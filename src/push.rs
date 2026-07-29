@@ -5,7 +5,7 @@
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
 
-use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
+use crate::manifest::{LockFile, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
 use crate::vcs::{
@@ -217,8 +217,7 @@ pub fn run_push(
     // checks + push loop) without re-walking the BTreeMap.
     let manifest_repos: Vec<(RepoPath, RepoEntry)> = project
         .manifest
-        .repositories
-        .iter()
+        .iter_entries()
         .map(|(rp, e)| (rp.clone(), e.clone()))
         .collect();
 
@@ -233,7 +232,7 @@ pub fn run_push(
     //    collaborators' `rwv fetch` (they hit "object missing" against the
     //    pinned-but-unpublished SHAs). The filter narrows the push loop,
     //    not the precondition.
-    let lock_path = project_dir.join("rwv.lock");
+    let lock_path = project_dir.join(LockFile::FILE_NAME);
     let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
         if let Some(raw_lock) = &project.lock {
             raw_lock

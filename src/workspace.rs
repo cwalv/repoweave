@@ -915,9 +915,9 @@ impl WorkspaceContext {
                         .primary_root
                         .join("projects")
                         .join(p.as_str())
-                        .join("rwv.yaml");
+                        .join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
-                        lines.push(format!("Repos: {}", manifest.repositories.len()));
+                        lines.push(format!("Repos: {}", manifest.len()));
                     }
                 }
             }
@@ -930,9 +930,9 @@ impl WorkspaceContext {
                         .primary_root
                         .join("projects")
                         .join(p.as_str())
-                        .join("rwv.yaml");
+                        .join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
-                        lines.push(format!("Repos: {}", manifest.repositories.len()));
+                        lines.push(format!("Repos: {}", manifest.len()));
                     }
                 }
             }

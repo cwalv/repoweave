@@ -86,7 +86,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
             .primary_path()
             .join("projects")
             .join(p.as_str())
-            .join("rwv.yaml");
+            .join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             out.push('\n');
             render_repo_table(&mut out, &manifest);
@@ -124,7 +124,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
 
 /// Render the repository table from the manifest.
 fn render_repo_table(out: &mut String, manifest: &Manifest) {
-    if manifest.repositories.is_empty() {
+    if manifest.is_empty() {
         return;
     }
 
@@ -132,7 +132,7 @@ fn render_repo_table(out: &mut String, manifest: &Manifest) {
     out.push_str("| Path | Role | Branch | URL |\n");
     out.push_str("|------|------|--------|-----|\n");
 
-    let mut repos: Vec<(&RepoPath, _)> = manifest.repositories.iter().collect();
+    let mut repos: Vec<(&RepoPath, _)> = manifest.iter_entries().collect();
     repos.sort_by_key(|(rp, _)| rp.as_str().to_string());
 
     for (rp, entry) in repos {

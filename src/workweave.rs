@@ -387,8 +387,7 @@ fn orphan_prune_pairs(
     workweave_dir: &Path,
 ) -> Vec<(PathBuf, PathBuf)> {
     manifest
-        .repositories
-        .keys()
+        .iter_repo_paths()
         .filter_map(|repo_path| {
             let worktree_dest = workweave_dir.join(repo_path.as_path());
             if classify_checkout(&worktree_dest) == CheckoutKind::ReferenceAlias {
@@ -3076,7 +3075,7 @@ fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manife
     let manifest_path = ws_root
         .join("projects")
         .join(project.as_str())
-        .join("rwv.yaml");
+        .join(Manifest::FILE_NAME);
     Manifest::from_path(&manifest_path)
 }
 

@@ -1035,15 +1035,17 @@ fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> a
     })?;
 
     let has_new = vcs
-        .has_committed_replay_exclusion(cwd_project_dir, Path::new("rwv.lock"))
+        .has_committed_replay_exclusion(cwd_project_dir, Path::new(LockFile::FILE_NAME))
         .unwrap_or(false);
     if has_new {
         return Ok(());
     }
 
-    let has_legacy =
-        crate::git::has_committed_legacy_replay_exclusion(cwd_project_dir, Path::new("rwv.lock"))
-            .unwrap_or(false);
+    let has_legacy = crate::git::has_committed_legacy_replay_exclusion(
+        cwd_project_dir,
+        Path::new(LockFile::FILE_NAME),
+    )
+    .unwrap_or(false);
 
     if has_legacy {
         anyhow::bail!(
@@ -3033,10 +3035,6 @@ fn check_detached_target_preflight(
     Ok(())
 }
 
-/// The lock file path relative to a project directory. Its tracked-dirty state
-/// is carved out of the source preflight (it is the auto-relock's own input).
-const RWV_LOCK_FILE: &str = "rwv.lock";
-
 // ---------------------------------------------------------------------------
 // Sync (pull) destination-side dirt scan
 // ---------------------------------------------------------------------------
@@ -3286,7 +3284,7 @@ fn check_dirty_source_preflight(
         .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
     let non_lock: Vec<&String> = project_tracked
         .iter()
-        .filter(|p| p.as_str() != RWV_LOCK_FILE)
+        .filter(|p| p.as_str() != LockFile::FILE_NAME)
         .collect();
     if !non_lock.is_empty() {
         // Name the specific tracked files so the operator sees exactly what
@@ -3981,7 +3979,7 @@ fn pin_source_snapshot(
             .read_file_at_revision(
                 source_project_dir,
                 &source_project_tip,
-                Path::new("rwv.lock"),
+                Path::new(LockFile::FILE_NAME),
             )
             .with_context(|| {
                 format!(
@@ -4004,7 +4002,7 @@ fn pin_source_snapshot(
             .read_file_at_revision(
                 source_project_dir,
                 &source_project_tip,
-                Path::new("rwv.yaml"),
+                Path::new(Manifest::FILE_NAME),
             )
             .with_context(|| {
                 format!(
@@ -4424,7 +4422,7 @@ fn retire_workweave_after_sync_to(
     target_workspace_dir: &Path,
 ) -> anyhow::Result<()> {
     // Reload manifest post-Phase 3 so we see any repos newly added by sync.
-    let manifest_path = cwd_project_dir.join("rwv.yaml");
+    let manifest_path = cwd_project_dir.join(Manifest::FILE_NAME);
     let manifest =
         Manifest::from_path(&manifest_path).context("--retire: failed to reload manifest")?;
 
@@ -4697,7 +4695,7 @@ fn regenerate_lock_phase3(
     )
     .context("failed to generate lock")?;
 
-    let lock_path = cwd_project_dir.join("rwv.lock");
+    let lock_path = cwd_project_dir.join(LockFile::FILE_NAME);
     crate::lock::write_lock(&new_lock, &lock_path)?;
 
     let message = auto_relock_commit_message(source_workspace_name);

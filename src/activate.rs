@@ -236,7 +236,7 @@ fn activate_at(
 ) -> anyhow::Result<()> {
     let project_name = ProjectName::new(project)?;
     let project_dir = root.join("projects").join(project);
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)?;
 
     // Discover repos on disk and project paths (needed by IntegrationContext).
@@ -659,7 +659,10 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         Some(name) => name,
         None => return Ok(BTreeSet::new()),
     };
-    let manifest_path = root.join("projects").join(active.as_str()).join("rwv.yaml");
+    let manifest_path = root
+        .join("projects")
+        .join(active.as_str())
+        .join(Manifest::FILE_NAME);
     if !manifest_path.exists() {
         return Ok(BTreeSet::new());
     }

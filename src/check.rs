@@ -5,7 +5,7 @@
 
 use crate::git::git_command;
 use crate::integration::{Issue, IssueKind};
-use crate::manifest::{Project, ProjectName, RepoPath, Role, WorkweaveName};
+use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
 use crate::workspace::Resolution;
 use anyhow::Context;
@@ -2093,7 +2093,7 @@ fn scan_project_dir_for_legacy(
     project_dir: &Path,
     out: &mut Vec<LegacyRolePrimaryManifest>,
 ) {
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
     if manifest_path.is_file() {
         if let Ok(content) = std::fs::read_to_string(&manifest_path) {
             if crate::manifest::manifest_has_legacy_role_primary(&content) {
@@ -7461,11 +7461,11 @@ fn apply_workspace_repairs(
         }
         let has_legacy = crate::git::has_working_tree_legacy_replay_exclusion(
             &project_repo,
-            std::path::Path::new("rwv.lock"),
+            std::path::Path::new(LockFile::FILE_NAME),
         )
         .unwrap_or(false);
         let has_new = vcs
-            .has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+            .has_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME))
             .unwrap_or(false);
         if has_new && !has_legacy {
             continue;
@@ -7473,7 +7473,7 @@ fn apply_workspace_repairs(
         // Rewrites a legacy line to the new name in place rather than
         // appending alongside it, and is a no-op once the new line is the
         // only one.
-        match vcs.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
+        match vcs.set_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
             Ok(()) => {
                 if has_legacy {
                     // The invariant reads the *committed* form, so a migration
@@ -8150,7 +8150,7 @@ fn load_doctor_world(
             if !project_dir.is_dir() {
                 continue;
             }
-            let manifest_path = project_dir.join("rwv.yaml");
+            let manifest_path = project_dir.join(Manifest::FILE_NAME);
             if !manifest_path.exists() {
                 continue;
             }
@@ -8569,12 +8569,12 @@ fn collect_doctor_violations(
         // `has_replay_exclusion` matches only the current needle, so a project
         // still on the legacy spelling reports missing and drives the same
         // `--fix` migration.
-        match vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
+        match vcs.has_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
             Ok(true) => {}
             Ok(false) => {
                 let legacy = crate::git::has_working_tree_legacy_replay_exclusion(
                     &project_repo,
-                    std::path::Path::new("rwv.lock"),
+                    std::path::Path::new(LockFile::FILE_NAME),
                 )
                 .unwrap_or(false);
                 violations.push(CheckViolation::MissingReplayExclusion {

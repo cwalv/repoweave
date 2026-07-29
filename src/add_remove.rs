@@ -140,7 +140,10 @@ fn create_worktree_in_workweave(
 /// member set is whole.
 fn activate_for_workspace(ctx: &WorkspaceContext, project_name: &str) -> anyhow::Result<()> {
     let root = ctx.active_path();
-    let manifest_path = root.join("projects").join(project_name).join("rwv.yaml");
+    let manifest_path = root
+        .join("projects")
+        .join(project_name)
+        .join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
@@ -174,7 +177,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let project_dir = find_project_dir(ctx)?;
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Check if the argument is a local path (no URL scheme and directory exists
     // relative to workspace root). Local-path resolution still scans primary
@@ -257,7 +260,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.repositories.contains_key(&repo_path) {
+    if manifest.contains_repo(&repo_path) {
         eprintln!(
             "Repository already exists in manifest at '{}'",
             repo_path.as_str()
@@ -325,11 +328,11 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         version: default_branch,
         role,
     };
-    manifest.repositories.insert(repo_path.clone(), entry);
+    manifest.insert_repo(repo_path.clone(), entry);
 
     // Write back the manifest (per-workspace state: workweave's own copy when
     // CWD is in one, primary's otherwise).
-    write_manifest(&manifest_path, &manifest)?;
+    manifest.write(&manifest_path)?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
 
@@ -403,7 +406,7 @@ fn run_add_from_local_path(
     let mut manifest = Manifest::from_path(manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.repositories.contains_key(&repo_path) {
+    if manifest.contains_repo(&repo_path) {
         eprintln!(
             "Repository already exists in manifest at '{}'",
             repo_path.as_str()
@@ -436,9 +439,9 @@ fn run_add_from_local_path(
         version: default_branch,
         role,
     };
-    manifest.repositories.insert(repo_path.clone(), entry);
+    manifest.insert_repo(repo_path.clone(), entry);
 
-    write_manifest(manifest_path, &manifest)?;
+    manifest.write(manifest_path)?;
 
     eprintln!(
         "Added '{}' to manifest (url: {})",
@@ -459,7 +462,7 @@ pub fn run_remove(
     ctx: &WorkspaceContext,
 ) -> anyhow::Result<()> {
     let project_dir = find_project_dir(ctx)?;
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     let repo_path = RepoPath::new(path)?;
 
@@ -467,7 +470,7 @@ pub fn run_remove(
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    let Some(removed) = manifest.repositories.remove(&repo_path) else {
+    let Some(removed) = manifest.remove_repo(&repo_path) else {
         bail!("Error: path '{}' not found in manifest", repo_path.as_str());
     };
 
@@ -519,7 +522,7 @@ pub fn run_remove(
     }
 
     // Write back the manifest (after all pre-flight checks pass).
-    write_manifest(&manifest_path, &manifest)?;
+    manifest.write(&manifest_path)?;
 
     eprintln!("Removed '{}' from manifest", repo_path.as_str());
 
@@ -647,7 +650,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let project_dir = find_project_dir(ctx)?;
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Validate that the argument looks like a path (registry/owner/repo).
     let segments: Vec<&str> = path_arg.split('/').filter(|s| !s.is_empty()).collect();
@@ -675,7 +678,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.repositories.contains_key(&repo_path) {
+    if manifest.contains_repo(&repo_path) {
         eprintln!(
             "Repository already exists in manifest at '{}'",
             repo_path.as_str()
@@ -736,10 +739,10 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
         version: default_branch,
         role: Role::Owned,
     };
-    manifest.repositories.insert(repo_path.clone(), entry);
+    manifest.insert_repo(repo_path.clone(), entry);
 
     // Write back the manifest (per-workspace state).
-    write_manifest(&manifest_path, &manifest)?;
+    manifest.write(&manifest_path)?;
 
     eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
 
@@ -808,9 +811,9 @@ fn find_other_projects_with_roles(
         if path == active_project_dir {
             continue;
         }
-        let manifest_path = path.join("rwv.yaml");
+        let manifest_path = path.join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
-            if let Some(entry) = manifest.repositories.get(repo_path) {
+            if let Some(entry) = manifest.get_entry(repo_path) {
                 // Derive a human-readable project name from the directory name.
                 let name = path
                     .file_name()
@@ -888,8 +891,8 @@ fn infer_url_from_path(path: &str, registries: &[&dyn Registry]) -> Option<RepoU
 /// The registry segment is the URL's own host (user-info and port stripped),
 /// or `local` for `file://`, which has none. The bare `{owner}/{repo}` shape
 /// a matched registry never produces is not a valid substitute here: it
-/// collides with the workspace-root layout `write_manifest` writes every
-/// other repo under.
+/// collides with the workspace-root layout every other repo is written
+/// under.
 fn derive_local_path_from_url(url: &str) -> Option<PathBuf> {
     let (registry, path_str) = if let Some(rest) = url.strip_prefix("file://") {
         ("local".to_owned(), rest)
@@ -922,13 +925,6 @@ fn derive_local_path_from_url(url: &str) -> Option<PathBuf> {
     Some(crate::registry::canonical_local_path(
         &registry, owner, repo,
     ))
-}
-
-/// Serialize and write a manifest to disk, preserving YAML format.
-fn write_manifest(path: &Path, manifest: &Manifest) -> anyhow::Result<()> {
-    let yaml = serde_yaml::to_string(manifest).context("failed to serialize manifest")?;
-    std::fs::write(path, &yaml).with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]

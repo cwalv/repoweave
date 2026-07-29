@@ -188,7 +188,7 @@ pub(crate) fn commit_lock_file_with_message(
     project_dir: &Path,
     message: &str,
 ) -> anyhow::Result<bool> {
-    stage_and_commit(project_dir, &["rwv.lock"], message)
+    stage_and_commit(project_dir, &[LockFile::FILE_NAME], message)
 }
 
 /// Stage `paths` (relative to `project_dir`) and commit from `project_dir`.
@@ -270,7 +270,7 @@ fn commit_lock_file(
 
     let mut authored_paths: Vec<&str> = Vec::new();
     for path in &dirty {
-        if path == "rwv.lock" {
+        if path == LockFile::FILE_NAME {
             continue;
         }
         if let Some(owned) = authored.get(path.as_str()) {
@@ -279,7 +279,7 @@ fn commit_lock_file(
     }
     let has_other_changes = tracked_dirty
         .iter()
-        .any(|path| path != "rwv.lock" && !authored.contains(path.as_str()));
+        .any(|path| path != LockFile::FILE_NAME && !authored.contains(path.as_str()));
     if has_other_changes {
         anyhow::bail!(
             "project repo has uncommitted changes outside rwv.lock; \
@@ -287,7 +287,7 @@ fn commit_lock_file(
         );
     }
 
-    let mut paths = vec!["rwv.lock"];
+    let mut paths = vec![LockFile::FILE_NAME];
     paths.extend(authored_paths);
 
     let message = build_commit_message(new_lock, old_lock);
@@ -376,7 +376,7 @@ pub(crate) fn write_project_lock(
     let workweave_pair = workweave_name.as_ref().zip(workweave_dir.as_deref());
     let lock = generate_lock(&project.manifest, ctx.primary_path(), workweave_pair, dirty)?;
 
-    let lock_path = project_dir.join("rwv.lock");
+    let lock_path = project_dir.join(LockFile::FILE_NAME);
     // Read old lock before overwriting so the commit message can list what
     // changed. Resolve the raw lock against on-disk repos so the diff
     // computed by `commit_lock_file` is a canonical-SHA comparison rather

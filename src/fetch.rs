@@ -141,8 +141,7 @@ fn find_incomplete_repos(
     no_reference: bool,
 ) -> Vec<RepoPath> {
     manifest
-        .repositories
-        .iter()
+        .iter_entries()
         .filter(|(_, entry)| !(no_reference && entry.role == Role::Reference))
         .map(|(rp, _)| rp)
         .filter(|rp| !lock.contains_repo(rp))
@@ -343,14 +342,14 @@ fn fetch_project_repos(
     resolution: Option<Resolution>,
 ) -> anyhow::Result<()> {
     // Read the manifest
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to read manifest from {}", manifest_path.display()))?;
 
     // Load the lock file. In Frozen mode the lock must exist and cover all
     // manifest repos. In Default mode the lock may be absent (bootstrap), and
     // missing repos are added additively after fetch.
-    let lock_path = project_dir.join("rwv.lock");
+    let lock_path = project_dir.join(LockFile::FILE_NAME);
     let existing_lock: Option<LockFile> = if lock_path.exists() {
         Some(
             LockFile::from_path(&lock_path)
@@ -387,7 +386,7 @@ fn fetch_project_repos(
     // and doesn't touch the clones.
     if let Some(ref lock) = existing_lock {
         for repo_path in lock.iter_repo_paths() {
-            if !manifest.repositories.contains_key(repo_path) {
+            if !manifest.contains_repo(repo_path) {
                 eprintln!(
                     "rwv fetch: warning: orphan in lock: {} (lock entry has no manifest entry)",
                     repo_path.as_str()
@@ -404,8 +403,7 @@ fn fetch_project_repos(
     // selected repos. Empty filter is a no-op (every repo passes). See
     // `src/selector.rs` for the grammar and union semantics.
     let work_items: Vec<(RepoPath, RepoEntry, Box<dyn Vcs>)> = manifest
-        .repositories
-        .iter()
+        .iter_entries()
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, e)| (rp.clone(), e.clone(), vcs_for(e.vcs_type)))
         .collect();
@@ -612,9 +610,7 @@ fn fetch_project_repos(
         // generation so we don't trip on the missing paths.
         let lock_manifest = if no_reference {
             let mut filtered = manifest.clone();
-            filtered
-                .repositories
-                .retain(|_, entry| entry.role != Role::Reference);
+            filtered.retain_repos(|_, entry| entry.role != Role::Reference);
             std::borrow::Cow::Owned(filtered)
         } else {
             std::borrow::Cow::Borrowed(&manifest)
@@ -637,14 +633,7 @@ fn fetch_project_repos(
             let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
             for repo_path in &added_to_lock {
                 if let Some(entry) = new_lock.get_entry(repo_path) {
-                    // Convert ResolvedLockEntry to LockEntry for the merge
-                    // (canonical SHA serializes the same as raw scalar).
-                    let raw_entry = crate::manifest::LockEntry {
-                        vcs_type: entry.vcs_type,
-                        url: entry.url.clone(),
-                        version: crate::vcs::RawRevisionId::new(entry.version.display_str()),
-                    };
-                    merged.repositories.insert(repo_path.clone(), raw_entry);
+                    merged.insert_entry(repo_path.clone(), entry.to_raw());
                 }
             }
             lock::write_lock(&merged, &lock_path)?;

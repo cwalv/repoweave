@@ -1040,6 +1040,10 @@ pub struct WorkweaveConfig {
 /// - [`Manifest::iter_entries`] — iterate over `(path, entry)` pairs.
 /// - [`Manifest::len`] — number of repositories.
 /// - [`Manifest::is_empty`] — true when there are no repositories.
+/// - [`Manifest::contains_repo`] — test whether a path is present.
+/// - [`Manifest::insert_repo`] / [`Manifest::remove_repo`] /
+///   [`Manifest::retain_repos`] — mutate the repository set.
+/// - [`Manifest::write`] — serialize back to disk.
 ///
 /// The `repositories` field is `pub(crate)`; external callers must use the
 /// accessor methods above.
@@ -1053,6 +1057,18 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// The manifest's name inside a project directory.
+    ///
+    /// Public because operators type this name, `.gitattributes` entries
+    /// carry it and documentation quotes it — it is an interface, not an
+    /// implementation detail to be hidden. The constant exists so it is
+    /// spelled once rather than re-typed at every path join.
+    pub const FILE_NAME: &'static str = "rwv.yaml";
+
+    /// The manifest text a project starts life with.
+    pub const SKELETON: &'static str =
+        "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\nrepositories: {}\n";
+
     /// Iterate over every [`RepoPath`] in the manifest, in sorted order.
     ///
     /// This is the preferred accessor for callers that only need keys;
@@ -1094,6 +1110,26 @@ impl Manifest {
         self.repositories.is_empty()
     }
 
+    /// Return `true` if the manifest contains an entry for `path`.
+    pub fn contains_repo(&self, path: &RepoPath) -> bool {
+        self.repositories.contains_key(path)
+    }
+
+    /// Insert `entry` at `path`, returning whatever it displaced.
+    pub fn insert_repo(&mut self, path: RepoPath, entry: RepoEntry) -> Option<RepoEntry> {
+        self.repositories.insert(path, entry)
+    }
+
+    /// Remove the entry at `path`, returning it when one was present.
+    pub fn remove_repo(&mut self, path: &RepoPath) -> Option<RepoEntry> {
+        self.repositories.remove(path)
+    }
+
+    /// Drop every entry for which `keep` returns `false`.
+    pub fn retain_repos(&mut self, keep: impl FnMut(&RepoPath, &mut RepoEntry) -> bool) {
+        self.repositories.retain(keep);
+    }
+
     /// Load from a YAML file.
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
@@ -1124,6 +1160,18 @@ impl Manifest {
                 }
             }
         }
+    }
+
+    /// Serialize to YAML and write to `path`.
+    ///
+    /// The round-trip runs through serde, so any comment an operator wrote
+    /// in the file being overwritten is gone afterwards — including the
+    /// header [`Self::SKELETON`] starts a project with.
+    pub fn write(&self, path: &Path) -> anyhow::Result<()> {
+        let yaml = serde_yaml::to_string(self).context("failed to serialize manifest")?;
+        std::fs::write(path, &yaml)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        Ok(())
     }
 }
 
@@ -1215,6 +1263,7 @@ pub struct LockEntry {
 /// - [`LockFile::len`] — number of repositories.
 /// - [`LockFile::is_empty`] — true when there are no repositories.
 /// - [`LockFile::contains_repo`] — test whether a path is present.
+/// - [`LockFile::insert_entry`] — add or replace one entry.
 ///
 /// The `repositories` field is `pub(crate)`; external callers must use the
 /// accessor methods above.
@@ -1266,7 +1315,36 @@ pub struct ResolvedLockFile {
     pub(crate) repositories: BTreeMap<RepoPath, ResolvedLockEntry>,
 }
 
+impl ResolvedLockEntry {
+    /// This entry in the raw form `rwv.lock` stores.
+    ///
+    /// The missing `Deserialize` above makes raw-to-resolved unreachable
+    /// without resolving. The reverse is sound — a resolved SHA is already a
+    /// well-formed raw version string — and lives here so that appending a
+    /// freshly generated entry to an existing lock does not mean
+    /// reconstructing a [`LockEntry`] field by field at the call site.
+    pub fn to_raw(&self) -> LockEntry {
+        LockEntry {
+            vcs_type: self.vcs_type,
+            url: self.url.clone(),
+            version: crate::vcs::RawRevisionId::new(self.version.display_str()),
+        }
+    }
+}
+
 impl LockFile {
+    /// The lock file's name inside a project directory.
+    ///
+    /// Public for the same reason [`Manifest::FILE_NAME`] is: operators name
+    /// it in `.gitattributes` merge rules and in `git` invocations, so it is
+    /// an interface. The constant keeps it spelled once.
+    pub const FILE_NAME: &'static str = "rwv.lock";
+
+    /// Insert `entry` at `path`, returning whatever it displaced.
+    pub fn insert_entry(&mut self, path: RepoPath, entry: LockEntry) -> Option<LockEntry> {
+        self.repositories.insert(path, entry)
+    }
+
     /// Iterate over every [`RepoPath`] in the lock file, in sorted order.
     ///
     /// This is the preferred accessor for callers that only need keys;
@@ -1501,10 +1579,10 @@ impl Project {
 
     /// Load a project from its directory.
     pub fn from_dir(dir: &Path) -> anyhow::Result<Self> {
-        let manifest_path = dir.join("rwv.yaml");
+        let manifest_path = dir.join(Manifest::FILE_NAME);
         let manifest = Manifest::from_path(&manifest_path)
             .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
-        let lock_path = dir.join("rwv.lock");
+        let lock_path = dir.join(LockFile::FILE_NAME);
         let lock = if lock_path.exists() {
             Some(
                 LockFile::from_path(&lock_path)
@@ -1540,7 +1618,7 @@ impl Project {
     /// The returned `Project` always has `lock: None`, regardless of whether
     /// `rwv.lock` exists or what it contains.
     pub fn from_dir_skip_lock(dir: &Path) -> anyhow::Result<Self> {
-        let manifest_path = dir.join("rwv.yaml");
+        let manifest_path = dir.join(Manifest::FILE_NAME);
         let manifest = Manifest::from_path(&manifest_path)
             .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 

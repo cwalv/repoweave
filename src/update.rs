@@ -216,8 +216,7 @@ fn update_for_project(
     let workweave_dir = workweave.map(|(_, wd)| wd);
     let work_items: Vec<WorkItem> = project
         .manifest
-        .repositories
-        .iter()
+        .iter_entries()
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, entry)| {
             let abs = resolve_repo_dir(rp, primary_root, workweave_dir);
