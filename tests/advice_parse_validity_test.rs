@@ -349,13 +349,17 @@ fn advice_invocations_all_parse() {
 
     // Canaries: these specific normalized strings must appear in the extracted
     // set.  A missing canary means extraction or normalization has a gap.
+    // `rwv sync` is the bare form because no advice string hardcodes
+    // `rwv sync --continue` any more: the doctor's stale-op-state message was
+    // the last one, and it now derives the verb from the record. The flagged
+    // shape is still covered by the `sync-to` canary above it.
     let canaries: &[&str] = &[
         "rwv doctor --fix",
         "rwv sync-to --continue",
         "rwv lock",
         "rwv abort",
         "rwv fetch",
-        "rwv sync --continue",
+        "rwv sync",
     ];
     for &canary in canaries {
         assert!(

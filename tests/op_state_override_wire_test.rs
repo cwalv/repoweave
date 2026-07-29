@@ -16,6 +16,8 @@ use clap::CommandFactory;
 use repoweave::cli::Cli;
 use repoweave::op_state::{self, Override};
 
+mod common;
+
 /// Every `Override`, with a match that stops compiling when a variant is
 /// added — the list below is what the assertions iterate, so it has to grow
 /// with the enum.
@@ -90,7 +92,7 @@ fn every_override_spells_the_consent_flag_that_mints_it() {
 
 #[test]
 fn an_owner_record_naming_every_consent_flag_parses() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = common::tempdir().expect("tempdir");
     let list: String = consent_flag_names("sync-to")
         .iter()
         .map(|f| format!("  - {f}\n"))
