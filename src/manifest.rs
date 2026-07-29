@@ -296,9 +296,8 @@ impl<'de> serde::Deserialize<'de> for WorkweaveName {
 /// A clone source string parsed into its constituent parts.
 ///
 /// Parsing happens once at the boundary via [`FromStr`] / [`Deserialize`],
-/// which walks the registry list (built-in and any future user registries)
-/// and returns the first match. Downstream code dispatches on the variant
-/// rather than re-parsing.
+/// which walks the registry list and returns the first match. Downstream
+/// code dispatches on the variant rather than re-parsing.
 ///
 /// `Display` reconstructs the canonical clone URL or shorthand form. For
 /// inputs the registry list does not recognise, [`RepoUrl::Unknown`]
@@ -316,13 +315,6 @@ pub enum RepoUrl {
     Ssh {
         registry: RegistryName,
         host: String,
-        owner: String,
-        repo: String,
-    },
-    /// `file://{prefix}/{owner}/{repo}` — under a directory registry.
-    File {
-        registry: RegistryName,
-        prefix: PathBuf,
         owner: String,
         repo: String,
     },
@@ -389,9 +381,7 @@ impl RepoUrl {
     /// The registry that recognised this URL, when one did.
     pub fn registry(&self) -> Option<&RegistryName> {
         match self {
-            Self::Https { registry, .. }
-            | Self::Ssh { registry, .. }
-            | Self::File { registry, .. } => Some(registry),
+            Self::Https { registry, .. } | Self::Ssh { registry, .. } => Some(registry),
             Self::Shorthand {
                 registry: Some(r), ..
             } => Some(r),
@@ -404,18 +394,17 @@ impl RepoUrl {
         match self {
             Self::Https { owner, repo, .. }
             | Self::Ssh { owner, repo, .. }
-            | Self::File { owner, repo, .. }
             | Self::Shorthand { owner, repo, .. } => Some((owner, repo)),
             Self::Unknown(_) => None,
         }
     }
 
     /// Whether this represents a URL form passable to `git clone`.
-    /// HTTPS, SSH, File are URLs; Shorthand is not. Unknown is decided
+    /// HTTPS and SSH are URLs; Shorthand is not. Unknown is decided
     /// by inspecting the raw string.
     pub fn is_url(&self) -> bool {
         match self {
-            Self::Https { .. } | Self::Ssh { .. } | Self::File { .. } => true,
+            Self::Https { .. } | Self::Ssh { .. } => true,
             Self::Shorthand { .. } => false,
             Self::Unknown(s) => s.contains("://") || s.starts_with("git@"),
         }
@@ -476,12 +465,6 @@ impl fmt::Display for RepoUrl {
             Self::Ssh {
                 host, owner, repo, ..
             } => write!(f, "git@{}:{}/{}.git", host, owner, repo),
-            Self::File {
-                prefix,
-                owner,
-                repo,
-                ..
-            } => write!(f, "file://{}/{}/{}", prefix.display(), owner, repo),
             Self::Shorthand {
                 registry: None,
                 owner,

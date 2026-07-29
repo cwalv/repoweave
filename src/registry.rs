@@ -222,12 +222,6 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
             owner,
             repo,
             ..
-        }
-        | RepoUrl::File {
-            registry,
-            owner,
-            repo,
-            ..
         } => Ok(CloneInfo {
             url: source.clone(),
             registry: registry.clone(),
