@@ -1,17 +1,21 @@
-//! One sample of every `(kind, sub-kind)` pair `CheckViolation` can take,
-//! and the token that names it.
+//! One sample of every finding `rwv doctor` can report, and the token that
+//! names it, over both channels: `CheckViolation` for rwv's own scans and
+//! `Issue` for what an integration raised.
 //!
 //! Shared because more than one instrument needs to walk the whole finding
 //! space, and a second copy of the walk is a second thing to keep complete.
-//! [`case_token`] matches exhaustively, so a new variant or sub-kind stops
-//! every dependent test compiling until a sample is added here.
+//! [`case_token`] and [`issue_kind_token`] match exhaustively, so a new
+//! variant, sub-kind or issue kind stops every dependent test compiling until
+//! a sample is added here.
 
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
-    IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, ProvenanceKind,
+    IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, ProvenanceKind, ReplayExclusionKind,
     WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
+use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
+use repoweave::integrations::merge::MemberIncompatibility;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::op_state::OpVerb;
 use repoweave::vcs::ResolvedRevisionId;
@@ -65,7 +69,19 @@ pub fn case_token(v: &CheckViolation) -> String {
             WorkingTreeDriftKind::SafeToFix => "working-tree-drift/safe-to-fix".into(),
             WorkingTreeDriftKind::LiveEdits => "working-tree-drift/live-edits".into(),
         },
-        CheckViolation::MissingReplayExclusion { .. } => "missing-replay-exclusion".into(),
+        CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
+            ReplayExclusionKind::Absent => "missing-replay-exclusion/absent".into(),
+            ReplayExclusionKind::LegacySpelling => {
+                "missing-replay-exclusion/legacy-spelling".into()
+            }
+        },
+        CheckViolation::ReplayExclusionUnreadable { .. } => "replay-exclusion-unreadable".into(),
+        CheckViolation::MissingMergeDriverConfig { .. } => "missing-merge-driver-config".into(),
+        CheckViolation::MergeDriverConfigUnreadable { .. } => {
+            "merge-driver-config-unreadable".into()
+        }
+        CheckViolation::HeadUnreadable { .. } => "head-unreadable".into(),
+        CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry".into(),
         CheckViolation::LegacyRolePrimary { .. } => "legacy-role-primary".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
         CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
@@ -220,7 +236,35 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo: repo(),
             kind: WorkingTreeDriftKind::LiveEdits,
         },
-        CheckViolation::MissingReplayExclusion { project: project() },
+        CheckViolation::MissingReplayExclusion {
+            project: project(),
+            sub_kind: ReplayExclusionKind::Absent,
+        },
+        CheckViolation::MissingReplayExclusion {
+            project: project(),
+            sub_kind: ReplayExclusionKind::LegacySpelling,
+        },
+        CheckViolation::ReplayExclusionUnreadable {
+            project: project(),
+            error: "permission denied".into(),
+        },
+        CheckViolation::MissingMergeDriverConfig {
+            project: project(),
+            config_key: "merge.rwv-ours.driver".into(),
+        },
+        CheckViolation::MergeDriverConfigUnreadable {
+            project: project(),
+            config_key: "merge.rwv-ours.driver".into(),
+            error: "bad config line 3".into(),
+        },
+        CheckViolation::HeadUnreadable {
+            repo: repo(),
+            error: "not a git repository".into(),
+        },
+        CheckViolation::UnresolvableLockEntry {
+            project: project(),
+            repo: repo(),
+        },
         CheckViolation::LegacyRolePrimary {
             project: project(),
             manifest_path: path("/ws/projects/proj/rwv.yaml"),
@@ -520,4 +564,62 @@ pub fn corpus() -> Vec<CheckViolation> {
             driver: "rwv-nope".into(),
         },
     ]
+}
+
+// ---------------------------------------------------------------------------
+// The other finding channel: `Issue`
+// ---------------------------------------------------------------------------
+
+/// One sample of every [`IssueKind`], the discriminant integration findings
+/// travel under on `rwv doctor --json`'s `issues` array.
+///
+/// Same construction as [`corpus`] and for the same reason: a new kind stops
+/// [`issue_kind_token`] compiling until a sample is added here.
+pub fn issue_corpus() -> Vec<Issue> {
+    [
+        IssueKind::ToolMissing,
+        IssueKind::ManagedFileMissing,
+        IssueKind::ManagedFileDrift,
+        IssueKind::ManagedFileUserHeld,
+        IssueKind::Surfacing,
+        IssueKind::ConfigRejected,
+        IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
+            "go-work",
+            &path("/ws/projects/proj/go.work"),
+            "go",
+            "1.21",
+            "1.23",
+            "github/acme/repo/go.mod",
+        ))),
+        IssueKind::IntegrationFailed,
+        IssueKind::CoreFinding,
+    ]
+    .into_iter()
+    .map(|kind| Issue {
+        integration: "go-work".into(),
+        severity: Severity::Warning,
+        message: format!("sample finding for `{}`", kind.tag()),
+        kind,
+        safe_to_fix: true,
+    })
+    .collect()
+}
+
+/// The wire tag one sample must arrive under, taken from [`IssueKind::tag`]
+/// rather than retyped — the published tag and the token this compares it
+/// against would otherwise be two spellings of one value.
+///
+/// The match is exhaustive for the same reason [`case_token`]'s is.
+pub fn issue_kind_token(kind: &IssueKind) -> String {
+    match kind {
+        IssueKind::ToolMissing
+        | IssueKind::ManagedFileMissing
+        | IssueKind::ManagedFileDrift
+        | IssueKind::ManagedFileUserHeld
+        | IssueKind::Surfacing
+        | IssueKind::ConfigRejected
+        | IssueKind::MemberIncompatibility(_)
+        | IssueKind::IntegrationFailed
+        | IssueKind::CoreFinding => kind.tag().to_string(),
+    }
 }

@@ -55,6 +55,41 @@ fn init_git_repo(path: &Path) -> String {
     run(&["rev-parse", "HEAD"], path)
 }
 
+/// Make `project_dir` the git repo a real project directory is, with the
+/// replay exclusion committed and the `rwv-ours` merge driver defined.
+///
+/// A fixture that merely writes `.gitattributes` into a plain directory is
+/// still missing what `rwv sync`'s rebase needs, and both renderers say so —
+/// so a test asserting a clean workspace has to build one.
+fn make_project_repo_clean(project_dir: &Path) {
+    let run = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(project_dir)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    run(&["init", "-b", "main"]);
+    run(&["add", "."]);
+    run(&["commit", "-m", "initial"]);
+    run(&["config", "merge.rwv-ours.driver", "true"]);
+}
+
 /// Write an `rwv.yaml` manifest into a project directory.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
@@ -979,8 +1014,8 @@ fn check_fix_plants_rwv_ours_driver_config() {
 mod doctor_json {
     use super::*;
     use repoweave::check::{
-        build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, ViolationOutput,
-        WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
+        build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind,
+        ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
     };
     use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
     use repoweave::vcs::ResolvedRevisionId;
@@ -1030,12 +1065,7 @@ mod doctor_json {
             &project_dir,
             &[(repo_path, "https://github.com/acme/server.git")],
         );
-        // Pre-create the replay-exclusion line so the workspace is clean.
-        std::fs::write(
-            project_dir.join(".gitattributes"),
-            "rwv.lock merge=rwv-ours\n",
-        )
-        .unwrap();
+        make_project_repo_clean(&project_dir);
 
         let assertion = rwv_cmd()
             .args(["doctor", "--json"])
@@ -1474,7 +1504,10 @@ mod doctor_json {
                 "working-tree-drift",
             ),
             (
-                CheckViolation::MissingReplayExclusion { project: pn() },
+                CheckViolation::MissingReplayExclusion {
+                    project: pn(),
+                    sub_kind: ReplayExclusionKind::Absent,
+                },
                 "missing-replay-exclusion",
             ),
             (
@@ -1527,14 +1560,21 @@ mod doctor_json {
             },
             CheckViolation::MissingReplayExclusion {
                 project: ProjectName::new("p").unwrap(),
+                sub_kind: ReplayExclusionKind::Absent,
             },
         ];
 
         // Serialized, not field-accessed: the assertions below are about the
         // bytes an operator receives, not about the struct that produced them.
-        let payload =
-            serde_json::to_value(build_doctor_json(violations, &ws, &ww_dirs, None, vec![]))
-                .expect("doctor payload serializes");
+        let payload = serde_json::to_value(build_doctor_json(
+            violations,
+            Vec::new(),
+            &ws,
+            &ww_dirs,
+            None,
+            vec![],
+        ))
+        .expect("doctor payload serializes");
         assert_eq!(
             payload.get("$schema").and_then(|s| s.as_str()),
             Some(DOCTOR_SCHEMA_URL)
@@ -1669,6 +1709,7 @@ mod doctor_json {
             },
             CheckViolation::MissingReplayExclusion {
                 project: ProjectName::new("p").unwrap(),
+                sub_kind: ReplayExclusionKind::Absent,
             },
             CheckViolation::UnparseableProject {
                 project: ProjectName::new("p").unwrap(),
@@ -1683,9 +1724,15 @@ mod doctor_json {
         ];
         let expected_len = violations.len();
 
-        let payload =
-            serde_json::to_value(build_doctor_json(violations, &ws, &no_ww, None, vec![]))
-                .expect("doctor payload serializes");
+        let payload = serde_json::to_value(build_doctor_json(
+            violations,
+            Vec::new(),
+            &ws,
+            &no_ww,
+            None,
+            vec![],
+        ))
+        .expect("doctor payload serializes");
         let arr = payload.get("violations").unwrap().clone();
         let parsed: Vec<WireViolation> = serde_json::from_value(arr).expect("round-trip failed");
         assert_eq!(parsed.len(), expected_len);
@@ -2241,11 +2288,7 @@ fn default_scope_json_no_orphan_when_active_project_set() {
         &project_dir,
         &[(owned_repo, "https://github.com/acme/owned.git")],
     );
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=rwv-ours\n",
-    )
-    .unwrap();
+    make_project_repo_clean(&project_dir);
 
     // Orphan-looking repo that belongs to no active project.
     init_git_repo(&root.join("github/acme/other-project-repo"));

@@ -9,7 +9,9 @@
 //! text report listed them. The convention that text is a subset of JSON held
 //! in reverse and nothing noticed, because the convention was prose.
 //!
-//! Two instruments, because there are two ways to lose a finding:
+//! Two ways to lose a finding, on each of the two channels `rwv doctor`
+//! carries them on — `CheckViolation` for its own scans, `Issue` for what an
+//! integration raised:
 //!
 //!   1. **A renderer drops a kind it was handed.** [`corpus`] holds one sample
 //!      per `(kind, sub-kind)` pair the enum can take; both renderers must
@@ -17,6 +19,12 @@
 //!   2. **A collector is never called on one path.** The reachability walk
 //!      below re-derives the call graph from the source and requires every
 //!      violation-producing scan to sit under the one collection pipeline.
+//!   3. The reported bug, end to end, over the binary.
+//!   4. Kind 1 on the `Issue` channel: every [`IssueKind`] must arrive on the
+//!      wire under the tag `IssueKind::tag` mints.
+//!   5. Kind 2 on the `Issue` channel: every integration hook must be driven
+//!      from the one pass both renderers take their `Issue`s from.
+//!   6. The same bug on the `Issue` channel, end to end, over the binary.
 //!
 //! Each instrument ships a seeded failure that plants the defect and asserts
 //! the check reports it, and a non-vacuity assertion so a parser that silently
@@ -24,24 +32,27 @@
 //!
 //! **Residue** — what these do *not* cover:
 //!
-//!   - Findings with no `CheckViolation` variant at all. Unreadable HEADs,
-//!     unresolvable lock entries, the legacy `merge=ours` replay-exclusion
-//!     spelling and the missing `merge.rwv-ours.driver` config reach the text
-//!     report as bare `Issue`s and are absent from `--json` by construction.
-//!     Nothing here sees them.
-//!   - Integration-runner, `verify()` and surfacing findings, for the same
-//!     reason.
 //!   - A collector whose name does not start with `scan_` (and is not
 //!     `find_violations`) is invisible to the reachability walk.
 //!   - Sub-kind coverage is only as complete as [`corpus`]. `case_token`
 //!     matches exhaustively, so a new variant or sub-kind fails to compile
 //!     until a sample is added — but a sub-kind carrying a *field* whose value
 //!     changes a renderer's mind is sampled once, at one value.
+//!   - `--fix`'s own failures reach the text report as bare `Issue`s and are
+//!     absent from `--json`. There is no `--fix` on the JSON path to produce
+//!     one, so nothing is lost; instrument 4 pins that no *other* finding
+//!     arrives on the wire under the same `core-finding` tag.
+//!   - The hook walk in instrument 5 reads which functions are *named* inside
+//!     `collect_doctor_issues`, not whether the pass is reached for every
+//!     project. A hook called under a condition that is never true is reported
+//!     as collected.
 
 mod common;
 
-use common::doctor_corpus::{case_token, corpus, path, workweave};
+use common::doctor_corpus::{case_token, corpus, issue_corpus, issue_kind_token, path, workweave};
+use common::src_scan;
 use repoweave::check::{build_doctor_json, violations_to_issues, CheckViolation};
+use repoweave::integration::{Issue, IssueKind};
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use std::collections::HashMap;
 
@@ -69,6 +80,7 @@ fn renders_as_json(v: CheckViolation) -> bool {
     // rendered surfaces, so this side must read the emitted JSON.
     let doc = serde_json::to_value(build_doctor_json(
         vec![v],
+        Vec::new(),
         &path("/ws"),
         &workweave_dirs,
         None,
@@ -480,5 +492,373 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
     assert_eq!(
         recorded["ref_name"], "myproj--ghost/main",
         "and it must name the receipt, not just the kind: {recorded}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Instrument 4: neither renderer may drop an integration finding
+// ---------------------------------------------------------------------------
+
+/// The tags `--json` produces for `issues`, one sample per [`IssueKind`].
+fn rendered_issue_tags(issues: Vec<Issue>) -> Vec<String> {
+    let doc = serde_json::to_value(build_doctor_json(
+        Vec::new(),
+        issues,
+        &path("/ws"),
+        &HashMap::new(),
+        None,
+        Vec::new(),
+    ))
+    .expect("doctor payload serializes");
+    doc["issues"]
+        .as_array()
+        .expect("the document carries an issues array")
+        .iter()
+        .map(|i| match &i["kind"] {
+            // The documented two shapes: a fieldless kind is a plain string,
+            // one carrying fields is a single-key object keyed by the tag.
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Object(map) => map
+                .keys()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "<empty object>".into()),
+            other => format!("<unreadable: {other}>"),
+        })
+        .collect()
+}
+
+#[test]
+fn every_issue_kind_reaches_the_wire_under_its_published_tag() {
+    let expected: Vec<String> = issue_corpus()
+        .iter()
+        .map(|i| issue_kind_token(&i.kind))
+        .collect();
+    assert_eq!(
+        rendered_issue_tags(issue_corpus()),
+        expected,
+        "`--json` must carry one `issues` entry per finding, tagged with \
+         `IssueKind::tag()` — the same token the findings page is keyed by"
+    );
+}
+
+#[test]
+fn the_issue_channel_check_reports_a_renderer_that_drops_a_kind() {
+    // The defect this whole file exists for, planted on the other channel: a
+    // finding the text report prints and the wire format never carries.
+    let holed: Vec<Issue> = issue_corpus()
+        .into_iter()
+        .filter(|i| !matches!(i.kind, IssueKind::Surfacing))
+        .collect();
+    let expected: Vec<String> = issue_corpus()
+        .iter()
+        .map(|i| issue_kind_token(&i.kind))
+        .collect();
+    let rendered = rendered_issue_tags(holed);
+    assert_ne!(
+        rendered, expected,
+        "a wire format that drops `surfacing` must not compare equal"
+    );
+    assert!(
+        !rendered.contains(&"surfacing".to_string()) && expected.contains(&"surfacing".to_string()),
+        "the plant must be the missing kind and nothing else; rendered {rendered:?}"
+    );
+}
+
+#[test]
+fn a_member_incompatibility_arrives_as_fields_rather_than_a_sentence() {
+    // The one kind carrying an observation. A consumer must not have to parse
+    // the four facts back out of the English the same finding also renders.
+    let doc = serde_json::to_value(build_doctor_json(
+        Vec::new(),
+        issue_corpus(),
+        &path("/ws"),
+        &HashMap::new(),
+        None,
+        Vec::new(),
+    ))
+    .expect("doctor payload serializes");
+    let entry = doc["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"].get("member-incompatibility").is_some())
+        .unwrap_or_else(|| panic!("no member-incompatibility on the wire: {doc}"));
+    let observation = &entry["kind"]["member-incompatibility"];
+    assert_eq!(observation["key"], "go");
+    assert_eq!(observation["on_disk"], "1.21");
+    assert_eq!(observation["required"], "1.23");
+    assert_eq!(observation["required_by"], "github/acme/repo/go.mod");
+    assert_eq!(observation["path"], "/ws/projects/proj/go.work");
+}
+
+#[test]
+fn the_issue_corpus_covers_every_kind_and_is_not_empty() {
+    let tokens: Vec<String> = issue_corpus()
+        .iter()
+        .map(|i| issue_kind_token(&i.kind))
+        .collect();
+    assert!(
+        tokens.len() >= 9,
+        "the issue corpus yielded only {} samples — a builder that reads \
+         nothing passes every comparison above",
+        tokens.len()
+    );
+    let unique: std::collections::BTreeSet<&String> = tokens.iter().collect();
+    assert_eq!(
+        unique.len(),
+        tokens.len(),
+        "duplicate sample tokens hide a missing kind: {tokens:?}"
+    );
+    for expected in [
+        "surfacing",
+        "member-incompatibility",
+        "managed-file-user-held",
+    ] {
+        assert!(
+            unique.iter().any(|t| t.as_str() == expected),
+            "the issue corpus must carry a `{expected}` sample"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Instrument 5: every integration hook sits under the one collection pass
+// ---------------------------------------------------------------------------
+
+/// The function `rwv doctor` collects integration findings through.
+const ISSUE_PIPELINE: &str = "collect_doctor_issues";
+
+/// Every `pub fn` outside `check.rs` that hands back a vector of `Issue` —
+/// derived from the sources rather than listed, so a hook added tomorrow is in
+/// the set the moment it is written.
+fn issue_producers() -> Vec<String> {
+    let mut out = Vec::new();
+    for line in src_scan::production_lines() {
+        if line.file == "check.rs" {
+            continue;
+        }
+        let Some(rest) = line.text.strip_prefix("pub fn ") else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let source = std::fs::read_to_string(src_scan::src_dir().join(&line.file))
+            .expect("the scanned file is readable");
+        let body: String = source
+            .lines()
+            .skip(line.line - 1)
+            .take_while(|l| !l.contains(" {"))
+            .chain(
+                source
+                    .lines()
+                    .skip(line.line - 1)
+                    .find(|l| l.contains(" {")),
+            )
+            .collect::<Vec<_>>()
+            .join(" ");
+        if body.contains("-> Vec<") && body.contains("Issue> {") {
+            out.push(name);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Producers `src/check.rs` calls from somewhere other than the one pass.
+fn producers_called_outside_the_pipeline(source: &str, producers: &[String]) -> Vec<String> {
+    let fns = top_level_fns(source);
+    fns.iter()
+        .filter(|(name, _)| name != ISSUE_PIPELINE)
+        .flat_map(|(name, body)| {
+            producers
+                .iter()
+                .filter(|p| body.contains(&format!("{p}(")))
+                .map(move |p| format!("{p} called from {name}"))
+        })
+        .collect()
+}
+
+#[test]
+fn every_integration_hook_is_called_only_from_the_collection_pass() {
+    let producers = issue_producers();
+    let strays = producers_called_outside_the_pipeline(&check_source(), &producers);
+    assert!(
+        strays.is_empty(),
+        "these integration hooks are driven from somewhere other than \
+         `{ISSUE_PIPELINE}` — a renderer that calls one directly is a channel \
+         the other renderer cannot see:\n  {}",
+        strays.join("\n  ")
+    );
+}
+
+#[test]
+fn both_renderers_take_their_issues_from_the_collection_pass() {
+    let fns = top_level_fns(&check_source());
+    for renderer in ["run_check", "run_check_json"] {
+        let (_, body) = fns
+            .iter()
+            .find(|(name, _)| name == renderer)
+            .unwrap_or_else(|| panic!("`{renderer}` not recovered from the source"));
+        assert!(
+            body.contains(&format!("{ISSUE_PIPELINE}(")),
+            "`{renderer}` must take its integration findings from \
+             `{ISSUE_PIPELINE}`; deciding twice is what lost a whole finding \
+             kind last time"
+        );
+    }
+}
+
+#[test]
+fn the_hook_check_reports_a_renderer_driving_an_integration_itself() {
+    let producers = issue_producers();
+    let hook = producers
+        .iter()
+        .find(|p| p.as_str() == "run_checks")
+        .expect("`run_checks` must be among the derived producers");
+    let seeded = format!(
+        "\
+fn collect_doctor_issues() {{
+    issues.extend({hook}(&integrations, m, c));
+}}
+fn run_check() {{
+    all_issues.extend({hook}(&integrations, m, c));
+}}
+fn run_check_json() {{
+    let issues = collect_doctor_issues(ctx, &world, Repair::Report);
+}}
+"
+    );
+    let strays = producers_called_outside_the_pipeline(&seeded, &producers);
+    assert_eq!(
+        strays,
+        vec![format!("{hook} called from run_check")],
+        "a renderer that drives a hook itself must be reported, and the \
+         pipeline's own call must not be"
+    );
+}
+
+#[test]
+fn the_hook_walk_actually_reads_the_sources() {
+    let producers = issue_producers();
+    assert!(
+        producers.len() >= 4,
+        "only {} issue-producing hooks found: {producers:?} — the signature \
+         matcher has stopped recognising the shape, and emptiness elsewhere \
+         would prove nothing",
+        producers.len()
+    );
+    for expected in [
+        "run_checks",
+        "run_verifications",
+        "run_member_incompatibilities",
+        "verify_surfacing",
+    ] {
+        assert!(
+            producers.iter().any(|p| p == expected),
+            "`{expected}` must be among the derived producers: {producers:?}"
+        );
+    }
+    let source = check_source();
+    let named: Vec<&String> = producers
+        .iter()
+        .filter(|p| source.contains(&format!("{p}(")))
+        .collect();
+    assert!(
+        named.len() >= 4,
+        "src/check.rs names only {} of the derived hooks ({named:?}) — a walk \
+         that finds none reports no strays either",
+        named.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Instrument 6: the second channel, end to end
+// ---------------------------------------------------------------------------
+
+/// A surfacing symlink deleted out from under an activated project. Both
+/// renderers must report it.
+///
+/// The bug this file's other instruments reason about, on the channel that
+/// carried none of its findings: `rwv doctor` listed the surfacing finding and
+/// `rwv doctor --json` emitted a document with nowhere to put it.
+#[test]
+fn a_surfacing_finding_reaches_both_the_report_and_the_wire_format() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    let project_dir = root.join("projects").join("alpha");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.yaml"),
+        "repositories: {}\n\
+         integrations:\n\
+         \x20 static-files:\n\
+         \x20   enabled: true\n\
+         \x20   files:\n\
+         \x20     - CLAUDE.md\n",
+    )
+    .unwrap();
+    std::fs::write(project_dir.join("CLAUDE.md"), "alpha's instructions\n").unwrap();
+
+    common::rwv()
+        .args(["activate", "alpha", "--no-install"])
+        .current_dir(&root)
+        .assert()
+        .success();
+    std::fs::remove_file(root.join("CLAUDE.md")).expect("activate surfaced the declared file");
+
+    let text = common::rwv()
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let text_stdout = String::from_utf8_lossy(&text.stdout).into_owned();
+    assert!(
+        text_stdout.contains("CLAUDE.md"),
+        "the text report must carry the surfacing finding; got:\n{text_stdout}"
+    );
+
+    let json = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let json_stdout = String::from_utf8_lossy(&json.stdout).into_owned();
+    let doc: serde_json::Value = serde_json::from_str(&json_stdout)
+        .unwrap_or_else(|e| panic!("`doctor --json` did not emit JSON ({e}):\n{json_stdout}"));
+    let issues = doc["issues"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the document carries an issues array:\n{json_stdout}"));
+    let surfacing: Vec<&serde_json::Value> =
+        issues.iter().filter(|i| i["kind"] == "surfacing").collect();
+    assert!(
+        !surfacing.is_empty(),
+        "`doctor --json` must emit the finding the text report shows; issues were \
+         {issues:?}"
+    );
+    assert!(
+        surfacing.iter().any(|i| i["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("CLAUDE.md"))),
+        "and it must name the file, not just the kind: {surfacing:?}"
+    );
+
+    // The disjointness the envelope claims: a core finding belongs on
+    // `violations`, and reaching this array would mean it is reported twice or
+    // typed as something it is not.
+    let core: Vec<&serde_json::Value> = issues
+        .iter()
+        .filter(|i| i["kind"] == "core-finding")
+        .collect();
+    assert!(
+        core.is_empty(),
+        "`issues` must not carry core findings — those are `violations`: {core:?}"
     );
 }

@@ -37,8 +37,10 @@
 //!     which samples the envelope's neighbours rather than every variant.
 //!     `tests/doctor_render_parity_test.rs` is what pins every variant
 //!     reaching `--json` at all; this file pins the shape of what comes out.
-//!   - Findings with no `CheckViolation` variant never enter `--json` and so
-//!     are invisible here, as they are to the schema.
+//!   - Coverage of the `issues` array is two entries: one fieldless kind and
+//!     the one carrying an observation, which is what exercises both `kind`
+//!     shapes and the `MemberIncompatibilityOutput` definition. Every other
+//!     kind serializes through the same fieldless arm.
 //!   - Validating against the committed artifact says nothing about whether
 //!     that artifact is current. The generator drift gate in
 //!     `scripts/ci-local.sh` is what pins that, and both are needed: this test
@@ -48,6 +50,8 @@ use repoweave::check::{
     build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, WeaveRootIdentityConflictKind,
     WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
 };
+use repoweave::integration::{Issue, IssueKind, Severity};
+use repoweave::integrations::merge::MemberIncompatibility;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::plugins::PluginRecord;
 use repoweave::vcs::ResolvedRevisionId;
@@ -414,8 +418,40 @@ fn resolution() -> Resolution {
     }
 }
 
+/// Both shapes an `issues` entry's `kind` can take: a fieldless kind, which
+/// serializes as a plain string, and the one carrying an observation, which
+/// serializes as a single-key object. A corpus of only the first would leave
+/// `MemberIncompatibilityOutput` in the schema with nothing validating against
+/// it.
+fn issues() -> Vec<Issue> {
+    vec![
+        Issue {
+            integration: "static-files".into(),
+            severity: Severity::Warning,
+            message: "projects/proj/CLAUDE.md is declared but not surfaced".into(),
+            kind: IssueKind::Surfacing,
+            safe_to_fix: true,
+        },
+        Issue {
+            integration: "go-work".into(),
+            severity: Severity::Error,
+            message: "member-incompatibility: go.work sets `go` to `1.21`".into(),
+            kind: IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
+                "go-work",
+                Path::new("/ws/projects/proj/go.work"),
+                "go",
+                "1.21",
+                "1.23",
+                "github/acme/repo/go.mod",
+            ))),
+            safe_to_fix: false,
+        },
+    ]
+}
+
 fn emit(
     violations: Vec<CheckViolation>,
+    issues: Vec<Issue>,
     res: Option<Resolution>,
     plugins: Vec<PluginRecord>,
 ) -> Value {
@@ -423,6 +459,7 @@ fn emit(
     workweave_dirs.insert(workweave(), PathBuf::from("/ws/.workweaves/proj--feat-a"));
     serde_json::to_value(build_doctor_json(
         violations,
+        issues,
         Path::new("/ws"),
         &workweave_dirs,
         res,
@@ -432,7 +469,7 @@ fn emit(
 }
 
 fn populated() -> Value {
-    emit(corpus(), Some(resolution()), plugins())
+    emit(corpus(), issues(), Some(resolution()), plugins())
 }
 
 // ---------------------------------------------------------------------------
@@ -466,7 +503,7 @@ fn emitted_output_validates_against_the_committed_schema() {
 
 #[test]
 fn empty_envelope_validates_against_the_committed_schema() {
-    let (errors, walk) = check(&emit(Vec::new(), None, Vec::new()));
+    let (errors, walk) = check(&emit(Vec::new(), Vec::new(), None, Vec::new()));
     assert!(
         errors.is_empty(),
         "clean-workspace output does not satisfy {COMMITTED_SCHEMA_PATH}:\n  {}",

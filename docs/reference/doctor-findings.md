@@ -25,11 +25,20 @@ The two `sub_kind` shapes are why that expression looks the way it does: a
 sub-kind with no fields of its own is a plain string, one that carries fields
 is a single-key object whose key is the tag.
 
-Ten kinds carry a `sub_kind` that decides the disposition —
-`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`,
+Findings an integration raised sit on a second array and take the same two
+shapes in their `kind`:
+
+```bash
+rwv doctor --json | jq -r '.issues[] |
+    (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
+```
+
+Eleven kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
+`dead-op-lease`, `index-drift`, `missing-replay-exclusion`,
 `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`,
-`working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Those
-entries have a sub-heading per `sub_kind`; the rest are single entries.
+`working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
+sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
+where it only narrows what was found, one entry covers them all.
 
 The full wire shape is in [Formats](./formats.md), and the committed JSON
 Schema is `docs/reference/schemas/doctor.json`.
@@ -131,6 +140,26 @@ lock file; a project with no lock yet is a separate, unlocked state.
 
 **What to do:** `rwv lock` to write the missing entry.
 
+### `unresolvable-lock-entry`
+
+**Error. Report-only.** An `rwv.lock` entry names a revision this clone cannot
+resolve — a lock written against history that was never fetched here. The
+entry is kept as a finding rather than dropped: dropping it would leave the
+repo with no locked revision to compare against, which reads as healthy.
+
+**What to do:** fetch the missing history, or `rwv lock` to re-pin from the
+working tips if the lock is the stale side.
+
+### `head-unreadable`
+
+**Error. Report-only.** A repo present under a registry directory whose HEAD
+could not be read. Every freshness comparison for that repo — stale lock,
+drift, provenance — is unevaluated, and reporting the read failure is what
+keeps the repo from looking clean.
+
+**What to do:** the `error` field carries what git said. A directory that is
+not a git repo, a corrupt `.git`, and a permissions problem all land here.
+
 ### `missing-replay-exclusion`
 
 **Warning. Auto-fixable.** A project repo's `.gitattributes` lacks the
@@ -138,10 +167,46 @@ lock file; a project with no lock yet is a separate, unlocked state.
 lock edits through the merge inputs instead of letting the lock be
 regenerated from the result.
 
+The `sub_kind` says which repair applies. `absent` — no entry for `rwv.lock`
+at all. `legacy-spelling` — the entry is there under the pre-rename
+`merge=ours`, which reads as satisfied to a human and satisfies nothing:
+sync's check matches the current name, and `ours` collides with a driver a
+global git config may define for something else entirely.
+
 **What to do:** `rwv doctor --fix` appends the line — or migrates the legacy
-`merge=ours` spelling in place — and commits it when the repo has no other
-staged changes. The committed form is what sync's invariant reads, so the
-commit is the part that makes it take effect.
+spelling in place — and commits it when the repo has no other staged changes.
+The committed form is what sync's invariant reads, so the commit is the part
+that makes it take effect.
+
+### `replay-exclusion-unreadable`
+
+**Warning. Report-only.** Reading the project repo's `.gitattributes` failed,
+so the replay exclusion is neither confirmed present nor confirmed missing.
+Reported rather than swallowed: an unevaluated invariant that stays silent
+reads exactly like one that holds.
+
+**What to do:** the `error` field carries what git said. Once the file is
+readable, re-run `rwv doctor` to get the real answer.
+
+### `missing-merge-driver-config`
+
+**Warning. Auto-fixable.** The project repo does not define the `rwv-ours`
+merge driver in its own git config. `rwv sync` passes the definition per
+invocation, so its own rebase is unaffected — but a bare `git rebase
+--continue` you run afterwards is not, and git treats an undefined driver as
+`merge=binary`: conflict markers in `rwv.lock` where the lock was supposed to
+be regenerated.
+
+**What to do:** `rwv doctor --fix` plants the config. `config_key` names the
+key it writes.
+
+### `merge-driver-config-unreadable`
+
+**Warning. Report-only.** Reading the project repo's git config for the
+merge-driver definition failed, so the definition is neither confirmed present
+nor confirmed missing.
+
+**What to do:** the `error` field carries what git said.
 
 ### `phantom-merge-driver`
 
@@ -742,17 +807,34 @@ one is inert.
 
 ---
 
-## Findings with no `kind`
+## The integration channel
 
-Two categories travel the integration-issue channel instead of the violation
-enum, so they have no dedicated `--json` tag. Their kebab-case prefix in the
-message is what a caller keys off.
+Everything above is a finding one of rwv's own scans made, and lands on
+`--json`'s `violations` array. A finding an *integration* raised lands on the
+`issues` array instead, under its own tag set. The two arrays are disjoint: an
+`issues` entry never carries `kind: "core-finding"`.
 
-**Surfacing violations** — a missing or mis-resolved symlink in the active
-project's surfacing set. Reported as `core` integration warnings.
-`rwv doctor --fix` re-runs the surfacing primitive; a real file occupying a
-surfacing path is yours and is reported rather than clobbered.
+An `issues` entry carries `integration` (which integration raised it),
+`severity`, the operator-facing `message`, and `safe_to_fix` — `false` marking
+a file region you hold the pen on, which `--fix` reports and never overwrites.
 
-**`member-incompatibility`** — doctor is the standing observation arm for this
-category, and `rwv update` reports the same finding at the moment it creates
-one. Neither gates: nothing refuses on it, and `--fix` cannot repair it.
+| `kind` | What it is |
+| --- | --- |
+| `tool-missing` | The ecosystem CLI the integration drives is not on `PATH`. |
+| `managed-file-missing` | A file the integration owns is not in the project directory. |
+| `managed-file-drift` | Owned content on disk differs from what `rwv activate` would write, or the owning tool can no longer read it. |
+| `managed-file-user-held` | The owned key or region is present without rwv's ownership marker. You hold the pen; `--fix` will not touch it. |
+| `surfacing` | A weave-root symlink onto an owned file is absent, occupied by real content, or resolves into a different project. |
+| `config-rejected` | `rwv.yaml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
+| `member-incompatibility` | A value you hold is incompatible with what the members require. Carries the observation as fields, below. |
+| `integration-failed` | An integration's hook returned an error; the runner captured it so the remaining integrations could still run. |
+| `core-finding` | Raised by doctor itself while driving the integrations. On the wire this appears only under `--fix`, which `--json` has no form of — see the disjointness rule above. |
+
+`member-incompatibility` is the one kind that carries fields rather than only
+a tag, because the four facts its predicate established are what the remedy
+turns on: `path` (the managed file holding the value), `key`, `on_disk`,
+`required`, and `required_by` (the member file carrying the requirement).
+Doctor is the standing observation arm for it, and `rwv update` reports the
+same finding at the moment it creates one. Neither gates: nothing refuses on
+it, and `--fix` cannot repair it — rwv seeded the key once and never
+overwrites it, so this is not drift.

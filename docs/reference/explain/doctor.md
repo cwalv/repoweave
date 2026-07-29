@@ -180,10 +180,10 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `provenance`, `replay-exclusion-unreadable`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
@@ -216,16 +216,24 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "DoctorJsonOutput",
-  "description": "Output envelope for `rwv doctor --json`. By default only the active project is checked and orphan detection is skipped; pass `--all` to scan every project and enable weave-wide orphan detection. The `violations` array contains one entry per finding; an empty array means the checked scope is clean. The `plugins` array is the PATH inventory of `rwv-*` executables (reporting only — plugin presence never fails the doctor check or affects the exit code).",
+  "description": "Output envelope for `rwv doctor --json`. By default only the active project is checked and orphan detection is skipped; pass `--all` to scan every project and enable weave-wide orphan detection. Findings arrive on two disjoint arrays — `violations` for what rwv's own scans found, `issues` for what an integration reported — and both empty means the checked scope is clean. The `plugins` array is the PATH inventory of `rwv-*` executables (reporting only — plugin presence never fails the doctor check or affects the exit code).",
   "type": "object",
   "required": [
     "$schema",
+    "issues",
     "plugins",
     "violations"
   ],
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "issues": {
+      "description": "Findings raised by an integration rather than by one of rwv's own scans: a missing ecosystem tool, drift or user-held content in a managed file, a surfacing symlink that does not resolve, a member incompatibility. Disjoint from `violations` — nothing on this array carries `kind: \"core-finding\"`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/IssueOutput"
+      }
     },
     "plugins": {
       "description": "`rwv-*` executables discovered on `PATH`. Each record carries the verb name, absolute path, and a `shadowed` flag for duplicates: when the same name appears in multiple `PATH` directories, the first copy wins at exec time; later copies are marked `shadowed: true` with `shadowed_by` pointing at the winning binary. Records are sorted by `(name, path)` for deterministic output. An empty array means no `rwv-*` executables were found. Never a failed check — the inventory is the audit surface for the PATH trust boundary.",
@@ -803,6 +811,67 @@ Schema:
         }
       ]
     },
+    "IssueKindOutput": {
+      "description": "`IssueKind` on the wire.\n\nExternally tagged, which is the shape the findings page already documents for `sub_kind`: a kind with no fields of its own is a plain string, and one that carries fields is a single-key object whose key is the tag. The tags are `IssueKind::tag`'s, and a divergence between the two is what `IssueKindOutput::from_kind` is exhaustive to prevent.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "tool-missing",
+            "managed-file-missing",
+            "managed-file-drift",
+            "managed-file-user-held",
+            "surfacing",
+            "config-rejected",
+            "integration-failed",
+            "core-finding"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "member-incompatibility"
+          ],
+          "properties": {
+            "member-incompatibility": {
+              "$ref": "#/definitions/MemberIncompatibilityOutput"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "IssueOutput": {
+      "description": "One integration-reported finding as it appears in `rwv doctor --json`.",
+      "type": "object",
+      "required": [
+        "integration",
+        "kind",
+        "message",
+        "safe_to_fix",
+        "severity"
+      ],
+      "properties": {
+        "integration": {
+          "description": "The integration that raised it, or `core` for a finding raised by `rwv doctor` itself while driving the integrations.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/IssueKindOutput"
+        },
+        "message": {
+          "description": "Operator-facing prose. Everything a consumer routes on is a field — matching on this string is what `kind` exists to replace.",
+          "type": "string"
+        },
+        "safe_to_fix": {
+          "description": "Whether `rwv doctor --fix` is permitted to auto-repair this finding. `false` marks a user-held file region auto-repair would destroy.",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/definitions/SeverityOutput"
+        }
+      }
+    },
     "LegacyRefAtTip": {
       "description": "A pre-flat branch and the commit it reaches. **Both** tips are reported, side by side, because the operator is choosing between them.",
       "type": "object",
@@ -822,6 +891,39 @@ Schema:
         },
         "tip_sha": {
           "description": "Its tip.",
+          "type": "string"
+        }
+      }
+    },
+    "MemberIncompatibilityOutput": {
+      "description": "The four facts a `member-incompatibility` predicate established, as fields rather than as the sentence they are also rendered into.",
+      "type": "object",
+      "required": [
+        "key",
+        "on_disk",
+        "path",
+        "required",
+        "required_by"
+      ],
+      "properties": {
+        "key": {
+          "description": "Display form of the `DefaultOnly` key.",
+          "type": "string"
+        },
+        "on_disk": {
+          "description": "The value currently on disk.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The managed file holding the incompatible value.",
+          "type": "string"
+        },
+        "required": {
+          "description": "The strongest value the members require.",
+          "type": "string"
+        },
+        "required_by": {
+          "description": "The member file carrying that requirement.",
           "type": "string"
         }
       }
@@ -953,6 +1055,25 @@ Schema:
         }
       ]
     },
+    "ReplayExclusionKind": {
+      "description": "Which spelling of the replay exclusion the project repo carries, which decides whether `--fix` writes the entry fresh or migrates one in place.",
+      "oneOf": [
+        {
+          "description": "`.gitattributes` carries no entry for `rwv.lock` at all.",
+          "type": "string",
+          "enum": [
+            "absent"
+          ]
+        },
+        {
+          "description": "`.gitattributes` carries the legacy `merge=ours` spelling. The driver was renamed to close a collision with a global-config `ours` driver; the old name reads as the invariant being met while sync's check — which matches the current name — sees nothing.",
+          "type": "string",
+          "enum": [
+            "legacy-spelling"
+          ]
+        }
+      ]
+    },
     "Resolution": {
       "description": "Resolved workspace coordinates for `--json` output and (future) plugin env-var envelope.\n\nCarries exactly the three result fields — `workspace` (primary root abs path), `workweave` (`<project>--<name>` identity when in a workweave, absent at primary), and `project` (resolved project name). Presence of `workweave` encodes the checkout kind; no separate `kind` or `location` field is needed.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`): both surfaces are pure projections of `WorkspaceContext::resolution`, never independently computed.",
       "type": "object",
@@ -977,6 +1098,14 @@ Schema:
           ]
         }
       }
+    },
+    "SeverityOutput": {
+      "description": "`crate::integration::Severity` on the wire.",
+      "type": "string",
+      "enum": [
+        "warning",
+        "error"
+      ]
     },
     "ViolationOutput": {
       "description": "One violation as it appears in `rwv doctor --json` output.",
@@ -1215,7 +1344,8 @@ Schema:
           "type": "object",
           "required": [
             "kind",
-            "project"
+            "project",
+            "sub_kind"
           ],
           "properties": {
             "kind": {
@@ -1223,6 +1353,131 @@ Schema:
               "enum": [
                 "missing-replay-exclusion"
               ]
+            },
+            "project": {
+              "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/ReplayExclusionKind"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind",
+            "project"
+          ],
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "replay-exclusion-unreadable"
+              ]
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "config_key",
+            "kind",
+            "project"
+          ],
+          "properties": {
+            "config_key": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "missing-merge-driver-config"
+              ]
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "config_key",
+            "error",
+            "kind",
+            "project"
+          ],
+          "properties": {
+            "config_key": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "merge-driver-config-unreadable"
+              ]
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "error",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "head-unreadable"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "project"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unresolvable-lock-entry"
+              ]
+            },
+            "path": {
+              "type": "string"
             },
             "project": {
               "type": "string"

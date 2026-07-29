@@ -73,10 +73,25 @@ impl Weave {
             ),
         )
         .unwrap();
-        // The lock's own declaration, correctly spelled — without it the
-        // project repo reports `missing-replay-exclusion` and the baseline
-        // is no longer clean.
+        // Both of the project repo's replay-exclusion preconditions. Without
+        // the declaration it reports `missing-replay-exclusion`; without the
+        // driver definition, `missing-merge-driver-config`. Either leaves the
+        // baseline unclean.
         std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+        let project_git = |args: &[&str]| {
+            let out = common::git()
+                .args(args)
+                .current_dir(&project)
+                .output()
+                .expect("git failed to start");
+            assert!(
+                out.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        project_git(&["init", "-b", "main"]);
+        project_git(&["config", "merge.rwv-ours.driver", "true"]);
 
         Self { _tmp: tmp, root }
     }

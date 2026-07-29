@@ -81,12 +81,47 @@ pub enum CheckViolation {
     /// A project repo is missing the `rwv.lock merge=rwv-ours` entry in
     /// `.gitattributes`. Without it, `rwv sync`'s native rebase would carry
     /// user lock-edits through the merge inputs instead of letting Phase 3
-    /// regenerate them. Auto-fixable: append the line, or (if the legacy
-    /// `merge=ours` spelling is present in `.gitattributes`) migrate it in
-    /// place and commit. The committed-form check is the one sync's
-    /// invariant reads; the migration commit is what makes it visible on
-    /// the next rebase.
-    MissingReplayExclusion { project: ProjectName },
+    /// regenerate them. The committed-form check is the one sync's invariant
+    /// reads; the migration commit is what makes it visible on the next
+    /// rebase.
+    MissingReplayExclusion {
+        project: ProjectName,
+        sub_kind: ReplayExclusionKind,
+    },
+
+    /// Reading a project repo's `.gitattributes` for the replay-exclusion
+    /// entry failed, so the invariant is neither satisfied nor violated.
+    ReplayExclusionUnreadable { project: ProjectName, error: String },
+
+    /// A project repo does not define the `rwv-ours` merge driver in its own
+    /// git config. `rwv sync` passes the definition per invocation, so its own
+    /// rebase is unaffected; a bare `git rebase --continue` the operator runs
+    /// afterwards is not, and git treats an undefined driver as `merge=binary`
+    /// — conflict markers in `rwv.lock` where Phase 3 expects to regenerate.
+    MissingMergeDriverConfig {
+        project: ProjectName,
+        config_key: String,
+    },
+
+    /// Reading a project repo's git config for the `rwv-ours` merge-driver
+    /// definition failed, so the invariant is neither satisfied nor violated.
+    MergeDriverConfigUnreadable {
+        project: ProjectName,
+        config_key: String,
+        error: String,
+    },
+
+    /// A repo present under a registry directory whose HEAD `rwv doctor` could
+    /// not read. Every freshness comparison for that repo is unevaluated, so
+    /// suppressing it would leave the repo looking healthy.
+    HeadUnreadable { repo: RepoPath, error: String },
+
+    /// An `rwv.lock` entry naming a revision the local clone cannot resolve —
+    /// a lock written against history this clone has never fetched.
+    UnresolvableLockEntry {
+        project: ProjectName,
+        repo: RepoPath,
+    },
 
     /// A project's `rwv.yaml` uses the legacy `role: primary` spelling
     /// (replaced by `role: owned`; the back-compat alias has since been
@@ -530,9 +565,13 @@ impl CheckViolation {
             | CheckViolation::CargoPatchShadowing { .. }
             | CheckViolation::MissingCanonicalClone { .. }
             | CheckViolation::UninitializedSubmodule { .. }
+            | CheckViolation::ReplayExclusionUnreadable { .. }
+            | CheckViolation::MergeDriverConfigUnreadable { .. }
+            | CheckViolation::HeadUnreadable { .. }
+            | CheckViolation::UnresolvableLockEntry { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
-            CheckViolation::MissingReplayExclusion { .. }
+            CheckViolation::MissingMergeDriverConfig { .. }
             | CheckViolation::LegacyRolePrimary { .. }
             | CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
@@ -542,6 +581,9 @@ impl CheckViolation {
             | CheckViolation::PreFlatRefReceipt { .. }
             | CheckViolation::DeadOpLease { .. } => Auto,
 
+            CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
+                ReplayExclusionKind::Absent | ReplayExclusionKind::LegacySpelling => Auto,
+            },
             CheckViolation::IndexDrift { kind, .. } => match kind {
                 IndexDriftKind::SafeToFix => Auto,
                 IndexDriftKind::LiveStaged => ReportOnly,
@@ -641,6 +683,20 @@ pub enum DriftKind {
     Missing,
     /// Worktree exists, but manifest doesn't list it.
     Extra,
+}
+
+/// Which spelling of the replay exclusion the project repo carries, which
+/// decides whether `--fix` writes the entry fresh or migrates one in place.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReplayExclusionKind {
+    /// `.gitattributes` carries no entry for `rwv.lock` at all.
+    Absent,
+    /// `.gitattributes` carries the legacy `merge=ours` spelling. The driver
+    /// was renamed to close a collision with a global-config `ours` driver;
+    /// the old name reads as the invariant being met while sync's check —
+    /// which matches the current name — sees nothing.
+    LegacySpelling,
 }
 
 /// How a stale index should be treated.
@@ -1281,6 +1337,31 @@ pub enum ViolationOutput {
     },
     MissingReplayExclusion {
         project: String,
+        #[serde(rename = "sub_kind")]
+        sub_kind: ReplayExclusionKind,
+    },
+    ReplayExclusionUnreadable {
+        project: String,
+        error: String,
+    },
+    MissingMergeDriverConfig {
+        project: String,
+        config_key: String,
+    },
+    MergeDriverConfigUnreadable {
+        project: String,
+        config_key: String,
+        error: String,
+    },
+    HeadUnreadable {
+        path: String,
+        absolute_path: String,
+        error: String,
+    },
+    UnresolvableLockEntry {
+        path: String,
+        absolute_path: String,
+        project: String,
     },
     LegacyRolePrimary {
         project: String,
@@ -1590,9 +1671,46 @@ impl ViolationOutput {
                 workweave: workweave.map(|w| w.to_string()),
                 sub_kind: kind,
             },
-            CheckViolation::MissingReplayExclusion { project } => Self::MissingReplayExclusion {
+            CheckViolation::MissingReplayExclusion { project, sub_kind } => {
+                Self::MissingReplayExclusion {
+                    project: project.to_string(),
+                    sub_kind,
+                }
+            }
+            CheckViolation::ReplayExclusionUnreadable { project, error } => {
+                Self::ReplayExclusionUnreadable {
+                    project: project.to_string(),
+                    error,
+                }
+            }
+            CheckViolation::MissingMergeDriverConfig {
+                project,
+                config_key,
+            } => Self::MissingMergeDriverConfig {
                 project: project.to_string(),
+                config_key,
             },
+            CheckViolation::MergeDriverConfigUnreadable {
+                project,
+                config_key,
+                error,
+            } => Self::MergeDriverConfigUnreadable {
+                project: project.to_string(),
+                config_key,
+                error,
+            },
+            CheckViolation::HeadUnreadable { repo, error } => Self::HeadUnreadable {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                error,
+            },
+            CheckViolation::UnresolvableLockEntry { project, repo } => {
+                Self::UnresolvableLockEntry {
+                    absolute_path: abs(workspace_dir, &repo),
+                    path: repo.to_string(),
+                    project: project.to_string(),
+                }
+            }
             CheckViolation::LegacyRolePrimary {
                 project,
                 manifest_path,
@@ -1804,6 +1922,116 @@ impl ViolationOutput {
                 pattern,
                 driver,
             },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IssueOutput — wire-format mirror of Issue for `--json`
+// ---------------------------------------------------------------------------
+//
+// Same split as `CheckViolation` -> `ViolationOutput`, and for the same
+// reason: `Issue` is the integration contract's type, carried across a trait
+// boundary third-party integrations implement, and the wire format is owned
+// here. Nothing in `crate::integration` derives serde.
+
+/// [`crate::integration::Severity`] on the wire.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum SeverityOutput {
+    Warning,
+    Error,
+}
+
+/// [`IssueKind`] on the wire.
+///
+/// Externally tagged, which is the shape the findings page already documents
+/// for `sub_kind`: a kind with no fields of its own is a plain string, and one
+/// that carries fields is a single-key object whose key is the tag. The tags
+/// are [`IssueKind::tag`]'s, and a divergence between the two is what
+/// `IssueKindOutput::from_kind` is exhaustive to prevent.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum IssueKindOutput {
+    ToolMissing,
+    ManagedFileMissing,
+    ManagedFileDrift,
+    ManagedFileUserHeld,
+    Surfacing,
+    ConfigRejected,
+    MemberIncompatibility(MemberIncompatibilityOutput),
+    IntegrationFailed,
+    CoreFinding,
+}
+
+/// The four facts a `member-incompatibility` predicate established, as fields
+/// rather than as the sentence they are also rendered into.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MemberIncompatibilityOutput {
+    /// The managed file holding the incompatible value.
+    pub path: String,
+    /// Display form of the `DefaultOnly` key.
+    pub key: String,
+    /// The value currently on disk.
+    pub on_disk: String,
+    /// The strongest value the members require.
+    pub required: String,
+    /// The member file carrying that requirement.
+    pub required_by: String,
+}
+
+impl IssueKindOutput {
+    fn from_kind(kind: IssueKind) -> Self {
+        match kind {
+            IssueKind::ToolMissing => Self::ToolMissing,
+            IssueKind::ManagedFileMissing => Self::ManagedFileMissing,
+            IssueKind::ManagedFileDrift => Self::ManagedFileDrift,
+            IssueKind::ManagedFileUserHeld => Self::ManagedFileUserHeld,
+            IssueKind::Surfacing => Self::Surfacing,
+            IssueKind::ConfigRejected => Self::ConfigRejected,
+            IssueKind::MemberIncompatibility(observation) => {
+                Self::MemberIncompatibility(MemberIncompatibilityOutput {
+                    path: observation.path().to_string_lossy().into_owned(),
+                    key: observation.key().to_owned(),
+                    on_disk: observation.on_disk().to_owned(),
+                    required: observation.required().to_owned(),
+                    required_by: observation.required_by().to_owned(),
+                })
+            }
+            IssueKind::IntegrationFailed => Self::IntegrationFailed,
+            IssueKind::CoreFinding => Self::CoreFinding,
+        }
+    }
+}
+
+/// One integration-reported finding as it appears in `rwv doctor --json`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IssueOutput {
+    pub kind: IssueKindOutput,
+    /// The integration that raised it, or `core` for a finding raised by
+    /// `rwv doctor` itself while driving the integrations.
+    pub integration: String,
+    pub severity: SeverityOutput,
+    /// Operator-facing prose. Everything a consumer routes on is a field —
+    /// matching on this string is what `kind` exists to replace.
+    pub message: String,
+    /// Whether `rwv doctor --fix` is permitted to auto-repair this finding.
+    /// `false` marks a user-held file region auto-repair would destroy.
+    pub safe_to_fix: bool,
+}
+
+impl IssueOutput {
+    /// Convert an internal [`Issue`] into its wire-format counterpart.
+    pub fn from_issue(issue: Issue) -> Self {
+        Self {
+            kind: IssueKindOutput::from_kind(issue.kind),
+            integration: issue.integration,
+            severity: match issue.severity {
+                crate::integration::Severity::Warning => SeverityOutput::Warning,
+                crate::integration::Severity::Error => SeverityOutput::Error,
+            },
+            message: issue.message,
+            safe_to_fix: issue.safe_to_fix,
         }
     }
 }
@@ -5482,8 +5710,9 @@ pub const DOCTOR_SCHEMA_URL: &str = crate::schema_url::schema_url!("doctor");
 
 /// Output envelope for `rwv doctor --json`. By default only the active project
 /// is checked and orphan detection is skipped; pass `--all` to scan every
-/// project and enable weave-wide orphan detection. The `violations` array
-/// contains one entry per finding; an empty array means the checked scope is
+/// project and enable weave-wide orphan detection. Findings arrive on two
+/// disjoint arrays — `violations` for what rwv's own scans found, `issues` for
+/// what an integration reported — and both empty means the checked scope is
 /// clean. The `plugins` array is the PATH inventory of `rwv-*` executables
 /// (reporting only — plugin presence never fails the doctor check or affects
 /// the exit code).
@@ -5492,6 +5721,12 @@ pub struct DoctorJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub violations: Vec<ViolationOutput>,
+    /// Findings raised by an integration rather than by one of rwv's own
+    /// scans: a missing ecosystem tool, drift or user-held content in a
+    /// managed file, a surfacing symlink that does not resolve, a member
+    /// incompatibility. Disjoint from `violations` — nothing on this array
+    /// carries `kind: "core-finding"`.
+    pub issues: Vec<IssueOutput>,
     /// `rwv-*` executables discovered on `PATH`. Each record carries the verb
     /// name, absolute path, and a `shadowed` flag for duplicates: when the
     /// same name appears in multiple `PATH` directories, the first copy wins
@@ -5753,11 +5988,55 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!("{location}: {detail}"),
                     )
                 }
-                CheckViolation::MissingReplayExclusion { project } => (
+                CheckViolation::MissingReplayExclusion { project, sub_kind } => (
+                    crate::integration::Severity::Warning,
+                    match sub_kind {
+                        ReplayExclusionKind::Absent => format!(
+                            "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
+                             (run `rwv doctor --fix` to add)"
+                        ),
+                        ReplayExclusionKind::LegacySpelling => format!(
+                            "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
+                             the driver was renamed to close a global-config collision hazard \
+                             (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
+                             and commit)"
+                        ),
+                    },
+                ),
+                CheckViolation::ReplayExclusionUnreadable { project, error } => (
                     crate::integration::Severity::Warning,
                     format!(
-                        "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
-                         (run `rwv doctor --fix` to add)"
+                        "{project}: failed to read .gitattributes for replay-exclusion check: {error}"
+                    ),
+                ),
+                CheckViolation::MissingMergeDriverConfig {
+                    project,
+                    config_key,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{project}: project repo missing `{config_key}` config \
+                         (defines the `rwv-ours` merge driver used by bare \
+                         `git rebase --continue`; run `rwv doctor --fix` to plant)"
+                    ),
+                ),
+                CheckViolation::MergeDriverConfigUnreadable {
+                    project,
+                    config_key,
+                    error,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!("{project}: failed to read `{config_key}` config: {error}"),
+                ),
+                CheckViolation::HeadUnreadable { repo, error } => (
+                    crate::integration::Severity::Error,
+                    format!("{repo}: HEAD unreadable ({error})"),
+                ),
+                CheckViolation::UnresolvableLockEntry { project, repo } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "{project}: lock references unknown revision for {repo}; \
+                         run `rwv lock` or fetch"
                     ),
                 ),
                 CheckViolation::LegacyRolePrimary {
@@ -7519,53 +7798,151 @@ fn apply_finding_repairs(
     kept
 }
 
-/// The text renderer over a collected violation vector.
+/// Whether the integration pass repairs what it finds or only reports it.
 ///
-/// The one kind it formats itself is `missing-replay-exclusion`: a project
-/// still carrying the legacy `merge=ours` spelling needs the migration
-/// wording rather than the write-it-fresh wording, and the legacy spelling has
-/// no `CheckViolation` variant of its own to carry that. `--json` therefore
-/// reports the finding without the distinction.
-fn violations_to_text_issues(world: &DoctorWorld, violations: Vec<CheckViolation>) -> Vec<Issue> {
-    let legacy_replay: std::collections::HashSet<crate::manifest::ProjectName> = world
-        .input
-        .projects
-        .iter()
-        .filter(|project| {
-            let project_repo = world
-                .workspace_dir
-                .join("projects")
-                .join(project.name.as_str());
-            project_repo.is_dir()
-                && crate::git::has_working_tree_legacy_replay_exclusion(
-                    &project_repo,
-                    std::path::Path::new("rwv.lock"),
-                )
-                .unwrap_or(false)
-        })
-        .map(|project| project.name.clone())
-        .collect();
+/// `--fix` interleaves with this collection rather than following it: a
+/// fixable `verify()` or surfacing finding is repaired in place and dropped
+/// from the report, so the operator is never shown both `[fixed]` and the
+/// warning it resolved. Under [`Repair::Report`] every finding is returned.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Repair {
+    Report,
+    Apply,
+}
 
-    let (legacy_findings, rest): (Vec<_>, Vec<_>) = violations.into_iter().partition(|v| {
-        matches!(v, CheckViolation::MissingReplayExclusion { project }
-            if legacy_replay.contains(project))
-    });
+/// Every finding an integration raised, for one pass over the loaded projects.
+///
+/// The counterpart of [`collect_doctor_violations`] on the other channel, and
+/// for the same reason: both renderers take their `Issue`s from here, so a
+/// hook reachable from one is reachable from the other by construction.
+///
+/// Under [`Repair::Report`] nothing here mints an [`IssueKind::CoreFinding`] —
+/// every core finding is a `CheckViolation` — which is what lets `--json`
+/// carry the two channels as disjoint arrays.
+fn collect_doctor_issues(
+    ctx: &crate::workspace::WorkspaceContext,
+    world: &DoctorWorld,
+    repair: Repair,
+) -> Vec<Issue> {
+    use crate::integration::Severity;
+    use crate::integration_runner::run_checks;
+    use crate::workspace::Checkout;
 
-    let mut issues = violations_to_issues(rest);
-    for v in legacy_findings {
-        if let CheckViolation::MissingReplayExclusion { project } = v {
-            issues.push(Issue {
-                kind: IssueKind::CoreFinding,
-                integration: "core".into(),
-                severity: crate::integration::Severity::Warning,
-                message: format!(
-                    "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
-                     the driver was renamed to close a global-config collision hazard \
-                     (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
-                     and commit)"
+    let workspace_dir = &world.workspace_dir;
+    let builtin = crate::integrations::builtin_integrations();
+    let integrations: Vec<&dyn crate::integration::Integration> =
+        builtin.iter().map(|b| b.as_ref()).collect();
+    let fix = repair == Repair::Apply;
+
+    let mut issues: Vec<Issue> = Vec::new();
+    for project in &world.input.projects {
+        let detection_cache = crate::integration_runner::build_detection_cache(
+            &integrations,
+            workspace_dir,
+            project.manifest.iter_entries(),
+        );
+        let ctx_base = world.session.context_base(
+            &project.name,
+            &detection_cache,
+            project.manifest.workweave.as_ref(),
+        );
+        issues.extend(run_checks(&integrations, &project.manifest, &ctx_base));
+
+        // The integrations' `verify()` pass reports drift between on-disk
+        // managed content and what `activate()` would produce. USER-HELD
+        // findings (`safe_to_fix = false`) surface even under `--fix`: the
+        // user holds the pen on that file region and auto-repair would
+        // silently destroy their content.
+        let verify_issues = crate::integration_runner::run_verifications(
+            &integrations,
+            &project.manifest,
+            &ctx_base,
+        );
+        let (fixable_issues, user_held_issues): (Vec<_>, Vec<_>) =
+            verify_issues.into_iter().partition(|i| i.safe_to_fix);
+        issues.extend(user_held_issues);
+        if fix && !fixable_issues.is_empty() {
+            // The repair primitive must be pointed at the same weave the
+            // detector scanned. `activate_intent` targets primary
+            // unconditionally, so from a workweave it would rewrite the
+            // PRIMARY project's managed files — `activate_intent_at` takes the
+            // weave dir, and `workspace_dir` is `ctx.active_path()`.
+            match crate::activate::activate_intent_at(project.name.as_str(), workspace_dir) {
+                Ok(()) => println!(
+                    "[fixed] core: regenerated integration content for project `{}` (drift detected)",
+                    project.name
                 ),
-                safe_to_fix: true,
-            });
+                Err(e) => issues.push(Issue {
+                    kind: IssueKind::CoreFinding,
+                    integration: "core".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "doctor --fix: failed to regenerate integration content for `{}`: {e}",
+                        project.name
+                    ),
+                    safe_to_fix: true,
+                }),
+            }
+        } else {
+            issues.extend(fixable_issues);
+        }
+
+        // An `Ownership::DefaultOnly` value the operator holds may be
+        // incompatible with what the members require, which `verify()` does
+        // not see. No automated repair exists, so these bypass the `--fix`
+        // partition above.
+        issues.extend(crate::integration_runner::run_member_incompatibilities(
+            &integrations,
+            &project.manifest,
+            &ctx_base,
+        ));
+
+        // Axis-1: nothing in `verify()` asserts that the surfacing *symlinks*
+        // exist and resolve. Scoped to `workspace_dir` (= `ctx.active_path()`),
+        // so it checks primary's surfacing at primary and the workweave's
+        // inside a workweave.
+        let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
+        let surfacing_issues = crate::activate::verify_surfacing(
+            workspace_dir,
+            &project.name,
+            &project.manifest,
+            in_workweave,
+        );
+        let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
+            surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
+        // A real file or dir occupying a surfacing path is user-held and never
+        // auto-clobbered.
+        issues.extend(surf_user_held);
+        if fix && !surf_fixable.is_empty() {
+            // Authors no content — it only (re)creates the owner-scoped
+            // symlinks, which is what workweave-create runs at creation.
+            // `--project` scopes doctor to a project without switching to it,
+            // so the weave root's shared names stay with the project it
+            // presents.
+            match crate::activate::surface_symlinks(
+                workspace_dir,
+                &project.name,
+                &project.manifest,
+                in_workweave,
+                crate::activate::SurfacingMode::Repair,
+            ) {
+                Ok(()) => println!(
+                    "[fixed] core: re-surfaced symlinks for project `{}` (missing/mis-resolved surfacing)",
+                    project.name
+                ),
+                Err(e) => issues.push(Issue {
+                    kind: IssueKind::CoreFinding,
+                    integration: "core".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "doctor --fix: failed to re-surface symlinks for `{}`: {e}",
+                        project.name
+                    ),
+                    safe_to_fix: true,
+                }),
+            }
+        } else {
+            issues.extend(surf_fixable);
         }
     }
     issues
@@ -7578,12 +7955,11 @@ fn violations_to_text_issues(world: &DoctorWorld, violations: Vec<CheckViolation
 /// When `fix` is `true`, the repairable subset is remediated in place before
 /// the report is rendered, so a repaired workspace reports healthy.
 ///
-/// The violations it renders come from [`collect_doctor_violations`], the same
-/// pass [`run_check_json`] renders. What this function adds on top are the
-/// findings that have no `CheckViolation` variant: integration-runner and
-/// surfacing issues, unreadable HEADs, unresolvable lock entries, the legacy
-/// replay-exclusion spelling and the missing merge-driver config. Those reach
-/// the text report alone.
+/// Both of its inputs are collected elsewhere and shared with
+/// [`run_check_json`]: [`collect_doctor_violations`] for the core findings and
+/// [`collect_doctor_issues`] for the integrations'. The only thing this
+/// function raises itself is a `--fix` arm's own failure, which `--json` has no
+/// `--fix` to produce.
 ///
 /// When `scope_all` is `false` (the default), only the active project is
 /// checked: stale locks, dangling references, and integration hooks are
@@ -7615,8 +7991,6 @@ pub fn run_check(
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
 ) -> anyhow::Result<bool> {
     use crate::integration::Severity;
-    use crate::integration_runner::run_checks;
-    use crate::workspace::Checkout;
 
     let mut fix_errors: Vec<String> = Vec::new();
 
@@ -7625,7 +7999,6 @@ pub fn run_check(
     }
 
     let world = load_doctor_world(ctx, scope_all)?;
-    let workspace_dir = world.workspace_dir.clone();
 
     if fix {
         apply_workspace_repairs(ctx, &world, reattach, adopt_detached, &mut fix_errors);
@@ -7643,7 +8016,7 @@ pub fn run_check(
         violations
     };
 
-    let mut all_issues = violations_to_text_issues(&world, violations);
+    let mut all_issues = violations_to_issues(violations);
 
     for msg in fix_errors {
         all_issues.push(Issue {
@@ -7655,201 +8028,11 @@ pub fn run_check(
         });
     }
 
-    // Doctor is the diagnostic of last resort; a lock entry the local clone
-    // has never seen is exactly the wrong signal to swallow.
-    for (project_name, repo_path) in &world.lock_resolve_failures {
-        all_issues.push(Issue {
-            kind: IssueKind::CoreFinding,
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: format!(
-                "{project_name}: lock references unknown revision for {repo_path}; run `rwv lock` or fetch"
-            ),
-            safe_to_fix: true,
-        });
-    }
-
-    for (repo_path, err_msg) in &world.head_read_failures {
-        all_issues.push(Issue {
-            kind: IssueKind::CoreFinding,
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: format!("{repo_path}: HEAD unreadable ({err_msg})"),
-            safe_to_fix: true,
-        });
-    }
-
-    let vcs_for_report = world.vcs.as_ref();
-
-    // Neither of these has a `CheckViolation` variant, so `--json` carries
-    // neither. The missing-config arm reports only without `--fix`: with it
-    // on the plant has already run, and its failure is the report.
-    for project in &world.input.projects {
-        let project_repo = workspace_dir.join("projects").join(project.name.as_str());
-        if !project_repo.is_dir() {
-            continue;
-        }
-        match crate::git::has_rwv_merge_driver_config(&project_repo) {
-            Ok(true) => {}
-            Ok(false) => {
-                if !fix {
-                    all_issues.push(Issue {
-                        kind: IssueKind::CoreFinding,
-                        integration: "core".into(),
-                        severity: Severity::Warning,
-                        message: format!(
-                            "{}: project repo missing `{}` config \
-                             (defines the `rwv-ours` merge driver used by bare \
-                             `git rebase --continue`; run `rwv doctor --fix` to plant)",
-                            project.name,
-                            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-                        ),
-                        safe_to_fix: true,
-                    });
-                }
-            }
-            Err(e) => all_issues.push(Issue {
-                kind: IssueKind::CoreFinding,
-                integration: "core".into(),
-                severity: Severity::Warning,
-                message: format!(
-                    "{}: failed to read `{}` config: {e}",
-                    project.name,
-                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-                ),
-                safe_to_fix: true,
-            }),
-        }
-        if let Err(e) =
-            vcs_for_report.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
-        {
-            all_issues.push(Issue {
-                kind: IssueKind::CoreFinding,
-                integration: "core".into(),
-                severity: Severity::Warning,
-                message: format!(
-                    "{}: failed to read .gitattributes for replay-exclusion check: {e}",
-                    project.name
-                ),
-                safe_to_fix: true,
-            });
-        }
-    }
-
-    let builtin = crate::integrations::builtin_integrations();
-    let integrations: Vec<&dyn crate::integration::Integration> =
-        builtin.iter().map(|b| b.as_ref()).collect();
-
-    for project in &world.input.projects {
-        let detection_cache = crate::integration_runner::build_detection_cache(
-            &integrations,
-            &workspace_dir,
-            project.manifest.iter_entries(),
-        );
-        let ctx_base = world.session.context_base(
-            &project.name,
-            &detection_cache,
-            project.manifest.workweave.as_ref(),
-        );
-        all_issues.extend(run_checks(&integrations, &project.manifest, &ctx_base));
-
-        // The integrations' `verify()` pass reports drift between on-disk
-        // managed content and what `activate()` would produce. USER-HELD
-        // findings (`safe_to_fix = false`) surface even under `--fix`: the
-        // user holds the pen on that file region and auto-repair would
-        // silently destroy their content.
-        let verify_issues = crate::integration_runner::run_verifications(
-            &integrations,
-            &project.manifest,
-            &ctx_base,
-        );
-        let (fixable_issues, user_held_issues): (Vec<_>, Vec<_>) =
-            verify_issues.into_iter().partition(|i| i.safe_to_fix);
-        all_issues.extend(user_held_issues);
-        if fix && !fixable_issues.is_empty() {
-            // The repair primitive must be pointed at the same weave the
-            // detector scanned. `activate_intent` targets primary
-            // unconditionally, so from a workweave it would rewrite the
-            // PRIMARY project's managed files — `activate_intent_at` takes the
-            // weave dir, and `workspace_dir` is `ctx.active_path()`.
-            match crate::activate::activate_intent_at(project.name.as_str(), &workspace_dir) {
-                Ok(()) => println!(
-                    "[fixed] core: regenerated integration content for project `{}` (drift detected)",
-                    project.name
-                ),
-                Err(e) => all_issues.push(Issue {
-                    kind: IssueKind::CoreFinding,
-                    integration: "core".into(),
-                    severity: Severity::Error,
-                    message: format!(
-                        "doctor --fix: failed to regenerate integration content for `{}`: {e}",
-                        project.name
-                    ),
-                    safe_to_fix: true,
-                }),
-            }
-        } else {
-            all_issues.extend(fixable_issues);
-        }
-
-        // An `Ownership::DefaultOnly` value the operator holds may be
-        // incompatible with what the members require, which `verify()` does
-        // not see. No automated repair exists, so these bypass the `--fix`
-        // partition above.
-        all_issues.extend(crate::integration_runner::run_member_incompatibilities(
-            &integrations,
-            &project.manifest,
-            &ctx_base,
-        ));
-
-        // Axis-1: nothing in `verify()` asserts that the surfacing *symlinks*
-        // exist and resolve. Scoped to `workspace_dir` (= `ctx.active_path()`),
-        // so it checks primary's surfacing at primary and the workweave's
-        // inside a workweave.
-        let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
-        let surfacing_issues = crate::activate::verify_surfacing(
-            &workspace_dir,
-            &project.name,
-            &project.manifest,
-            in_workweave,
-        );
-        let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
-            surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
-        // A real file or dir occupying a surfacing path is user-held and never
-        // auto-clobbered.
-        all_issues.extend(surf_user_held);
-        if fix && !surf_fixable.is_empty() {
-            // Authors no content — it only (re)creates the owner-scoped
-            // symlinks, which is what workweave-create runs at creation.
-            // `--project` scopes doctor to a project without switching to it,
-            // so the weave root's shared names stay with the project it
-            // presents.
-            match crate::activate::surface_symlinks(
-                &workspace_dir,
-                &project.name,
-                &project.manifest,
-                in_workweave,
-                crate::activate::SurfacingMode::Repair,
-            ) {
-                Ok(()) => println!(
-                    "[fixed] core: re-surfaced symlinks for project `{}` (missing/mis-resolved surfacing)",
-                    project.name
-                ),
-                Err(e) => all_issues.push(Issue {
-                    kind: IssueKind::CoreFinding,
-                    integration: "core".into(),
-                    severity: Severity::Error,
-                    message: format!(
-                        "doctor --fix: failed to re-surface symlinks for `{}`: {e}",
-                        project.name
-                    ),
-                    safe_to_fix: true,
-                }),
-            }
-        } else {
-            all_issues.extend(surf_fixable);
-        }
-    }
+    all_issues.extend(collect_doctor_issues(
+        ctx,
+        &world,
+        if fix { Repair::Apply } else { Repair::Report },
+    ));
 
     let mut has_errors = false;
     for issue in &all_issues {
@@ -7872,6 +8055,7 @@ pub fn run_check(
 /// disk.
 pub fn build_doctor_json(
     violations: Vec<CheckViolation>,
+    issues: Vec<Issue>,
     workspace_dir: &Path,
     workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
     resolution: Option<Resolution>,
@@ -7883,6 +8067,7 @@ pub fn build_doctor_json(
             .into_iter()
             .map(|v| ViolationOutput::from_violation(v, workspace_dir, workweave_dirs))
             .collect(),
+        issues: issues.into_iter().map(IssueOutput::from_issue).collect(),
         plugins,
         resolution,
     }
@@ -7891,8 +8076,9 @@ pub fn build_doctor_json(
 /// Everything `rwv doctor` reads off disk before any scan runs: the workspace
 /// session, the loaded manifests, and each on-disk repo's HEAD.
 ///
-/// `head_read_failures` and `lock_resolve_failures` have no `CheckViolation`
-/// variant, so they reach the text renderer alone.
+/// `head_read_failures` and `lock_resolve_failures` are raised as findings by
+/// [`collect_doctor_violations`] rather than here, so both renderers see them
+/// on the same terms as every other scan.
 struct DoctorWorld {
     workspace_dir: PathBuf,
     session: crate::workspace::WorkspaceSession,
@@ -8075,11 +8261,12 @@ struct DoctorFindings {
 ///
 /// Repairs are not collection: `--fix` runs its bulk arms before this and its
 /// per-finding arms over the vector this returns, so a scan here always
-/// observes the state the operator is left in.
+/// observes the state the operator is left in. The merge-driver-config probe
+/// relies on that ordering rather than on a `fix` flag of its own — under
+/// `--fix` the plant has already run, so the probe sees the config present.
 ///
-/// Integration-runner findings, unreadable HEADs and unresolvable lock entries
-/// are outside this vector: they are `Issue`s with no `CheckViolation` variant
-/// and reach the text renderer alone.
+/// Findings an integration raised are outside this vector; they are `Issue`s,
+/// and [`collect_doctor_issues`] is the pass both renderers take them from.
 fn collect_doctor_violations(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
@@ -8382,12 +8569,56 @@ fn collect_doctor_violations(
         // `has_replay_exclusion` matches only the current needle, so a project
         // still on the legacy spelling reports missing and drives the same
         // `--fix` migration.
-        if let Ok(false) = vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
-        {
-            violations.push(CheckViolation::MissingReplayExclusion {
+        match vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
+            Ok(true) => {}
+            Ok(false) => {
+                let legacy = crate::git::has_working_tree_legacy_replay_exclusion(
+                    &project_repo,
+                    std::path::Path::new("rwv.lock"),
+                )
+                .unwrap_or(false);
+                violations.push(CheckViolation::MissingReplayExclusion {
+                    project: project.name.clone(),
+                    sub_kind: if legacy {
+                        ReplayExclusionKind::LegacySpelling
+                    } else {
+                        ReplayExclusionKind::Absent
+                    },
+                });
+            }
+            Err(e) => violations.push(CheckViolation::ReplayExclusionUnreadable {
                 project: project.name.clone(),
-            });
+                error: e.to_string(),
+            }),
         }
+        match crate::git::has_rwv_merge_driver_config(&project_repo) {
+            Ok(true) => {}
+            Ok(false) => violations.push(CheckViolation::MissingMergeDriverConfig {
+                project: project.name.clone(),
+                config_key: crate::git::RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
+            }),
+            Err(e) => violations.push(CheckViolation::MergeDriverConfigUnreadable {
+                project: project.name.clone(),
+                config_key: crate::git::RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
+                error: e.to_string(),
+            }),
+        }
+    }
+
+    // Doctor is the diagnostic of last resort; a repo whose HEAD would not
+    // read, or a lock entry the local clone has never seen, is exactly the
+    // wrong signal to swallow.
+    for (repo, error) in &world.head_read_failures {
+        violations.push(CheckViolation::HeadUnreadable {
+            repo: repo.clone(),
+            error: error.clone(),
+        });
+    }
+    for (project, repo) in &world.lock_resolve_failures {
+        violations.push(CheckViolation::UnresolvableLockEntry {
+            project: project.clone(),
+            repo: repo.clone(),
+        });
     }
 
     let repo_locations = hygiene_targets
@@ -8404,14 +8635,17 @@ fn collect_doctor_violations(
 
 /// Run `rwv doctor --json`.
 ///
-/// Emits `{ "$schema": "...", "violations": [...] }` to stdout. Exit
-/// semantics match [`run_check`]: returns `Ok(true)` iff any violations
-/// were found, so the caller can exit non-zero.
+/// Emits `{ "$schema": "...", "violations": [...], "issues": [...] }` to
+/// stdout, from the same two collection passes [`run_check`] renders as text.
 ///
-/// Only `CheckViolation` variants are surfaced — integration-runner
-/// findings (which are `Issue`s, not `CheckViolation`s) and ad-hoc
-/// failures (HEAD-unreadable, lock-resolve failures) are intentionally
-/// out of scope for the JSON channel (see the design notes for rationale).
+/// Returns `Ok(true)` — the caller's exit-1 signal — when any violation was
+/// found or any integration issue was an error. The violation half of that is
+/// wider than [`run_check`]'s, which exits non-zero on errors alone, and stays
+/// so: a caller already scripting against `--json` reads a warning-severity
+/// violation as exit 1 today.
+///
+/// There is no `--fix` on this path, so nothing here repairs and nothing mints
+/// a `--fix` failure.
 ///
 /// When `scope_all` is `false` (the default), only the active project is
 /// checked and orphan detection is skipped. Pass `scope_all = true` (`--all`)
@@ -8426,13 +8660,18 @@ pub fn run_check_json(
         workweave_dirs,
         ..
     } = collect_doctor_violations(ctx, &world, ScanProgress::Silent);
-    let has_violations = !violations.is_empty();
+    let issues = collect_doctor_issues(ctx, &world, Repair::Report);
+    let has_violations = !violations.is_empty()
+        || issues
+            .iter()
+            .any(|i| i.severity == crate::integration::Severity::Error);
     // Discover `rwv-*` executables on PATH for the inventory. This is
     // reporting only — the presence or absence of plugins never affects the
     // has_violations signal or the doctor exit code.
     let plugins = crate::plugins::discover_plugins(None::<&std::ffi::OsStr>);
     let payload = build_doctor_json(
         violations,
+        issues,
         &world.workspace_dir,
         &workweave_dirs,
         ctx.resolution(),
