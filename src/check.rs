@@ -2298,14 +2298,11 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
 
     // Race guard: if the parent already exists, the dangling condition healed
     // (e.g. the parent was recreated) — leave the marker alone.
-    if marker.parent.exists() {
+    if marker.parent().exists() {
         return Ok(false);
     }
 
-    let new_parent = primary
-        .canonicalize()
-        .unwrap_or_else(|_| primary.to_path_buf());
-    marker.parent = new_parent;
+    marker.repoint_parent(primary);
     marker.write(marker_dir).with_context(|| {
         format!(
             "failed to write {}/.rwv-workweave during --fix",
@@ -2749,21 +2746,21 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
         .canonicalize()
         .unwrap_or_else(|_| primary_root.to_path_buf());
     let marker_primary_canonical = marker
-        .primary
+        .primary()
         .canonicalize()
-        .unwrap_or_else(|_| marker.primary.clone());
+        .unwrap_or_else(|_| marker.primary().to_path_buf());
     if marker_primary_canonical != primary_canonical {
         return Some(unwitnessed(format!(
             "The marker names primary `{}`, which is not this workspace, so this \
              workspace's registry has no say over it.",
-            marker.primary.display()
+            marker.primary().display()
         )));
     }
 
     // The registry entry is the external witness: it lives at
     // `<primary>/projects/<project>/.rwv-workweave-index`, is written only by
     // `rwv workweave create`, and names this directory by absolute path.
-    let recorded = crate::workweave_index::read(primary_root, &marker.project)
+    let recorded = crate::workweave_index::read(primary_root, marker.project())
         .ok()
         .flatten()
         .and_then(|idx| {
@@ -2777,7 +2774,7 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
             root: root.to_path_buf(),
             pointer_project,
             sub_kind: WeaveRootIdentityConflictKind::RegisteredWorkweave {
-                project: marker.project.to_string(),
+                project: marker.project().to_string(),
                 workweave_name,
             },
         }),
@@ -2785,7 +2782,7 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
             "The marker names project `{}` of this workspace, but that project's registry \
              does not record this directory — most likely a workweave copied out-of-band \
              (`cp -r`), whose registry entry still names the original.",
-            marker.project
+            marker.project()
         ))),
     }
 }
@@ -2883,9 +2880,9 @@ pub fn scan_workweave_tree_integrity(
 
         // Foreign-primary check: marker's `primary` must resolve to ws_root.
         let marker_primary_canonical = marker
-            .primary
+            .primary()
             .canonicalize()
-            .unwrap_or_else(|_| marker.primary.clone());
+            .unwrap_or_else(|_| marker.primary().to_path_buf());
         if marker_primary_canonical != ws_canonical {
             let sub_kind = if crate::workspace::is_workspace_root(&marker_primary_canonical) {
                 WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
@@ -2893,7 +2890,7 @@ pub fn scan_workweave_tree_integrity(
                 }
             } else {
                 WorkweaveTreeIntegrityKind::ForeignPrimary {
-                    marker_primary: marker.primary.clone(),
+                    marker_primary: marker.primary().to_path_buf(),
                 }
             };
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
@@ -2907,11 +2904,11 @@ pub fn scan_workweave_tree_integrity(
         }
 
         // Dangling-parent check: the parent path must exist on disk.
-        if !marker.parent.exists() {
+        if !marker.parent().exists() {
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: dir.clone(),
                 sub_kind: WorkweaveTreeIntegrityKind::DanglingParent {
-                    parent_path: marker.parent.clone(),
+                    parent_path: marker.parent().to_path_buf(),
                 },
             });
             // Even with a dangling parent we can still collect the entry
@@ -2920,8 +2917,8 @@ pub fn scan_workweave_tree_integrity(
 
         marker_entries.push(MarkerEntry {
             dir: dir.clone(),
-            project: marker.project.clone(),
-            parent: marker.parent.clone(),
+            project: marker.project().clone(),
+            parent: marker.parent().to_path_buf(),
         });
     }
 
@@ -3872,7 +3869,7 @@ fn live_workweave_names(
 
     for (name, dir) in workweave_dirs {
         if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(dir) {
-            if marker.project.as_str() == project.as_str() {
+            if marker.project().as_str() == project.as_str() {
                 names.insert(name.clone());
             }
         }
@@ -4434,7 +4431,7 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
     for (name, dir) in crate::workweave::list_workweave_dirs(ws_root) {
         if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) {
             if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(&name) {
-                out.push(EphemeralRefName::mint(&marker.project, &workweave_name));
+                out.push(EphemeralRefName::mint(marker.project(), &workweave_name));
             }
         }
     }
@@ -4687,7 +4684,7 @@ pub fn scan_branch_discipline(
             ws_root,
             &recorded,
             &workweave_dir,
-            marker.project.as_str(),
+            marker.project().as_str(),
             &workweave_name,
             &mut violations,
         );
@@ -5163,7 +5160,7 @@ pub fn fix_branch_model_migration(
             continue;
         };
         if let Some(active) = active_project {
-            if marker.project.as_str() != active {
+            if marker.project().as_str() != active {
                 continue;
             }
         }
@@ -5189,10 +5186,10 @@ pub fn fix_branch_model_migration(
                 continue;
             }
         };
-        let flat = EphemeralRefName::mint(&marker.project, &workweave_name_typed);
-        let mut registry = RefRegistry::for_project(ws_root, &marker.project);
+        let flat = EphemeralRefName::mint(marker.project(), &workweave_name_typed);
+        let mut registry = RefRegistry::for_project(ws_root, marker.project());
 
-        for abs in workweave_checkouts(vcs, &workweave_dir, marker.project.as_str()) {
+        for abs in workweave_checkouts(vcs, &workweave_dir, marker.project().as_str()) {
             let store = crate::workweave::receipt_store_for(vcs, &abs);
             let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
 

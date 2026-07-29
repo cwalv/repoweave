@@ -85,11 +85,11 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     std::fs::create_dir_all(&ww_dir).unwrap();
 
     // Write the `.rwv-workweave` marker so the round-trip validation passes.
-    let marker = WorkweaveMarker {
-        primary: ws_canon.clone(),
-        project: ProjectName::new(project).unwrap(),
-        parent: ws_canon.clone(),
-    };
+    let marker = WorkweaveMarker::new(
+        ws_canon.clone(),
+        ProjectName::new(project).unwrap(),
+        &ws_canon,
+    );
     marker.write(&ww_dir).unwrap();
 
     // Also place the project dir structure inside the workweave so that

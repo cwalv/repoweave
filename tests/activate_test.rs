@@ -735,11 +735,11 @@ fn activate_from_workweave_is_rejected() {
     let workweave_dir = tmp.path().join("ws--ww1");
     std::fs::create_dir_all(&workweave_dir).unwrap();
     let primary_canon = ws.canonicalize().unwrap();
-    let marker = WorkweaveMarker {
-        primary: primary_canon.clone(),
-        project: ProjectName::new("my-proj").unwrap(),
-        parent: primary_canon.clone(),
-    };
+    let marker = WorkweaveMarker::new(
+        primary_canon.clone(),
+        ProjectName::new("my-proj").unwrap(),
+        &primary_canon,
+    );
     marker.write(&workweave_dir).unwrap();
 
     // Running activate from the workweave root must fail.
@@ -785,11 +785,11 @@ fn activate_different_project_from_workweave_is_rejected() {
     let workweave_dir = tmp.path().join("ws--ww2");
     std::fs::create_dir_all(&workweave_dir).unwrap();
     let primary_canon = ws.canonicalize().unwrap();
-    let marker = WorkweaveMarker {
-        primary: primary_canon.clone(),
-        project: ProjectName::new("proj-a").unwrap(),
-        parent: primary_canon.clone(),
-    };
+    let marker = WorkweaveMarker::new(
+        primary_canon.clone(),
+        ProjectName::new("proj-a").unwrap(),
+        &primary_canon,
+    );
     marker.write(&workweave_dir).unwrap();
 
     // Attempt to activate proj-b from the workweave — must fail.

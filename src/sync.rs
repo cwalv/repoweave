@@ -6120,11 +6120,11 @@ mod tests {
         let ww = primary.join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(ww.join("github/example")).unwrap();
         let primary_canon = primary.canonicalize().unwrap();
-        crate::workspace::WorkweaveMarker {
-            primary: primary_canon.clone(),
-            project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon,
-        }
+        crate::workspace::WorkweaveMarker::new(
+            primary_canon.clone(),
+            ProjectName::new("web-app").unwrap(),
+            &primary_canon,
+        )
         .write(&ww)
         .unwrap();
 
@@ -6265,11 +6265,11 @@ mod tests {
         let ww = primary.join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(ww.join("github/example")).unwrap();
         let primary_canon = primary.canonicalize().unwrap();
-        crate::workspace::WorkweaveMarker {
-            primary: primary_canon.clone(),
-            project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon,
-        }
+        crate::workspace::WorkweaveMarker::new(
+            primary_canon.clone(),
+            ProjectName::new("web-app").unwrap(),
+            &primary_canon,
+        )
         .write(&ww)
         .unwrap();
 

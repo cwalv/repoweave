@@ -50,11 +50,11 @@ fn make_workweave(tmp: &Path, ws: &Path, project: &str, name: &str) -> std::path
     let ww_dir = tmp.join(format!("{project}--{name}"));
     std::fs::create_dir_all(&ww_dir).unwrap();
     let primary_canon = ws.canonicalize().unwrap();
-    let marker = WorkweaveMarker {
-        primary: primary_canon.clone(),
-        project: ProjectName::new(project).unwrap(),
-        parent: primary_canon,
-    };
+    let marker = WorkweaveMarker::new(
+        primary_canon.clone(),
+        ProjectName::new(project).unwrap(),
+        &primary_canon,
+    );
     marker.write(&ww_dir).unwrap();
     ww_dir
 }

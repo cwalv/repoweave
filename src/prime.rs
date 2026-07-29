@@ -436,11 +436,11 @@ integrations:
         // Write the .rwv-workweave marker so resolve() recognizes this as a
         // workweave (marker-less resolution was removed).
         let primary_canon = root.canonicalize().unwrap();
-        crate::workspace::WorkweaveMarker {
-            primary: primary_canon.clone(),
-            project: crate::manifest::ProjectName::new("ws").unwrap(),
-            parent: primary_canon,
-        }
+        crate::workspace::WorkweaveMarker::new(
+            primary_canon.clone(),
+            crate::manifest::ProjectName::new("ws").unwrap(),
+            &primary_canon,
+        )
         .write(&workweave_dir)
         .unwrap();
 

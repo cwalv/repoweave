@@ -168,15 +168,15 @@ pub fn validate_registry_entry(
         .canonicalize()
         .unwrap_or_else(|_| primary_root.to_path_buf());
     let marker_primary_canonical = marker
-        .primary
+        .primary()
         .canonicalize()
-        .unwrap_or_else(|_| marker.primary.clone());
+        .unwrap_or_else(|_| marker.primary().to_path_buf());
     if marker_primary_canonical != primary_canonical {
         return RegistryEntryValidation::ForeignPrimary;
     }
-    if &marker.project != project {
+    if marker.project() != project {
         return RegistryEntryValidation::ProjectMismatch {
-            actual: marker.project,
+            actual: marker.project().clone(),
         };
     }
     RegistryEntryValidation::Valid
@@ -1283,7 +1283,7 @@ pub fn create_workweave(
             // `project` and would fail on wrong-marker / missing-marker
             // cases.
             let can_use_structured_delete = match WorkweaveMarker::read(&workweave_dir)? {
-                Some(m) => &m.project == project,
+                Some(m) => m.project() == project,
                 None => false,
             };
             // Even under --replace-existing, refuse to replace a workweave
@@ -1805,14 +1805,7 @@ pub fn create_workweave(
     // where to sync to. For workweaves forked directly from primary, parent
     // == primary; for workweaves forked from another workweave, parent is
     // that workweave's directory.
-    let parent_path = source_root
-        .canonicalize()
-        .unwrap_or_else(|_| source_root.to_path_buf());
-    let marker = WorkweaveMarker {
-        primary: primary_root.to_path_buf(),
-        project: project.clone(),
-        parent: parent_path,
-    };
+    let marker = WorkweaveMarker::new(primary_root.to_path_buf(), project.clone(), source_root);
     // The marker is the ONLY identity file a workweave root gets: it and
     // `.rwv-active` name the same fact and are mutually exclusive, occupying
     // one tier of the resolution chain rather than two. A pointer beside it
@@ -1869,20 +1862,20 @@ fn reuse_existing_workweave(
         )
     })?;
 
-    if &marker.project != project {
+    if marker.project() != project {
         bail!(
             "workweave at {} is for project '{}', refusing to recreate for project '{}'; \
              rerun with --replace-existing to overwrite",
             workweave_dir.display(),
-            marker.project.as_str(),
+            marker.project().as_str(),
             project
         );
     }
 
     let marker_primary = marker
-        .primary
+        .primary()
         .canonicalize()
-        .unwrap_or_else(|_| marker.primary.clone());
+        .unwrap_or_else(|_| marker.primary().to_path_buf());
     let primary_canonical = primary_root
         .canonicalize()
         .unwrap_or_else(|_| primary_root.to_path_buf());
@@ -1891,7 +1884,7 @@ fn reuse_existing_workweave(
             "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
              rerun with --replace-existing to overwrite",
             workweave_dir.display(),
-            marker.primary.display(),
+            marker.primary().display(),
             primary_root.display()
         );
     }
@@ -2010,8 +2003,8 @@ pub fn collect_dirty_paths(
 fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
     let mut baselines: Vec<PathBuf> = Vec::new();
     if let Ok(Some(marker)) = WorkweaveMarker::read(workweave_dir) {
-        if marker.parent.exists() && marker.parent != ws_root {
-            baselines.push(marker.parent);
+        if marker.parent().exists() && marker.parent() != ws_root {
+            baselines.push(marker.parent().to_path_buf());
         }
     }
     baselines.push(ws_root.to_path_buf());
@@ -2350,7 +2343,7 @@ fn refuse_if_checkouts_host_foreign_worktrees(
 /// writes via `source_root.canonicalize()`).
 fn adoptive_parent_for_children(retiree_dir: &Path, primary_root: &Path) -> PathBuf {
     let grandparent = match WorkweaveMarker::read(retiree_dir) {
-        Ok(Some(marker)) if marker.parent.exists() => Some(marker.parent),
+        Ok(Some(marker)) if marker.parent().exists() => Some(marker.parent().to_path_buf()),
         _ => None,
     };
     let target = grandparent.unwrap_or_else(|| primary_root.to_path_buf());
@@ -2404,9 +2397,9 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
             _ => continue,
         };
         let marker_parent_canonical = marker
-            .parent
+            .parent()
             .canonicalize()
-            .unwrap_or_else(|_| marker.parent.clone());
+            .unwrap_or_else(|_| marker.parent().to_path_buf());
         if marker_parent_canonical != retiree_canonical {
             continue;
         }
@@ -2419,7 +2412,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
             );
             continue;
         }
-        marker.parent = new_parent.clone();
+        marker.repoint_parent(&new_parent);
         if let Err(e) = marker.write(&child_dir) {
             eprintln!(
                 "warning: failed to adopt child workweave {child_name}: could not rewrite \
@@ -3082,9 +3075,9 @@ pub fn doctor_scan_container(
             _ => continue,
         };
         let m_primary = marker
-            .primary
+            .primary()
             .canonicalize()
-            .unwrap_or_else(|_| marker.primary.clone());
+            .unwrap_or_else(|_| marker.primary().to_path_buf());
         if m_primary != primary_canonical {
             continue;
         }
@@ -3522,8 +3515,8 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             // Fire-and-forget: log errors but always succeed.
             if let Ok(Some(marker)) = WorkweaveMarker::read(Path::new(&worktree_path)) {
                 let outcome = workweave_name_for_path(
-                    &marker.primary,
-                    &marker.project,
+                    marker.primary(),
+                    marker.project(),
                     Path::new(&worktree_path),
                 )
                 .and_then(|found| {
@@ -3532,7 +3525,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                             "{worktree_path} carries a workweave marker but is not \
                              registered for project `{}` — refusing to delete rather \
                              than guess its name",
-                            marker.project
+                            marker.project()
                         )
                     })
                 })
@@ -3552,7 +3545,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     // for the same reason: "Claude moved on" is not the
                     // operator consenting to lose their edits, and a refusal on
                     // stderr is strictly better than a silent destroy.
-                    delete_workweave(&marker.primary, &marker.project, &name, false, None)
+                    delete_workweave(marker.primary(), marker.project(), &name, false, None)
                 });
                 if let Err(e) = outcome {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");

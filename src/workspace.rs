@@ -1222,13 +1222,48 @@ pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
 /// with `rwv doctor --fix` before the workweave can be used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkweaveMarker {
-    pub primary: PathBuf,
-    pub project: ProjectName,
-    /// Workspace this workweave was forked from.
-    pub parent: PathBuf,
+    primary: PathBuf,
+    project: ProjectName,
+    parent: PathBuf,
 }
 
 impl WorkweaveMarker {
+    /// Build a marker for a workweave forked from `parent_source`.
+    ///
+    /// `parent_source` is canonicalized into `parent` (falling back to the
+    /// given path if canonicalization fails, e.g. in tests against a path
+    /// that was never created on disk) so that every marker this type
+    /// produces compares equal to the registry entries and chain-walks that
+    /// key off `parent`, regardless of which of two equivalent spellings the
+    /// caller had on hand. `primary` is stored as given; callers already hold
+    /// it canonical (it flows from [`WorkspaceContext::primary_path`] or an
+    /// already-migrated marker's `primary`).
+    pub fn new(primary: PathBuf, project: ProjectName, parent_source: &Path) -> Self {
+        WorkweaveMarker {
+            primary,
+            project,
+            parent: canonicalize_or(parent_source),
+        }
+    }
+
+    pub fn primary(&self) -> &Path {
+        &self.primary
+    }
+
+    pub fn project(&self) -> &ProjectName {
+        &self.project
+    }
+
+    pub fn parent(&self) -> &Path {
+        &self.parent
+    }
+
+    /// Re-point `parent` at `parent_source`, canonicalized the same way
+    /// [`Self::new`] canonicalizes it at creation.
+    pub fn repoint_parent(&mut self, parent_source: &Path) {
+        self.parent = canonicalize_or(parent_source);
+    }
+
     /// Read the marker file from `dir`.
     ///
     /// Returns `Ok(None)` if the marker file is absent.
@@ -1286,6 +1321,10 @@ impl WorkweaveMarker {
         marker.write(dir)?;
         Ok(true)
     }
+}
+
+fn canonicalize_or(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 // ---------------------------------------------------------------------------
