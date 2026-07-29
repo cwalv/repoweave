@@ -251,6 +251,19 @@ pub enum ConflictOp {
     CherryPick,
 }
 
+impl std::fmt::Display for ConflictOp {
+    /// The hyphen-spelled op name, matching what this enum serialises to.
+    /// Callers compose `mid-{op}` messages from it rather than carrying a
+    /// second copy of the VCS's vocabulary.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Rebase => "rebase",
+            Self::Merge => "merge",
+            Self::CherryPick => "cherry-pick",
+        })
+    }
+}
+
 /// A named ref (branch, tag, bookmark), independent of VCS.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]

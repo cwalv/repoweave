@@ -632,19 +632,6 @@ fn sync_one_repo(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Hyphen-spelled label for a mid-op [`ConflictOp`] — `"rebase"`, `"merge"`,
-/// or `"cherry-pick"`. Used to compose `"mid-{label}"` messages without
-/// hardcoding a VCS vocabulary table inside sync. The VCS vocabulary (which
-/// op names exist) lives behind [`ConflictOp`]; this helper only shapes the
-/// display text.
-fn mid_op_label(op: ConflictOp) -> &'static str {
-    match op {
-        ConflictOp::Rebase => "rebase",
-        ConflictOp::Merge => "merge",
-        ConflictOp::CherryPick => "cherry-pick",
-    }
-}
-
 /// Failure from [`apply_strategy`] carrying both the human-formatted error
 /// string and (when available) the underlying typed [`VcsError`] so callers
 /// can plumb structured cause info into `--json` output.
@@ -2054,10 +2041,7 @@ fn run_preconditions_after_acquire(
 ) -> anyhow::Result<PreconditionOutcome> {
     // CWD project repo must not be mid-op.
     if let Some(op) = project_vcs.mid_op(cwd_project_dir) {
-        anyhow::bail!(
-            "CWD project repo is mid-{op}; resolve before running sync",
-            op = mid_op_label(op),
-        );
+        anyhow::bail!("CWD project repo is mid-{op}; resolve before running sync");
     }
 
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
