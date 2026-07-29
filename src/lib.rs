@@ -34,6 +34,7 @@ pub mod add_remove;
 pub mod check;
 pub mod cli;
 pub mod explain;
+pub mod durable_file;
 pub mod fetch;
 pub mod git;
 pub mod init;

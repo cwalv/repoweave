@@ -44,7 +44,7 @@
 //!
 //! For `sync` / `sync-to`, the owner record and every touched-workspace lease
 //! are acquired **atomically at guard time** via [`acquire_op`]: each file is
-//! created with `create_new(true)` (`O_CREAT|O_EXCL`), and on `AlreadyExists`
+//! published with [`crate::durable_file::create_new`], and on `AlreadyExists`
 //! anywhere the acquisition unwinds any partial state it created and returns
 //! the standard in-flight refusal. This closes the guard→mark TOCTOU window
 //! that a plain [`check_no_op_in_progress`] would leave: two concurrent ops
@@ -65,6 +65,7 @@
 //!
 //! Both files live at the workspace root (same directory as `.rwv-active`).
 
+use crate::durable_file::CreateNewError;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -952,9 +953,9 @@ pub fn acquire_op(
     let owner_path = OwnerRecord::path_in(owner_workspace_dir);
     let owner_yaml = serde_yaml::to_string(owner_record)
         .context("failed to serialize owner record for acquisition")?;
-    match atomic_write_new(&owner_path, owner_yaml.as_bytes()) {
+    match crate::durable_file::create_new(&owner_path, owner_yaml.as_bytes()) {
         Ok(()) => {}
-        Err(AtomicWriteError::AlreadyExists) => {
+        Err(CreateNewError::AlreadyExists) => {
             // Race: another op landed here. Read it back for the standard
             // refusal shape. If it disappeared between EEXIST and re-read
             // (the winner completed successfully already), fall through with a
@@ -968,7 +969,7 @@ pub fn acquire_op(
                 }),
             );
         }
-        Err(AtomicWriteError::Io(e)) => {
+        Err(CreateNewError::Io(e)) => {
             return Err(anyhow::Error::new(e).context(format!(
                 "failed to acquire owner record at {}",
                 owner_path.display()
@@ -994,9 +995,9 @@ pub fn acquire_op(
                 return Err(anyhow::Error::new(e).context("failed to serialize lease record"));
             }
         };
-        match atomic_write_new(&lease_path, lease_yaml.as_bytes()) {
+        match crate::durable_file::create_new(&lease_path, lease_yaml.as_bytes()) {
             Ok(()) => acquired_leases.push(ws.clone()),
-            Err(AtomicWriteError::AlreadyExists) => {
+            Err(CreateNewError::AlreadyExists) => {
                 // Race on a lease: undo owner + any leases we already wrote,
                 // then emit the in-flight refusal reading the *existing*
                 // lease (following its pointer for the rich message shape,
@@ -1006,7 +1007,7 @@ pub fn acquire_op(
                     anyhow::anyhow!("raced with a concurrent op at {}; retry", ws.display())
                 }));
             }
-            Err(AtomicWriteError::Io(e)) => {
+            Err(CreateNewError::Io(e)) => {
                 rollback_acquired(owner_workspace_dir, &acquired_leases);
                 return Err(anyhow::Error::new(e).context(format!(
                     "failed to acquire lease at {}",
@@ -1037,87 +1038,6 @@ fn rollback_acquired(owner_workspace_dir: &Path, acquired_leases: &[PathBuf]) {
         clear_lease(ws);
     }
     clear_owner(owner_workspace_dir);
-}
-
-/// Local error type for [`atomic_write_new`] so acquisition can distinguish
-/// "race with another op" (map to in-flight refusal) from generic I/O failure.
-enum AtomicWriteError {
-    AlreadyExists,
-    Io(std::io::Error),
-}
-
-/// Atomically publish `bytes` at `path` with **content-complete** semantics:
-/// no other observer ever sees `path` half-written.
-///
-/// Implementation: write the full content to a sibling temp file (unique via
-/// PID + process-local counter), fsync-optional, then `link(2)` it into place. `link` is
-/// atomic and fails with `EEXIST` when the target already exists — exactly the
-/// `O_CREAT|O_EXCL` semantic we want, but applied to an already-populated
-/// inode so the loser reads a complete file. The temp file is unlinked
-/// afterwards (both on success and on link EEXIST — cleanup is idempotent).
-///
-/// Rationale (vs. `OpenOptions::create_new`): with plain `create_new`, the
-/// winner creates the file and then writes bytes; a concurrent loser that
-/// hits `EEXIST` and immediately opens the file for reading may see it empty
-/// or partially populated (race window between create and write). The reader
-/// then fails with a YAML parse error rather than the standard in-flight
-/// refusal, defeating the whole point of atomic acquisition. Content-complete
-/// publish via `link` closes that window.
-///
-/// Cross-platform note: `std::fs::hard_link` works on POSIX and NTFS. If we
-/// ever grow platforms without hard-link support (rare) we would swap in a
-/// platform-specific atomic rename with the same exclusive-create semantics.
-fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
-    use std::io::Write as _;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "op-state".to_owned());
-    // Unique-per-attempt sibling: the PID component keeps concurrent
-    // *processes* apart; a process-local monotonic counter keeps concurrent
-    // *threads* within one process apart. Both components are structural —
-    // no wall-clock input. (A previous revision used nanosecond timestamps
-    // for the intra-process component; two barrier-synchronized threads can
-    // read the same `SystemTime::now()` value under load, collide on the tmp
-    // path, and then each sabotage the other's attempt: the create_new loser
-    // unlinked the winner's in-flight temp, so the winner's link(2) hit
-    // ENOENT and *both* acquisitions failed. Structurally-unique names make
-    // that interleave impossible.)
-    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp_name = format!(".{file_name}.tmp.{pid}.{seq}", pid = std::process::id());
-    let tmp_path = parent.join(tmp_name);
-
-    // Write the full content into the sibling temp. If this fails, drop the
-    // temp and surface the I/O error — we haven't touched `path`.
-    match (|| -> std::io::Result<()> {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        f.write_all(bytes)?;
-        Ok(())
-    })() {
-        Ok(()) => {}
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp_path);
-            return Err(AtomicWriteError::Io(e));
-        }
-    }
-
-    // Atomic exclusive publish: link() fails EEXIST if target already there.
-    // Independent of whether it succeeds, unlink the temp — its role ends
-    // here.
-    let link_result = std::fs::hard_link(&tmp_path, path);
-    let _ = std::fs::remove_file(&tmp_path);
-    match link_result {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(AtomicWriteError::AlreadyExists)
-        }
-        Err(e) => Err(AtomicWriteError::Io(e)),
-    }
 }
 
 // ---------------------------------------------------------------------------

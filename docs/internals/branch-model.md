@@ -1845,8 +1845,8 @@ landed — plus a seventh the implementation exposed.
    `adopt_legacy` `:694`, `migrate_legacy_index` `:823`. The store key is
    `std::fs::canonicalize` (`:921-923`), so `record_created` fails rather than
    records an unresolvable key. Writes go through one durable path
-   (`write_durably` `:350`: fsync file, rename, fsync dir) under an in-process
-   RMW guard (`:331-348`) `[V]`.
+   (`durable_file::replace`: fsync file, rename, fsync dir) under an in-process
+   RMW guard (`workweave_index.rs:306-317`) `[V]`.
    Legacy markers and indexes migrate along the path that already existed:
    "Markers written before `parent` was introduced (legacy markers) must be
    migrated with `rwv doctor --fix` before the workweave can be used" is the

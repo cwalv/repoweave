@@ -89,7 +89,6 @@ use crate::vcs::{
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// The `.rwv-workweave-index` file name (dotted, machine-local).
@@ -253,31 +252,13 @@ pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option
 
 /// Atomically and **durably** write `index` for `(primary_root, project)`.
 ///
-/// Writes to `<path>.tmp.<pid>.<n>` in the same directory then renames over
-/// the target — `rename(2)` is atomic within a filesystem, so a concurrent
-/// writer or reader never observes a half-written file. If
-/// `projects/<project>/` does not exist yet the write fails with an
-/// actionable error (rather than silently succeeding into an unowned
-/// parent).
+/// This is one write path for the whole file, and it is the durable one (see
+/// [`crate::durable_file`]). A separate fast-but-lossy path for the placement
+/// entries — which could live with last-writer-wins — would only be a way for
+/// an ownership receipt to end up on the wrong one.
 ///
-/// ## Why this path fsyncs
-///
-/// Atomic is not durable. A temp file written with `write(2)` and renamed
-/// leaves both the bytes and the rename in the page cache: a power loss or
-/// kernel panic can lose either, and ext4's delayed-allocation flush on
-/// rename-over-an-existing-file is a heuristic, not a guarantee. That gap is
-/// tolerable for the placement entries and **not** tolerable for the
-/// ownership receipts sharing this file, whose whole contract is that the
-/// receipt reaches disk *before* the ref it describes. git fsyncs a loose
-/// ref it writes; if the receipt were only in the
-/// page cache, the surviving state after a crash would be a ref with no
-/// receipt — the one state R2 permanently disowns.
-///
-/// So this is one write path, and it is the durable one: fsync the temp
-/// file's contents, rename, then fsync the containing directory so the
-/// rename itself survives. A separate fast-but-lossy path for the placement
-/// entries would only be a way for a receipt write to end up on the wrong
-/// one.
+/// If `projects/<project>/` does not exist yet the write fails with an
+/// actionable error rather than silently succeeding into an unowned parent.
 pub fn write(
     primary_root: &Path,
     project: &ProjectName,
@@ -301,7 +282,7 @@ pub fn write(
     let _ = ensure_ignore_entry(primary_root, project);
     let content =
         serde_json::to_string_pretty(index).context("failed to serialize workweave index")?;
-    write_durably(&path, parent, &content)
+    crate::durable_file::replace(&path, content.as_bytes())
 }
 
 /// Serialises read-modify-write sequences on the index **within one
@@ -332,75 +313,6 @@ fn index_rmw_guard() -> std::sync::MutexGuard<'static, ()> {
     INDEX_RMW
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Serial number for temp files, so two threads writing the same index in
-/// one process cannot pick the same name and clobber each other's temp.
-///
-/// The pid keeps concurrent `rwv` invocations apart; the serial keeps
-/// writers within one process apart, which matters now that a per-repo loop
-/// can fan out across worker threads ([`crate::parallel`]) and each repo's
-/// receipt lands in the same project index. Structural uniqueness, no
-/// wall-clock input — the same rule `op_state::atomic_write_new` follows,
-/// and for the same reason it learned to.
-static TMP_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// Write `content` to `path` via a temp file in `parent`, atomically and
-/// durably. See [`write`] for why the fsyncs are here.
-fn write_durably(path: &Path, parent: &Path, content: &str) -> anyhow::Result<()> {
-    let serial = TMP_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let tmp_path = parent.join(format!(
-        "{}.tmp.{}.{}",
-        INDEX_FILENAME,
-        std::process::id(),
-        serial
-    ));
-
-    // Contents first, and synced before the rename: a rename can only
-    // publish bytes that have reached the disk.
-    let written = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&tmp_path)?;
-        file.write_all(content.as_bytes())?;
-        file.sync_all()
-    })();
-    if let Err(e) = written {
-        // Do not leave the temp behind for a later reader to trip over.
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(
-            anyhow::Error::new(e).context(format!("failed to write {}", tmp_path.display()))
-        );
-    }
-
-    if let Err(e) = std::fs::rename(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(anyhow::Error::new(e).context(format!(
-            "failed to rename {} to {}",
-            tmp_path.display(),
-            path.display()
-        )));
-    }
-
-    sync_dir(parent)
-}
-
-/// fsync the directory so the **rename** is durable, not just the bytes it
-/// published.
-///
-/// Without this, a crash can resurrect the pre-rename directory entry with
-/// the new file's contents already on disk — the file is intact and the
-/// index still points at the old one.
-#[cfg(unix)]
-fn sync_dir(dir: &Path) -> anyhow::Result<()> {
-    std::fs::File::open(dir)
-        .and_then(|d| d.sync_all())
-        .with_context(|| format!("failed to fsync directory {}", dir.display()))
-}
-
-/// No portable directory-fsync exists off unix; `File::open` on a directory
-/// is itself an error on Windows. The atomic rename still holds there.
-#[cfg(not(unix))]
-fn sync_dir(_dir: &Path) -> anyhow::Result<()> {
-    Ok(())
 }
 
 /// Resolve the effective container for new workweaves in `(primary_root, project)`.

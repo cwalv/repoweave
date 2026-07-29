@@ -72,7 +72,8 @@ empty is what lets the consent tokens in `src/cli.rs:576` stay
 | `lock` (`src/lock.rs`, 427) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 3799) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
 | `workweave_index` (`src/workweave_index.rs`, 1833) | The primary-side `.rwv-workweave-index` (`:99`) and `RefRegistry` (`:595`) — the ref-ownership receipt store. |
-| `op_state` (`src/op_state.rs`, 2184) | The in-flight-operation record: `OpPhase` (`:119`), `OwnerRecord` (`:242`), `PhaseTips` (`:165`), `acquire_op` (`:757`). |
+| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` (`:90`) / `SyncStrategy` (`:139`), the two record fields the engine also reads. |
+| `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. Used by `workweave_index` and `op_state`. |
 
 ### Verbs
 

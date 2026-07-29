@@ -387,32 +387,29 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "op_state.rs",
         pattern: "remove_file",
-        count: 4,
+        count: 2,
         justification: "(1) clear_owner: removing the .rwv-op owner record (rwv-internal). \
             (2) clear_lease: removing the .rwv-op-lease thin lease (rwv-internal). \
-            (3)+(4) atomic_write_new temp-file cleanup: unlinks the sibling temp file \
-            used to publish op-state atomically via link(2) — both on the write-error \
-            path and on the always-runs post-link cleanup. The temp file is created by \
-            atomic_write_new itself as `.<file>.tmp.<pid>.<seq>`, pid keeping processes \
-            apart and a process-local AtomicU64 keeping threads apart, so nothing else \
-            on disk can be named that. Both components are structural: an earlier \
-            revision used a nanosecond timestamp for the intra-process half and two \
-            barrier-synchronized threads collided on it, each unlinking the other's \
-            in-flight temp — so \"unique\" here must NOT be re-derived from a clock. \
-            All four sites operate on rwv-internal bookkeeping, never user data.",
+            Both operate on rwv-internal bookkeeping, never user data. The temp-file \
+            cleanup that used to sit here moved to durable_file.rs, audited below.",
     },
     Allowed {
-        file: "workweave_index.rs",
+        file: "durable_file.rs",
         pattern: "remove_file",
-        count: 2,
-        justification: "write_durably temp-file cleanup, on the two error \
-            paths (content write failed; rename failed). Unlinks only the \
-            sibling temp this call created moments earlier, named \
-            <INDEX_FILENAME>.tmp.<pid>.<serial> with a process-local counter \
-            — the same structural uniqueness op_state::atomic_write_new \
-            uses, so no other writer, thread or process can be holding that \
-            name. Never reached on the success path (the rename consumes \
-            the temp) and never able to name the index itself. No waiver \
+        count: 3,
+        justification: "Temp-file cleanup for the two publish modes, and never \
+            able to name the published file itself. (1) staged_temp, when the \
+            content write or its fsync failed. (2) replace, when the rename \
+            failed. (3) create_new's always-runs cleanup after link(2), which \
+            consumes the temp's role whether or not the link took. Every site \
+            unlinks only the sibling temp this call created moments earlier, \
+            named <file>.tmp.<pid>.<serial>: the pid keeps processes apart and \
+            a process-local AtomicU64 keeps threads within one process apart, \
+            so no other writer can be holding that name. Both components are \
+            structural — an earlier revision used a nanosecond timestamp for \
+            the intra-process half and two barrier-synchronized threads \
+            collided on it, each unlinking the other's in-flight temp, so \
+            \"unique\" here must NOT be re-derived from a clock. No waiver \
             needed: an orphan temp is scratch, and leaving it behind is the \
             worse outcome — a later reader trips over it.",
     },
