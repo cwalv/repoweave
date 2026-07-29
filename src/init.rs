@@ -157,9 +157,12 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
             .iter()
             .find(|r| r.name() == &target)
             .ok_or_else(|| {
+                let names = crate::registry::builtin_registry_names();
+                let known: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
                 anyhow::anyhow!(
-                    "unknown registry '{}'. Known registries: github, gitlab, bitbucket",
-                    registry_name
+                    "unknown registry '{}'. Known registries: {}",
+                    registry_name,
+                    known.join(", ")
                 )
             })?;
 

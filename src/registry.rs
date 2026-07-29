@@ -262,6 +262,31 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
     }
 }
 
+/// The short names of the built-in registries — the first path segment of
+/// the canonical layout, and the directory names a weave root carries.
+pub fn builtin_registry_names() -> Vec<RegistryName> {
+    builtin_registries()
+        .iter()
+        .map(|r| r.name().clone())
+        .collect()
+}
+
+/// Split a canonical local path into `(registry, owner, repo)`.
+///
+/// The inverse of [`canonical_local_path`]. Returns `None` unless all three
+/// segments are present and non-empty; anything past the third stays with
+/// `repo`.
+pub(crate) fn split_canonical_local_path(path: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = path.splitn(3, '/');
+    let registry = parts.next()?;
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    if registry.is_empty() || owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some((registry, owner, repo))
+}
+
 /// Built-in registries for well-known hosts.
 pub fn builtin_registries() -> Vec<Box<dyn Registry>> {
     vec![

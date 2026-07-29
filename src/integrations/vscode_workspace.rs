@@ -17,6 +17,7 @@ use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Seve
 use crate::integrations::merge::{
     drift_issues, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc, RwvGeneratedMarker,
 };
+use crate::registry::split_canonical_local_path;
 use crate::workspace::is_workweave_root;
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -85,15 +86,17 @@ fn default_true() -> bool {
 pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Vec<String> {
     // Group all repos by owner (first two segments).
     let mut repos_by_owner: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut registry_of_owner: HashMap<String, String> = HashMap::new();
     for repo in all_repos {
-        let parts: Vec<&str> = repo.splitn(3, '/').collect();
-        if parts.len() >= 2 {
-            let owner = format!("{}/{}", parts[0], parts[1]);
-            repos_by_owner
-                .entry(owner)
-                .or_default()
-                .insert(repo.clone());
-        }
+        let Some((registry, owner, _)) = split_canonical_local_path(repo) else {
+            continue;
+        };
+        let owner_key = format!("{registry}/{owner}");
+        registry_of_owner.insert(owner_key.clone(), registry.to_owned());
+        repos_by_owner
+            .entry(owner_key)
+            .or_default()
+            .insert(repo.clone());
     }
 
     // Collapse at owner level.
@@ -110,12 +113,10 @@ pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Ve
         }
     }
 
-    // Group owners by registry (first segment).
     let mut owners_by_registry: HashMap<String, HashSet<String>> = HashMap::new();
-    for owner in repos_by_owner.keys() {
-        let registry = owner.split('/').next().unwrap_or(owner).to_string();
+    for (owner, registry) in &registry_of_owner {
         owners_by_registry
-            .entry(registry)
+            .entry(registry.clone())
             .or_default()
             .insert(owner.clone());
     }

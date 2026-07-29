@@ -179,11 +179,9 @@ fn render_directory_layout(
     out.push_str("```\n");
     out.push_str(&format!("{}/\n", ctx.primary_path().display()));
 
-    // List registry dirs
-    let registries = ["github", "gitlab", "bitbucket"];
-    for reg in &registries {
-        let reg_path = ctx.primary_path().join(reg);
-        if reg_path.is_dir() {
+    for name in crate::registry::builtin_registry_names() {
+        let reg = name.as_str();
+        if ctx.primary_path().join(reg).is_dir() {
             out.push_str(&format!("  {reg}/           # {reg} repos\n"));
         }
     }

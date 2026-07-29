@@ -15,7 +15,7 @@ use crate::selector::RepoFilter;
 use crate::vcs::{
     vcs_for, HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
 };
-use crate::workspace::{Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{member_checkout_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -219,7 +219,7 @@ fn update_for_project(
         .iter_entries()
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, entry)| {
-            let abs = resolve_repo_dir(rp, primary_root, workweave_dir);
+            let abs = member_checkout_dir(rp, primary_root, workweave_dir);
             let vcs = vcs_for(entry.vcs_type);
             let old_sha = vcs
                 .head_revision(&abs)
@@ -445,22 +445,6 @@ fn update_for_project(
     Ok(())
 }
 
-/// Resolve the on-disk path for a repo, preferring the workweave overlay
-/// when the repo exists there, falling back to `primary_root`.
-fn resolve_repo_dir(
-    repo_path: &RepoPath,
-    primary_root: &Path,
-    workweave_dir: Option<&Path>,
-) -> PathBuf {
-    if let Some(wd) = workweave_dir {
-        let candidate = wd.join(repo_path.as_path());
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    primary_root.join(repo_path.as_path())
-}
-
 /// Per-repo worker: `git fetch --all --tags`, resolve the role-conventional
 /// remote branch, then advance the checkout onto it ([`advance_checkout`]).
 ///
@@ -482,12 +466,10 @@ fn advance_one(
     reporter: &Reporter<'_>,
     use_reporter: bool,
 ) -> RepoOutcome {
-    let repo_dir = resolve_repo_dir(repo_path, primary_root, workweave_dir);
+    let repo_dir = member_checkout_dir(repo_path, primary_root, workweave_dir);
     // Which checkout this run is advancing decides which ref is the legal
     // object of the MOVE — the canonical's tracking counterpart, or the
-    // workweave's ephemeral ref. `resolve_repo_dir`
-    // prefers the workweave's slot only when the member is materialized
-    // there, so the answer is per repo, not per invocation.
+    // workweave's ephemeral ref.
     let in_workweave = workweave_dir.is_some_and(|wd| repo_dir.starts_with(wd));
 
     if !repo_dir.exists() {

@@ -71,19 +71,11 @@ pub fn generate_lock(
     let mut repositories = BTreeMap::new();
 
     for (repo_path, entry) in &manifest.repositories {
-        // Determine the actual on-disk path for this repo.
-        // In a workweave, repos live under the workweave directory; in primary, under root.
-        let repo_dir = if let Some((_, wd)) = workweave {
-            let candidate = wd.join(repo_path.as_path());
-            if candidate.exists() {
-                candidate
-            } else {
-                // Fall back to primary if the repo doesn't exist in the workweave
-                workspace_root.join(repo_path.as_path())
-            }
-        } else {
-            workspace_root.join(repo_path.as_path())
-        };
+        let repo_dir = crate::workspace::member_checkout_dir(
+            repo_path,
+            workspace_root,
+            workweave.map(|(_, wd)| wd),
+        );
 
         let vcs = vcs_for(entry.vcs_type);
 

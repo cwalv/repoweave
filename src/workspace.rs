@@ -26,7 +26,7 @@
 
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
-use crate::registry::{builtin_registries, Registry};
+use crate::registry::{builtin_registries, builtin_registry_names, Registry};
 use crate::vcs::Vcs;
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -175,12 +175,31 @@ pub enum Checkout {
 
 /// Well-known directory names that identify a workspace root.
 fn workspace_marker_names() -> Vec<String> {
-    let mut names: Vec<String> = builtin_registries()
+    let mut names: Vec<String> = builtin_registry_names()
         .iter()
-        .map(|r| r.name().as_str().to_owned())
+        .map(|n| n.as_str().to_owned())
         .collect();
     names.push("projects".to_string());
     names
+}
+
+/// Where a manifest member's checkout is for this run.
+///
+/// A workweave holds worktrees only for the members materialized in it, so
+/// the answer is per member, not per invocation: the workweave's slot when
+/// it exists on disk, primary's canonical clone otherwise.
+pub fn member_checkout_dir(
+    repo_path: &RepoPath,
+    primary_root: &Path,
+    workweave_dir: Option<&Path>,
+) -> PathBuf {
+    if let Some(wd) = workweave_dir {
+        let candidate = wd.join(repo_path.as_path());
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    primary_root.join(repo_path.as_path())
 }
 
 /// Returns true if `dir` looks like a workspace root (contains projects/ or
