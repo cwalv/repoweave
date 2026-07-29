@@ -70,14 +70,18 @@ fn the_workweave_arm_cannot_be_assembled_from_a_marker() {
 
 #[test]
 fn the_primary_arm_cannot_be_assembled_from_a_pointer() {
+    // Every field is supplied. A literal that omits one fails for the
+    // uninteresting reason instead, and would keep failing after the fields
+    // it does name became public.
     assert_fails_with(
         "E0451",
         "the primary arm is projected from an observation, not declared",
         r#"
         use repoweave::manifest::ProjectName;
         use repoweave::workspace::{PrimaryIdentity, WeaveRootIdentity};
-        pub fn forge(selection: Option<ProjectName>) -> WeaveRootIdentity {
-            WeaveRootIdentity::Primary(PrimaryIdentity { selection })
+        use std::path::PathBuf;
+        pub fn forge(root: PathBuf, selection: Option<ProjectName>) -> WeaveRootIdentity {
+            WeaveRootIdentity::Primary(PrimaryIdentity { root, selection })
         }
         "#,
     );

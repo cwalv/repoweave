@@ -73,6 +73,11 @@ pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
 #[derive(Debug, Clone)]
 pub struct WorkspaceContext {
     primary_root: PathBuf,
+    /// The witness for [`PrimaryIdentity::select_project`], present exactly
+    /// when the walk landed on a primary root. A workweave resolves through
+    /// the marker and so has none, which is what makes "select a project from
+    /// inside a workweave" unwritable rather than merely refused.
+    primary_identity: Option<PrimaryIdentity>,
     /// Which kind of checkout the origin dir resolved into: the primary,
     /// or a specific workweave.
     pub checkout: Checkout,
@@ -313,24 +318,15 @@ pub const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
 /// The marker file naming the project a **workweave** root belongs to.
 pub const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
 
-/// Whether `root` is a workweave root — i.e. carries the marker file.
-///
-/// A raw existence test, not a parse: a legacy or hand-mangled marker still
-/// makes the directory a workweave root for the purpose of the exclusivity
-/// rule below. Reading the marker's *contents* is [`WorkweaveMarker::read`],
-/// which refuses a legacy shape.
-pub fn is_workweave_root(root: &Path) -> bool {
-    root.join(WORKWEAVE_MARKER_FILE).exists()
-}
-
 /// Read the active project from the `.rwv-active` file in the workspace root.
 ///
 /// Returns `None` if the file does not exist or is empty.
 ///
 /// This reads the **pointer specifically**, not "the project this root
-/// presents" — see [`read_weave_root_project`] for that. Reach for this one
-/// only where the pointer file itself is the subject (doctor's stale-pointer
-/// check, `deactivate`'s removal).
+/// presents" — [`RootObservation::presented_project`] is that question, and
+/// answers it for either kind of root. Reach for this one only where the
+/// pointer file itself is the subject (doctor's stale-pointer check,
+/// `deactivate`'s removal).
 pub fn read_active_project(root: &Path) -> Option<ProjectName> {
     let path = root.join(ACTIVE_PROJECT_FILE);
     let content = std::fs::read_to_string(&path).ok()?;
@@ -339,58 +335,6 @@ pub fn read_active_project(root: &Path) -> Option<ProjectName> {
         return None;
     }
     ProjectName::new(trimmed).ok()
-}
-
-/// The project a weave root presents, read from whichever file names it.
-///
-/// `.rwv-active` and `.rwv-workweave` are **mutually exclusive** and occupy
-/// one tier of the resolution chain, not two: a primary root carries the
-/// pointer, a workweave root carries the marker, never both. This function is
-/// that tier — ask it "which project does this directory present?" and it
-/// consults the one file that can answer for this kind of root.
-///
-/// The marker is checked first so a tree that has somehow acquired both
-/// answers with the structural fact rather than the ambient one; that
-/// ordering is a tiebreak for a state `rwv doctor` reports as
-/// [`CheckViolation::WeaveRootIdentityConflict`], not a precedence the design
-/// relies on.
-///
-/// A legacy marker (missing `parent:`) still names its project, and this
-/// function returns it: the caller is asking which project the root presents,
-/// which the legacy shape answers perfectly well. `WorkweaveMarker::read`'s
-/// refusal exists to stop *parent-chain* consumers, and re-refusing here would
-/// make surfacing collapse on a workweave that `rwv doctor --fix` can migrate.
-///
-/// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
-pub fn read_weave_root_project(root: &Path) -> Option<ProjectName> {
-    let marker_path = root.join(WORKWEAVE_MARKER_FILE);
-    if marker_path.exists() {
-        let content = std::fs::read_to_string(&marker_path).ok()?;
-        let raw: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
-        let project = raw.get("project")?.as_str()?.trim();
-        if project.is_empty() {
-            return None;
-        }
-        return ProjectName::new(project).ok();
-    }
-    read_active_project(root)
-}
-
-/// Write the active project to the `.rwv-active` file in the workspace root.
-///
-/// **`root` must be a primary root.** The pointer is project *selection*, and
-/// selection is primary-only: a workweave's project is fixed at creation by
-/// its `.rwv-workweave` marker and cannot be switched. Writing the pointer
-/// into a workweave root would put a second, unread copy of the workweave's
-/// own identity beside the marker — the state `rwv doctor` reports as
-/// [`CheckViolation::WeaveRootIdentityConflict`]. Callers establish the
-/// precondition before calling; [`is_workweave_root`] is the test.
-///
-/// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
-pub fn set_active_project(root: &Path, project: &ProjectName) -> anyhow::Result<()> {
-    let path = root.join(ACTIVE_PROJECT_FILE);
-    std::fs::write(&path, format!("{}\n", project.as_str()))
-        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// Scan registry directories under `root` for VCS repos on disk.
@@ -522,8 +466,8 @@ impl WorkspaceSession {
     /// derives: a session scans a root without knowing which [`Checkout`]
     /// resolved it, so the kind travels in from whichever caller resolved
     /// one — via [`Checkout::kind`] — or, for the callers that never
-    /// resolve a `Checkout` at all, from [`is_workweave_root`] on the same
-    /// root.
+    /// resolve a `Checkout` at all, off the [`RootObservation`] they read
+    /// the root's presented project from anyway.
     pub fn context_base<'a>(
         &'a self,
         project: &'a ProjectName,
@@ -682,9 +626,7 @@ impl RootSite {
             WeaveRootIdentity::Workweave(identity) => {
                 self.by_marker(identity.into_marker(), project_override)
             }
-            WeaveRootIdentity::Primary(identity) => {
-                Ok(self.by_pointer(identity.into_selection(), project_override))
-            }
+            WeaveRootIdentity::Primary(identity) => Ok(self.by_pointer(identity, project_override)),
         }
     }
 
@@ -716,6 +658,7 @@ impl RootSite {
         Ok(WorkspaceContext {
             cwd_project_hint: detect_project(&self.cwd, &marker.primary),
             primary_root: marker.primary,
+            primary_identity: None,
             checkout: Checkout::Workweave {
                 name,
                 dir: self.dir,
@@ -733,12 +676,12 @@ impl RootSite {
     /// error.
     fn by_pointer(
         self,
-        selection: Option<ProjectName>,
+        identity: PrimaryIdentity,
         project_override: Option<ProjectName>,
     ) -> WorkspaceContext {
         let (project, provenance) = match project_override {
             Some(p) => (Some(p), Some(ProjectProvenance::Flag)),
-            None => match selection {
+            None => match identity.selection.clone() {
                 Some(p) => (Some(p), Some(ProjectProvenance::ActiveFile)),
                 None => (None, None),
             },
@@ -746,6 +689,7 @@ impl RootSite {
         WorkspaceContext {
             cwd_project_hint: detect_project(&self.cwd, &self.dir),
             primary_root: self.dir,
+            primary_identity: Some(identity),
             checkout: Checkout::Primary { project },
             project_provenance: provenance,
         }
@@ -1015,6 +959,16 @@ impl WorkspaceContext {
     /// under the primary regardless of where CWD currently is.
     pub fn primary_path(&self) -> &Path {
         &self.primary_root
+    }
+
+    /// The witness that permits project selection, or `None` when the walk
+    /// landed on a workweave root.
+    ///
+    /// `None` is the whole of "activate has no meaning here": the verb that
+    /// writes the pointer asks for the witness, and a workweave answers by
+    /// not having one.
+    pub fn primary_identity(&self) -> Option<&PrimaryIdentity> {
+        self.primary_identity.as_ref()
     }
 
     /// The directory CWD is actually in: the primary path when in a weave,
@@ -1498,7 +1452,10 @@ pub enum RootObservation {
     Workweave { marker: WorkweaveMarker },
     /// Workspace-shaped, no marker. `selection` is the `.rwv-active` pointer,
     /// which a primary root may legitimately be without.
-    Primary { selection: Option<ProjectName> },
+    Primary {
+        root: PathBuf,
+        selection: Option<ProjectName>,
+    },
     /// Both files present, marker verified. The pointer is duplicate identity
     /// no writer produces — a hygiene violation, not an ambiguity, since the
     /// marker remains the sole discriminator between the two kinds of root.
@@ -1560,6 +1517,7 @@ pub fn observe_root(dir: &Path) -> anyhow::Result<Option<RootObservation>> {
                 return Ok(None);
             }
             RootObservation::Primary {
+                root: dir.to_path_buf(),
                 selection: read_active_project(dir),
             }
         }
@@ -1574,8 +1532,11 @@ impl RootObservation {
             RootObservation::Workweave { marker } => {
                 Ok(WeaveRootIdentity::Workweave(WorkweaveIdentity { marker }))
             }
-            RootObservation::Primary { selection } => {
-                Ok(WeaveRootIdentity::Primary(PrimaryIdentity { selection }))
+            RootObservation::Primary { root, selection } => {
+                Ok(WeaveRootIdentity::Primary(PrimaryIdentity {
+                    root,
+                    selection,
+                }))
             }
             RootObservation::Disputed { root, .. } => anyhow::bail!(
                 "{} and {} both exist: a weave root carries the workweave marker \
@@ -1604,9 +1565,25 @@ impl RootObservation {
     pub fn presented_project(&self) -> Option<&ProjectName> {
         match self {
             RootObservation::Workweave { marker } => Some(&marker.project),
-            RootObservation::Primary { selection } => selection.as_ref(),
+            RootObservation::Primary { selection, .. } => selection.as_ref(),
             RootObservation::Disputed { marker, .. } => Some(&marker.project),
             RootObservation::MarkerUnverifiable { project_hint, .. } => project_hint.as_ref(),
+        }
+    }
+
+    /// Which kind of container this root is, for [`IntegrationContext`].
+    ///
+    /// Lenient on the same three arms as [`Self::presented_project`], and for
+    /// the same reason: a root whose marker is disputed or unmigrated is a
+    /// workweave to every integration that asks, because the alternative is
+    /// handing it a primary's authority on the strength of the claim its own
+    /// marker failed to witness.
+    ///
+    /// [`IntegrationContext`]: crate::integration::IntegrationContext
+    pub fn container_kind(&self) -> ContainerKind {
+        match self {
+            RootObservation::Primary { .. } => ContainerKind::Primary,
+            _ => ContainerKind::Workweave,
         }
     }
 }
@@ -1635,14 +1612,39 @@ impl WorkweaveIdentity {
     }
 }
 
-#[derive(Debug)]
+/// A primary root, and the only thing that can select a project.
+///
+/// The root travels inside the witness rather than beside it. A witness that
+/// only attested "some primary root exists" would leave the directory a free
+/// argument at the write, so the caller could still name a marker root and
+/// nothing in the type would object.
+#[derive(Debug, Clone)]
 pub struct PrimaryIdentity {
+    root: PathBuf,
     selection: Option<ProjectName>,
 }
 
 impl PrimaryIdentity {
     pub fn into_selection(self) -> Option<ProjectName> {
         self.selection
+    }
+
+    /// Write the `.rwv-active` pointer — project SELECTION, and rwv's sole
+    /// write path for it.
+    ///
+    /// Selection is primary-only: a workweave's project is fixed at creation
+    /// by its `.rwv-workweave` marker and cannot be switched, so a pointer
+    /// there would be a second, unread copy of the workweave's own identity
+    /// beside the marker — the state `rwv doctor` reports as
+    /// [`CheckViolation::WeaveRootIdentityConflict`]. That is why this hangs
+    /// off the witness instead of taking a root: the arm that carries a
+    /// marker has no such method, so the write is not expressible there.
+    ///
+    /// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
+    pub fn select_project(&self, project: &ProjectName) -> anyhow::Result<()> {
+        let path = self.root.join(ACTIVE_PROJECT_FILE);
+        std::fs::write(&path, format!("{}\n", project.as_str()))
+            .with_context(|| format!("failed to write {}", path.display()))
     }
 }
 
@@ -1947,40 +1949,69 @@ mod tests {
     }
 
     // ========================================================================
-    // set_active_project
+    // PrimaryIdentity::select_project
     // ========================================================================
 
+    /// The witness for `root`, minted the only way there is.
+    fn witness(root: &Path) -> PrimaryIdentity {
+        match observe_root(root).unwrap().unwrap().require_exclusive() {
+            Ok(WeaveRootIdentity::Primary(identity)) => identity,
+            other => panic!("{} is not a primary root: {other:?}", root.display()),
+        }
+    }
+
     #[test]
-    fn set_active_project_writes_file() {
+    fn select_project_writes_file() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project = ProjectName::new("web-app").unwrap();
-        set_active_project(&root, &project).unwrap();
+        witness(&root).select_project(&project).unwrap();
 
         let content = std::fs::read_to_string(root.join(".rwv-active")).unwrap();
         assert_eq!(content, "web-app\n");
     }
 
     #[test]
-    fn set_active_project_overwrites_existing() {
+    fn select_project_overwrites_existing() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        set_active_project(&root, &ProjectName::new("old-project").unwrap()).unwrap();
-        set_active_project(&root, &ProjectName::new("new-project").unwrap()).unwrap();
+        let identity = witness(&root);
+        identity
+            .select_project(&ProjectName::new("old-project").unwrap())
+            .unwrap();
+        identity
+            .select_project(&ProjectName::new("new-project").unwrap())
+            .unwrap();
 
         let project = read_active_project(&root).expect("should return project");
         assert_eq!(project.as_str(), "new-project");
     }
 
     #[test]
-    fn set_then_read_round_trips() {
+    fn select_then_read_round_trips() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project = ProjectName::new("mobile-app").unwrap();
-        set_active_project(&root, &project).unwrap();
+        witness(&root).select_project(&project).unwrap();
 
         let read_back = read_active_project(&root).expect("should return project");
         assert_eq!(read_back, project);
+    }
+
+    /// The witness writes to the root it was observed at, not to a root the
+    /// caller names — there is no second argument to disagree with the first.
+    #[test]
+    fn select_project_writes_to_the_root_the_witness_came_from() {
+        let tmp = tempfile::tempdir().unwrap();
+        let observed = make_workspace(tmp.path(), "ws");
+        let other = make_workspace(tmp.path(), "elsewhere");
+
+        witness(&observed)
+            .select_project(&ProjectName::new("web-app").unwrap())
+            .unwrap();
+
+        assert!(observed.join(".rwv-active").exists());
+        assert!(!other.join(".rwv-active").exists());
     }
 
     // ========================================================================
@@ -3450,8 +3481,12 @@ mod tests {
         write_pointer(&root, "web-app");
 
         match observe(&root) {
-            RootObservation::Primary { selection } => {
+            RootObservation::Primary {
+                root: observed,
+                selection,
+            } => {
                 assert_eq!(selection.as_ref().map(ProjectName::as_str), Some("web-app"));
+                assert_eq!(observed, root);
             }
             other => panic!("expected Primary, got {other:?}"),
         }
@@ -3463,7 +3498,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
 
         match observe(&root) {
-            RootObservation::Primary { selection } => assert!(selection.is_none()),
+            RootObservation::Primary { selection, .. } => assert!(selection.is_none()),
             other => panic!("expected Primary, got {other:?}"),
         }
     }

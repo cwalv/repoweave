@@ -225,6 +225,32 @@ fn activate_refuses_inside_a_workweave() {
     );
 }
 
+/// The same refusal via `-w` addressing, which reaches the workweave without
+/// standing in it. The guard is the absence of a selection witness on the
+/// resolved context, so it cannot depend on how the context was addressed —
+/// but that is an argument, and this is the observation.
+#[test]
+fn activate_refuses_a_workweave_addressed_by_flag() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+    let ww = create_workweave(&ws, "demo", "w1");
+
+    let out = rwv()
+        .args(["-w", "demo--w1", "activate", "demo"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("has no effect in a workweave"),
+        "expected a refusal naming the workweave; got: {stderr}"
+    );
+    assert!(
+        !has_pointer(&ww),
+        "the refusal must not leave a pointer behind"
+    );
+}
+
 /// The primary root keeps its pointer — the rule removes the workweave copy,
 /// not the selector itself.
 #[test]
@@ -298,6 +324,112 @@ fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
          `demo.code-workspace` at the workweave root; a missing symlink here \
          means the intent-mode gate read `.rwv-active` (absent in a \
          workweave) instead of the file that governs this root"
+    );
+}
+
+/// `rwv update` reaches the same gate by a different route than `rwv add` —
+/// through `update_for_project`, which also hands the surfacing set the
+/// container kind off its own resolved checkout. Both halves are observable
+/// here: a wrong gate answer removes the symlink, a wrong kind changes what
+/// the integration set declares.
+#[test]
+fn update_still_surfaces_inside_a_pointerless_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+
+    // `make_workspace` builds the member in place, so it has no `origin` and
+    // nothing for `rwv update`'s advance loop to resolve `main` against. The
+    // manifest URL already names this directory; making it the remote too is
+    // what lets the run reach the surfacing step this test is about.
+    let member = ws.join("github/org/repo");
+    git(
+        &[
+            "remote",
+            "add",
+            "origin",
+            &format!("file://{}", member.display()),
+        ],
+        &member,
+    );
+
+    let ww = create_workweave(&ws, "demo", "w1");
+
+    let surfaced = ww.join("demo.code-workspace");
+    let _ = std::fs::remove_file(&surfaced);
+
+    rwv().args(["update"]).current_dir(&ww).assert().success();
+
+    assert!(
+        !has_pointer(&ww),
+        "`rwv update` inside a workweave must not leave a `.rwv-active` behind"
+    );
+    assert!(
+        surfaced.symlink_metadata().is_ok(),
+        "`rwv update` inside a workweave must still surface \
+         `demo.code-workspace` at the workweave root"
+    );
+}
+
+/// `doctor --fix`'s SURFACING repair is a third route to the same question,
+/// and the one with no `rwv.yaml` edit behind it: it re-runs the surfacing
+/// primitive against the weave it scanned, deciding what to expect from what
+/// that root presents. A workweave carries no pointer, so a repair that asked
+/// for one would find the root presents nothing, expect no symlinks, and
+/// report a clean tree over a broken one.
+///
+/// The sibling content-repair arm is pinned by
+/// `doctor_workweave_content_fix_isolation_test`, which asserts the
+/// regenerated file lands in the workweave's own project dir.
+#[test]
+fn doctor_fix_repairs_surfacing_inside_a_pointerless_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+
+    // The project dir has to be a git repo before the fork, so the workweave
+    // gets a worktree of it rather than a plain directory — `doctor --fix`
+    // plants a merge driver in the project repo and errors out on anything
+    // else, which would mask the arm under test.
+    let project_dir = ws.join("projects/demo");
+    git(&["init", "--initial-branch=main"], &project_dir);
+    git(&["config", "user.email", "test@test.com"], &project_dir);
+    git(&["config", "user.name", "Test"], &project_dir);
+    git(&["add", "-A"], &project_dir);
+    git(&["commit", "-m", "manifest"], &project_dir);
+
+    let ww = create_workweave(&ws, "demo", "w1");
+
+    // Creation surfaces only files that already exist in the project dir, so
+    // the first repair is what authors the ecosystem file and links it. The
+    // second is the arm under test.
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ww)
+        .assert()
+        .success();
+
+    let surfaced = ww.join("demo.code-workspace");
+    assert!(
+        surfaced.symlink_metadata().is_ok(),
+        "`rwv doctor --fix` should have authored and surfaced \
+         `demo.code-workspace` in the workweave"
+    );
+    std::fs::remove_file(&surfaced).unwrap();
+
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ww)
+        .assert()
+        .success();
+
+    assert!(
+        surfaced.symlink_metadata().is_ok(),
+        "`rwv doctor --fix` inside a workweave must re-surface \
+         `demo.code-workspace`; a still-missing symlink means the repair \
+         read `.rwv-active` to decide what this root presents"
+    );
+    assert!(
+        !has_pointer(&ww),
+        "the repair must not author a pointer into the workweave root"
     );
 }
 

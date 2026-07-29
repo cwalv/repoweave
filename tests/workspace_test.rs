@@ -1,6 +1,7 @@
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workspace::{
-    parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name,
+    observe_root, parse_weave_dir_name, read_active_project, weave_dir_name, PrimaryIdentity,
+    WeaveRootIdentity,
 };
 
 mod common;
@@ -163,23 +164,42 @@ fn read_active_project_returns_none_for_empty_file() {
 }
 
 // ============================================================================
-// set_active_project — writes .rwv-active file
+// PrimaryIdentity::select_project — writes .rwv-active file
 // ============================================================================
 
+/// A workspace-shaped root, which is what `observe_root` needs before it will
+/// classify a directory as primary at all. The bare tempdir these tests used
+/// while selection took a `&Path` no longer reaches the write.
+fn primary_root(parent: &std::path::Path) -> std::path::PathBuf {
+    let root = parent.join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    root
+}
+
+fn witness(root: &std::path::Path) -> PrimaryIdentity {
+    match observe_root(root).unwrap().unwrap().require_exclusive() {
+        Ok(WeaveRootIdentity::Primary(identity)) => identity,
+        other => panic!("{} is not a primary root: {other:?}", root.display()),
+    }
+}
+
 #[test]
-fn set_active_project_creates_file() {
+fn select_project_creates_file() {
     let tmp = common::tempdir().unwrap();
+    let root = primary_root(tmp.path());
     let project = ProjectName::new("web-app").unwrap();
-    set_active_project(tmp.path(), &project).unwrap();
-    let content = std::fs::read_to_string(tmp.path().join(".rwv-active")).unwrap();
+    witness(&root).select_project(&project).unwrap();
+    let content = std::fs::read_to_string(root.join(".rwv-active")).unwrap();
     assert_eq!(content, "web-app\n");
 }
 
 #[test]
-fn set_active_project_round_trips_with_read() {
+fn select_project_round_trips_with_read() {
     let tmp = common::tempdir().unwrap();
+    let root = primary_root(tmp.path());
     let project = ProjectName::new("mobile-app").unwrap();
-    set_active_project(tmp.path(), &project).unwrap();
-    let result = read_active_project(tmp.path()).expect("should read back");
+    witness(&root).select_project(&project).unwrap();
+    let result = read_active_project(&root).expect("should read back");
     assert_eq!(result, project);
 }

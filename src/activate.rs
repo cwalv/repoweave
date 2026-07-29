@@ -17,9 +17,10 @@
 //!    files in the project directory.
 //! 4. Writing `.rwv-active` — **at a primary root only**. A workweave root's
 //!    project is structural, fixed by its `.rwv-workweave` marker at
-//!    creation; the two files are mutually exclusive, so step 4 is skipped
-//!    for a workweave root and steps 1–3 (which are weave-agnostic) are the
-//!    whole of what `activate_workweave` does.
+//!    creation; the two files are mutually exclusive. Steps 1–3 are
+//!    weave-agnostic and are the whole of what `activate_workweave` does;
+//!    step 4 sits outside them, in `activate_with_options`, where a
+//!    `PrimaryIdentity` witness is what makes it expressible at all.
 //!
 //! **Regeneration** — intent mode — is a different operation on a different
 //! scope: integrations author their managed/generated files into the target
@@ -42,8 +43,7 @@ use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
 use crate::workspace::{
-    is_workweave_root, read_weave_root_project, set_active_project, Checkout, ContainerKind,
-    WorkspaceContext, WorkspaceSession,
+    observe_root, ContainerKind, RootObservation, WorkspaceContext, WorkspaceSession,
 };
 
 /// Which class of verb is driving activation.
@@ -198,24 +198,27 @@ pub struct ActivateOptions {
 }
 
 /// Run activate with options. Public so the CLI can pass `--no-install`.
+///
+/// The witness lookup is the workweave guard. Activate has no meaning inside
+/// a workweave — the project is fixed at creation time (`rwv workweave
+/// <project> create <name>`), so there is no switch to make, and silently
+/// retargeting primary from inside one (the status quo before this fix)
+/// mutated primary's `.rwv-active` and weave-root symlinks as a side effect
+/// of a command run from an unrelated workweave. A workweave has no witness,
+/// so the two questions are one lookup.
 pub fn activate_with_options(
     project: &str,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    // Guard: activate has no meaning inside a workweave. The project is fixed
-    // at creation time (`rwv workweave <project> create <name>`), so there is
-    // no project switch to make. Silently operating on primary from inside a
-    // workweave (the status-quo before this fix) was surprising and unsafe —
-    // it mutated primary's .rwv-active and weave-root symlinks as a side
-    // effect of a command run from an unrelated workweave.
-    if let Checkout::Workweave { .. } = &ctx.checkout {
-        anyhow::bail!(
+    let primary = match ctx.primary_identity() {
+        Some(identity) => identity,
+        None => anyhow::bail!(
             "rwv activate has no effect in a workweave (project is fixed at creation). \
              cd to primary ({}) and rerun.",
             ctx.primary_path().display()
-        );
-    }
+        ),
+    };
 
     activate_at(
         ctx.primary_path(),
@@ -223,8 +226,13 @@ pub fn activate_with_options(
         false,
         opts,
         ActivationMode::Context,
-        ctx.checkout.kind(),
-    )
+        ContainerKind::Primary,
+    )?;
+
+    // Project SELECTION, after activation rather than inside it. An activate
+    // hook that errored bails above, so a partially-activated workspace
+    // still does not record success.
+    primary.select_project(&ProjectName::new(project)?)
 }
 
 /// Shared activation logic.
@@ -309,21 +317,26 @@ fn activate_at(
     }
 
     // Everything below acts on the weave ROOT. Which project the root
-    // presents comes from `read_weave_root_project` — the single tier of the
-    // resolution chain, answering from `.rwv-workweave` in a workweave root
-    // and from `.rwv-active` at primary. Reading the pointer directly here
-    // would be wrong in a workweave, whose root carries no pointer: every
-    // intent verb (`add`, `remove`, `update`) and `doctor --fix` run inside
-    // one would take the early return below and silently skip surfacing.
+    // presents is `presented_project` — the single tier of the resolution
+    // chain, answering from `.rwv-workweave` in a workweave root and from
+    // `.rwv-active` at primary. Reading the pointer directly here would be
+    // wrong in a workweave, whose root carries no pointer: every intent verb
+    // (`add`, `remove`, `update`) and `doctor --fix` run inside one would
+    // take the early return below and silently skip surfacing.
     //
     // Intent mode regenerates a project's content without choosing it, so it
     // touches the root only when the target is already the project the root
     // presents — whose owned-file union the regeneration it just ran may have
     // changed.
-    if mode == ActivationMode::Intent
-        && read_weave_root_project(root).as_ref() != Some(&project_name)
-    {
-        return Ok(());
+    if mode == ActivationMode::Intent {
+        let observed = observe_root(root)?;
+        if observed
+            .as_ref()
+            .and_then(RootObservation::presented_project)
+            != Some(&project_name)
+        {
+            return Ok(());
+        }
     }
 
     // Surface the owner-scoped symlink set: compute the
@@ -358,25 +371,6 @@ fn activate_at(
     if !opts.no_install {
         let hook_issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         report_and_check_activate_hook_issues(&hook_issues)?;
-    }
-
-    // Project SELECTION — write the `.rwv-active` pointer. Primary-only, and
-    // this is the sole write path for it in rwv.
-    //
-    // A workweave root must not get one. Its project is structural, fixed by
-    // `.rwv-workweave` at creation, and the two files are mutually exclusive:
-    // one tier of the resolution chain, not two. A pointer here would be a
-    // second copy of the workweave's own identity that nothing reads and
-    // nothing keeps in agreement with the marker — the state `rwv doctor`
-    // reports as `weave-root-identity-conflict`.
-    //
-    // The condition is on the ROOT rather than on the caller because
-    // `activate_workweave` reaches this function in Context mode too: it
-    // wants the surfacing half of Context ("surface + verify, never author"),
-    // not the selection half, and selection is the half that has no meaning
-    // for the root it passes.
-    if mode == ActivationMode::Context && !is_workweave_root(root) {
-        set_active_project(root, &project_name)?;
     }
 
     Ok(())
@@ -558,9 +552,10 @@ fn remove_activation_symlinks_in(
 /// commands inside the workweave when they actually need a refresh.
 ///
 /// Context mode here buys the surfacing-and-verify half only. The project
-/// SELECTION half — writing `.rwv-active` — is skipped because
-/// `workweave_dir` is a workweave root, whose project the `.rwv-workweave`
-/// marker already names; see the tail of [`activate_at`].
+/// SELECTION half — writing `.rwv-active` — is not skipped so much as
+/// absent: it lives in [`activate_with_options`] behind a `PrimaryIdentity`,
+/// and `workweave_dir` is a workweave root, whose project the
+/// `.rwv-workweave` marker already names.
 pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
     activate_at(
         workweave_dir,
@@ -617,16 +612,6 @@ pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The [`ContainerKind`] of a bare `root`, for the two functions below that
-/// receive one without a resolved `Checkout` to read it from.
-fn container_kind_of(root: &Path) -> ContainerKind {
-    if is_workweave_root(root) {
-        ContainerKind::Workweave
-    } else {
-        ContainerKind::Primary
-    }
-}
-
 /// Compute the owner-scoped surfacing set for `project` at `root`: the union
 /// of `generated_files()` and `managed_files()` across all enabled
 /// integrations, mapping each file to the integration that declares it.
@@ -642,27 +627,22 @@ fn container_kind_of(root: &Path) -> ContainerKind {
 /// by path (`BTreeMap`), matching the deterministic ordering the previous
 /// `BTreeSet` provided to symlink creation.
 ///
-/// `compute_owned_set` and [`member_incompatibilities`] are reached with a
-/// bare `root: &Path`, from callers with no resolved `Checkout` to hand
-/// over — [`container_kind_of`] is the same marker test [`activate_at`]'s
-/// Context-mode tail already uses, and is what lets both keep that
-/// signature rather than widen it for a value neither currently reads back
-/// out of an integration.
+/// `kind` travels in for the same reason it does everywhere else: nothing
+/// here re-derives which sort of root `root` is. Callers that resolved a
+/// `Checkout` pass its kind; the three below that read `root`'s identity for
+/// its presented project take the kind off that same observation.
 fn compute_owned_set(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
+    kind: ContainerKind,
 ) -> std::collections::BTreeMap<String, String> {
     let session = WorkspaceSession::new(root);
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(
-        project,
-        &detection_cache,
-        manifest.workweave.as_ref(),
-        container_kind_of(root),
-    );
+    let ctx_base =
+        session.context_base(project, &detection_cache, manifest.workweave.as_ref(), kind);
     let default_config = IntegrationConfig::default();
 
     let mut owned: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
@@ -689,20 +669,25 @@ pub(crate) fn owned_paths(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
+    kind: ContainerKind,
 ) -> BTreeSet<String> {
-    compute_owned_set(root, project, manifest)
+    compute_owned_set(root, project, manifest, kind)
         .into_keys()
         .collect()
 }
 
 /// Compute the owner-scoped surfacing set for the project `root` currently
-/// presents, per [`read_weave_root_project`] — the pointer at primary, the
-/// marker in a workweave. Returns an empty set if `root` presents no project
-/// (in which case no symlinks are owned by rwv and nothing gets removed).
-/// This is the deactivate-side analogue of step 2 in [`activate_at`].
+/// presents — the pointer at primary, the marker in a workweave. Returns an
+/// empty set if `root` presents no project (in which case no symlinks are
+/// owned by rwv and nothing gets removed). This is the deactivate-side
+/// analogue of step 2 in [`activate_at`].
 fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
-    let active = match read_weave_root_project(root) {
-        Some(name) => name,
+    let observed = match observe_root(root)? {
+        Some(observation) => observation,
+        None => return Ok(BTreeSet::new()),
+    };
+    let active = match observed.presented_project() {
+        Some(name) => name.clone(),
         None => return Ok(BTreeSet::new()),
     };
     let manifest_path = root
@@ -713,7 +698,12 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         return Ok(BTreeSet::new());
     }
     let manifest = Manifest::from_path(&manifest_path)?;
-    Ok(owned_paths(root, &active, &manifest))
+    Ok(owned_paths(
+        root,
+        &active,
+        &manifest,
+        observed.container_kind(),
+    ))
 }
 
 /// Surface the owner-scoped symlink set for `project` into `root` (the
@@ -751,12 +741,19 @@ pub fn surface_symlinks(
     mode: SurfacingMode,
 ) -> anyhow::Result<()> {
     let project_dir = root.join("projects").join(project.as_str());
-    let presented = read_weave_root_project(root);
+    let observed = observe_root(root)?;
+    let presented = observed
+        .as_ref()
+        .and_then(RootObservation::presented_project)
+        .cloned();
+    let kind = observed
+        .as_ref()
+        .map_or(ContainerKind::Primary, RootObservation::container_kind);
     let presents_project = mode == SurfacingMode::Select || presented.as_ref() == Some(project);
 
     // 1. Collect the owner-scoped surfacing set, narrowed to the
     //    per-project-named paths when `project` is not what the root presents.
-    let owned = compute_owned_set(root, project, manifest);
+    let owned = compute_owned_set(root, project, manifest, kind);
     let mut new_owned: BTreeSet<String> = owned.keys().cloned().collect();
     if !presents_project {
         new_owned.retain(|file| is_project_named(file, project));
@@ -981,17 +978,14 @@ pub fn member_incompatibilities(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
+    kind: ContainerKind,
 ) -> Vec<crate::integration::Issue> {
     let session = WorkspaceSession::new(root);
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(
-        project,
-        &detection_cache,
-        manifest.workweave.as_ref(),
-        container_kind_of(root),
-    );
+    let ctx_base =
+        session.context_base(project, &detection_cache, manifest.workweave.as_ref(), kind);
     crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
 }
 
@@ -1032,8 +1026,17 @@ pub fn verify_surfacing(
     use crate::integration::{Issue, IssueKind, Severity};
 
     let project_dir = root.join("projects").join(project.as_str());
-    let presents_project = read_weave_root_project(root).as_ref() == Some(project);
-    let owned = compute_owned_set(root, project, manifest);
+    // `observe_root` is total, so the discarded error arm is unreachable; a
+    // root that answers nothing presents nothing, which is the same `None`.
+    let observed = observe_root(root).ok().flatten();
+    let presents_project = observed
+        .as_ref()
+        .and_then(RootObservation::presented_project)
+        == Some(project);
+    let kind = observed
+        .as_ref()
+        .map_or(ContainerKind::Primary, RootObservation::container_kind);
+    let owned = compute_owned_set(root, project, manifest, kind);
     let mut issues = Vec::new();
 
     if presents_project {

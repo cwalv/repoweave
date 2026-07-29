@@ -4,19 +4,25 @@
 //! an integration testing `workspace_root` for the workweave marker itself
 //! would be re-deriving a fact its caller already had.
 //!
-//! The needles are the two symbols a path-based re-derivation has to go
-//! through: `is_workweave_root` (the test) and `WORKWEAVE_MARKER_FILE` (the
-//! constant it tests against). Checking for the constant rather than the
-//! literal `.rwv-workweave` string avoids a false hit on the unrelated
-//! `.rwv-workweave-index` marker (a different file, read by `check.rs` and
-//! `workweave_index.rs`) — a substring match on the literal would catch it
-//! too, since it shares the shorter string as a prefix.
+//! The needle is the symbol a path-based re-derivation has to go through:
+//! `WORKWEAVE_MARKER_FILE`, the constant naming the file it would test for.
+//! Checking for the constant rather than the literal `.rwv-workweave` string
+//! avoids a false hit on the unrelated `.rwv-workweave-index` marker (a
+//! different file, read by `check.rs` and `workweave_index.rs`) — a substring
+//! match on the literal would catch it too, since it shares the shorter
+//! string as a prefix.
+//!
+//! This scan once carried `is_workweave_root` as a second needle. That
+//! function no longer exists anywhere in the crate, so the pin that it stays
+//! gone is crate-wide and lives in `weave_root_probes_stay_deleted_test.rs`;
+//! keeping it here would have left this file's vacuity guard asserting the
+//! presence of something deliberately deleted.
 
 mod common;
 
 use common::src_scan::production_lines;
 
-const NEEDLES: [&str; 2] = ["is_workweave_root", "WORKWEAVE_MARKER_FILE"];
+const NEEDLES: [&str; 1] = ["WORKWEAVE_MARKER_FILE"];
 
 #[test]
 fn workspace_rs_still_mints_the_needles_this_scan_looks_for() {
