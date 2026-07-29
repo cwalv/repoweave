@@ -569,10 +569,11 @@ impl Role {
 
     pub fn legacy_spelling_hint() -> String {
         format!(
-            "`role: {}` is no longer accepted (the role is spelled `{}`); \
-             run `rwv doctor --fix` to migrate manifests still using it",
-            Self::LEGACY_SPELLING,
-            Role::Owned.as_str()
+            "the `{legacy}` role spelling is no longer accepted (the role is \
+             spelled `{owned}`); run `rwv doctor --fix` to migrate manifests \
+             still using `role: {legacy}`",
+            legacy = Self::LEGACY_SPELLING,
+            owned = Role::Owned.as_str()
         )
     }
 }
@@ -1223,7 +1224,7 @@ impl Manifest {
             Ok(manifest) => Ok(manifest),
             Err(err) => {
                 if manifest_has_legacy_role_primary(content) {
-                    Err(anyhow::anyhow!("manifest {}", Role::legacy_spelling_hint()))
+                    Err(anyhow::anyhow!("{}", Role::legacy_spelling_hint()))
                 } else {
                     Err(err.into())
                 }
