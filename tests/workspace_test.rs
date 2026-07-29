@@ -178,7 +178,7 @@ fn primary_root(parent: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn witness(root: &std::path::Path) -> PrimaryIdentity {
-    match observe_root(root).unwrap().unwrap().require_exclusive() {
+    match observe_root(root).unwrap().require_exclusive() {
         Ok(WeaveRootIdentity::Primary(identity)) => identity,
         other => panic!("{} is not a primary root: {other:?}", root.display()),
     }

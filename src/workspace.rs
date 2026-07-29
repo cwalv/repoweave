@@ -429,20 +429,13 @@ pub struct WorkspaceSession {
 impl WorkspaceSession {
     /// Build a `WorkspaceSession` by running the standard scan triad:
     /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_project_paths()`.
-    ///
-    /// `observe_root` is total, so the discarded error arm is unreachable; a
-    /// directory that answers nothing is not a weave root of either kind, and
-    /// the primary shape is what every verb that reaches here already assumes
-    /// of an unmarked directory.
     pub fn new(root: &Path) -> Self {
         let registries = builtin_registries();
         let vcs = crate::vcs::probe_vcs();
         let repos_on_disk = scan_repos_on_disk(root, &registries, vcs.as_ref());
         let project_paths = discover_project_paths(root);
-        let container_kind = observe_root(root)
-            .ok()
-            .flatten()
-            .map_or(ContainerKind::Primary, |observed| observed.container_kind());
+        let container_kind =
+            observe_root(root).map_or(ContainerKind::Primary, |observed| observed.container_kind());
         Self {
             root: root.to_path_buf(),
             container_kind,
@@ -600,7 +593,7 @@ fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)>
 
     let mut current = cwd.as_path();
     loop {
-        if let Some(observation) = observe_root(current)? {
+        if let Some(observation) = observe_root(current) {
             let site = RootSite {
                 cwd: cwd.clone(),
                 dir: current.to_path_buf(),
@@ -1489,10 +1482,10 @@ pub enum RootObservation {
 
 /// Observe what identity evidence `dir` carries.
 ///
-/// `Ok(None)` is "not a root of either kind" — a containment walk continues
-/// past it. Every other answer is terminal for the walk, including the two
-/// that no verb may act on.
-pub fn observe_root(dir: &Path) -> anyhow::Result<Option<RootObservation>> {
+/// `None` is "not a root of either kind" — a containment walk continues past
+/// it. Every other answer is terminal for the walk, including the two that no
+/// verb may act on.
+pub fn observe_root(dir: &Path) -> Option<RootObservation> {
     let marker_path = dir.join(WORKWEAVE_MARKER_FILE);
     let observation = match observe_marker(&marker_path) {
         MarkerPresence::Defective {
@@ -1525,7 +1518,7 @@ pub fn observe_root(dir: &Path) -> anyhow::Result<Option<RootObservation>> {
         }
         MarkerPresence::Absent => {
             if !is_workspace_root(dir) {
-                return Ok(None);
+                return None;
             }
             RootObservation::Primary {
                 root: dir.to_path_buf(),
@@ -1533,7 +1526,7 @@ pub fn observe_root(dir: &Path) -> anyhow::Result<Option<RootObservation>> {
             }
         }
     };
-    Ok(Some(observation))
+    Some(observation)
 }
 
 impl RootObservation {
@@ -1965,7 +1958,7 @@ mod tests {
 
     /// The witness for `root`, minted the only way there is.
     fn witness(root: &Path) -> PrimaryIdentity {
-        match observe_root(root).unwrap().unwrap().require_exclusive() {
+        match observe_root(root).unwrap().require_exclusive() {
             Ok(WeaveRootIdentity::Primary(identity)) => identity,
             other => panic!("{} is not a primary root: {other:?}", root.display()),
         }
@@ -3509,9 +3502,7 @@ mod tests {
     }
 
     fn observe(dir: &Path) -> RootObservation {
-        observe_root(dir)
-            .unwrap()
-            .unwrap_or_else(|| panic!("expected an observation at {}", dir.display()))
+        observe_root(dir).unwrap_or_else(|| panic!("expected an observation at {}", dir.display()))
     }
 
     #[test]
@@ -3685,7 +3676,7 @@ mod tests {
         let plain = tmp.path().join("just-a-dir");
         std::fs::create_dir_all(&plain).unwrap();
 
-        assert!(observe_root(&plain).unwrap().is_none());
+        assert!(observe_root(&plain).is_none());
     }
 
     /// A pointer outside a workspace-shaped tree names nothing: `.rwv-active`
@@ -3698,7 +3689,7 @@ mod tests {
         std::fs::create_dir_all(&plain).unwrap();
         write_pointer(&plain, "web-app");
 
-        assert!(observe_root(&plain).unwrap().is_none());
+        assert!(observe_root(&plain).is_none());
     }
 
     // ========================================================================

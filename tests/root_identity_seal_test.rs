@@ -44,7 +44,7 @@ fn the_harness_can_compile_a_legal_snippet() {
         use repoweave::workspace::{observe_root, WeaveRootIdentity};
         use std::path::Path;
         pub fn legal(dir: &Path) -> Option<WeaveRootIdentity> {
-            observe_root(dir).ok()??.require_exclusive().ok()
+            observe_root(dir)?.require_exclusive().ok()
         }
         "#,
     );

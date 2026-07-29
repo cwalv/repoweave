@@ -2715,11 +2715,11 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
     // `Workweave`, `Primary`, and `None` all require the pointer or the
     // marker to be absent, so they cannot come back here.
     let marker = match observe_root(root) {
-        Ok(Some(RootObservation::MarkerUnverifiable {
+        Some(RootObservation::MarkerUnverifiable {
             marker_path,
             defect,
             ..
-        })) => {
+        }) => {
             return Some(CheckViolation::WeaveRootIdentityConflict {
                 root: root.to_path_buf(),
                 pointer_project,
@@ -2729,8 +2729,8 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
                 },
             })
         }
-        Ok(Some(RootObservation::Disputed { marker, .. })) => marker,
-        Ok(_) | Err(_) => return None,
+        Some(RootObservation::Disputed { marker, .. }) => marker,
+        _ => return None,
     };
 
     let primary_canonical = primary_root

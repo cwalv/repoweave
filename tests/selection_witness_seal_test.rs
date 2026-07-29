@@ -40,7 +40,7 @@ fn the_harness_can_compile_a_legal_selection() {
         use repoweave::workspace::{observe_root, WeaveRootIdentity};
         use std::path::Path;
         pub fn legal(dir: &Path, project: &ProjectName) -> bool {
-            match observe_root(dir).ok().flatten() {
+            match observe_root(dir) {
                 Some(observation) => match observation.require_exclusive() {
                     Ok(WeaveRootIdentity::Primary(primary)) => {
                         primary.select_project(project).is_ok()

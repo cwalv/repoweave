@@ -305,7 +305,7 @@ fn activate_at(
     // presents — whose owned-file union the regeneration it just ran may have
     // changed.
     if mode == ActivationMode::Intent {
-        let observed = observe_root(root)?;
+        let observed = observe_root(root);
         if observed
             .as_ref()
             .and_then(RootObservation::presented_project)
@@ -648,7 +648,7 @@ pub(crate) fn owned_paths(
 /// owned by rwv and nothing gets removed). This is the deactivate-side
 /// analogue of step 2 in [`activate_at`].
 fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
-    let observed = match observe_root(root)? {
+    let observed = match observe_root(root) {
         Some(observation) => observation,
         None => return Ok(BTreeSet::new()),
     };
@@ -702,7 +702,7 @@ pub fn surface_symlinks(
     mode: SurfacingMode,
 ) -> anyhow::Result<()> {
     let project_dir = root.join("projects").join(project.as_str());
-    let observed = observe_root(root)?;
+    let observed = observe_root(root);
     let presented = observed
         .as_ref()
         .and_then(RootObservation::presented_project)
@@ -982,11 +982,7 @@ pub fn verify_surfacing(
     use crate::integration::{Issue, IssueKind, Severity};
 
     let project_dir = root.join("projects").join(project.as_str());
-    // `observe_root` is total, so the discarded error arm is unreachable; a
-    // root that answers nothing presents nothing, which is the same `None`.
     let presents_project = observe_root(root)
-        .ok()
-        .flatten()
         .as_ref()
         .and_then(RootObservation::presented_project)
         == Some(project);
