@@ -41,6 +41,7 @@ pub mod plugins;
 pub mod prime;
 pub mod push;
 pub mod registry;
+mod schema_url;
 pub mod selector;
 pub mod setup;
 pub mod status;

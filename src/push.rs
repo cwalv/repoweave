@@ -23,8 +23,7 @@ use std::sync::Mutex;
 /// under `docs/reference/schemas/push.json`. Emitted as the top-level
 /// `$schema` field of the [`PushJsonOutput`] envelope and in every NDJSON
 /// record under `--json -j N` with `N > 1`.
-pub const PUSH_SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/push.json";
+pub const PUSH_SCHEMA_URL: &str = crate::schema_url::schema_url!("push");
 
 // ---------------------------------------------------------------------------
 // JSON wire-output types for `rwv push --json`

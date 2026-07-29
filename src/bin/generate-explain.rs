@@ -921,6 +921,42 @@ fn check_verb_registry_consistency(verbs: &[Verb], runtime_verbs: &[&str]) -> Ve
     errors
 }
 
+/// Check that `base` (the schema-URL string template) appears nowhere in
+/// `files` except `src/schema_url.rs`, where the shared `schema_url!` macro
+/// spells it once.
+fn check_schema_url_scheme(root: &Path, files: &[PathBuf], base: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    for path in files {
+        if path.file_name() == Some(OsStr::new("schema_url.rs")) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(path).display();
+        for (n, line) in content.lines().enumerate() {
+            if line.contains(base) {
+                errors.push(format!(
+                    "{rel}:{}: hand-spells the schema-URL base instead of \
+                     `crate::schema_url::schema_url!(\"<verb>\")`",
+                    n + 1
+                ));
+            }
+        }
+    }
+    errors
+}
+
+/// `base` is derived from an already-committed schema URL const rather than
+/// hand-spelled here, so the checker cannot itself become a second place
+/// that types the template out.
+fn run_schema_url_scheme_check(root: &Path) -> Vec<String> {
+    let base = repoweave::fetch::FETCH_SCHEMA_URL
+        .strip_suffix("fetch.json")
+        .expect("FETCH_SCHEMA_URL ends with fetch.json");
+    check_schema_url_scheme(root, &src_rs_files(root), base)
+}
+
 /// Check that every top-level verb in `cli_top_level` appears in the
 /// `verbs` list (the explain registry).
 ///
@@ -2354,6 +2390,19 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // --- schema-url gate ----------------------------------------------------
+    // Every `<verb>_SCHEMA_URL` const is built from `crate::schema_url::
+    // schema_url!` (src/schema_url.rs); no file may hand-spell the base URL.
+    let schema_url_errors = run_schema_url_scheme_check(&root);
+    if !schema_url_errors.is_empty() {
+        let msg = schema_url_errors.join("\n");
+        anyhow::bail!(
+            "schema-URL scheme check failed:\n{msg}\n\n\
+             Fix: build the const from `crate::schema_url::schema_url!(\"<verb>\")` \
+             instead of spelling the URL out."
+        );
+    }
+
     // --- Link-cleanliness gate -------------------------------------------
     // Every relative markdown link in every .md file under docs/ must resolve
     // on disk; rustdoc intra-doc syntax must not appear in assembled output
@@ -2947,6 +2996,47 @@ mod tests {
         assert!(
             combined.contains("status"),
             "error should name the disagreeing verb, got:\n{combined}"
+        );
+    }
+
+    /// The base appearing only in `schema_url.rs` — passes.
+    #[test]
+    fn schema_url_scheme_passes_when_base_appears_only_in_schema_url_rs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("schema_url.rs");
+        fs::write(
+            &file,
+            "macro_rules! schema_url { ($verb:literal) => { concat!(\"https://example.com/schemas/\", $verb, \".json\") }; }\n",
+        )
+        .unwrap();
+        let errors = check_schema_url_scheme(tmp.path(), &[file], "https://example.com/schemas/");
+        assert!(
+            errors.is_empty(),
+            "expected no errors when the base appears only in schema_url.rs, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A schema URL hand-spelled outside `schema_url.rs` is reported
+    /// (seeded-failure proof).
+    #[test]
+    fn schema_url_scheme_fails_on_hand_spelled_base_elsewhere() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("fetch.rs");
+        fs::write(
+            &file,
+            "pub const FETCH_SCHEMA_URL: &str = \"https://example.com/schemas/fetch.json\";\n",
+        )
+        .unwrap();
+        let errors = check_schema_url_scheme(tmp.path(), &[file], "https://example.com/schemas/");
+        assert!(
+            !errors.is_empty(),
+            "expected an error for a hand-spelled schema URL outside schema_url.rs"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("fetch.rs"),
+            "error should name the offending file, got:\n{combined}"
         );
     }
 

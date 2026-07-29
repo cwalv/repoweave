@@ -23,8 +23,7 @@ use std::sync::Mutex;
 
 /// Schema URL embedded in `rwv fetch --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/fetch.json`.
-pub const FETCH_SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/fetch.json";
+pub const FETCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch");
 
 /// Per-repo outcome record for `rwv fetch --json`.
 ///

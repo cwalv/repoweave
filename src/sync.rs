@@ -568,13 +568,11 @@ pub struct SyncOutcomeNdjsonRecord<'a> {
 
 /// Schema URL embedded in `rwv sync --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/`.
-pub const SYNC_JSON_SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/sync.json";
+pub const SYNC_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync");
 
 /// Schema URL embedded in `rwv sync-to --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/`.
-pub const SYNC_TO_JSON_SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/sync-to.json";
+pub const SYNC_TO_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-to");
 
 impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

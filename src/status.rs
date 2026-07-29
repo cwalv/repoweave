@@ -11,8 +11,7 @@ use std::path::Path;
 /// Schema URL for `rwv status --json` output. Pins to the committed artifact
 /// under `docs/reference/schemas/status.json`. Emitted as the top-level
 /// `$schema` field of the [`StatusJsonOutput`] envelope.
-pub const STATUS_SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/status.json";
+pub const STATUS_SCHEMA_URL: &str = crate::schema_url::schema_url!("status");
 
 /// Top-level envelope for `rwv status --json`. Matches the convention adopted
 /// by doctor (`$schema` + `violations`) and sync (`$schema` + `outcomes`):

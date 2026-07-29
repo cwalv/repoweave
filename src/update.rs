@@ -26,8 +26,7 @@ use std::sync::Mutex;
 
 /// Schema URL for `rwv update --json` output. Pins to the committed artifact
 /// under `docs/reference/schemas/update.json`.
-pub const UPDATE_SCHEMA_URL: &str =
-    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/update.json";
+pub const UPDATE_SCHEMA_URL: &str = crate::schema_url::schema_url!("update");
 
 /// Per-repo outcome kind for `rwv update --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
