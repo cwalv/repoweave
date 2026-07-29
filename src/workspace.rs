@@ -1235,9 +1235,17 @@ impl WorkweaveMarker {
     /// that was never created on disk) so that every marker this type
     /// produces compares equal to the registry entries and chain-walks that
     /// key off `parent`, regardless of which of two equivalent spellings the
-    /// caller had on hand. `primary` is stored as given; callers already hold
-    /// it canonical (it flows from [`WorkspaceContext::primary_path`] or an
-    /// already-migrated marker's `primary`).
+    /// caller had on hand.
+    ///
+    /// `primary` is recorded as given, not canonicalized — an asymmetry with
+    /// `parent`, not an oversight. `create_workweave` passes `primary_root`
+    /// straight through uncanonicalized, and every comparison against
+    /// `marker.primary()` (the already-exists guard, registry-entry
+    /// validation) canonicalizes both sides again at compare time rather
+    /// than trusting the stored value. Canonicalizing `primary` here would
+    /// change the bytes this type writes to `.rwv-workweave` for a
+    /// non-canonical input — an on-disk format change this constructor has
+    /// no mandate to make.
     pub fn new(primary: PathBuf, project: ProjectName, parent_source: &Path) -> Self {
         WorkweaveMarker {
             primary,
