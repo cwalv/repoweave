@@ -4497,7 +4497,6 @@ fn retire_workweave_after_sync_to(
         workweave_name,
         workweave_dir,
         false,
-        false,
     )
     .context("--retire: workweave delete failed")?;
 

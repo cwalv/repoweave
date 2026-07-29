@@ -2603,18 +2603,13 @@ pub(crate) fn delete_workweave_for_retire(
     name: &WorkweaveName,
     workweave_dir: &Path,
     discard_uncommitted: bool,
-    discard_unmerged_commits: bool,
 ) -> anyhow::Result<()> {
     // `--retire` has no `--discard-unmerged-commits` flag, so no
-    // DiscardUnmergedConsent can be minted for this path — and minting one
-    // here from a bool is exactly the laundering the token exists to
-    // prevent. The retire phase runs its own diverged-and-dirty refusals
-    // before calling this and passes `false`, so reading the parameter as
-    // "no consent" changes nothing behaviourally and fails safe if it ever
-    // did: an unmerged ref is reported and left in place rather than
-    // destroyed. The parameter itself is vestigial and goes away when the
-    // sync-side call site is restated.
-    let _ = discard_unmerged_commits;
+    // DiscardUnmergedConsent exists for this path to pass on — and minting
+    // one here would be exactly the laundering the token exists to prevent.
+    // Without it an unmerged ref is reported and left in place rather than
+    // destroyed, which is also what the retire phase's own
+    // diverged-and-dirty refusals already guarantee.
     delete_workweave_inner_at(
         ws_root,
         project,
