@@ -101,21 +101,6 @@ pub enum FetchMode {
     Frozen,
 }
 
-/// Derive a project name from a source URL or path.
-///
-/// Takes the last path segment and strips a trailing `.git` suffix.
-pub fn project_name_from_source(source: &str) -> String {
-    // Strip trailing slashes, then take the last segment.
-    let trimmed = source.trim_end_matches('/');
-    let last_segment = trimmed.rsplit('/').next().unwrap_or(trimmed);
-    // Also handle git@host:owner/repo.git — take after last ':'
-    let last_segment = last_segment.rsplit(':').next().unwrap_or(last_segment);
-    last_segment
-        .strip_suffix(".git")
-        .unwrap_or(last_segment)
-        .to_string()
-}
-
 /// Resolve `source` to a clone URL and the owner string.
 ///
 /// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
@@ -203,7 +188,7 @@ pub fn run_fetch(
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
     let (url, owner) = resolve_source(source)?;
     let url_str = url.to_string();
-    let name = project_name_from_source(&url_str);
+    let name = registry::repo_name_from_source(&url_str);
     let projects_dir = workspace_root.join("projects");
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
@@ -980,53 +965,6 @@ fn fetch_one(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn project_name_from_https_url() {
-        assert_eq!(
-            project_name_from_source("https://github.com/org/myproject.git"),
-            "myproject"
-        );
-    }
-
-    #[test]
-    fn project_name_from_https_url_no_git_suffix() {
-        assert_eq!(
-            project_name_from_source("https://github.com/org/myproject"),
-            "myproject"
-        );
-    }
-
-    #[test]
-    fn project_name_from_file_url() {
-        let url = format!(
-            "file://{}",
-            std::env::temp_dir().join("project.git").display()
-        );
-        assert_eq!(project_name_from_source(&url), "project");
-    }
-
-    #[test]
-    fn project_name_from_file_url_trailing_slash() {
-        let url = format!(
-            "file://{}/",
-            std::env::temp_dir().join("project.git").display()
-        );
-        assert_eq!(project_name_from_source(&url), "project");
-    }
-
-    #[test]
-    fn project_name_from_ssh_url() {
-        assert_eq!(
-            project_name_from_source("git@github.com:org/repo.git"),
-            "repo"
-        );
-    }
-
-    #[test]
-    fn project_name_from_plain_name() {
-        assert_eq!(project_name_from_source("my-project"), "my-project");
-    }
 
     #[test]
     fn resolve_source_passes_through_urls() {

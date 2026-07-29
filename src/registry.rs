@@ -155,6 +155,22 @@ impl Registry for DomainRegistry {
     }
 }
 
+/// The repo's own name at the tail of a clone source.
+///
+/// The last path segment with a `.git` suffix removed, reading past a
+/// `git@host:owner/repo` colon as a separator the way git does. Sources that
+/// no registry matched still have a nameable tail, which is what makes this
+/// the fallback both `init --adopt` and `CloneInfo` extraction reach for.
+pub fn repo_name_from_source(source: &str) -> String {
+    let trimmed = source.trim_end_matches('/');
+    let last_segment = trimmed.rsplit('/').next().unwrap_or(trimmed);
+    let last_segment = last_segment.rsplit(':').next().unwrap_or(last_segment);
+    last_segment
+        .strip_suffix(".git")
+        .unwrap_or(last_segment)
+        .to_string()
+}
+
 /// Extract `owner/repo` from the path portion of a URL. Strips a single
 /// trailing `.git` suffix and ignores any segments past the first two.
 fn extract_owner_repo(path: &str) -> Option<(String, String)> {
@@ -246,7 +262,7 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
         }
         RepoUrl::Unknown(s) => {
             if source.is_url() {
-                let project_name = crate::fetch::project_name_from_source(s);
+                let project_name = repo_name_from_source(s);
                 Ok(CloneInfo {
                     url: source.clone(),
                     registry: RegistryName::new("unknown"),
@@ -410,6 +426,54 @@ mod tests {
     fn domain_matches_three_part_shorthand_for_other_returns_none() {
         // gitlab registry doesn't match a 3-part shorthand starting with "github"
         assert!(gitlab_reg().matches("github/owner/repo").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // repo_name_from_source
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn repo_name_from_https_url() {
+        assert_eq!(
+            repo_name_from_source("https://github.com/org/myproject.git"),
+            "myproject"
+        );
+    }
+
+    #[test]
+    fn repo_name_from_https_url_no_git_suffix() {
+        assert_eq!(
+            repo_name_from_source("https://github.com/org/myproject"),
+            "myproject"
+        );
+    }
+
+    #[test]
+    fn repo_name_from_file_url() {
+        let url = format!(
+            "file://{}",
+            std::env::temp_dir().join("project.git").display()
+        );
+        assert_eq!(repo_name_from_source(&url), "project");
+    }
+
+    #[test]
+    fn repo_name_from_file_url_trailing_slash() {
+        let url = format!(
+            "file://{}/",
+            std::env::temp_dir().join("project.git").display()
+        );
+        assert_eq!(repo_name_from_source(&url), "project");
+    }
+
+    #[test]
+    fn repo_name_from_ssh_url() {
+        assert_eq!(repo_name_from_source("git@github.com:org/repo.git"), "repo");
+    }
+
+    #[test]
+    fn repo_name_from_plain_name() {
+        assert_eq!(repo_name_from_source("my-project"), "my-project");
     }
 
     // -----------------------------------------------------------------------
