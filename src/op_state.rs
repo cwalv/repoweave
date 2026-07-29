@@ -833,17 +833,57 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
               or released via release_acquired on refusal"]
 #[derive(Debug)]
 pub struct AcquiredOp {
-    /// Owner workspace where the `.rwv-op` file was created.
-    owner_workspace: PathBuf,
-    /// Lease workspaces where `.rwv-op-lease` files were created (never
-    /// includes the owner workspace — the owner holds the record, not a lease).
-    lease_workspaces: Vec<PathBuf>,
+    touched: TouchedWorkspaces,
 }
 
 impl AcquiredOp {
     /// The owner workspace this acquisition writes into.
     pub fn owner_workspace(&self) -> &Path {
-        &self.owner_workspace
+        self.touched.owner()
+    }
+}
+
+/// The workspaces one op writes op-state into: the owner, which holds
+/// `.rwv-op`, and every workspace that holds a `.rwv-op-lease` pointing back
+/// at it.
+///
+/// `sync` mutates only the workspace it runs in, so it has no leases;
+/// `sync-to` also mutates the target and leases it. Acquisition and cleanup
+/// both take the set from here. Spelled at each site instead, the two drift
+/// apart the moment a verb starts touching another workspace, and the leases
+/// cleanup then stops clearing surface only as dead-lease doctor findings.
+#[derive(Debug, Clone)]
+pub struct TouchedWorkspaces {
+    owner: PathBuf,
+    leases: Vec<PathBuf>,
+}
+
+impl TouchedWorkspaces {
+    pub fn of(verb: OpVerb, owner_workspace_dir: &Path, dest_workspace_dir: &Path) -> Self {
+        let leases = match verb {
+            OpVerb::Sync => Vec::new(),
+            OpVerb::SyncTo => vec![dest_workspace_dir.to_path_buf()],
+        };
+        Self {
+            owner: owner_workspace_dir.to_path_buf(),
+            leases,
+        }
+    }
+
+    pub fn owner(&self) -> &Path {
+        &self.owner
+    }
+
+    /// Remove every op-state file this op wrote.
+    ///
+    /// Leases go first so an interruption part-way leaves an owner record with
+    /// no leases — a valid resume target — rather than a lease pointing at a
+    /// record that is already gone.
+    pub fn clear(&self) {
+        for ws in &self.leases {
+            clear_lease(ws);
+        }
+        clear_owner(&self.owner);
     }
 }
 
@@ -852,9 +892,9 @@ impl AcquiredOp {
 ///
 /// Semantics:
 ///
-/// - `owner_workspace_dir` gets `.rwv-op` written with the full `owner_record`.
-/// - Every workspace in `lease_workspaces` (must not include the owner) gets
-///   `.rwv-op-lease` written pointing back at the owner.
+/// - The owner workspace gets `.rwv-op` written with the full `owner_record`.
+/// - Every lease workspace gets `.rwv-op-lease` written pointing back at the
+///   owner.
 /// - Every file is created with `O_CREAT|O_EXCL`. On `AlreadyExists` anywhere,
 ///   any files already created by *this* call are removed and the returned
 ///   error is the standard [`check_no_op_in_progress`]-shape refusal reading
@@ -872,10 +912,11 @@ impl AcquiredOp {
 /// with no leases is a valid resume target; a lease with no owner record is
 /// the dead-lease case doctor auto-fixes.
 pub fn acquire_op(
-    owner_workspace_dir: &Path,
+    touched: &TouchedWorkspaces,
     owner_record: &OwnerRecord,
-    lease_workspaces: &[&Path],
 ) -> anyhow::Result<AcquiredOp> {
+    let owner_workspace_dir = touched.owner();
+    let lease_workspaces = &touched.leases;
     // Belt-and-braces: acquisition dominates every other refusal, so if any
     // touched workspace already carries op-state we must emit the rich in-flight
     // refusal from IT rather than a raw AlreadyExists context. We check first
@@ -885,7 +926,7 @@ pub fn acquire_op(
     if let Some(err) = in_flight_refusal_for(owner_workspace_dir)? {
         return Err(err);
     }
-    for &ws in lease_workspaces {
+    for ws in lease_workspaces {
         if let Some(err) = in_flight_refusal_for(ws)? {
             return Err(err);
         }
@@ -920,7 +961,7 @@ pub fn acquire_op(
     }
 
     let mut acquired_leases: Vec<PathBuf> = Vec::with_capacity(lease_workspaces.len());
-    for &ws in lease_workspaces {
+    for ws in lease_workspaces {
         let lease_path = LeaseRecord::path_in(ws);
         let lease = LeaseRecord {
             id: owner_record.id.clone(),
@@ -938,7 +979,7 @@ pub fn acquire_op(
             }
         };
         match atomic_write_new(&lease_path, lease_yaml.as_bytes()) {
-            Ok(()) => acquired_leases.push(ws.to_path_buf()),
+            Ok(()) => acquired_leases.push(ws.clone()),
             Err(AtomicWriteError::AlreadyExists) => {
                 // Race on a lease: undo owner + any leases we already wrote,
                 // then emit the in-flight refusal reading the *existing*
@@ -960,8 +1001,7 @@ pub fn acquire_op(
     }
 
     Ok(AcquiredOp {
-        owner_workspace: owner_workspace_dir.to_path_buf(),
-        lease_workspaces: acquired_leases,
+        touched: touched.clone(),
     })
 }
 
@@ -973,7 +1013,7 @@ pub fn acquire_op(
 /// [`acquire_op`] itself when a partial acquisition hits `AlreadyExists` on a
 /// later file.
 pub fn release_acquired(acquired: &AcquiredOp) {
-    rollback_acquired(&acquired.owner_workspace, &acquired.lease_workspaces);
+    acquired.touched.clear();
 }
 
 fn rollback_acquired(owner_workspace_dir: &Path, acquired_leases: &[PathBuf]) {
@@ -1963,6 +2003,14 @@ started_at: 2026-06-01T00:00:00Z
     // Atomic acquisition (guard→mark TOCTOU fix)
     // -----------------------------------------------------------------------
 
+    fn sync_touched(owner: &Path) -> TouchedWorkspaces {
+        TouchedWorkspaces::of(OpVerb::Sync, owner, owner)
+    }
+
+    fn sync_to_touched(owner: &Path, target: &Path) -> TouchedWorkspaces {
+        TouchedWorkspaces::of(OpVerb::SyncTo, owner, target)
+    }
+
     fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
         OwnerRecord::new_sync(
             op_id,
@@ -1991,7 +2039,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = make_sync_record(&op_id, owner, &PathBuf::from("/src"));
 
-        let acquired = acquire_op(owner, &record, &[]).unwrap();
+        let acquired = acquire_op(&sync_touched(owner), &record).unwrap();
 
         assert!(OwnerRecord::path_in(owner).exists());
         assert_eq!(acquired.owner_workspace(), owner);
@@ -2011,7 +2059,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
 
-        let acquired = acquire_op(&owner_dir, &record, &[target_dir.as_path()]).unwrap();
+        let acquired = acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record).unwrap();
 
         // Owner record + lease both present.
         assert!(OwnerRecord::path_in(&owner_dir).exists());
@@ -2021,6 +2069,32 @@ started_at: 2026-06-01T00:00:00Z
         assert_eq!(lease.id, op_id.as_str());
         assert_eq!(lease.owner, owner_dir);
         assert_eq!(acquired.owner_workspace(), owner_dir);
+    }
+
+    /// The handle is `#[must_use]`, and once the preconditions have run the
+    /// sync engine discards it rather than releasing it: from that point the
+    /// records belong to the phase driver and `--continue` / `abort` are the
+    /// exits. Clearing on drop would delete the running op's own claim.
+    #[test]
+    fn dropping_an_acquired_handle_leaves_the_records_on_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let target_dir = tmp.path().join("target");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&target_dir).unwrap();
+        let op_id = OpId::new_now();
+        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
+
+        drop(acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record).unwrap());
+
+        assert!(
+            OwnerRecord::path_in(&owner_dir).exists(),
+            "the owner record must outlive the handle"
+        );
+        assert!(
+            LeaseRecord::path_in(&target_dir).exists(),
+            "the lease must outlive the handle"
+        );
     }
 
     #[test]
@@ -2038,7 +2112,7 @@ started_at: 2026-06-01T00:00:00Z
         // Second acquisition attempt.
         let new_id = OpId::new_now();
         let new_record = make_sync_record(&new_id, owner_dir, &PathBuf::from("/new/src"));
-        let err = acquire_op(owner_dir, &new_record, &[])
+        let err = acquire_op(&sync_touched(owner_dir), &new_record)
             .unwrap_err()
             .to_string();
 
@@ -2079,7 +2153,7 @@ started_at: 2026-06-01T00:00:00Z
 
         let op_id = OpId::new_now();
         let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
-        let err = acquire_op(&owner_dir, &record, &[target_dir.as_path()])
+        let err = acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record)
             .unwrap_err()
             .to_string();
 
@@ -2110,7 +2184,7 @@ started_at: 2026-06-01T00:00:00Z
         std::fs::create_dir_all(&target_dir).unwrap();
         let op_id = OpId::new_now();
         let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
-        let acquired = acquire_op(&owner_dir, &record, &[target_dir.as_path()]).unwrap();
+        let acquired = acquire_op(&sync_to_touched(&owner_dir, &target_dir), &record).unwrap();
         assert!(OwnerRecord::path_in(&owner_dir).exists());
         assert!(LeaseRecord::path_in(&target_dir).exists());
 
@@ -2145,7 +2219,7 @@ started_at: 2026-06-01T00:00:00Z
                 let op = OpId::new_now();
                 let rec = make_sync_record(&op, &owner_dir_a, &PathBuf::from("/src"));
                 barrier_a.wait();
-                acquire_op(&owner_dir_a, &rec, &[])
+                acquire_op(&sync_touched(&owner_dir_a), &rec)
             });
 
             let owner_dir_b = owner_dir.clone();
@@ -2154,7 +2228,7 @@ started_at: 2026-06-01T00:00:00Z
                 let op = OpId::new_now();
                 let rec = make_sync_record(&op, &owner_dir_b, &PathBuf::from("/src2"));
                 barrier_b.wait();
-                acquire_op(&owner_dir_b, &rec, &[])
+                acquire_op(&sync_touched(&owner_dir_b), &rec)
             });
 
             let r1 = h1.join().unwrap();

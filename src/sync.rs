@@ -2485,8 +2485,7 @@ fn guard_and_mark<'a>(
     // op can be running these precondition checks at a time on a given
     // touched-workspace set.
     //
-    // The touched set is the workspaces the op writes op-state into: CWD
-    // for sync; CWD + target for sync-to. Overrides (`allow-stale-lock`,
+    // Overrides (`allow-stale-lock`,
     // `discard-local-commits`) are pushed onto the record AFTER preconditions
     // (they depend on precondition outcomes) via a second `write_owner` in
     // the Mark section below — the acquired file is then overwritten in
@@ -2508,11 +2507,12 @@ fn guard_and_mark<'a>(
             retire,
         ),
     };
-    let lease_workspaces: Vec<&Path> = match verb {
-        MachineVerb::Sync => Vec::new(),
-        MachineVerb::SyncTo => vec![dest_workspace_dir.as_path()],
-    };
-    let acquired = op_state::acquire_op(&owner_workspace_dir, &initial_record, &lease_workspaces)?;
+    let touched = op_state::TouchedWorkspaces::of(
+        initial_record.verb,
+        &owner_workspace_dir,
+        &dest_workspace_dir,
+    );
+    let acquired = op_state::acquire_op(&touched, &initial_record)?;
 
     // From here on, any early return from a precondition refusal must release
     // the acquired records (see the cleanup-table row for "refusal → cleared
@@ -4418,11 +4418,8 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    // Clear owner record and lease (if any).
-    op_state::clear_owner(&ctx.owner_workspace_dir);
-    if matches!(ctx.verb, op_state::OpVerb::SyncTo) {
-        op_state::clear_lease(&ctx.dest_workspace_dir);
-    }
+    op_state::TouchedWorkspaces::of(ctx.verb, &ctx.owner_workspace_dir, &ctx.dest_workspace_dir)
+        .clear();
     Ok(())
 }
 
