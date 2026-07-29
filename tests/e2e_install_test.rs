@@ -301,10 +301,14 @@ fn nix_devshell_provides_rwv() {
 /// release time. If this ever changes to track `CARGO_PKG_VERSION` (or any
 /// other real version) directly, that rewrite step needs updating to match —
 /// this test is what notices the drift.
+///
+/// pyproject.toml's own comment names the rewrite step by its `name:` —
+/// checked here too, so a rename or removal of that step leaves the citation
+/// caught rather than quietly lying.
 #[test]
 fn pyproject_version_is_the_release_time_placeholder() {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("python/repoweave/pyproject.toml");
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = repo_root.join("python/repoweave/pyproject.toml");
     let content =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     assert!(
@@ -312,6 +316,18 @@ fn pyproject_version_is_the_release_time_placeholder() {
         "{} no longer carries the `0.0.0` release-time placeholder — if this \
          is deliberate, update this test and .github/workflows/publish-shims.yml's \
          version-rewrite step to match; got:\n{content}",
+        path.display()
+    );
+
+    let workflow_path = repo_root.join(".github/workflows/publish-shims.yml");
+    let workflow = std::fs::read_to_string(&workflow_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", workflow_path.display()));
+    assert!(
+        workflow.contains("- name: Update version in pyproject.toml"),
+        "{} no longer has the \"Update version in pyproject.toml\" step that \
+         {}'s comment cites by name — rename it there too, or this citation \
+         is lying with nothing to catch it",
+        workflow_path.display(),
         path.display()
     );
 }
