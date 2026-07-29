@@ -32,6 +32,11 @@ fn workweave_bare_name_is_reframed_as_missing_subcommand() {
                 .and(predicate::str::contains("create"))
                 .and(predicate::str::contains("delete"))
                 .and(predicate::str::contains("list"))
+                // "log" and "set-container" pin that the list is read from
+                // clap's WorkweaveAction subcommands rather than a hand-typed
+                // subset that could silently drop an action.
+                .and(predicate::str::contains("log"))
+                .and(predicate::str::contains("set-container"))
                 .and(predicate::str::contains("Did you mean"))
                 .and(predicate::str::contains("create fo-city"))
                 // The old clap message must be gone.

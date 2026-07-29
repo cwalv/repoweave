@@ -436,28 +436,33 @@ pub fn run() -> anyhow::Result<()> {
             let word = raw_args.get(3).map(|s| s.as_str());
             let is_flag = |s: &str| s.starts_with('-');
             if let (Some(project), Some(word)) = (project, word) {
-                const KNOWN_SUBCOMMANDS: &[&str] =
-                    &["create", "delete", "list", "log", "set-container", "help"];
+                let cli_cmd = Cli::command();
+                let workweave_cmd = cli_cmd
+                    .find_subcommand("workweave")
+                    .expect("`workweave` is a Commands variant");
                 // WorkweaveAction names a typo could be aiming at. `help` is a
                 // clap builtin, not a typo target worth fuzzy-matching, so it's
                 // excluded here (an exact `help` is already handled above).
-                const SUBCOMMAND_ACTIONS: &[&str] =
-                    &["create", "delete", "list", "log", "set-container"];
+                let subcommand_actions: Vec<&str> = workweave_cmd
+                    .get_subcommands()
+                    .map(|c| c.get_name())
+                    .filter(|&name| name != "help")
+                    .collect();
                 // Edit-distance threshold below which WORD is treated as a
                 // subcommand typo and deferred to clap's native suggestion.
                 const SUBCOMMAND_TYPO_THRESHOLD: usize = 2;
-                let near_subcommand = SUBCOMMAND_ACTIONS
+                let near_subcommand = subcommand_actions
                     .iter()
                     .any(|sub| levenshtein(word, sub) <= SUBCOMMAND_TYPO_THRESHOLD);
-                if !is_flag(project)
-                    && !is_flag(word)
-                    && !KNOWN_SUBCOMMANDS.contains(&word)
-                    && !near_subcommand
-                {
+                let is_known_subcommand = workweave_cmd
+                    .get_subcommands()
+                    .any(|c| c.get_name() == word);
+                if !is_flag(project) && !is_flag(word) && !is_known_subcommand && !near_subcommand {
                     eprintln!(
                         "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
                          Did you mean:  rwv workweave {project} create {word}\n\
-                         Available subcommands: create, delete, list, log, set-container"
+                         Available subcommands: {}",
+                        subcommand_actions.join(", ")
                     );
                     std::process::exit(2);
                 }
