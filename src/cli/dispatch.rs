@@ -65,21 +65,15 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
         .with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
 }
 
-/// Returns true when `s` matches the `<project>--<name>` workweave name
-/// shape: at least one character on each side of a `--` separator, with no
-/// path separators (so it is clearly a bare name, not a path that happens to
-/// contain `--`).
+/// Returns true when `s` has no path separators and parses as the
+/// `<project>--<name>` workweave name shape via
+/// [`crate::workspace::parse_weave_dir_name`].
 fn looks_like_workweave_name(s: &str) -> bool {
     // Must not contain any path separator — a bare name, not a path.
     if s.contains('/') || s.contains('\\') {
         return false;
     }
-    // Must contain `--` with at least one character on each side.
-    if let Some(idx) = s.find("--") {
-        idx > 0 && idx + 2 < s.len()
-    } else {
-        false
-    }
+    crate::workspace::parse_weave_dir_name(s).is_some()
 }
 
 /// Resolve the workweave directory for a `-w <project>--<name>` argument.
@@ -131,19 +125,17 @@ fn resolve_workweave_flag(
         );
     }
 
-    // Parse the argument at the FIRST `--` — consistent with parse_weave_dir_name
-    // (workweave.rs), which uses split_once("--"). This means a project name
-    // cannot contain `--`; names are identifiers, not paths, so this is safe.
-    let (project_str, name_str) = raw.split_once("--").ok_or_else(|| {
-        anyhow::anyhow!(
-            "'-w {raw}' is not in the required <project>--<name> form.\n\
+    let (project_str, name_str) =
+        crate::workspace::split_at_weave_separator(raw).ok_or_else(|| {
+            anyhow::anyhow!(
+                "'-w {raw}' is not in the required <project>--<name> form.\n\
              \n\
              Provide both the project and the workweave name separated by `--`:\n\
              \n  rwv -w <project>--<name> <verb>\n\
              \n\
              Example:  rwv -w myproj--hotfix sync-to"
-        )
-    })?;
+            )
+        })?;
 
     if project_str.is_empty() || name_str.is_empty() {
         anyhow::bail!(

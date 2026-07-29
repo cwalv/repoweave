@@ -1183,11 +1183,20 @@ pub fn weave_dir_name(project_name: &str, workweave_name: &WorkweaveName) -> Str
     format!("{project_name}--{workweave_name}")
 }
 
+/// Split `s` at the first workweave separator, without validating either
+/// half. [`parse_weave_dir_name`] layers validation on top; a caller that
+/// needs its own error text for an invalid half, or that only wants to test
+/// for the separator's presence, calls this directly instead of writing
+/// `"--"` again.
+pub(crate) fn split_at_weave_separator(s: &str) -> Option<(&str, &str)> {
+    s.split_once("--")
+}
+
 /// Parse a directory name into `(left, workweave_name)` if it matches the
 /// `{left}--{name}` shape. The `left` component is the project name. Used by
 /// resolve() to extract the workweave name from a marker-bearing directory.
 pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
-    let (left, workweave) = dir_name.split_once("--")?;
+    let (left, workweave) = split_at_weave_separator(dir_name)?;
     if left.is_empty() || workweave.is_empty() {
         return None;
     }

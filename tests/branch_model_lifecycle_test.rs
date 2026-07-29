@@ -529,3 +529,54 @@ fn claude_worktree_remove_hook_does_not_destroy_uncommitted_work() {
         "the operator's edit must survive"
     );
 }
+
+/// A basename with no `--` used to be treated as the whole workweave name
+/// and handed straight to `delete_workweave`, which resolves its target
+/// from the NAME via the registry rather than from `worktree_path` — so a
+/// fabricated name that happened to collide with a different registered
+/// workweave would delete that one instead. The hook now identifies the
+/// workweave by looking `worktree_path` up in the registry; when the
+/// registry has no entry for it, it refuses rather than guesses.
+#[test]
+fn claude_worktree_remove_hook_refuses_a_basename_with_no_separator() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "renamed"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // The registry still names the original path; this directory is not
+    // registered under its new name.
+    let original = weaveroot.join("web-app--renamed");
+    let no_separator = weaveroot.join("norwvseparator");
+    std::fs::rename(&original, &no_separator).unwrap();
+
+    let payload = serde_json::json!({
+        "hook_event_name": "WorktreeRemove",
+        "worktree_path": no_separator.to_str().unwrap(),
+    })
+    .to_string();
+
+    let assert = rwv()
+        .args(["workweave", "--claude-hook"])
+        .current_dir(&ws)
+        .write_stdin(payload)
+        .assert()
+        .success(); // fire-and-forget: always exits 0
+
+    assert!(
+        no_separator.exists(),
+        "a directory the registry cannot identify by path must survive rather \
+         than be deleted under a guessed name"
+    );
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("refusing to delete"),
+        "expected a refusal on stderr, got:\n{stderr}"
+    );
+}

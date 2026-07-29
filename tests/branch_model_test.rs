@@ -601,6 +601,20 @@ fn ephemeral_names_are_flat_and_derived_from_exactly_two_inputs() {
 }
 
 #[test]
+fn mint_and_weave_dir_name_agree() {
+    // The workweave directory and its ephemeral branch are named by the
+    // same convention, minted from two independent call sites
+    // (`EphemeralRefName::mint`, `workspace::weave_dir_name`). Pinned so a
+    // future edit to either cannot reintroduce two spellings of one name.
+    let project = ProjectName::new("foundations").unwrap();
+    let workweave = WorkweaveName::new("fix-42").unwrap();
+    assert_eq!(
+        EphemeralRefName::mint(&project, &workweave).to_string(),
+        repoweave::workspace::weave_dir_name(project.as_str(), &workweave),
+    );
+}
+
+#[test]
 fn ephemeral_name_minting_rejects_the_pair_that_used_to_collide() {
     // Project `p` + workweave `x--y` and project `p--x` + workweave `y` used
     // to mint the same name ("p--x--y") because mint validated neither

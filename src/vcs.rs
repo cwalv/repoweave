@@ -1000,7 +1000,10 @@ impl EphemeralRefName {
     ///
     /// Total: no third input, no failure, no read of the current ref.
     pub fn mint(project: &ProjectName, workweave: &WorkweaveName) -> Self {
-        Self(format!("{}--{}", project.as_str(), workweave.as_str()))
+        Self(crate::workspace::weave_dir_name(
+            project.as_str(),
+            workweave,
+        ))
     }
 
     /// The requested name at the parse boundary, for the receipt store to

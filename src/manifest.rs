@@ -161,7 +161,10 @@ impl fmt::Display for ProjectNameError {
 impl std::error::Error for ProjectNameError {}
 
 fn validate_project_name(s: &str) -> Result<(), ProjectNameError> {
-    if s.contains("--") || s.starts_with('-') || s.ends_with('-') {
+    if crate::workspace::split_at_weave_separator(s).is_some()
+        || s.starts_with('-')
+        || s.ends_with('-')
+    {
         return Err(ProjectNameError::AmbiguousDelimiter(s.to_owned()));
     }
     crate::vcs::validate_ref_name(s).map_err(ProjectNameError::InvalidRef)
@@ -256,7 +259,10 @@ fn validate_workweave_name(s: &str) -> Result<(), WorkweaveNameError> {
     if s.contains('/') {
         return Err(WorkweaveNameError::Slash(s.to_owned()));
     }
-    if s.contains("--") || s.starts_with('-') || s.ends_with('-') {
+    if crate::workspace::split_at_weave_separator(s).is_some()
+        || s.starts_with('-')
+        || s.ends_with('-')
+    {
         return Err(WorkweaveNameError::AmbiguousDelimiter(s.to_owned()));
     }
     crate::vcs::validate_ref_name(s).map_err(WorkweaveNameError::InvalidRef)

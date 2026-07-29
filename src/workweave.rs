@@ -206,6 +206,30 @@ pub fn resolve_registered_workweave(
     }
 }
 
+/// The reverse of [`resolve_registered_workweave`]: given `path`, the name
+/// `project`'s registry has recorded for it, found by canonicalized
+/// comparison against every recorded entry.
+///
+/// For a caller that holds a path and needs the identity the registry gave
+/// it — never for guessing a name from the path's own shape, which is a
+/// syntax question [`crate::workspace::parse_weave_dir_name`] answers, not a
+/// registry one.
+pub fn workweave_name_for_path(
+    primary_root: &Path,
+    project: &ProjectName,
+    path: &Path,
+) -> anyhow::Result<Option<WorkweaveName>> {
+    let index = match workweave_index::read(primary_root, project)? {
+        Some(idx) => idx,
+        None => return Ok(None),
+    };
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let found = index.workweaves.into_iter().find(|(_, recorded)| {
+        recorded.canonicalize().unwrap_or_else(|_| recorded.clone()) == canonical
+    });
+    Ok(found.and_then(|(name, _)| WorkweaveName::new(name).ok()))
+}
+
 /// Return the registered path for a workweave AND require the marker
 /// round-trip to succeed. Used by destructive ops (`delete`, retire).
 ///
@@ -3497,43 +3521,41 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
 
             // Fire-and-forget: log errors but always succeed.
             if let Ok(Some(marker)) = WorkweaveMarker::read(Path::new(&worktree_path)) {
-                let dir_name = Path::new(&worktree_path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                let name = dir_name
-                    .split_once("--")
-                    .map(|(_, n)| n)
-                    .unwrap_or(dir_name);
-
-                // Waives NOTHING. Passing either waiver here would make
-                // this the one path where a dirty *and* diverged workweave
-                // is destroyed with no operator confirmation — on a name
-                // `.unwrap_or(dir_name)` may have fabricated from a basename
-                // with no `--`.
-                //
-                // The unmerged half is now unconstructible rather than
-                // merely unpassed: the warrant an unmerged ref's DESTROY
-                // needs is `DeletionWarrant::operator_discarded`, which
-                // takes a `DiscardUnmergedConsent` that only CLI dispatch
-                // can mint. There is no flag on this path to mint it
-                // from, so an unmerged ref is reported and left standing.
-                // The uncommitted half is a verb-level precondition rather
-                // than a warrant, so it stays a bool — passed `false` here
-                // for the same reason: "Claude moved on" is not the
-                // operator consenting to lose their edits, and a refusal on
-                // stderr is strictly better than a silent destroy.
-                match WorkweaveName::new(name) {
-                    Ok(name) => {
-                        if let Err(e) =
-                            delete_workweave(&marker.primary, &marker.project, &name, false, None)
-                        {
-                            eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
-                    }
+                let outcome = workweave_name_for_path(
+                    &marker.primary,
+                    &marker.project,
+                    Path::new(&worktree_path),
+                )
+                .and_then(|found| {
+                    found.ok_or_else(|| {
+                        anyhow!(
+                            "{worktree_path} carries a workweave marker but is not \
+                             registered for project `{}` — refusing to delete rather \
+                             than guess its name",
+                            marker.project
+                        )
+                    })
+                })
+                .and_then(|name| {
+                    // Waives NOTHING. Passing either waiver here would make
+                    // this the one path where a dirty *and* diverged workweave
+                    // is destroyed with no operator confirmation.
+                    //
+                    // The unmerged half is now unconstructible rather than
+                    // merely unpassed: the warrant an unmerged ref's DESTROY
+                    // needs is `DeletionWarrant::operator_discarded`, which
+                    // takes a `DiscardUnmergedConsent` that only CLI dispatch
+                    // can mint. There is no flag on this path to mint it
+                    // from, so an unmerged ref is reported and left standing.
+                    // The uncommitted half is a verb-level precondition rather
+                    // than a warrant, so it stays a bool — passed `false` here
+                    // for the same reason: "Claude moved on" is not the
+                    // operator consenting to lose their edits, and a refusal on
+                    // stderr is strictly better than a silent destroy.
+                    delete_workweave(&marker.primary, &marker.project, &name, false, None)
+                });
+                if let Err(e) = outcome {
+                    eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
                 }
             }
             // Always exit 0.
