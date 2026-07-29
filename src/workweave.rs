@@ -30,7 +30,7 @@
 
 use crate::cli::consent::DiscardUnmergedConsent;
 use crate::git::git_command;
-use crate::manifest::{Manifest, ProjectName, Role, WorkweaveName};
+use crate::manifest::{LockFile, Manifest, ProjectName, Role, WorkweaveName};
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
     ResolvedRevisionId, Vcs,
@@ -1708,7 +1708,7 @@ pub fn create_workweave(
     // uncommitted project files remain at their committed state, matching
     // the existing worktree-from-ref contract for everything else.
     if project_dir.exists() && project_wt_dest.exists() {
-        for fname in ["rwv.yaml", "rwv.lock"] {
+        for fname in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
             let src = project_dir.join(fname);
             let dst = project_wt_dest.join(fname);
             if !src.exists() {
