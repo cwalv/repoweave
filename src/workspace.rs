@@ -1169,7 +1169,12 @@ impl WorkweaveMarker {
 ///
 /// `Legacy` is the marker shape written before `parent:` became required;
 /// [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.
-#[derive(Debug)]
+///
+/// `Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can
+/// carry a defect straight into a doctor finding's wire shape — the same
+/// value `require_exclusive` refuses on, not a re-description of it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum MarkerDefect {
     DanglingPrimary { primary: PathBuf },
     Legacy,

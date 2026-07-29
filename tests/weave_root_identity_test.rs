@@ -110,6 +110,38 @@ fn has_marker(root: &Path) -> bool {
     root.join(".rwv-workweave").exists()
 }
 
+/// A hand-written marker whose `primary:` field a real `create_workweave`
+/// would never leave dangling — the shape needed to construct a
+/// `MarkerDefect::DanglingPrimary` fixture without an actual moved workspace.
+fn write_marker(dir: &Path, primary: &Path, project: &str, parent: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join(".rwv-workweave"),
+        format!(
+            "primary: {}\nproject: {project}\nparent: {}\n",
+            primary.display(),
+            parent.display()
+        ),
+    )
+    .unwrap();
+}
+
+/// A marker written before `parent:` became required — `MarkerDefect::Legacy`.
+fn write_legacy_marker(dir: &Path, primary: &Path, project: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join(".rwv-workweave"),
+        format!("primary: {}\nproject: {project}\n", primary.display()),
+    )
+    .unwrap();
+}
+
+/// A marker file that fails to parse — `MarkerDefect::Unreadable`.
+fn write_unreadable_marker(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join(".rwv-workweave"), "primary: [unclosed\n").unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // 1. Production — nothing writes a pointer into a workweave root
 // ---------------------------------------------------------------------------
@@ -314,6 +346,17 @@ fn doctor_fix_clears_a_registered_workweaves_stray_pointer() {
         "--fix must leave the marker: it carries `primary` and `parent` \
          values that exist nowhere else"
     );
+
+    // Idempotency: the pointer is gone, so a second run finds nothing left
+    // to fix — `--fix` deleting an absent file is not itself an error, but
+    // the finding it repairs must not resurface.
+    let out = rwv().arg("doctor").current_dir(&ws).output().unwrap();
+    let report =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !report.contains("mutually exclusive"),
+        "a second doctor run after --fix must report the root clean; got: {report}"
+    );
 }
 
 /// Two workspaces sharing one workweave container: `--fix` run at workspace A
@@ -437,6 +480,77 @@ fn doctor_fix_leaves_an_unregistered_both_files_tree_alone() {
     assert!(has_marker(&copy), "--fix must NOT delete the marker either");
 }
 
+/// A tree that is itself the registry's home — it holds
+/// `projects/<project>/.rwv-workweave-index` — yet also carries a
+/// `.rwv-workweave` marker is report-only, the same as an unregistered copy.
+/// The registry it holds names entries elsewhere (the real workweave `w1`),
+/// never itself, so the reverse lookup this root would need to be
+/// `--fix`-eligible comes back empty.
+#[test]
+fn doctor_fix_leaves_a_registry_holding_root_alone() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+    create_workweave(&ws, "demo", "w1");
+
+    // `ws` already holds `projects/demo/.rwv-workweave-index` from the create
+    // above. Giving it a marker of its own recreates a hand-added-marker (or
+    // primary-copied-onto-a-workweave) accident without touching the real
+    // registry.
+    std::fs::write(
+        ws.join(".rwv-workweave"),
+        format!(
+            "primary: {}\nproject: demo\nparent: {}\n",
+            ws.display(),
+            ws.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(ws.join(".rwv-active"), "demo\n").unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let report =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        report.contains("mutually exclusive"),
+        "doctor must report the conflict on the registry-holding root; got: {report}"
+    );
+
+    assert!(
+        has_pointer(&ws),
+        "--fix must NOT delete the pointer: this root's own registry names \
+         `w1` elsewhere, never itself, so the reverse lookup finds no entry"
+    );
+    assert!(has_marker(&ws), "--fix must NOT delete the marker either");
+}
+
+/// Doctor and status are the two verbs exempt from the hard refusal a
+/// disputed root gives every other verb, so doctor invoked *from inside* a
+/// copied both-present tree must still classify it, rather than erroring
+/// before the scan even runs.
+#[test]
+fn doctor_run_from_inside_the_copy_classifies_its_own_root() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+    let ww = create_workweave(&ws, "demo", "w1");
+
+    let copy = ww.parent().unwrap().join("demo--copy");
+    copy_dir(&ww, &copy);
+    std::fs::write(copy.join(".rwv-active"), "demo\n").unwrap();
+
+    let out = rwv().arg("doctor").current_dir(&copy).output().unwrap();
+    let report =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    assert!(
+        report.contains("mutually exclusive") && report.contains("demo--copy"),
+        "doctor run from inside the disputed root itself must still resolve \
+         and classify it, not refuse before the scan starts; got: {report}"
+    );
+}
+
 /// The `--json` channel carries the finding with its sub-kind, so a caller can
 /// tell the fixable arm from the report-only one without parsing prose.
 #[test]
@@ -468,6 +582,138 @@ fn doctor_json_carries_the_conflict_and_its_sub_kind() {
     assert_eq!(
         finding["sub_kind"]["registered-workweave"]["workweave_name"], "w1",
         "the fixable arm must name the registry entry that witnesses it"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 4. A marker that cannot witness itself — its own sub-kind, not a flattened
+//    `unwitnessed` string
+// ---------------------------------------------------------------------------
+
+/// Each `MarkerDefect` produces its own finding, both in the text report and
+/// under its own `--json` tag. A check that only asserted "a finding was
+/// produced" would pass on the flattening this sub-kind replaces, where an
+/// unreadable marker, a legacy marker, and a dangling `primary:` all reported
+/// the same generic detail string.
+#[test]
+fn doctor_reports_a_distinct_marker_unverifiable_finding_per_defect() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+    let ww = create_workweave(&ws, "demo", "w1");
+    let container = ww.parent().unwrap();
+
+    let gone = tmp.path().join("nowhere");
+    let dangling = container.join("demo--dangling");
+    write_marker(&dangling, &gone, "demo", &gone);
+    std::fs::write(dangling.join(".rwv-active"), "demo\n").unwrap();
+
+    let legacy = container.join("demo--legacy");
+    write_legacy_marker(&legacy, &ws, "demo");
+    std::fs::write(legacy.join(".rwv-active"), "demo\n").unwrap();
+
+    let unreadable = container.join("demo--unreadable");
+    write_unreadable_marker(&unreadable);
+    std::fs::write(unreadable.join(".rwv-active"), "demo\n").unwrap();
+
+    let out = rwv().arg("doctor").current_dir(&ws).output().unwrap();
+    let report =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    let line_for = |needle: &str| -> &str {
+        report
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("expected a line naming `{needle}`; got: {report}"))
+    };
+    let dangling_line = line_for("demo--dangling");
+    let legacy_line = line_for("demo--legacy");
+    let unreadable_line = line_for("demo--unreadable");
+
+    assert!(
+        dangling_line.contains("is not a repoweave workspace root"),
+        "got: {dangling_line}"
+    );
+    assert!(
+        legacy_line.contains("missing the required `parent:` field"),
+        "got: {legacy_line}"
+    );
+    assert!(
+        unreadable_line.contains("failed to parse"),
+        "got: {unreadable_line}"
+    );
+    assert_ne!(
+        dangling_line, legacy_line,
+        "each defect names its own cause"
+    );
+    assert_ne!(
+        legacy_line, unreadable_line,
+        "each defect names its own cause"
+    );
+    assert_ne!(
+        dangling_line, unreadable_line,
+        "each defect names its own cause"
+    );
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json must emit JSON ({e}); got: {stdout}"));
+    let defect_tag = |root: &Path| -> String {
+        let canonical = root.canonicalize().unwrap();
+        let finding = doc["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| {
+                v["kind"] == "weave-root-identity-conflict"
+                    && v["root"] == canonical.to_string_lossy().as_ref()
+            })
+            .unwrap_or_else(|| panic!("expected a finding for {}; got: {stdout}", root.display()));
+        match &finding["sub_kind"]["marker-unverifiable"]["defect"] {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Object(o) => o.keys().next().unwrap().clone(),
+            other => panic!("unexpected defect shape: {other:?}"),
+        }
+    };
+    assert_eq!(defect_tag(&dangling), "dangling-primary");
+    assert_eq!(defect_tag(&legacy), "legacy");
+    assert_eq!(defect_tag(&unreadable), "unreadable");
+}
+
+/// `MarkerUnverifiable` is never auto-fixable: a marker that cannot witness
+/// its own claim cannot witness which of the two files is the stray, so
+/// `--fix` must leave both alone until the marker itself is repaired. Pinned
+/// directly rather than left to the prohibition's comment on
+/// `fix_disposition`.
+#[test]
+fn doctor_fix_never_touches_a_marker_unverifiable_root() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "demo");
+    let ww = create_workweave(&ws, "demo", "w1");
+    let container = ww.parent().unwrap();
+
+    let gone = tmp.path().join("nowhere");
+    let dangling = container.join("demo--dangling");
+    write_marker(&dangling, &gone, "demo", &gone);
+    std::fs::write(dangling.join(".rwv-active"), "demo\n").unwrap();
+
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+
+    assert!(
+        has_pointer(&dangling),
+        "--fix must not delete the pointer at a root whose marker cannot be \
+         witnessed"
+    );
+    assert!(
+        has_marker(&dangling),
+        "--fix must not touch the marker either — repairing it is a separate step"
     );
 }
 

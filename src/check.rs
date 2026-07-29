@@ -594,7 +594,8 @@ impl CheckViolation {
             },
             CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
                 WeaveRootIdentityConflictKind::RegisteredWorkweave { .. } => Auto,
-                WeaveRootIdentityConflictKind::Unwitnessed { .. } => ReportOnly,
+                WeaveRootIdentityConflictKind::MarkerUnverifiable { .. }
+                | WeaveRootIdentityConflictKind::Unwitnessed { .. } => ReportOnly,
             },
             CheckViolation::WorkweaveTreeIntegrity { sub_kind, .. } => match sub_kind {
                 WorkweaveTreeIntegrityKind::DanglingParent { .. }
@@ -766,12 +767,28 @@ pub enum WeaveRootIdentityConflictKind {
         /// Name the registry records this directory under.
         workweave_name: String,
     },
-    /// Nothing outside the tree settles which file is the stray: the marker
-    /// is unreadable, or names a different primary, or names this primary but
-    /// no registry entry points back at this directory. Report-only. Deleting
-    /// either file here would be a guess, and the wrong guess destroys
-    /// operator state — the marker in particular carries `primary` and
-    /// `parent` values that exist nowhere else.
+    /// The marker itself cannot witness the identity it claims — unreadable,
+    /// legacy (missing `parent:`), or naming a `primary:` that verifies as no
+    /// workspace at all. `observe_root` classifies a root like this
+    /// `MarkerUnverifiable` rather than `Disputed` even with `.rwv-active`
+    /// present alongside: a marker that cannot prove its own claim cannot
+    /// prove which of the two files is the stray either, so this is
+    /// report-only for the same reason `Unwitnessed` is. Never auto-fixed —
+    /// repairing the marker (`rwv doctor --fix` migrates a legacy one; a
+    /// dangling or unreadable one needs a hand edit) is a separate step from
+    /// clearing a pointer whose redundancy the marker cannot yet vouch for.
+    MarkerUnverifiable {
+        /// Absolute path to the `.rwv-workweave` file.
+        marker_path: PathBuf,
+        /// Why the marker cannot witness its own claim.
+        defect: crate::workspace::MarkerDefect,
+    },
+    /// The marker is readable and verifies, but names a different primary,
+    /// or names this primary with no registry entry pointing back at this
+    /// directory. Report-only. Deleting either file here would be a guess,
+    /// and the wrong guess destroys operator state — the marker in
+    /// particular carries `primary` and `parent` values that exist nowhere
+    /// else.
     ///
     /// The most likely cause of the last shape is a workweave copied
     /// out-of-band (`cp -r`): the copy carries both files, and the registry
@@ -2684,10 +2701,13 @@ fn scan_weave_root_identity(primary_root: &Path, active_path: &Path) -> Vec<Chec
 ///
 /// Existence tests, not parses, decide whether there is a conflict at all —
 /// an empty pointer or a legacy marker is still a present file and still two
-/// copies of one fact. Parsing only decides the sub-kind.
+/// copies of one fact. Parsing only decides the sub-kind, via `observe_root`
+/// — the same reader `resolve` consumes, so this and resolution cannot
+/// diverge on what a root *is*.
 fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<CheckViolation> {
     use crate::workspace::{
-        read_active_project, WorkweaveMarker, ACTIVE_PROJECT_FILE, WORKWEAVE_MARKER_FILE,
+        observe_root, read_active_project, RootObservation, ACTIVE_PROJECT_FILE,
+        WORKWEAVE_MARKER_FILE,
     };
 
     if !root.join(ACTIVE_PROJECT_FILE).exists() || !root.join(WORKWEAVE_MARKER_FILE).exists() {
@@ -2701,19 +2721,28 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
         sub_kind: WeaveRootIdentityConflictKind::Unwitnessed { detail },
     };
 
-    // The marker has to be readable to name the project whose registry could
-    // vouch for this directory. A legacy marker (missing `parent:`) is
-    // refused by `read`, and doctor reports it separately with its own
-    // `--fix`; until that runs there is no project name to look up here.
-    let marker = match WorkweaveMarker::read(root) {
-        Ok(Some(m)) => m,
-        Ok(None) | Err(_) => {
-            return Some(unwitnessed(
-                "The `.rwv-workweave` marker cannot be read, so no registry entry can be \
-                 looked up for it."
-                    .to_string(),
-            ))
+    // Both files exist, per the guard above, so a marker present on disk
+    // observes as exactly one of the two arms that require the pointer too:
+    // `Disputed` (the marker verifies) or `MarkerUnverifiable` (it does not).
+    // `Workweave`, `Primary`, and `None` all require the pointer or the
+    // marker to be absent, so they cannot come back here.
+    let marker = match observe_root(root) {
+        Ok(Some(RootObservation::MarkerUnverifiable {
+            marker_path,
+            defect,
+            ..
+        })) => {
+            return Some(CheckViolation::WeaveRootIdentityConflict {
+                root: root.to_path_buf(),
+                pointer_project,
+                sub_kind: WeaveRootIdentityConflictKind::MarkerUnverifiable {
+                    marker_path,
+                    defect,
+                },
+            })
         }
+        Ok(Some(RootObservation::Disputed { marker, .. })) => marker,
+        Ok(_) | Err(_) => return None,
     };
 
     let primary_canonical = primary_root
@@ -6137,6 +6166,16 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                              an unread duplicate; run `rwv doctor --fix` to delete \
                              `.rwv-active` here (the marker is left alone)",
                             root.display()
+                        ),
+                        WeaveRootIdentityConflictKind::MarkerUnverifiable {
+                            marker_path,
+                            defect,
+                        } => format!(
+                            "{}: carries both `.rwv-active` (which {pointer}) and \
+                             `.rwv-workweave`; the two are mutually exclusive. {} \
+                             `--fix` does not touch the pointer until the marker is repaired",
+                            root.display(),
+                            defect.refusal(marker_path)
                         ),
                         WeaveRootIdentityConflictKind::Unwitnessed { detail } => format!(
                             "{}: carries both `.rwv-active` (which {pointer}) and \

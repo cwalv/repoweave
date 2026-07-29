@@ -19,6 +19,7 @@ use repoweave::integrations::merge::MemberIncompatibility;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::op_state::OpVerb;
 use repoweave::vcs::ResolvedRevisionId;
+use repoweave::workspace::MarkerDefect;
 use std::path::PathBuf;
 
 pub fn project() -> ProjectName {
@@ -87,6 +88,9 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
             WeaveRootIdentityConflictKind::RegisteredWorkweave { .. } => {
                 "weave-root-identity-conflict/registered-workweave".into()
+            }
+            WeaveRootIdentityConflictKind::MarkerUnverifiable { .. } => {
+                "weave-root-identity-conflict/marker-unverifiable".into()
             }
             WeaveRootIdentityConflictKind::Unwitnessed { .. } => {
                 "weave-root-identity-conflict/unwitnessed".into()
@@ -279,6 +283,14 @@ pub fn corpus() -> Vec<CheckViolation> {
             sub_kind: WeaveRootIdentityConflictKind::RegisteredWorkweave {
                 project: "proj".into(),
                 workweave_name: "feat-a".into(),
+            },
+        },
+        CheckViolation::WeaveRootIdentityConflict {
+            root: path("/ws"),
+            pointer_project: Some(project()),
+            sub_kind: WeaveRootIdentityConflictKind::MarkerUnverifiable {
+                marker_path: path("/ws/.rwv-workweave"),
+                defect: MarkerDefect::Legacy,
             },
         },
         CheckViolation::WeaveRootIdentityConflict {

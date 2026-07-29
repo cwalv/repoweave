@@ -260,13 +260,25 @@ primary's registry records this exact directory. The tree is a workweave, so
 
 **What to do:** `rwv doctor --fix` deletes the pointer and leaves the marker.
 
+#### `marker-unverifiable`
+
+**Report-only.** The marker itself cannot witness what it claims: it is
+unreadable, missing the required `parent:` field (a legacy marker), or names a
+`primary:` that verifies as no workspace at all. A marker that cannot prove
+its own claim cannot prove which of the two files is the stray either.
+
+**What to do:** repair the marker first — `rwv doctor --fix` migrates a legacy
+one; an unreadable or dangling one needs a hand edit — then re-run `rwv
+doctor` to classify the pointer against the repaired marker. Never
+auto-fixed: `--fix` does not touch `.rwv-active` here.
+
 #### `unwitnessed`
 
-**Report-only.** Nothing outside the tree settles which file is the stray: the
-marker is unreadable, or names a different primary, or names this primary but
-no registry entry points back here. The most likely cause of the last shape is
-a workweave copied out of band with `cp -r` — the copy carries both files, and
-the registry still names only the original.
+**Report-only.** The marker parses and verifies, but nothing outside the tree
+settles which file is the stray: it names a different primary, or names this
+primary but no registry entry points back here. The most likely cause of the
+last shape is a workweave copied out of band with `cp -r` — the copy carries
+both files, and the registry still names only the original.
 
 **What to do:** decide which file is the stray and delete it yourself.
 Deleting either one automatically would be a guess, and the wrong guess

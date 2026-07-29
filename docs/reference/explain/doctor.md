@@ -121,18 +121,25 @@ identity file is the whole of the distinction, and a tree carrying both has
 two answers with nothing keeping them in agreement. `rwv doctor` reports that
 as `weave-root-identity-conflict`.
 
-`--fix` repairs one of its two sub-kinds, and the split is not symmetric:
+`--fix` repairs one of its three sub-kinds, and the split is not symmetric:
 
 - **`registered-workweave`** — the marker names this workspace's primary, and
   that primary's `.rwv-workweave-index` records this exact directory as one of
   its workweaves. Evidence held *outside* the tree settles the identity, so
   the pointer is provably the redundant copy. `--fix` deletes `.rwv-active`
   and leaves the marker.
-- **`unwitnessed`** — the marker is unreadable, or names a different primary,
-  or names this primary but no registry entry points back at this directory
-  (the usual cause: a workweave copied with `cp -r`, whose registry entry
-  still names the original). Report-only. Deleting either file would be a
-  guess, and the marker in particular carries `primary` and `parent` values
+- **`marker-unverifiable`** — the marker itself cannot witness what it
+  claims: unreadable, missing the required `parent:` field (a legacy marker),
+  or naming a `primary:` that verifies as no workspace at all. Report-only —
+  a marker that cannot prove its own claim cannot prove which file is the
+  stray either. Never auto-fixed: repairing the marker (`rwv doctor --fix`
+  migrates a legacy one; a dangling or unreadable one needs a hand edit) is a
+  separate step from clearing the pointer.
+- **`unwitnessed`** — the marker parses and verifies, but names a different
+  primary, or names this primary with no registry entry pointing back at this
+  directory (the usual cause: a workweave copied with `cp -r`, whose registry
+  entry still names the original). Report-only. Deleting either file would be
+  a guess, and the marker in particular carries `primary` and `parent` values
   that exist nowhere else.
 
 The discriminator is deliberately the registry and not "does this tree contain
@@ -894,6 +901,57 @@ Schema:
           "type": "string"
         }
       }
+    },
+    "MarkerDefect": {
+      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` is the marker shape written before `parent:` became required; `WorkweaveMarker::migrate_legacy` is what `rwv doctor --fix` runs on it.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "legacy"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "dangling-primary"
+          ],
+          "properties": {
+            "dangling-primary": {
+              "type": "object",
+              "required": [
+                "primary"
+              ],
+              "properties": {
+                "primary": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "unreadable"
+          ],
+          "properties": {
+            "unreadable": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
     },
     "MemberIncompatibilityOutput": {
       "description": "The four facts a `member-incompatibility` predicate established, as fields rather than as the sentence they are also rendered into.",
@@ -2174,7 +2232,38 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "Nothing outside the tree settles which file is the stray: the marker is unreadable, or names a different primary, or names this primary but no registry entry points back at this directory. Report-only. Deleting either file here would be a guess, and the wrong guess destroys operator state — the marker in particular carries `primary` and `parent` values that exist nowhere else.\n\nThe most likely cause of the last shape is a workweave copied out-of-band (`cp -r`): the copy carries both files, and the registry still names only the original.",
+          "description": "The marker itself cannot witness the identity it claims — unreadable, legacy (missing `parent:`), or naming a `primary:` that verifies as no workspace at all. `observe_root` classifies a root like this `MarkerUnverifiable` rather than `Disputed` even with `.rwv-active` present alongside: a marker that cannot prove its own claim cannot prove which of the two files is the stray either, so this is report-only for the same reason `Unwitnessed` is. Never auto-fixed — repairing the marker (`rwv doctor --fix` migrates a legacy one; a dangling or unreadable one needs a hand edit) is a separate step from clearing a pointer whose redundancy the marker cannot yet vouch for.",
+          "type": "object",
+          "required": [
+            "marker-unverifiable"
+          ],
+          "properties": {
+            "marker-unverifiable": {
+              "type": "object",
+              "required": [
+                "defect",
+                "marker_path"
+              ],
+              "properties": {
+                "defect": {
+                  "description": "Why the marker cannot witness its own claim.",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/MarkerDefect"
+                    }
+                  ]
+                },
+                "marker_path": {
+                  "description": "Absolute path to the `.rwv-workweave` file.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The marker is readable and verifies, but names a different primary, or names this primary with no registry entry pointing back at this directory. Report-only. Deleting either file here would be a guess, and the wrong guess destroys operator state — the marker in particular carries `primary` and `parent` values that exist nowhere else.\n\nThe most likely cause of the last shape is a workweave copied out-of-band (`cp -r`): the copy carries both files, and the registry still names only the original.",
           "type": "object",
           "required": [
             "unwitnessed"
