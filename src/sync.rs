@@ -2568,14 +2568,14 @@ fn guard_and_mark<'a>(
     // path on any downstream mid-op error since the record is already on disk.
     let mut record = initial_record;
     if allow_stale_lock {
-        record.overrides.push("allow-stale-lock".to_owned());
+        record.overrides.push(op_state::Override::AllowStaleLock);
     }
     if phase1_ancestor_bypassed {
         // Named consent: --discard-local-commits will discard
         // reachable project commits in Phase 1'. Recorded in the audit-trail
         // `overrides` field so cleanup preserves the project savepoint as a
         // tombstone and --continue resumes with the same consent.
-        record.overrides.push("discard-local-commits".to_owned());
+        record.overrides.push(op_state::Override::DiscardLocalCommits);
     }
     if !record.overrides.is_empty() {
         // Only rewrite when we actually have overrides — otherwise the
@@ -2851,8 +2851,7 @@ fn load_continuing_context<'a>(
     // resumption phases); only `discard-local-commits` gates Phase 1'.
     let discard_local_commits_resumed = record
         .overrides
-        .iter()
-        .any(|o| o == "discard-local-commits");
+        .contains(&op_state::Override::DiscardLocalCommits);
 
     Ok(OpContext {
         cwd_ctx,
@@ -4368,7 +4367,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let owner = op_state::read_owner(&ctx.owner_workspace_dir)?;
     let discard_tombstone = owner
         .as_ref()
-        .map(|r| r.overrides.iter().any(|o| o == "discard-local-commits"))
+        .map(|r| r.overrides.contains(&op_state::Override::DiscardLocalCommits))
         .unwrap_or(false);
 
     if !discard_tombstone {

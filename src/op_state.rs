@@ -317,6 +317,28 @@ impl PhaseTips {
 }
 
 // ---------------------------------------------------------------------------
+// Override — a named consent the operator supplied at invocation
+// ---------------------------------------------------------------------------
+
+/// A named consent supplied at invocation and recorded on the owner record.
+///
+/// Each variant is one CLI flag, and serialises to that flag's name without
+/// the leading dashes — the spelling already on disk in every `.rwv-op`
+/// written so far. `--continue` re-derives the op's consent from this list
+/// and `cleanup` reads it to decide whether the project savepoint survives as
+/// the only remaining pointer to discarded commits, so mint and read must be
+/// the same value rather than the same text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Override {
+    /// The lock-freshness precondition was waived on both sides.
+    AllowStaleLock,
+    /// Phase 1' may hard-reset the project repo past commits the source does
+    /// not carry.
+    DiscardLocalCommits,
+}
+
+// ---------------------------------------------------------------------------
 // OwnerRecord — the full op record at the initiating workspace
 // ---------------------------------------------------------------------------
 
@@ -355,8 +377,8 @@ pub struct OwnerRecord {
     /// time (see [`PhaseTips`]). Replay-phase intent during replay; converged
     /// tips after the atomic [`PhaseTips::converge`] swap at relock completion.
     pub tips: PhaseTips,
-    /// Named overrides supplied at invocation (e.g. `allow-stale-lock`).
-    pub overrides: Vec<String>,
+    /// Named overrides supplied at invocation.
+    pub overrides: Vec<Override>,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
 }
@@ -389,7 +411,7 @@ struct WireOwnerRecord {
     #[serde(default)]
     converged_tips: BTreeMap<String, String>,
     #[serde(default)]
-    overrides: Vec<String>,
+    overrides: Vec<Override>,
     started_at: String,
 }
 
