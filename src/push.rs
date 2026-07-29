@@ -330,12 +330,7 @@ pub fn run_push(
     // repos return 403 against upstreams the operator doesn't own. When
     // selectors ARE passed, use them verbatim — selectors override the default.
     let (effective_filter, using_default): (RepoFilter, bool) = if filter.is_empty() {
-        // No selectors supplied — default to Owned + Fork.
-        (
-            RepoFilter::parse(&["owned".to_string(), "fork".to_string()], &[])
-                .expect("known-safe literal roles"),
-            true,
-        )
+        (RepoFilter::from_roles(vec![Role::Owned, Role::Fork]), true)
     } else {
         (filter.clone(), false)
     };

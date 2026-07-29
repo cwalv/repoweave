@@ -536,6 +536,14 @@ pub enum Role {
 }
 
 impl Role {
+    /// Every variant, in the order operator-facing text lists them.
+    ///
+    /// `--role` parsing and its error text are both derived from this slice,
+    /// so a variant missing here is a variant the CLI cannot name. Nothing in
+    /// the type system enforces completeness; `tests/role_single_mint_test.rs`
+    /// does, by matching exhaustively.
+    pub const ALL: &'static [Role] = &[Role::Owned, Role::Fork, Role::Dependency, Role::Reference];
+
     /// Whether this repo should appear in ecosystem workspace configs.
     /// Reference repos are excluded — they're not part of the build graph.
     pub fn is_active(&self) -> bool {
@@ -549,6 +557,70 @@ impl Role {
             Role::Dependency => "dependency",
             Role::Reference => "reference",
         }
+    }
+
+    /// The spelling this role is no longer accepted under, and the sentence
+    /// telling an operator what to run instead.
+    ///
+    /// Manifest loading and `--role` parsing both hit this rejection, from
+    /// different parsers, and an operator who sees two different sentences
+    /// for one migration reads it as two different problems.
+    pub const LEGACY_SPELLING: &'static str = "primary";
+
+    pub fn legacy_spelling_hint() -> String {
+        format!(
+            "`role: {}` is no longer accepted (the role is spelled `{}`); \
+             run `rwv doctor --fix` to migrate manifests still using it",
+            Self::LEGACY_SPELLING,
+            Role::Owned.as_str()
+        )
+    }
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The `--role` value did not name a [`Role`].
+///
+/// Carries the offending value so callers can name it; [`Display`] lists the
+/// accepted spellings from [`Role::ALL`] rather than restating them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleParseError(pub String);
+
+impl fmt::Display for RoleParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.eq_ignore_ascii_case(Role::LEGACY_SPELLING) {
+            return f.write_str(&Role::legacy_spelling_hint());
+        }
+        let accepted: Vec<&str> = Role::ALL.iter().map(|r| r.as_str()).collect();
+        write!(
+            f,
+            "'{}' is not a recognised role (expected {})",
+            self.0,
+            accepted.join(", ")
+        )
+    }
+}
+
+impl std::error::Error for RoleParseError {}
+
+impl FromStr for Role {
+    type Err = RoleParseError;
+
+    /// Case-insensitive, over the same spellings [`Role::as_str`] writes.
+    ///
+    /// [`Role::LEGACY_SPELLING`] is deliberately absent: it must reach
+    /// [`RoleParseError`] so the operator gets the migration sentence
+    /// instead of a silent acceptance.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Role::ALL
+            .iter()
+            .copied()
+            .find(|r| r.as_str().eq_ignore_ascii_case(s))
+            .ok_or_else(|| RoleParseError(s.to_owned()))
     }
 }
 
@@ -1151,10 +1223,7 @@ impl Manifest {
             Ok(manifest) => Ok(manifest),
             Err(err) => {
                 if manifest_has_legacy_role_primary(content) {
-                    Err(anyhow::anyhow!(
-                        "manifest uses the deprecated `role: primary` spelling; \
-                         run `rwv doctor --fix` to migrate to `role: owned`"
-                    ))
+                    Err(anyhow::anyhow!("manifest {}", Role::legacy_spelling_hint()))
                 } else {
                     Err(err.into())
                 }
@@ -1202,7 +1271,7 @@ pub fn migrate_legacy_role_primary(content: &str) -> (String, usize) {
             // `$2` captures the trailing character (whitespace, '#', or
             // newline) we need to preserve so that `role: primary  # foo`
             // and `role: primary\n` keep their original shape.
-            format!("{}owned{}", &caps[1], &caps[2])
+            format!("{}{}{}", &caps[1], Role::Owned.as_str(), &caps[2])
         })
         .into_owned();
     (out, count)
@@ -1225,8 +1294,11 @@ fn legacy_role_primary_regex() -> &'static regex::Regex {
     // consumes nothing (Capture 2 falls back to an empty match in that
     // case, which `replace_all` re-emits as empty).
     RE.get_or_init(|| {
-        regex::Regex::new(r"(?m)^([ \t]*role:[ \t]+)primary([ \t#\r\n]|$)")
-            .expect("legacy_role_primary regex compiles")
+        regex::Regex::new(&format!(
+            r"(?m)^([ \t]*role:[ \t]+){}([ \t#\r\n]|$)",
+            regex::escape(Role::LEGACY_SPELLING)
+        ))
+        .expect("legacy_role_primary regex compiles")
     })
 }
 

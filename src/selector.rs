@@ -46,7 +46,7 @@
 //! lock-precondition site in `src/push.rs`. The filter narrows the push
 //! loop, never the precondition.
 
-use crate::manifest::{RepoPath, Role};
+use crate::manifest::{RepoPath, Role, RoleParseError};
 use globset::{Glob, GlobMatcher};
 use regex::Regex;
 use std::fmt;
@@ -92,7 +92,7 @@ enum RepoSelector {
 #[derive(Debug)]
 pub enum FilterError {
     /// `--role <value>` did not match any [`Role`] variant.
-    UnknownRole(String),
+    UnknownRole(RoleParseError),
     /// `--repo re:` or `--repo glob:` with nothing after the prefix.
     EmptyPattern { kind: &'static str },
     /// `--repo re:<pattern>` where `<pattern>` failed to compile as a regex.
@@ -110,20 +110,7 @@ pub enum FilterError {
 impl fmt::Display for FilterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownRole(value) => {
-                if value.eq_ignore_ascii_case("primary") {
-                    write!(
-                        f,
-                        "--role: 'primary' is no longer accepted (the role is spelled `owned`); \
-                         run `rwv doctor --fix` to migrate any manifests still using `role: primary`"
-                    )
-                } else {
-                    write!(
-                        f,
-                        "--role: '{value}' is not a recognised role (expected owned, dependency, fork, or reference)"
-                    )
-                }
-            }
+            Self::UnknownRole(source) => write!(f, "--role: {source}"),
             Self::EmptyPattern { kind } => {
                 write!(
                     f,
@@ -143,6 +130,7 @@ impl fmt::Display for FilterError {
 impl std::error::Error for FilterError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::UnknownRole(source) => Some(source),
             Self::InvalidRegex { source, .. } => Some(source),
             Self::InvalidGlob { source, .. } => Some(source),
             _ => None,
@@ -175,6 +163,18 @@ impl RepoFilter {
         })
     }
 
+    /// Build a filter from roles a caller already holds as [`Role`] values.
+    ///
+    /// A verb computing its own default has nothing to parse; spelling the
+    /// roles as strings so they can be re-parsed puts a panic path in the
+    /// caller and a second copy of the vocabulary in a verb.
+    pub fn from_roles(roles: Vec<Role>) -> Self {
+        Self {
+            roles,
+            selectors: Vec::new(),
+        }
+    }
+
     /// True iff both `--role` and `--repo` lists are empty — callers should
     /// short-circuit (every repo passes) without invoking [`Self::matches`]
     /// per item.
@@ -203,14 +203,12 @@ impl RepoFilter {
     }
 }
 
-/// Case-insensitive parse of a `--role` value against the [`Role`] enum.
+/// Parse a `--role` value through the vocabulary's owner.
 ///
-/// We don't use clap's `ValueEnum` parsing here because `--role` is collected
-/// as `Vec<String>` in the verb subcommands (shared across three verbs; the
-/// arg is wired up identically per verb). Going through `Role::from_str`
-/// keeps the parse error type ours so the CLI surfaces a consistent message.
+/// clap's `ValueEnum` parsing does not apply here: `--role` is collected as
+/// `Vec<String>` across three verbs, so the values arrive unparsed.
 fn parse_role(raw: &str) -> Result<Role, FilterError> {
-    Role::from_str(raw).map_err(|_| FilterError::UnknownRole(raw.to_string()))
+    Role::from_str(raw).map_err(FilterError::UnknownRole)
 }
 
 fn parse_selector(raw: &str) -> Result<RepoSelector, FilterError> {
@@ -257,26 +255,6 @@ fn parse_selector(raw: &str) -> Result<RepoSelector, FilterError> {
     }
 }
 
-// Role doesn't expose a FromStr today; provide one here gated on the same
-// `as_str` variants the manifest already serialises. Case-insensitive.
-impl FromStr for Role {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // No `primary` alias here: the back-compat surface was dropped
-        // in favour of `rwv doctor --fix`. `FilterError::UnknownRole`
-        // detects the legacy spelling and emits the migration hint, so
-        // matching `primary` here would mask that diagnostic.
-        match s.to_ascii_lowercase().as_str() {
-            "owned" => Ok(Role::Owned),
-            "fork" => Ok(Role::Fork),
-            "dependency" => Ok(Role::Dependency),
-            "reference" => Ok(Role::Reference),
-            _ => Err(()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,7 +295,7 @@ mod tests {
     fn parse_role_rejects_unknown() {
         let err = RepoFilter::parse(&["bogus".into()], &[]).unwrap_err();
         match err {
-            FilterError::UnknownRole(v) => assert_eq!(v, "bogus"),
+            FilterError::UnknownRole(v) => assert_eq!(v.0, "bogus"),
             other => panic!("expected UnknownRole, got {other}"),
         }
     }
