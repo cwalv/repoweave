@@ -80,11 +80,6 @@ pub trait Registry {
     /// Construct a clone URL from an owner/repo pair.
     /// Returns `None` if this registry can't generate URLs (e.g., directory-based).
     fn clone_url(&self, id: &RepoId) -> Option<RepoUrl>;
-
-    /// The local path for a repo: `{registry}/{owner}/{repo}`.
-    fn local_path(&self, id: &RepoId) -> PathBuf {
-        canonical_local_path(self.name().as_str(), id.owner(), id.repo())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -174,44 +169,6 @@ fn extract_owner_repo(path: &str) -> Option<(String, String)> {
 }
 
 // ---------------------------------------------------------------------------
-// Directory-based registry (local repos under a shared prefix)
-// ---------------------------------------------------------------------------
-
-/// A registry that matches `file://` URLs under a local directory prefix.
-pub struct DirectoryRegistry {
-    pub registry_name: RegistryName,
-    pub prefix: PathBuf,
-}
-
-impl Registry for DirectoryRegistry {
-    fn name(&self) -> &RegistryName {
-        &self.registry_name
-    }
-
-    fn matches(&self, raw: &str) -> Option<RepoUrl> {
-        let path_str = raw.strip_prefix("file://")?;
-        let path = Path::new(path_str);
-        let relative = path.strip_prefix(&self.prefix).ok()?;
-        let mut components = relative.components();
-        let owner = components.next()?.as_os_str().to_str()?.to_owned();
-        let repo = components.next()?.as_os_str().to_str()?.to_owned();
-        if owner.is_empty() || repo.is_empty() {
-            return None;
-        }
-        Some(RepoUrl::File {
-            registry: self.registry_name.clone(),
-            prefix: self.prefix.clone(),
-            owner,
-            repo,
-        })
-    }
-
-    fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
-        None
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Built-in registries and CloneInfo extraction
 // ---------------------------------------------------------------------------
 
@@ -288,7 +245,7 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
             })
         }
         RepoUrl::Unknown(s) => {
-            if s.contains("://") || s.starts_with("git@") {
+            if source.is_url() {
                 let project_name = crate::fetch::project_name_from_source(s);
                 Ok(CloneInfo {
                     url: source.clone(),
@@ -338,13 +295,6 @@ mod tests {
         DomainRegistry {
             registry_name: RegistryName::new("gitlab"),
             domain: "gitlab.com".into(),
-        }
-    }
-
-    fn dir_reg() -> DirectoryRegistry {
-        DirectoryRegistry {
-            registry_name: RegistryName::new("local"),
-            prefix: PathBuf::from("/srv/repos"),
         }
     }
 
@@ -438,58 +388,6 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // DirectoryRegistry::matches edge cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn directory_matches_extra_segments() {
-        let url = dir_reg()
-            .matches("file:///srv/repos/owner/repo/sub/dir")
-            .unwrap();
-        assert_eq!(url.owner_repo(), Some(("owner", "repo")));
-    }
-
-    #[test]
-    fn directory_matches_only_owner_returns_none() {
-        assert!(dir_reg().matches("file:///srv/repos/owner").is_none());
-    }
-
-    #[test]
-    fn directory_matches_exact_prefix_no_segments_returns_none() {
-        assert!(dir_reg().matches("file:///srv/repos").is_none());
-    }
-
-    #[test]
-    fn directory_matches_trailing_slash() {
-        let url = dir_reg().matches("file:///srv/repos/owner/repo/").unwrap();
-        assert_eq!(url.owner_repo(), Some(("owner", "repo")));
-    }
-
-    #[test]
-    fn directory_matches_non_file_scheme_returns_none() {
-        assert!(dir_reg().matches("https:///srv/repos/owner/repo").is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // local_path generation
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn local_path_domain_registry() {
-        let id = RepoId::new("alice", "widgets");
-        assert_eq!(
-            github_reg().local_path(&id),
-            Path::new("github/alice/widgets")
-        );
-    }
-
-    #[test]
-    fn local_path_directory_registry() {
-        let id = RepoId::new("bob", "tools");
-        assert_eq!(dir_reg().local_path(&id), Path::new("local/bob/tools"));
-    }
-
-    // -----------------------------------------------------------------------
     // clone_url generation
     // -----------------------------------------------------------------------
 
@@ -509,12 +407,6 @@ mod tests {
             gitlab_reg().clone_url(&id).unwrap().to_string(),
             "https://gitlab.com/org/project.git"
         );
-    }
-
-    #[test]
-    fn clone_url_directory_registry_returns_none() {
-        let id = RepoId::new("x", "y");
-        assert!(dir_reg().clone_url(&id).is_none());
     }
 
     // -----------------------------------------------------------------------

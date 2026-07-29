@@ -202,7 +202,7 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
 
 The `.workweaves/` subtree is created and destroyed by `rwv workweave <project> create` and `rwv workweave <project> delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create --from <source>` is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
 
-The first path segment is a **registry** — a short name for where the repo lives. Built-in registries: `github` → `github.com`, `gitlab` → `gitlab.com`, `bitbucket` → `bitbucket.org`. Custom registries are configured in `rwv`'s own config (domain-based for hosted hosts, directory-based for local paths).
+The first path segment is a **registry** — a short name for where the repo lives. Built-in registries: `github` → `github.com`, `gitlab` → `gitlab.com`, `bitbucket` → `bitbucket.org`. The set is not configurable. A URL on any other host still resolves: the segment becomes the URL's own host, or `local` for a `file://` URL.
 
 - **Repos are regular clones** at the weave root. `cd github/chatly/server && git status` works; no bare repos. (A workweave's checkouts are a different kind of thing — see the `.workweaves/` note above.)
 - **Ecosystem files are symlinked** at the weave directory to the active project's directory. Real files live in `projects/<name>/`.

@@ -1,8 +1,6 @@
 use repoweave::manifest::RepoUrl;
-use repoweave::registry::{
-    builtin_registries, DirectoryRegistry, DomainRegistry, Registry, RegistryName, RepoId,
-};
-use std::path::{Path, PathBuf};
+use repoweave::registry::{builtin_registries, DomainRegistry, Registry, RegistryName, RepoId};
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // DomainRegistry: HTTPS URL parsing
@@ -83,57 +81,6 @@ fn domain_registry_clone_url() {
 }
 
 // ---------------------------------------------------------------------------
-// DomainRegistry: local_path generation
-// ---------------------------------------------------------------------------
-
-#[test]
-fn domain_registry_local_path() {
-    let reg = github_registry();
-    let id = RepoId::new("cwalv", "repoweave");
-    let path = reg.local_path(&id);
-    assert_eq!(path, Path::new("github/cwalv/repoweave"));
-}
-
-// ---------------------------------------------------------------------------
-// DirectoryRegistry: parse file:// URLs
-// ---------------------------------------------------------------------------
-
-#[test]
-fn directory_registry_parse_file_url() {
-    let reg = dir_registry();
-    let url = reg.matches("file:///srv/repos/owner/repo").unwrap();
-    assert!(matches!(url, RepoUrl::File { .. }));
-    assert_eq!(url.owner_repo(), Some(("owner", "repo")));
-}
-
-// ---------------------------------------------------------------------------
-// DirectoryRegistry: reject non-matching prefixes
-// ---------------------------------------------------------------------------
-
-#[test]
-fn directory_registry_rejects_non_matching_prefix() {
-    let reg = dir_registry();
-    assert!(reg.matches("file:///other/path/owner/repo").is_none());
-}
-
-#[test]
-fn directory_registry_rejects_https_urls() {
-    let reg = dir_registry();
-    assert!(reg.matches("https://example.com/owner/repo").is_none());
-}
-
-// ---------------------------------------------------------------------------
-// DirectoryRegistry: clone_url returns None
-// ---------------------------------------------------------------------------
-
-#[test]
-fn directory_registry_clone_url_returns_none() {
-    let reg = dir_registry();
-    let id = RepoId::new("owner", "repo");
-    assert!(reg.clone_url(&id).is_none());
-}
-
-// ---------------------------------------------------------------------------
 // builtin_registries(): verify github, gitlab, bitbucket are present
 // ---------------------------------------------------------------------------
 
@@ -210,13 +157,6 @@ fn github_registry() -> DomainRegistry {
     DomainRegistry {
         registry_name: RegistryName::new("github"),
         domain: "github.com".into(),
-    }
-}
-
-fn dir_registry() -> DirectoryRegistry {
-    DirectoryRegistry {
-        registry_name: RegistryName::new("local"),
-        prefix: PathBuf::from("/srv/repos"),
     }
 }
 

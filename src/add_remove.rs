@@ -184,11 +184,12 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
+    let parsed_url: RepoUrl = url.parse()?;
 
-    // Check if the argument is a local path (no URL scheme and directory exists
-    // relative to workspace root). Local-path resolution still scans primary
-    // for existing clones — that is the canonical layout regardless of CWD.
-    if !url.contains("://") {
+    // A non-URL argument may name a clone already on disk. Local-path
+    // resolution scans primary for it — that is the canonical layout
+    // regardless of CWD.
+    if !parsed_url.is_url() {
         let candidate = ctx.primary_path().join(url);
         if candidate.is_dir() {
             // Warn when this clone path is already registered by another project
@@ -228,8 +229,6 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         }
     }
 
-    // Resolve the URL through registries to get a canonical local path.
-    let parsed_url: RepoUrl = url.parse()?;
     let local_path = parsed_url
         .local_path()
         .or_else(|| derive_local_path_from_url(url))
