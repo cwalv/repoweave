@@ -1,4 +1,4 @@
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
     drift_issues, merge_activate, missing_issue, strip_deactivate, KeyPath, ManagedDoc, OwnedValue,
     Ownership, YamlDoc,
@@ -129,6 +129,7 @@ impl Integration for PnpmWorkspaces {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "pnpm is not on PATH".to_string(),
+                kind: IssueKind::ToolMissing,
                 safe_to_fix: true,
             });
         }

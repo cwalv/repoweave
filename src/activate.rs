@@ -975,7 +975,7 @@ pub fn verify_surfacing(
     manifest: &Manifest,
     skip_missing_sources: bool,
 ) -> Vec<crate::integration::Issue> {
-    use crate::integration::{Issue, Severity};
+    use crate::integration::{Issue, IssueKind, Severity};
 
     let project_dir = root.join("projects").join(project.as_str());
     let presents_project = read_weave_root_project(root).as_ref() == Some(project);
@@ -992,6 +992,7 @@ pub fn verify_surfacing(
                     "surfacing: `{file}` resolves into project `{owner}` while the weave root \
                      presents `{project}` (shared names follow the root's project; safe to --fix)"
                 ),
+                kind: IssueKind::Surfacing,
                 safe_to_fix: true,
             });
         }
@@ -1022,6 +1023,7 @@ pub fn verify_surfacing(
                         "surfacing: `{file}` is not surfaced (no symlink at `{}`; safe to --fix)",
                         link.display()
                     ),
+                    kind: IssueKind::Surfacing,
                     safe_to_fix: true,
                 });
                 continue;
@@ -1041,6 +1043,7 @@ pub fn verify_surfacing(
                      not auto-fixed)",
                     link.display()
                 ),
+                kind: IssueKind::Surfacing,
                 safe_to_fix: false,
             });
             continue;
@@ -1059,7 +1062,8 @@ pub fn verify_surfacing(
                         actual.display(),
                         expected_target.display()
                     ),
-                    safe_to_fix: true,
+                    kind: IssueKind::Surfacing,
+                safe_to_fix: true,
                 });
             }
             Err(e) => {
@@ -1070,6 +1074,7 @@ pub fn verify_surfacing(
                         "surfacing: `{file}` symlink unreadable at `{}` ({e}; safe to --fix)",
                         link.display()
                     ),
+                    kind: IssueKind::Surfacing,
                     safe_to_fix: true,
                 });
             }
@@ -1082,13 +1087,14 @@ pub fn verify_surfacing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::Issue;
+    use crate::integration::{Issue, IssueKind};
 
     fn issue(integration: &str, severity: Severity, message: &str) -> Issue {
         Issue {
             integration: integration.into(),
             severity,
             message: message.into(),
+            kind: IssueKind::ToolMissing,
             safe_to_fix: true,
         }
     }

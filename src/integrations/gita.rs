@@ -1,4 +1,4 @@
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -117,6 +117,7 @@ impl Integration for Gita {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "gita is not on PATH".to_string(),
+                kind: IssueKind::ToolMissing,
                 safe_to_fix: true,
             });
         }

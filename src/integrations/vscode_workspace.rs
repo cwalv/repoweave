@@ -13,7 +13,7 @@
 //! and `verify` go through it — regeneration and drift detection cannot
 //! disagree about what the region should hold.
 
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
     drift_issues, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc, RwvGeneratedMarker,
 };
@@ -526,6 +526,7 @@ impl Integration for VscodeWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: format!("{} does not exist", filename),
+                kind: IssueKind::ManagedFileMissing,
                 safe_to_fix: true,
             });
         }

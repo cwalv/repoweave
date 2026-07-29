@@ -48,7 +48,7 @@
 //! through `set_owned`, it merges into the existing map rather than replacing
 //! the whole value. Leaf variants (`Bool`, `String`, `Array`) replace.
 
-use crate::integration::{Issue, Severity};
+use crate::integration::{Issue, IssueKind, Severity};
 use crate::workweave_index;
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
@@ -1813,6 +1813,7 @@ pub fn drift_issues(
                  rwv will NOT auto-take-over (would discard user content). {user_held_suffix}",
                 path.display()
             ),
+            kind: IssueKind::ManagedFileUserHeld,
             safe_to_fix: false,
         }],
         VerifyState::Drift => vec![Issue {
@@ -1823,6 +1824,7 @@ pub fn drift_issues(
                  Run rwv doctor --fix to regenerate",
                 path.display()
             ),
+            kind: IssueKind::ManagedFileDrift,
             safe_to_fix: true,
         }],
         VerifyState::Clean => vec![],
@@ -1842,6 +1844,7 @@ pub fn missing_issue(name: &str, path: &Path) -> Issue {
             "{name} managed file missing: {}; run rwv doctor --fix to regenerate",
             path.display()
         ),
+        kind: IssueKind::ManagedFileMissing,
         safe_to_fix: true,
     }
 }
@@ -1870,6 +1873,7 @@ pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Is
              run rwv doctor --fix to regenerate",
             path.display()
         ),
+        kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
     }
 }
@@ -1892,14 +1896,6 @@ pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Is
 // rule 5 is untouched, `verify()` still reports `DefaultOnly` divergence as
 // CLEAN, and the two coexist on the same file. Nothing gates on it — `doctor`
 // and `update` report; neither refuses.
-
-/// Stable kebab-case kind tag for the member-incompatibility category.
-///
-/// Prefixed onto every message this category emits so the finding is
-/// dispatchable the way `rwv doctor --json`'s `kind` discriminants are —
-/// integration findings travel as [`Issue`] values, which carry no typed
-/// discriminant field, so the tag rides in the message text.
-pub const MEMBER_INCOMPATIBILITY_KIND: &str = "member-incompatibility";
 
 /// An on-disk `Ownership::DefaultOnly` value that is incompatible with what
 /// the workspace members require.
@@ -1965,31 +1961,61 @@ impl MemberIncompatibility {
         }
     }
 
+    /// The managed file holding the incompatible value.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Display form of the `DefaultOnly` key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The value currently on disk.
+    pub fn on_disk(&self) -> &str {
+        &self.on_disk
+    }
+
+    /// The strongest value the members require.
+    pub fn required(&self) -> &str {
+        &self.required
+    }
+
+    /// The member file carrying that requirement.
+    pub fn required_by(&self) -> &str {
+        &self.required_by
+    }
+
     /// Render this observation as the informational [`Issue`] both `rwv doctor`
     /// and `rwv update` surface.
     ///
     /// `safe_to_fix` is `false` and the message names both operator remedies;
-    /// neither is a per-call-site choice (see the type docs).
+    /// neither is a per-call-site choice (see the type docs). The observation
+    /// itself rides on [`Issue::kind`], so a surface that wants the four facts
+    /// reads them rather than parsing them back out of the sentence.
     pub fn into_issue(self) -> Issue {
+        let message = format!(
+            "{tag}: {} sets `{}` to `{}`, but the members \
+             require `{}` (from {}) — the toolchain rejects this configuration. \
+             rwv seeded this key once and never overwrites it, so this is not drift \
+             and no automated repair applies: either raise `{}` to `{}` in {}, \
+             or lower the requirement in {}.",
+            self.path.display(),
+            self.key,
+            self.on_disk,
+            self.required,
+            self.required_by,
+            self.key,
+            self.required,
+            self.path.display(),
+            self.required_by,
+            tag = IssueKind::MEMBER_INCOMPATIBILITY,
+        );
         Issue {
-            integration: self.integration,
+            integration: self.integration.clone(),
             severity: Severity::Warning,
-            message: format!(
-                "{MEMBER_INCOMPATIBILITY_KIND}: {} sets `{}` to `{}`, but the members \
-                 require `{}` (from {}) — the toolchain rejects this configuration. \
-                 rwv seeded this key once and never overwrites it, so this is not drift \
-                 and no automated repair applies: either raise `{}` to `{}` in {}, \
-                 or lower the requirement in {}.",
-                self.path.display(),
-                self.key,
-                self.on_disk,
-                self.required,
-                self.required_by,
-                self.key,
-                self.required,
-                self.path.display(),
-                self.required_by,
-            ),
+            message,
+            kind: IssueKind::MemberIncompatibility(Box::new(self)),
             safe_to_fix: false,
         }
     }
@@ -2167,6 +2193,7 @@ pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
              restore the file to the recorded state",
             path.display()
         ),
+        kind: IssueKind::ManagedFileDrift,
         safe_to_fix: false,
     }
 }

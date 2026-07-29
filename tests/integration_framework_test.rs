@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use repoweave::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
+use repoweave::integration::{
+    is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity,
+};
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::RefName;
 
@@ -272,12 +274,14 @@ fn mock_check_returns_issues() {
             integration: "cargo".into(),
             severity: Severity::Warning,
             message: "missing dependency".into(),
+            kind: IssueKind::ToolMissing,
             safe_to_fix: true,
         },
         Issue {
             integration: "cargo".into(),
             severity: Severity::Error,
             message: "build failure".into(),
+            kind: IssueKind::ConfigRejected,
             safe_to_fix: true,
         },
     ];
@@ -331,6 +335,7 @@ fn issue_creation_with_warning_severity() {
         integration: "npm".into(),
         severity: Severity::Warning,
         message: "outdated lockfile".into(),
+        kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
     };
     assert_eq!(issue.integration, "npm");
@@ -344,6 +349,7 @@ fn issue_creation_with_error_severity() {
         integration: "cargo".into(),
         severity: Severity::Error,
         message: "unresolvable version conflict".into(),
+        kind: IssueKind::ConfigRejected,
         safe_to_fix: true,
     };
     assert_eq!(issue.integration, "cargo");
@@ -1071,7 +1077,7 @@ mod fo_cnpjy_3 {
     use std::sync::{Arc, Mutex};
 
     use repoweave::activate::{activate, activate_intent_with_options, ActivateOptions};
-    use repoweave::integration::{Integration, IntegrationContext, Issue, Severity};
+    use repoweave::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
     use repoweave::manifest::ProjectName;
 
     // -----------------------------------------------------------------------
@@ -1236,6 +1242,7 @@ mod fo_cnpjy_3 {
                     integration: "check-warner".into(),
                     severity: Severity::Warning,
                     message: "env precondition".into(),
+                    kind: IssueKind::ToolMissing,
                     safe_to_fix: true,
                 }])
             }

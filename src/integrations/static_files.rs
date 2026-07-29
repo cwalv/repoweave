@@ -32,7 +32,7 @@
 //! config sees a clear message rather than relying on the framework's
 //! tie-breaking (defense in depth).
 
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -148,6 +148,7 @@ impl Integration for StaticFiles {
                 integration: self.name().to_string(),
                 severity: Severity::Error,
                 message: collision_message(&name),
+                kind: IssueKind::ConfigRejected,
                 safe_to_fix: true,
             });
         }
@@ -159,6 +160,7 @@ impl Integration for StaticFiles {
                     integration: self.name().to_string(),
                     severity: Severity::Warning,
                     message: format!("declared file '{}' not found in project directory", file),
+                    kind: IssueKind::ConfigRejected,
                     safe_to_fix: true,
                 });
             }

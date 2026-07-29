@@ -49,7 +49,7 @@
 //! declared.  Tests set it to `true` to guarantee the hand-parse path is
 //! taken regardless of whether `go` happens to be on PATH in the test runner.
 
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
     drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, GoWorkDoc, ManagedDoc,
     MemberIncompatibility, OwnedValue, Ownership,
@@ -185,6 +185,7 @@ impl Integration for GoWork {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "go is not on PATH; using hand-edit fallback for go.work".to_string(),
+                kind: IssueKind::ToolMissing,
                 safe_to_fix: true,
             });
         }

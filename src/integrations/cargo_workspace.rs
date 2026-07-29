@@ -141,7 +141,7 @@
 //! Opt-out keys that don't match any active Rust repo are silently ignored
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
     check_owned_digest, drift_issues, fully_owned_digest_mismatch_issue,
     fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue, stamp_owned_digest,
@@ -749,6 +749,7 @@ impl Integration for CargoWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "cargo is not on PATH".to_string(),
+                kind: IssueKind::ToolMissing,
                 safe_to_fix: true,
             });
         }
@@ -761,6 +762,7 @@ impl Integration for CargoWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Error,
                 message: nested_workspace_error(&nested_conflicts),
+                kind: IssueKind::ConfigRejected,
                 safe_to_fix: true,
             });
         }

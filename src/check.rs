@@ -4,7 +4,7 @@
 //! a series of checks. Integration check hooks are run separately.
 
 use crate::git::git_command;
-use crate::integration::Issue;
+use crate::integration::{Issue, IssueKind};
 use crate::manifest::{Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
 use crate::workspace::Resolution;
@@ -6506,6 +6506,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 }
             };
             Some(Issue {
+                kind: IssueKind::CoreFinding,
                 integration: "core".into(),
                 severity,
                 message,
@@ -7543,6 +7544,7 @@ fn violations_to_text_issues(world: &DoctorWorld, violations: Vec<CheckViolation
     for v in legacy_findings {
         if let CheckViolation::MissingReplayExclusion { project } = v {
             issues.push(Issue {
+                kind: IssueKind::CoreFinding,
                 integration: "core".into(),
                 severity: crate::integration::Severity::Warning,
                 message: format!(
@@ -7634,6 +7636,7 @@ pub fn run_check(
 
     for msg in fix_errors {
         all_issues.push(Issue {
+            kind: IssueKind::CoreFinding,
             integration: "core".into(),
             severity: Severity::Error,
             message: msg,
@@ -7645,6 +7648,7 @@ pub fn run_check(
     // has never seen is exactly the wrong signal to swallow.
     for (project_name, repo_path) in &world.lock_resolve_failures {
         all_issues.push(Issue {
+            kind: IssueKind::CoreFinding,
             integration: "core".into(),
             severity: Severity::Error,
             message: format!(
@@ -7656,6 +7660,7 @@ pub fn run_check(
 
     for (repo_path, err_msg) in &world.head_read_failures {
         all_issues.push(Issue {
+            kind: IssueKind::CoreFinding,
             integration: "core".into(),
             severity: Severity::Error,
             message: format!("{repo_path}: HEAD unreadable ({err_msg})"),
@@ -7678,6 +7683,7 @@ pub fn run_check(
             Ok(false) => {
                 if !fix {
                     all_issues.push(Issue {
+                        kind: IssueKind::CoreFinding,
                         integration: "core".into(),
                         severity: Severity::Warning,
                         message: format!(
@@ -7692,6 +7698,7 @@ pub fn run_check(
                 }
             }
             Err(e) => all_issues.push(Issue {
+                kind: IssueKind::CoreFinding,
                 integration: "core".into(),
                 severity: Severity::Warning,
                 message: format!(
@@ -7706,6 +7713,7 @@ pub fn run_check(
             vcs_for_report.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
         {
             all_issues.push(Issue {
+                kind: IssueKind::CoreFinding,
                 integration: "core".into(),
                 severity: Severity::Warning,
                 message: format!(
@@ -7759,6 +7767,7 @@ pub fn run_check(
                     project.name
                 ),
                 Err(e) => all_issues.push(Issue {
+                    kind: IssueKind::CoreFinding,
                     integration: "core".into(),
                     severity: Severity::Error,
                     message: format!(
@@ -7816,6 +7825,7 @@ pub fn run_check(
                     project.name
                 ),
                 Err(e) => all_issues.push(Issue {
+                    kind: IssueKind::CoreFinding,
                     integration: "core".into(),
                     severity: Severity::Error,
                     message: format!(

@@ -74,7 +74,7 @@
 //! `uv.lock` stays in `generated_files()` — it is fully-owned by rwv and
 //! gitignore-eligible.
 
-use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
     drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
     KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, StripOutcome, TomlDoc,
@@ -472,6 +472,7 @@ impl Integration for UvWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "uv is not on PATH".to_string(),
+                kind: IssueKind::ToolMissing,
                 safe_to_fix: true,
             });
         }

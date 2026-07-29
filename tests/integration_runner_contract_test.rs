@@ -1,6 +1,6 @@
-//! Pins the three contracts between the integration runner and the
-//! integrations it drives. Each reads `src/` itself, so the pin's input is the
-//! source tree rather than a list restated here.
+//! Pins the contracts between the integration runner and the integrations it
+//! drives. The source-scanning ones read `src/` itself, so the pin's input is
+//! the source tree rather than a list restated here.
 //!
 //! 1. **Detection vocabulary lives on the trait.** The filenames the runner
 //!    pre-computes a detection list for are exactly the ones production code
@@ -13,14 +13,20 @@
 //!    `src/integrations/` re-spells a name an integration returns from
 //!    `name()`; a rename would otherwise leave a config lookup silently
 //!    falling back to the default config.
+//! 4. **A finding's kind is a value, not a sentence.** The verify state
+//!    machine's four outcomes and the member-incompatibility observation reach
+//!    `Issue::kind` intact, and no production code reads a finding back out of
+//!    `Issue::message`.
 
 mod common;
 
 use common::src_scan::{production_lines, string_arguments_to, struct_literal_needle};
-use repoweave::integration::{Integration, IntegrationContext};
+use repoweave::integration::{Integration, IntegrationContext, IssueKind};
 use repoweave::integration_runner::{detection_vocabulary, IntegrationContextBase};
 use repoweave::integrations::builtin_integrations;
+use repoweave::integrations::merge::{drift_issues, missing_issue, MemberIncompatibility};
 use std::collections::BTreeSet;
+use std::path::Path;
 
 #[test]
 fn detection_vocabulary_is_exactly_what_production_code_detects_by() {
@@ -132,4 +138,144 @@ fn integration_names_are_not_respelled_outside_their_modules() {
              falling back to the default config."
         );
     }
+}
+
+/// The verify state machine's three issue-producing outcomes must be readable
+/// off the `Issue` without matching on its prose. Inputs are the real
+/// `drift_issues` / `missing_issue` boundary, not a restatement of it.
+#[test]
+fn verify_states_reach_issue_kind_intact() {
+    let path = Path::new("/w/projects/p/pnpm-workspace.yaml");
+
+    // USER-HELD: owned key on disk, no rwv marker.
+    let user_held = drift_issues(
+        "pnpm",
+        path,
+        false,
+        true,
+        Some(&[]),
+        &[],
+        "cut over",
+        "detail",
+    );
+    assert_eq!(user_held.len(), 1);
+    assert_eq!(user_held[0].kind, IssueKind::ManagedFileUserHeld);
+    assert!(!user_held[0].safe_to_fix);
+
+    // DRIFT: marker present, content diverges.
+    let on_disk = ["a".to_string()];
+    let expected = ["b".to_string()];
+    let drift = drift_issues(
+        "pnpm",
+        path,
+        true,
+        true,
+        Some(&on_disk),
+        &expected,
+        "cut over",
+        "detail",
+    );
+    assert_eq!(drift.len(), 1);
+    assert_eq!(drift[0].kind, IssueKind::ManagedFileDrift);
+
+    // CLEAN produces nothing at all.
+    let clean = drift_issues(
+        "pnpm",
+        path,
+        true,
+        true,
+        Some(&on_disk),
+        &on_disk,
+        "cut over",
+        "detail",
+    );
+    assert!(clean.is_empty());
+
+    assert_eq!(
+        missing_issue("pnpm", path).kind,
+        IssueKind::ManagedFileMissing
+    );
+}
+
+/// The member-incompatibility observation must survive into the kind. Every
+/// fact is compared against what was handed to the predicate, so a renderer
+/// can read them instead of parsing the sentence back apart.
+#[test]
+fn member_incompatibility_observations_survive_into_the_kind() {
+    let path = Path::new("/w/projects/p/go.work");
+    let issue = MemberIncompatibility::new(
+        "go-work",
+        path,
+        "go",
+        "1.21",
+        "1.26",
+        "github/org/member-a/go.mod",
+    )
+    .into_issue();
+
+    let IssueKind::MemberIncompatibility(observed) = &issue.kind else {
+        panic!("into_issue must tag the finding with its own kind; got {issue:?}");
+    };
+    assert_eq!(observed.path(), path);
+    assert_eq!(observed.key(), "go");
+    assert_eq!(observed.on_disk(), "1.21");
+    assert_eq!(observed.required(), "1.26");
+    assert_eq!(observed.required_by(), "github/org/member-a/go.mod");
+    assert_eq!(issue.kind.tag(), IssueKind::MEMBER_INCOMPATIBILITY);
+}
+
+/// The one kind tag that is also published prose has one mint. The needle is
+/// the const itself, so it cannot point at a word the const no longer uses.
+#[test]
+fn published_kind_tag_is_minted_once() {
+    let literal = format!("\"{}\"", IssueKind::MEMBER_INCOMPATIBILITY);
+    let sites: Vec<String> = production_lines()
+        .iter()
+        .filter(|l| l.text.contains(&literal))
+        .map(|l| l.site())
+        .collect();
+
+    assert_eq!(
+        sites.len(),
+        1,
+        "{literal} is operator-facing prose (doctor keys the category by it) \
+         *and* a discriminant, so it has one mint: \
+         `IssueKind::MEMBER_INCOMPATIBILITY`. Found: {sites:?}"
+    );
+    assert!(
+        sites[0].starts_with("integration.rs"),
+        "the mint must be the const in integration.rs; found {}",
+        sites[0]
+    );
+}
+
+/// No production code recovers a finding's identity from its message text.
+/// The tag used to be the only discriminant available, which made this the
+/// obvious thing to reach for; `Issue::kind` is now the thing to match on.
+#[test]
+fn no_production_code_dispatches_on_issue_message() {
+    let needles = [
+        "message.contains(",
+        "message.starts_with(",
+        "message.ends_with(",
+    ];
+    let lines = production_lines();
+    assert!(
+        lines.len() > 10_000,
+        "scanner returned only {} production lines from src/; it is not \
+         reading the tree",
+        lines.len()
+    );
+
+    let sites: Vec<String> = lines
+        .iter()
+        .filter(|l| needles.iter().any(|n| l.text.contains(n)))
+        .map(|l| format!("{}: {}", l.site(), l.text.trim()))
+        .collect();
+
+    assert!(
+        sites.is_empty(),
+        "production code must not read a finding back out of `Issue::message` \
+         — match on `Issue::kind`. Found: {sites:#?}"
+    );
 }

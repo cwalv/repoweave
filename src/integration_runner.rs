@@ -10,7 +10,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
 
 /// Shared base data for constructing `IntegrationContext` per integration.
@@ -174,6 +174,7 @@ fn for_each_enabled(
                     integration: integration.name().to_string(),
                     severity: Severity::Error,
                     message: e.to_string(),
+                    kind: IssueKind::IntegrationFailed,
                     safe_to_fix: true,
                 });
             }
@@ -586,12 +587,14 @@ mod tests {
             integration: "cargo".into(),
             severity: Severity::Warning,
             message: "missing dep".into(),
+            kind: IssueKind::ToolMissing,
             safe_to_fix: true,
         }]);
         let npm = MockIntegration::new("npm", true).with_check_issues(vec![Issue {
             integration: "npm".into(),
             severity: Severity::Error,
             message: "lockfile mismatch".into(),
+            kind: IssueKind::ManagedFileDrift,
             safe_to_fix: true,
         }]);
         let integrations: Vec<&dyn Integration> = vec![&cargo, &npm];
@@ -629,6 +632,7 @@ mod tests {
             integration: "npm".into(),
             severity: Severity::Warning,
             message: "minor issue".into(),
+            kind: IssueKind::ToolMissing,
             safe_to_fix: true,
         }]);
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];

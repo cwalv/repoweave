@@ -129,6 +129,73 @@ pub enum Severity {
     Error,
 }
 
+/// What an [`Issue`] reports, as a value a consumer can dispatch on.
+///
+/// The prose in [`Issue::message`] is for an operator to read. Anything a
+/// machine needs to route or re-render a finding by belongs here, because a
+/// sentence is not a thing another surface can re-word: sentences are matched
+/// with substring tests that break the moment the wording improves.
+///
+/// [`IssueKind::MemberIncompatibility`] carries its whole observation rather
+/// than a tag, for that reason — its `key`, `on_disk`, `required` and
+/// `required_by` are facts the predicate established, and a renderer that has
+/// to recover them from the sentence is parsing English.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IssueKind {
+    /// The ecosystem CLI this integration drives is absent from `PATH`.
+    ToolMissing,
+    /// A file the integration owns is absent from the project directory.
+    ManagedFileMissing,
+    /// On-disk owned content diverges from what `activate()` would write, or
+    /// is no longer consumable by the tool that owns it.
+    ManagedFileDrift,
+    /// The owned key or region is present without rwv's ownership marker —
+    /// the user holds the pen, and auto-repair would discard their content.
+    ManagedFileUserHeld,
+    /// The weave-root symlink onto an owned file is absent, occupied by real
+    /// content, or resolves somewhere other than the declaring project.
+    Surfacing,
+    /// `rwv.yaml` asks for something the workspace cannot satisfy: a name two
+    /// sections claim, a declared file that is not there, a member topology
+    /// the ecosystem tool rejects.
+    ConfigRejected,
+    /// An `Ownership::DefaultOnly` value that is incompatible with what the
+    /// members require. Carries the observation the predicate made.
+    MemberIncompatibility(Box<crate::integrations::merge::MemberIncompatibility>),
+    /// An integration's hook returned an error and the runner captured it so
+    /// the remaining integrations could still run.
+    IntegrationFailed,
+    /// Raised by one of `rwv doctor`'s own scans rather than by an
+    /// integration. The typed discriminant for these is
+    /// [`crate::check::CheckViolation`]; this variant says only that the
+    /// finding came in on the core channel.
+    CoreFinding,
+}
+
+impl IssueKind {
+    /// The tag `member-incompatibility` findings carry on operator surfaces.
+    ///
+    /// The one kind whose tag is published prose as well as a discriminant —
+    /// `docs/reference/doctor-findings.md` keys the category by this word and
+    /// the message opens with it — so it is minted here and read from here.
+    pub const MEMBER_INCOMPATIBILITY: &'static str = "member-incompatibility";
+
+    /// The stable kebab-case tag this kind travels under.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::ToolMissing => "tool-missing",
+            Self::ManagedFileMissing => "managed-file-missing",
+            Self::ManagedFileDrift => "managed-file-drift",
+            Self::ManagedFileUserHeld => "managed-file-user-held",
+            Self::Surfacing => "surfacing",
+            Self::ConfigRejected => "config-rejected",
+            Self::MemberIncompatibility(_) => Self::MEMBER_INCOMPATIBILITY,
+            Self::IntegrationFailed => "integration-failed",
+            Self::CoreFinding => "core-finding",
+        }
+    }
+}
+
 /// A single issue reported by an integration's check or verify hook.
 ///
 /// `safe_to_fix`: when `true` (the default for all environment/config issues),
@@ -141,6 +208,8 @@ pub struct Issue {
     pub integration: String,
     pub severity: Severity,
     pub message: String,
+    /// What this finding is, independent of how the message words it.
+    pub kind: IssueKind,
     /// Whether `rwv doctor --fix` is permitted to auto-repair this finding.
     ///
     /// `true` for all environment / config / drift issues (the common case).
