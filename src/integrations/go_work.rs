@@ -165,7 +165,8 @@ impl Integration for GoWork {
         let path = root.join("go.work");
         // owned_keys = [["use"]] only — NEVER include ["go"] per C2 note.
         let owned_keys = vec![keypath(["use"])];
-        strip_deactivate::<GoWorkDoc>(&path, &owned_keys)
+        strip_deactivate::<GoWorkDoc>(&path, &owned_keys)?;
+        Ok(())
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
@@ -485,34 +486,14 @@ fn activate_via_go_tool(
     Ok(())
 }
 
-/// Read the current `use` paths from go.work using GoWorkDoc.
+/// Read the current `use` paths from go.work using [`GoWorkDoc::current_uses`].
 fn read_current_uses_from_file(path: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return vec![];
     };
-    // Extract use entries from the block via a lightweight parse.
-    let mut uses = Vec::new();
-    let mut in_use_block = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("use (") || trimmed == "use(" {
-            in_use_block = true;
-            continue;
-        }
-        if in_use_block {
-            if trimmed == ")" {
-                break;
-            }
-            if !trimmed.is_empty() && !trimmed.starts_with("//") {
-                uses.push(trimmed.to_string());
-            }
-        } else if trimmed.starts_with("use ") && !trimmed.contains('(') {
-            // Single-line form.
-            let path_part = trimmed.strip_prefix("use ").unwrap_or("").trim();
-            uses.push(path_part.to_string());
-        }
-    }
-    uses
+    GoWorkDoc::parse(&text)
+        .map(|doc| doc.current_uses())
+        .unwrap_or_default()
 }
 
 /// Put `want` back as the go directive of `path`, undoing the raise that
@@ -595,38 +576,13 @@ fn restore_toolchain_directive(path: &Path, want: Option<&str>) -> anyhow::Resul
     Ok(())
 }
 
-/// Ensure the `// managed by repoweave` marker line is present immediately
-/// above the `use (…)` block in go.work (post-tool injection).
+/// Ensure the ownership marker is present immediately above the `use (…)`
+/// block in go.work (post-tool injection).
 fn ensure_marker_present(path: &Path) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path)?;
-    // Check if marker is already there via GoWorkDoc.
-    let doc = GoWorkDoc::parse(&text)?;
-    use crate::integrations::merge::ManagedDoc;
-    if doc.has_marker(&[keypath(["use"])]) {
-        return Ok(());
-    }
-    // Inject: find the `use (` line and insert the marker above it.
-    let mut lines: Vec<&str> = text.lines().collect();
-    let mut insert_at: Option<usize> = None;
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("use (")
-            || trimmed == "use("
-            || (trimmed.starts_with("use ") && !trimmed.contains('('))
-        {
-            insert_at = Some(i);
-            break;
-        }
-    }
-    if let Some(idx) = insert_at {
-        lines.insert(idx, "// managed by repoweave");
-        let trailing = text.ends_with('\n');
-        let mut out = lines.join("\n");
-        if trailing || !out.ends_with('\n') {
-            out.push('\n');
-        }
-        std::fs::write(path, out)?;
-    }
+    let mut doc = GoWorkDoc::parse(&text)?;
+    doc.ensure_marker();
+    std::fs::write(path, doc.serialize()?)?;
     Ok(())
 }
 

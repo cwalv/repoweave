@@ -762,9 +762,16 @@ fn npm_workspaces_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
+    // package.json is hybrid (rwv owns `workspaces` inside a user-authored
+    // file) — it lives in managed_files(), not generated_files().
+    // package-lock.json is fully-owned and stays in generated_files().
     assert_eq!(
         NpmWorkspaces.generated_files(&ctx2),
-        vec!["package.json", "package-lock.json"]
+        vec!["package-lock.json"]
+    );
+    assert_eq!(
+        NpmWorkspaces.managed_files(&ctx2),
+        vec!["package-lock.json", "package.json"]
     );
 }
 
@@ -1006,8 +1013,14 @@ fn vscode_workspace_generated_files_includes_project_name() {
         workweave: None,
     };
 
-    let files = VscodeWorkspace.generated_files(&ctx);
-    assert_eq!(files, vec!["web-app.code-workspace"]);
+    // The `.code-workspace` file is hybrid — it lives in managed_files(),
+    // not generated_files() (which is empty: vscode has no fully-owned
+    // artifact).
+    assert!(VscodeWorkspace.generated_files(&ctx).is_empty());
+    assert_eq!(
+        VscodeWorkspace.managed_files(&ctx),
+        vec!["web-app.code-workspace"]
+    );
 }
 
 #[test]
@@ -1038,8 +1051,11 @@ fn vscode_workspace_generated_files_varies_with_project() {
         workweave: None,
     };
 
-    let files = VscodeWorkspace.generated_files(&ctx);
-    assert_eq!(files, vec!["mobile-app.code-workspace"]);
+    assert!(VscodeWorkspace.generated_files(&ctx).is_empty());
+    assert_eq!(
+        VscodeWorkspace.managed_files(&ctx),
+        vec!["mobile-app.code-workspace"]
+    );
 }
 
 // ===========================================================================

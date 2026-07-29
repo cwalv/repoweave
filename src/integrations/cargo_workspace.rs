@@ -1142,8 +1142,6 @@ impl CargoWorkspace {
         ctx: &IntegrationContext,
         cfg: &CargoWorkspaceConfig,
     ) -> anyhow::Result<Vec<Issue>> {
-        use crate::integrations::merge::TOML_MARKER_TEXT;
-
         let path = ctx.output_dir.join(".cargo").join("config.toml");
 
         // Compute the expected patch set (same computation activate uses).
@@ -1196,11 +1194,7 @@ impl CargoWorkspace {
                     continue;
                 };
                 for (crate_name, _) in sub.iter() {
-                    let is_marked = sub
-                        .key(crate_name)
-                        .and_then(|k| k.leaf_decor().prefix().and_then(|r| r.as_str()))
-                        .map(|p| p.contains(TOML_MARKER_TEXT))
-                        .unwrap_or(false);
+                    let is_marked = TomlDoc::key_has_marker(sub, crate_name);
                     let key = (registry.to_string(), crate_name.to_string());
                     if is_marked {
                         on_disk_marked.insert(key);
@@ -1893,8 +1887,6 @@ impl CargoWorkspace {
         path: &Path,
         patches: &[DerivedPatch],
     ) -> anyhow::Result<()> {
-        use crate::integrations::merge::TOML_MARKER_TEXT;
-
         if patches.is_empty() {
             return Ok(());
         }
@@ -1931,18 +1923,8 @@ impl CargoWorkspace {
 
             // Verify-and-warn: if the user already authored this entry (no
             // rwv marker on the leaf), do not overwrite.
-            let user_holds_pen = sub_table
-                .key(entry.crate_name.as_str())
-                .map(|k| {
-                    let prefix = k
-                        .leaf_decor()
-                        .prefix()
-                        .and_then(|r| r.as_str())
-                        .unwrap_or("");
-                    !prefix.contains(TOML_MARKER_TEXT)
-                })
-                .unwrap_or(false)
-                && sub_table.contains_key(entry.crate_name.as_str());
+            let user_holds_pen = sub_table.contains_key(entry.crate_name.as_str())
+                && !TomlDoc::key_has_marker(sub_table, entry.crate_name.as_str());
             if user_holds_pen {
                 continue;
             }
@@ -1960,20 +1942,7 @@ impl CargoWorkspace {
 
             // Attach the `# managed by rwv` marker on the leaf key,
             // idempotently and preserving any existing user decor lines.
-            if let Some(mut key_mut) = sub_table.key_mut(entry.crate_name.as_str()) {
-                let decor = key_mut.leaf_decor_mut();
-                let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
-                if !existing.contains(TOML_MARKER_TEXT) {
-                    let new = if existing.is_empty() {
-                        "# managed by rwv\n".to_string()
-                    } else if existing.ends_with('\n') {
-                        format!("{existing}# managed by rwv\n")
-                    } else {
-                        format!("{existing}\n# managed by rwv\n")
-                    };
-                    decor.set_prefix(new);
-                }
-            }
+            TomlDoc::decorate_key(sub_table, entry.crate_name.as_str());
         }
 
         // The cargo-config surface writes to `<project>/.cargo/config.toml`;
@@ -2006,8 +1975,6 @@ impl CargoWorkspace {
     /// `PatchMode::Derived`, which writes into per-git-URL sub-tables in
     /// addition to `crates-io`.
     fn strip_marked_patch_entries(path: &Path) -> anyhow::Result<()> {
-        use crate::integrations::merge::TOML_MARKER_TEXT;
-
         if !path.exists() {
             return Ok(());
         }
@@ -2036,15 +2003,8 @@ impl CargoWorkspace {
                 .and_then(|i| i.as_table())
                 .map(|t| {
                     t.iter()
-                        .filter_map(|(name, _)| {
-                            let key = t.key(name)?;
-                            let prefix = key.leaf_decor().prefix().and_then(|r| r.as_str())?;
-                            if prefix.contains(TOML_MARKER_TEXT) {
-                                Some(name.to_string())
-                            } else {
-                                None
-                            }
-                        })
+                        .filter(|&(name, _)| TomlDoc::key_has_marker(t, name))
+                        .map(|(name, _)| name.to_string())
                         .collect()
                 })
                 .unwrap_or_default();

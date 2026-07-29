@@ -77,7 +77,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
     drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
-    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
+    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, StripOutcome, TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -342,24 +342,6 @@ fn member_package_name(workspace_root: &Path, member: &str) -> Option<String> {
         .map(String::from)
 }
 
-/// Return true if the `pyproject.toml` at `path` carries the `# managed by rwv`
-/// marker on one of `owned_keys`.
-///
-/// The TOML marker is per-key decor, so unlike npm's top-level JSON marker this
-/// needs the same key set `strip_deactivate` gates on.
-fn has_our_marker(path: &Path, owned_keys: &[KeyPath]) -> bool {
-    if !path.exists() {
-        return false;
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(doc) = TomlDoc::parse(&text) else {
-        return false;
-    };
-    doc.has_marker(owned_keys)
-}
-
 /// Remove a nested key at `path` if it exists and is an empty table.
 ///
 /// Checks (immutable borrow) whether the table at `path` is empty.
@@ -457,23 +439,16 @@ impl Integration for UvWorkspace {
 
         let owned_keys = Self::deactivate_owned_keys();
 
-        // Probe the marker BEFORE stripping so we can gate the sources pass on
-        // it. strip_deactivate removes the marker as part of the strip, so
-        // afterwards there is no ownership proof left to re-check — and it
-        // no-ops silently when the marker was absent, without telling us. Same
-        // shape as npm_workspaces::deactivate.
-        let we_owned = has_our_marker(&path, &owned_keys);
-
         // strip_deactivate removes `members` (and prunes empty
         // [tool.uv.workspace]) gated on the per-key marker.
-        strip_deactivate::<TomlDoc>(&path, &owned_keys)
+        let outcome = strip_deactivate::<TomlDoc>(&path, &owned_keys)
             .with_context(|| format!("strip-deactivate {}", path.display()))?;
 
         // Now strip only {workspace=true} entries from [tool.uv.sources]
         // (bespoke adapter — see module doc). Only when we owned the file: an
         // unmarked, hand-authored pyproject.toml keeps its workspace-true
         // sources, and is never emptied and deleted.
-        if we_owned {
+        if outcome == StripOutcome::Stripped {
             Self::strip_workspace_sources(&path)
                 .with_context(|| format!("strip-workspace-sources {}", path.display()))?;
         }

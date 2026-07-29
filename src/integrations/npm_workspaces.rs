@@ -1,7 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
     drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, JsonDoc, ManagedDoc,
-    OwnedValue, Ownership, XRepoweaveMarker,
+    OwnedValue, Ownership, StripOutcome, XRepoweaveMarker,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -124,20 +124,6 @@ fn member_globs(ws: Option<&serde_json::Value>) -> Option<Vec<String>> {
     )
 }
 
-/// Return true if the package.json at `path` carries the x-repoweave marker.
-fn has_our_marker(path: &Path) -> bool {
-    if !path.exists() {
-        return false;
-    }
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return false;
-    };
-    let Ok(doc) = JsonDoc::<XRepoweaveMarker>::parse(&text) else {
-        return false;
-    };
-    doc.has_marker(&[])
-}
-
 impl Integration for NpmWorkspaces {
     fn name(&self) -> &str {
         "npm-workspaces"
@@ -176,18 +162,13 @@ impl Integration for NpmWorkspaces {
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
         let path = root.join("package.json");
 
-        // Probe the marker BEFORE stripping so we can gate lockfile removal on
-        // it. strip_deactivate returns without doing anything when the marker is
-        // absent (user holds the pen), so we must capture ownership proof now.
-        let we_owned = has_our_marker(&path);
-
         // strip_deactivate: gates on x-repoweave marker; strips owned keys;
         // prunes empty parents; deletes the file only if nothing else remains.
         let owned_keys = deactivate_owned_keys();
-        strip_deactivate::<JsonDoc<XRepoweaveMarker>>(&path, &owned_keys)?;
+        let outcome = strip_deactivate::<JsonDoc<XRepoweaveMarker>>(&path, &owned_keys)?;
 
-        // Remove package-lock.json only when we owned the package.json.
-        if we_owned {
+        // Remove package-lock.json only when we owned package.json.
+        if outcome == StripOutcome::Stripped {
             let lock_path = root.join("package-lock.json");
             if lock_path.exists() {
                 std::fs::remove_file(&lock_path)
@@ -295,10 +276,152 @@ impl Integration for NpmWorkspaces {
         Ok(())
     }
 
+    /// `package-lock.json` is fully-owned — gitignore-eligible, whole-deletable.
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
         if ctx.detect_repos_with_manifest("package.json").is_empty() {
             return vec![];
         }
-        vec!["package.json".to_string(), "package-lock.json".to_string()]
+        vec!["package-lock.json".to_string()]
+    }
+
+    /// `package.json` is **hybrid** (rwv owns `workspaces`/`workspaces.packages`
+    /// plus the `name`/`private` `DefaultOnly` seeds inside a user-authored
+    /// file). It MUST NOT appear in `generated_files()` — that would mark it
+    /// gitignore-eligible and whole-deletable, discarding the user's
+    /// dependencies and scripts.
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        let mut files = self.generated_files(ctx);
+        if !ctx.detect_repos_with_manifest("package.json").is_empty() {
+            files.push("package.json".to_string());
+        }
+        files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    fn make_manifest(repos: &[(&str, Role)]) -> Manifest {
+        let mut yaml = String::from("repositories:\n");
+        for (path, role) in repos {
+            let last = path.split('/').next_back().unwrap();
+            yaml.push_str(&format!(
+                "  {path}:\n    type: git\n    url: https://github.com/test/{last}.git\n    version: main\n    role: {}\n",
+                role.as_str()
+            ));
+        }
+        Manifest::from_yaml_str(&yaml).unwrap()
+    }
+
+    fn make_ctx<'a>(
+        root: &'a Path,
+        project: &'a ProjectName,
+        manifest: &'a Manifest,
+        config: &'a IntegrationConfig,
+        cache: &'a HashMap<String, Vec<String>>,
+    ) -> IntegrationContext<'a> {
+        IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: cache,
+            workweave: None,
+        }
+    }
+
+    fn touch(root: &Path, rel: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+
+    /// Regression for the managed/generated split: `package.json` is hybrid
+    /// (rwv owns `workspaces` inside a user-authored file) while
+    /// `package-lock.json` is fully-owned. If `managed_files()` ever silently
+    /// reverted to the `Integration` trait's default (`generated_files(ctx)`),
+    /// `package.json` would go back to being gitignore-eligible and
+    /// whole-deletable — the exact loss path this split closes.
+    #[test]
+    fn managed_files_includes_hybrid_package_json_not_just_the_lockfile() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/test/pkg/package.json");
+        let manifest = make_manifest(&[("github/test/pkg", Role::Owned)]);
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = NpmWorkspaces;
+        let generated = integration.generated_files(&ctx);
+        let managed = integration.managed_files(&ctx);
+
+        assert_eq!(generated, vec!["package-lock.json".to_string()]);
+        assert!(
+            managed.contains(&"package.json".to_string()),
+            "managed_files must include the hybrid package.json: {managed:?}"
+        );
+        assert!(
+            !generated.contains(&"package.json".to_string()),
+            "package.json must never be gitignore/whole-delete eligible: {generated:?}"
+        );
+    }
+
+    /// StripOutcome regression: deactivate must gate `package-lock.json`
+    /// removal on whether the strip actually happened (marker present), not
+    /// merely on having called `strip_deactivate`. A hand-authored,
+    /// unmarked `package.json` means the user holds the pen — the
+    /// co-requisite lockfile must survive.
+    #[test]
+    fn deactivate_leaves_lockfile_when_user_holds_the_pen() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name": "hand-authored", "workspaces": ["a", "b"]}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("package-lock.json"), "{}").unwrap();
+
+        NpmWorkspaces.deactivate(root).unwrap();
+
+        assert!(
+            root.join("package-lock.json").exists(),
+            "must not remove a co-requisite lockfile for a package.json the user holds the pen on"
+        );
+        assert!(root.join("package.json").exists());
+    }
+
+    /// The other side of the same regression: once rwv's ownership is
+    /// confirmed (marker present, strip actually runs), the co-requisite
+    /// lockfile IS removed.
+    #[test]
+    fn deactivate_removes_lockfile_once_rwv_owned_package_json() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"workspaces": ["a"], "x-repoweave": {"managed": true}}"#,
+        )
+        .unwrap();
+        std::fs::write(root.join("package-lock.json"), "{}").unwrap();
+
+        NpmWorkspaces.deactivate(root).unwrap();
+
+        assert!(
+            !root.join("package-lock.json").exists(),
+            "must remove the co-requisite lockfile once the strip confirmed rwv's ownership"
+        );
     }
 }

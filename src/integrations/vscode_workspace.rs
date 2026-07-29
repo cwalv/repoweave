@@ -15,19 +15,16 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, missing_issue, JsonDoc, ManagedDoc, RwvGeneratedMarker,
+    drift_issues, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc, RwvGeneratedMarker,
 };
 use crate::workspace::is_workweave_root;
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-/// Marker key written into generated `.code-workspace` files so that
-/// `deactivate` can distinguish rwv-managed files from user-created ones.
-const GENERATED_MARKER_KEY: &str = "rwv.generated";
-
-/// Sub-key within the `rwv.generated` object that records which
-/// `settings.files.exclude` keys were set by rwv on the last activation.
+/// Sub-key within the `rwv.generated` object (`RwvGeneratedMarker::KEY`)
+/// that records which `settings.files.exclude` keys were set by rwv on the
+/// last activation.
 ///
 /// On the next activation this list is read back, those keys are removed, and
 /// the new rwv-derived set is inserted — implementing "set-subtract old owned
@@ -235,7 +232,7 @@ fn expected_generated_set(
 /// Returns an empty set if the file is fresh, uses the legacy bool marker
 /// form, or has no stored list.
 fn read_prev_rwv_excludes(obj: &serde_json::Map<String, serde_json::Value>) -> HashSet<String> {
-    match obj.get(GENERATED_MARKER_KEY) {
+    match obj.get(RwvGeneratedMarker::KEY) {
         Some(serde_json::Value::Object(m)) => {
             if let Some(serde_json::Value::Array(arr)) = m.get(MARKER_EXCLUDES_KEY) {
                 arr.iter()
@@ -477,7 +474,7 @@ impl Integration for VscodeWorkspace {
             .map(|k| serde_json::Value::String(k.clone()))
             .collect();
         obj.insert(
-            GENERATED_MARKER_KEY.to_string(),
+            RwvGeneratedMarker::KEY.to_string(),
             serde_json::json!({ "managed": true, MARKER_EXCLUDES_KEY: rwv_excludes_list }),
         );
 
@@ -635,7 +632,18 @@ impl Integration for VscodeWorkspace {
         ))
     }
 
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    /// No fully-owned files — the `.code-workspace` file itself is hybrid
+    /// (see `managed_files`), never gitignore-eligible or whole-deletable.
+    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+        vec![]
+    }
+
+    /// `<project>.code-workspace` is **hybrid**: rwv owns the `rwv.generated`-
+    /// marked `folders[0]` entry and derived `settings.files.exclude` keys
+    /// inside a file that also carries the user's own folders and settings.
+    /// It MUST NOT appear in `generated_files()` — that would mark it
+    /// gitignore-eligible and whole-deletable.
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
         vec![format!("{}.code-workspace", ctx.project.as_str())]
     }
 }
@@ -647,9 +655,50 @@ impl Integration for VscodeWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+    use tempfile::TempDir;
 
     fn set(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Regression for the managed/generated split: the `.code-workspace`
+    /// file is hybrid (rwv owns the `rwv.generated`-marked region inside a
+    /// user-authored file) — it must never appear in `generated_files()`,
+    /// or a consumer treating that list as gitignore-eligible / whole-
+    /// deletable would silently discard the user's own folders and settings.
+    #[test]
+    fn managed_files_carries_the_hybrid_workspace_file_not_generated_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let manifest = Manifest::from_yaml_str("repositories: {}\n").unwrap();
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config: &config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: &cache,
+            workweave: None,
+        };
+
+        let integration = VscodeWorkspace;
+        assert!(
+            integration.generated_files(&ctx).is_empty(),
+            "the .code-workspace file must not be gitignore/whole-delete eligible"
+        );
+        assert_eq!(
+            integration.managed_files(&ctx),
+            vec!["test-project.code-workspace".to_string()]
+        );
     }
 
     fn all_repos(items: &[&str]) -> Vec<String> {
@@ -728,7 +777,7 @@ mod tests {
         // Old marker shape: `"rwv.generated": true` — no stored list.
         let mut obj = serde_json::Map::new();
         obj.insert(
-            GENERATED_MARKER_KEY.to_string(),
+            RwvGeneratedMarker::KEY.to_string(),
             serde_json::Value::Bool(true),
         );
         let prev = read_prev_rwv_excludes(&obj);
@@ -740,7 +789,7 @@ mod tests {
         // New marker shape: `"rwv.generated": {"managed": true, "files.exclude": [...]}`
         let mut obj = serde_json::Map::new();
         obj.insert(
-            GENERATED_MARKER_KEY.to_string(),
+            RwvGeneratedMarker::KEY.to_string(),
             serde_json::json!({ "managed": true, "files.exclude": [".*", "github/acme"] }),
         );
         let prev = read_prev_rwv_excludes(&obj);
@@ -770,7 +819,7 @@ mod tests {
         );
         // Mark what rwv owned last time.
         obj.insert(
-            GENERATED_MARKER_KEY.to_string(),
+            RwvGeneratedMarker::KEY.to_string(),
             serde_json::json!({ "managed": true, "files.exclude": [".*", "github/acme"] }),
         );
 

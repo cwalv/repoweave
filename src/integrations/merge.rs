@@ -164,6 +164,25 @@ pub struct MergeResult {
     pub deferred: Vec<KeyPath>,
 }
 
+/// The result of [`strip_deactivate`].
+///
+/// Without this, a caller that needs to know whether the strip actually
+/// happened (e.g. to gate removing a co-requisite generated file, or a
+/// second, differently-keyed strip pass) has no way to learn it from a bare
+/// `Result<()>` except re-reading and re-parsing the file itself to redo the
+/// `has_marker` check `strip_deactivate` already performed internally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripOutcome {
+    /// The file did not exist. Nothing to strip.
+    Absent,
+    /// The file existed but carried no rwv marker on any of `owned_keys` —
+    /// the user holds the pen. Left untouched.
+    UserHeld,
+    /// The marker was present; the owned keys and the marker were removed
+    /// (and the file deleted, if that emptied it).
+    Stripped,
+}
+
 // ---------------------------------------------------------------------------
 // The trait
 // ---------------------------------------------------------------------------
@@ -315,17 +334,20 @@ pub fn merge_activate<D: ManagedDoc>(
 /// Deactivate the managed region of a hybrid file.
 ///
 /// Semantics:
-/// - If the file is missing: nothing to strip; `Ok(())`.
+/// - If the file is missing: nothing to strip; [`StripOutcome::Absent`].
 /// - Parse; bail loudly if malformed.
 /// - If the marker is **absent** (against any of `owned_keys`): the user
-///   holds the pen — leave the file alone.
+///   holds the pen — leave the file alone; [`StripOutcome::UserHeld`].
 /// - Otherwise: remove each owned key, remove the marker, prune empty
 ///   parents. If the document is then empty: delete the file. Else: write
 ///   the stripped document back (without the marker — the file becomes
-///   hand-owned).
-pub fn strip_deactivate<D: ManagedDoc>(path: &Path, owned_keys: &[KeyPath]) -> Result<()> {
+///   hand-owned). [`StripOutcome::Stripped`] either way.
+pub fn strip_deactivate<D: ManagedDoc>(
+    path: &Path,
+    owned_keys: &[KeyPath],
+) -> Result<StripOutcome> {
     if !path.exists() {
-        return Ok(());
+        return Ok(StripOutcome::Absent);
     }
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -333,7 +355,7 @@ pub fn strip_deactivate<D: ManagedDoc>(path: &Path, owned_keys: &[KeyPath]) -> R
 
     if !doc.has_marker(owned_keys) {
         // User took the pen — never strip a hand-owned key.
-        return Ok(());
+        return Ok(StripOutcome::UserHeld);
     }
 
     for key in owned_keys {
@@ -347,7 +369,7 @@ pub fn strip_deactivate<D: ManagedDoc>(path: &Path, owned_keys: &[KeyPath]) -> R
         let text = doc.serialize()?;
         std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
     }
-    Ok(())
+    Ok(StripOutcome::Stripped)
 }
 
 // ===========================================================================
@@ -373,11 +395,10 @@ impl JsonMarker for XRepoweaveMarker {
 
 /// The legacy JSON marker key, used by vscode-workspace.
 ///
-/// Kept because the existing on-disk shape (`rwv.generated: true`) is the
-/// vscode precedent the joint doc names; changing it would orphan every
-/// committed `.code-workspace` from prior versions. (rwv is alpha and
-/// migrations are operator-handled — but vscode's marker was already
-/// explicit, so no migration is needed here.)
+/// Kept because `rwv.generated` is the vscode precedent the joint doc names;
+/// changing the key would orphan every committed `.code-workspace` from prior
+/// versions. (rwv is alpha and migrations are operator-handled — but vscode's
+/// marker was already explicit, so no migration is needed here.)
 pub struct RwvGeneratedMarker;
 impl JsonMarker for RwvGeneratedMarker {
     const KEY: &'static str = "rwv.generated";
@@ -390,10 +411,11 @@ impl JsonMarker for RwvGeneratedMarker {
 /// different marker keys.
 ///
 /// **Marker value:** the marker is stored as the object `{"managed": true}`
-/// on the marker key for npm/`XRepoweaveMarker`. For `RwvGeneratedMarker`
-/// (vscode), the marker value is the bool `true` — matching the existing
-/// vscode shape. `has_marker` accepts either shape (bool true OR an object
-/// whose `managed` field is true) to be tolerant of cross-version reads.
+/// on the marker key, both for npm's `XRepoweaveMarker` and vscode's
+/// `RwvGeneratedMarker` (whose object additionally carries a `files.exclude`
+/// sub-key). `has_marker` also accepts a bare boolean `true`: a
+/// `.code-workspace` an older rwv wrote that shape into must still read as
+/// marked.
 ///
 /// **Preserve_order:** if the workspace crate is compiled with the
 /// `preserve_order` feature on `serde_json`, the JsonDoc preserves insertion
@@ -781,7 +803,13 @@ impl TomlDoc {
     }
 
     /// Apply the `# managed by rwv` decoration to a specific key, idempotently.
-    fn decorate_key(table: &mut toml_edit::Table, leaf: &str) {
+    ///
+    /// Public within the crate so a consumer holding its own
+    /// `toml_edit::Table` for a dynamic key set (e.g. cargo-workspace's
+    /// `[patch.<registry>].<crate>` entries, which have no static [`KeyPath`]
+    /// list to hand `set_marker`) can decorate a leaf without re-deriving the
+    /// marker text and prefix-building logic itself.
+    pub(crate) fn decorate_key(table: &mut toml_edit::Table, leaf: &str) {
         let Some(mut key_mut) = table.key_mut(leaf) else {
             return;
         };
@@ -801,7 +829,9 @@ impl TomlDoc {
         decor.set_prefix(new);
     }
 
-    fn key_has_marker(table: &toml_edit::Table, leaf: &str) -> bool {
+    /// Does `leaf`'s decor prefix carry the marker text? The per-key read
+    /// counterpart of [`Self::decorate_key`] — same crate-visibility reason.
+    pub(crate) fn key_has_marker(table: &toml_edit::Table, leaf: &str) -> bool {
         let Some(key_mut) = table.key(leaf) else {
             return false;
         };
@@ -812,7 +842,10 @@ impl TomlDoc {
             .is_some_and(|s| s.contains(TOML_MARKER_TEXT))
     }
 
-    fn undecorate_key(table: &mut toml_edit::Table, leaf: &str) {
+    /// Strip the marker line from `leaf`'s decor prefix, keeping any other
+    /// prefix content. Crate-visible for the same reason as
+    /// [`Self::decorate_key`].
+    pub(crate) fn undecorate_key(table: &mut toml_edit::Table, leaf: &str) {
         let Some(mut key_mut) = table.key_mut(leaf) else {
             return;
         };
@@ -1342,6 +1375,58 @@ impl GoWorkDoc {
                 None
             }
         })
+    }
+
+    /// The `use` entries currently on disk (not `pending_use` — this reads
+    /// `self.text` as parsed, before any `set_owned` call). Shares
+    /// [`Self::locate_use_block`] with `has_marker`/`key_present`, so a
+    /// consumer reading back what a prior write (or an external tool, e.g.
+    /// `go work use`) left in the file agrees with what this type considers
+    /// the `use` block to be.
+    pub(crate) fn current_uses(&self) -> Vec<String> {
+        let Some((start, end, _)) = Self::locate_use_block(&self.text) else {
+            return Vec::new();
+        };
+        let lines: Vec<&str> = self.text.lines().collect();
+        let header = lines[start].trim();
+        if header.starts_with("use (") || header == "use(" {
+            // `end` is the index one past the closing `)` line, per
+            // `locate_use_block` — the entries sit strictly between.
+            let close = end.min(lines.len()).max(start + 1);
+            lines[start + 1..close - 1]
+                .iter()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty() && !l.starts_with("//"))
+                .map(str::to_string)
+                .collect()
+        } else {
+            vec![header.strip_prefix("use ").unwrap_or("").trim().to_string()]
+        }
+    }
+
+    /// Insert the marker line above an existing `use (…)` block, if one
+    /// exists and is not already marked. No-op otherwise.
+    ///
+    /// For the PRIMARY (go-tool) activation path: `go work use` writes the
+    /// `use` block itself, so the marker has to be injected into
+    /// already-on-disk text after the fact rather than riding
+    /// `set_owned`/`serialize`'s `pending_use` injection (the FALLBACK
+    /// path's route, which never runs here).
+    pub(crate) fn ensure_marker(&mut self) {
+        let Some((start, _, marker_idx)) = Self::locate_use_block(&self.text) else {
+            return;
+        };
+        if marker_idx.is_some() {
+            return;
+        }
+        let mut lines: Vec<&str> = self.text.lines().collect();
+        lines.insert(start, GO_MARKER_LINE);
+        let trailing_newline = self.text.ends_with('\n');
+        let mut out = lines.join("\n");
+        if trailing_newline || !out.ends_with('\n') {
+            out.push('\n');
+        }
+        self.text = out;
     }
 }
 
@@ -2905,6 +2990,63 @@ replace example.com/legacy => ./vendor/legacy
             );
             assert!(!text.contains("./repoweave"));
             assert!(!text.contains(GO_MARKER_LINE));
+        }
+
+        #[test]
+        fn current_uses_reads_multiline_block() {
+            let doc = GoWorkDoc::parse(&format!(
+                "go 1.26\n\n{GO_MARKER_LINE}\nuse (\n\t./a\n\t./b\n)\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                doc.current_uses(),
+                vec!["./a".to_string(), "./b".to_string()]
+            );
+        }
+
+        #[test]
+        fn current_uses_reads_single_line_form() {
+            let doc = GoWorkDoc::parse("go 1.26\n\nuse ./solo\n").unwrap();
+            assert_eq!(doc.current_uses(), vec!["./solo".to_string()]);
+        }
+
+        #[test]
+        fn current_uses_empty_without_a_use_block() {
+            let doc = GoWorkDoc::parse("go 1.26\n").unwrap();
+            assert!(doc.current_uses().is_empty());
+        }
+
+        #[test]
+        fn ensure_marker_inserts_above_an_unmarked_use_block() {
+            let mut doc = GoWorkDoc::parse("go 1.26\n\nuse (\n\t./a\n)\n").unwrap();
+            doc.ensure_marker();
+            let text = doc.serialize().unwrap();
+            assert!(text.contains(GO_MARKER_LINE), "marker inserted: {text}");
+            assert!(text.contains("./a"), "use block preserved: {text}");
+        }
+
+        #[test]
+        fn ensure_marker_is_a_noop_when_already_marked() {
+            let seed = format!("go 1.26\n\n{GO_MARKER_LINE}\nuse (\n\t./a\n)\n");
+            let mut doc = GoWorkDoc::parse(&seed).unwrap();
+            doc.ensure_marker();
+            assert_eq!(
+                doc.serialize().unwrap(),
+                seed,
+                "must not double-insert the marker"
+            );
+        }
+
+        #[test]
+        fn ensure_marker_is_a_noop_without_a_use_block() {
+            let seed = "go 1.26\n\nreplace example.com/legacy => ./vendor/legacy\n";
+            let mut doc = GoWorkDoc::parse(seed).unwrap();
+            doc.ensure_marker();
+            assert_eq!(
+                doc.serialize().unwrap(),
+                seed,
+                "nothing to attach the marker above"
+            );
         }
     }
 
