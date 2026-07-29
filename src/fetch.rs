@@ -413,9 +413,7 @@ fn fetch_project_repos(
     let parallel = jobs > 1;
     let write_lock: Mutex<()> = Mutex::new(());
 
-    // When --json is requested under -j > 1, switch to NDJSON streaming: one
-    // self-describing JSON line per repo as workers finish, no envelope wrapper.
-    let ndjson = json && parallel;
+    let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
 
     let outcomes: Vec<FetchOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
         let (repo_path, entry, vcs) = item;

@@ -5366,7 +5366,9 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let ndjson = request.jobs > 1;
+    // This function is only reached when `--json` was passed, so `true` here
+    // is that flag — the resolved mode's only remaining variable is `jobs`.
+    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs).is_ndjson();
     let project_level_result = if ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
@@ -5525,7 +5527,9 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let ndjson = request.jobs > 1;
+    // This function is only reached when `--json` was passed, so `true` here
+    // is that flag — the resolved mode's only remaining variable is `jobs`.
+    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs).is_ndjson();
     let project_level_result = if ndjson {
         // NDJSON mode: use the standard NDJSON handler (step3 SHAs are not
         // surfaced per-line in NDJSON; the envelope-level fields are only

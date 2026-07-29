@@ -67,6 +67,34 @@ pub fn resolve_jobs(jobs: Option<usize>) -> usize {
     }
 }
 
+/// How a `--json`-capable verb shapes its structured output, decided once
+/// from the `--json` flag and the resolved worker count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    /// No `--json`: human-readable text.
+    Text,
+    /// `--json`, `jobs == 1`: one pretty-printed envelope after all repos
+    /// complete.
+    JsonEnvelope,
+    /// `--json`, `jobs > 1`: one self-describing NDJSON line per repo,
+    /// streamed as workers finish; no envelope wrapper.
+    Ndjson,
+}
+
+impl OutputMode {
+    pub fn resolve(json: bool, jobs: usize) -> Self {
+        match (json, jobs > 1) {
+            (false, _) => OutputMode::Text,
+            (true, false) => OutputMode::JsonEnvelope,
+            (true, true) => OutputMode::Ndjson,
+        }
+    }
+
+    pub fn is_ndjson(self) -> bool {
+        matches!(self, OutputMode::Ndjson)
+    }
+}
+
 /// Output channel for per-repo progress lines.
 ///
 /// Under `-j 1` ([`Reporter::serial`]) the wrappers delegate to the
@@ -314,6 +342,25 @@ fn forward_stream<R: Read>(stream: R, reporter: &Reporter<'_>, is_stdout: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_mode_resolve_no_json_is_text_regardless_of_jobs() {
+        assert_eq!(OutputMode::resolve(false, 1), OutputMode::Text);
+        assert_eq!(OutputMode::resolve(false, 8), OutputMode::Text);
+    }
+
+    #[test]
+    fn output_mode_resolve_json_jobs_one_is_envelope() {
+        assert_eq!(OutputMode::resolve(true, 1), OutputMode::JsonEnvelope);
+    }
+
+    #[test]
+    fn output_mode_resolve_json_jobs_gt_one_is_ndjson() {
+        assert_eq!(OutputMode::resolve(true, 2), OutputMode::Ndjson);
+        assert!(OutputMode::resolve(true, 2).is_ndjson());
+        assert!(!OutputMode::resolve(true, 1).is_ndjson());
+        assert!(!OutputMode::resolve(false, 2).is_ndjson());
+    }
 
     #[test]
     fn resolve_jobs_some_n_returns_n() {

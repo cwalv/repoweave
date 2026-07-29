@@ -266,7 +266,7 @@ fn update_for_project(
 
     // Build JSON records if requested. We zip work_items with outcomes by
     // position (run_in_parallel preserves input order in its output).
-    let ndjson = json && jobs > 1;
+    let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
     let stdout_lock: Mutex<()> = Mutex::new(());
     let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
 

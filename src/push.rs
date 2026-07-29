@@ -464,7 +464,7 @@ pub fn run_push(
     //    X" lines) is suppressed; the Reporter is always Serial/quiet so
     //    stdout stays clean for the JSON envelope or NDJSON records.
     let parallel = jobs > 1;
-    let ndjson = json && parallel;
+    let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
     let write_lock: Mutex<()> = Mutex::new(());
 
     // Collect (path, abs_path, outcome) triples for the JSON path.
