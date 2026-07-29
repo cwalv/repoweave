@@ -20,6 +20,7 @@ const ACCEPTANCE_VERBS: &[&str] = &[
     "status",
     "doctor",
     "sync",
+    "sync-to",
     "push",
     "fetch",
     "update",
