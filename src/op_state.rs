@@ -65,17 +65,110 @@
 //!
 //! Both files live at the workspace root (same directory as `.rwv-active`).
 
-use crate::sync::{OpId, SyncStrategy};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// Name of the owner op-state file at the initiating workspace.
 pub const OP_STATE_FILE: &str = ".rwv-op";
 
 /// Name of the thin-lease file at every other mutated workspace.
 pub const OP_LEASE_FILE: &str = ".rwv-op-lease";
+
+// ---------------------------------------------------------------------------
+// OpId — newtype for sync operation identifiers
+// ---------------------------------------------------------------------------
+
+/// A nanosecond-resolution identifier for one in-flight sync operation.
+///
+/// Used to namespace pre-op savepoint refs so concurrent or interleaved
+/// sync attempts don't collide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpId(String);
+
+impl OpId {
+    /// Generate a fresh `OpId` from the current wall-clock time.
+    ///
+    /// Panics if the system clock is before UNIX_EPOCH. The previous
+    /// fallback to a literal "0" sentinel masked a clock invariant: every
+    /// pre-epoch run would collide on a single `OpId`, and the savepoint
+    /// ref scheme this id keys depends on uniqueness. Per FP-in-Rust:
+    /// don't silently default away an invariant.
+    pub fn new_now() -> Self {
+        let s = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX_EPOCH")
+            .as_nanos()
+            .to_string();
+        Self(s)
+    }
+
+    /// Reconstruct an `OpId` from its string form (e.g. when reading the sync
+    /// op marker file). `pub(crate)` to keep the constructor inside the
+    /// crate — `OpId::new_now` is the only externally legitimate way to mint
+    /// a fresh id.
+    pub(crate) fn from_string(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for OpId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SyncStrategy — typed sync strategy
+// ---------------------------------------------------------------------------
+
+/// How `rwv sync` advances each repo to its lock target.
+///
+/// `merge` is intentionally not offered (state-space shrink). See
+/// `docs/explanation/joints/sync-semantics.md` §"Why no `merge` strategy" for
+/// the justification test and the origin-less weave-to-weave escape hatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum SyncStrategy {
+    /// Fast-forward only; bail if not possible.
+    Ff,
+    /// Rebase the local branch onto the lock target.
+    Rebase,
+}
+
+impl fmt::Display for SyncStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Ff => "ff",
+            Self::Rebase => "rebase",
+        })
+    }
+}
+
+impl FromStr for SyncStrategy {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ff" => Ok(Self::Ff),
+            "rebase" => Ok(Self::Rebase),
+            // `merge` was removed (state-space shrink). A pre-removal in-flight
+            // op recorded with strategy=merge resolves here as an invalid
+            // op-state strategy; per the alpha no-back-compat convention the
+            // operator aborts (`rwv abort`) and re-invokes. No migration path.
+            other => {
+                anyhow::bail!("unknown sync strategy `{other}` in op-state; expected ff or rebase")
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // OpVerb — which top-level verb started this op
@@ -1168,7 +1261,6 @@ fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::OpId;
 
     #[test]
     fn utc_roundtrip_is_plausible() {
@@ -1204,7 +1296,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1235,7 +1327,7 @@ mod tests {
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1337,7 +1429,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1407,7 +1499,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync_to(
             &op_id,
-            crate::sync::SyncStrategy::Ff,
+            SyncStrategy::Ff,
             PathBuf::from("/cwd/ws"),
             PathBuf::from("/tgt/ws"),
             true,
@@ -1433,7 +1525,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Ff,
+            SyncStrategy::Ff,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1450,7 +1542,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1512,7 +1604,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1534,7 +1626,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync_to(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/cwd"),
             PathBuf::from("/tgt"),
             false,
@@ -1577,7 +1669,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Ff,
+            SyncStrategy::Ff,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1620,7 +1712,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync_to(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/cwd"),
             PathBuf::from("/tgt"),
             false,
@@ -1659,7 +1751,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync_to(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             owner_dir.clone(),
             PathBuf::from("/tgt"),
             false,
@@ -1723,7 +1815,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Ff,
+            SyncStrategy::Ff,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1749,7 +1841,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1770,7 +1862,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync_to(
             &op_id,
-            crate::sync::SyncStrategy::Ff,
+            SyncStrategy::Ff,
             PathBuf::from("/cwd"),
             PathBuf::from("/tgt"),
             false,
@@ -1809,7 +1901,7 @@ started_at: 2026-06-01T00:00:00Z
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
             &op_id,
-            crate::sync::SyncStrategy::Ff,
+            SyncStrategy::Ff,
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1852,7 +1944,7 @@ started_at: 2026-06-01T00:00:00Z
     fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
         OwnerRecord::new_sync(
             op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             source.to_path_buf(),
             owner.to_path_buf(),
         )
@@ -1861,7 +1953,7 @@ started_at: 2026-06-01T00:00:00Z
     fn make_sync_to_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
         OwnerRecord::new_sync_to(
             op_id,
-            crate::sync::SyncStrategy::Rebase,
+            SyncStrategy::Rebase,
             owner.to_path_buf(),
             target.to_path_buf(),
             false,

@@ -15,7 +15,8 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::manifest;
-use crate::sync::{SyncSource, SyncStrategy};
+use crate::op_state::SyncStrategy;
+use crate::sync::SyncSource;
 
 #[derive(Parser)]
 #[command(name = "rwv", version = crate::rwv_version(), about = "A cross-repo workspace manager")]

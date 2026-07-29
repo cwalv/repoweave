@@ -2159,8 +2159,8 @@ fn migration_skips_a_workweave_with_an_operation_in_flight() {
 
     // An owner record for a stopped op, as `rwv sync` leaves behind.
     let owner = repoweave::op_state::OwnerRecord::new_sync(
-        &repoweave::sync::OpId::new_now(),
-        repoweave::sync::SyncStrategy::Rebase,
+        &repoweave::op_state::OpId::new_now(),
+        repoweave::op_state::SyncStrategy::Rebase,
         ws.clone(),
         ww_dir.clone(),
     );

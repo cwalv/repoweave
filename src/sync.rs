@@ -7,7 +7,7 @@ use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName, WorkweaveNameError,
 };
-use crate::op_state::{self, OpVerb, OwnerRecord};
+use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
@@ -68,51 +68,6 @@ fn workspace_name(ctx: &WorkspaceContext) -> String {
 /// the pre-extraction literal.
 pub fn auto_relock_commit_message(source: &str) -> String {
     format!("lock: auto-relock after sync from {source}")
-}
-
-// ---------------------------------------------------------------------------
-// SyncStrategy — typed sync strategy
-// ---------------------------------------------------------------------------
-
-/// How `rwv sync` advances each repo to its lock target.
-///
-/// `merge` is intentionally not offered (state-space shrink). See
-/// `docs/explanation/joints/sync-semantics.md` §"Why no `merge` strategy" for
-/// the justification test and the origin-less weave-to-weave escape hatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-#[clap(rename_all = "lowercase")]
-pub enum SyncStrategy {
-    /// Fast-forward only; bail if not possible.
-    Ff,
-    /// Rebase the local branch onto the lock target.
-    Rebase,
-}
-
-impl fmt::Display for SyncStrategy {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Ff => "ff",
-            Self::Rebase => "rebase",
-        })
-    }
-}
-
-impl FromStr for SyncStrategy {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ff" => Ok(Self::Ff),
-            "rebase" => Ok(Self::Rebase),
-            // `merge` was removed (state-space shrink). A pre-removal in-flight
-            // op recorded with strategy=merge resolves here as an invalid
-            // op-state strategy; per the alpha no-back-compat convention the
-            // operator aborts (`rwv abort`) and re-invokes. No migration path.
-            other => {
-                anyhow::bail!("unknown sync strategy `{other}` in op-state; expected ff or rebase")
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,53 +625,6 @@ fn sync_one_repo(
         Err(StrategyError { message, cause }) => {
             RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// OpId — newtype for sync operation identifiers
-// ---------------------------------------------------------------------------
-
-/// A nanosecond-resolution identifier for one in-flight sync operation.
-///
-/// Used to namespace pre-op savepoint refs so concurrent or interleaved
-/// sync attempts don't collide.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpId(String);
-
-impl OpId {
-    /// Generate a fresh `OpId` from the current wall-clock time.
-    ///
-    /// Panics if the system clock is before UNIX_EPOCH. The previous
-    /// fallback to a literal "0" sentinel masked a clock invariant: every
-    /// pre-epoch run would collide on a single `OpId`, and the savepoint
-    /// ref scheme this id keys depends on uniqueness. Per FP-in-Rust:
-    /// don't silently default away an invariant.
-    pub fn new_now() -> Self {
-        let s = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX_EPOCH")
-            .as_nanos()
-            .to_string();
-        Self(s)
-    }
-
-    /// Reconstruct an `OpId` from its string form (e.g. when reading the sync
-    /// op marker file). `pub(crate)` to keep the constructor inside the
-    /// crate — `OpId::new_now` is the only externally legitimate way to mint
-    /// a fresh id.
-    pub(crate) fn from_string(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for OpId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
     }
 }
 

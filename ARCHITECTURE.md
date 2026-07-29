@@ -262,8 +262,8 @@ reported rather than reset and blocks the record from being cleared
 (`src/sync.rs:4935-4945`).
 
 Savepoints are git refs under `refs/rwv/pre-op/<op-id>`; pre-abort refs under
-`refs/rwv/pre-abort/<op-id>`. `OpId` (`src/sync.rs:641`) is nanoseconds since
-epoch, minted by `OpId::new_now()` (`:651`).
+`refs/rwv/pre-abort/<op-id>`. `OpId` (`src/op_state.rs:90`) is nanoseconds since
+epoch, minted by `OpId::new_now()` (`:100`).
 
 ## 6. The seams
 
