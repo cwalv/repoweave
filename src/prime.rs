@@ -354,36 +354,74 @@ integrations:
 
     // -- Key commands table names only real verbs -----------------------------
 
+    /// A token that names an argument placeholder (`PROJECT`, `NAME`, ...) or
+    /// a flag (`--role`, `[--role`), rather than a subcommand.
+    fn is_placeholder_or_flag(token: &str) -> bool {
+        if token.starts_with('-') || token.starts_with('[') {
+            return true;
+        }
+        let core = token.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        !core.is_empty() && core.chars().all(|c| c.is_ascii_uppercase())
+    }
+
     /// Every verb the "Key commands" table names must be a real subcommand.
     /// The table is a hand-curated onboarding subset (not the full `rwv
     /// explain` registry — its rows carry usage syntax and short blurbs a
     /// mechanical listing would either omit or bloat), so this does not
-    /// regenerate it; it only guards against a renamed or removed verb
-    /// going stale here silently.
+    /// regenerate it; it walks the *rendered* rows against `Cli::command()`
+    /// instead of a second hand-typed verb list, so a stale row is what fails.
     #[test]
     fn key_commands_table_names_only_real_verbs() {
         use clap::CommandFactory;
 
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_test_workspace(tmp.path(), "ws");
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let output = render_context(&ctx);
+
+        let section_start = output
+            .find("## Key commands")
+            .expect("Key commands section missing from render_context output");
+        let section = &output[section_start..];
+        let section_end = section[1..]
+            .find("\n## ")
+            .map(|i| i + 1)
+            .unwrap_or(section.len());
+        let section = &section[..section_end];
+
         let cli_cmd = crate::cli::Cli::command();
-        for verb in [
-            "resolve",
-            "activate",
-            "workweave",
-            "add",
-            "remove",
-            "lock",
-            "doctor",
-            "fetch",
-        ] {
-            assert!(
-                cli_cmd.find_subcommand(verb).is_some(),
-                "Key commands table names `{verb}`, which is not a real rwv subcommand"
+        let mut rows_checked = 0;
+        for line in section.lines() {
+            let Some(cmd_str) = line
+                .strip_prefix("| `")
+                .and_then(|rest| rest.split_once('`'))
+                .map(|(cmd, _)| cmd)
+            else {
+                continue;
+            };
+            rows_checked += 1;
+
+            let mut tokens = cmd_str.split_whitespace();
+            assert_eq!(
+                tokens.next(),
+                Some("rwv"),
+                "Key commands row `{cmd_str}` doesn't start with `rwv`"
             );
+            let mut current = &cli_cmd;
+            for token in tokens {
+                if is_placeholder_or_flag(token) {
+                    continue;
+                }
+                current = current.find_subcommand(token).unwrap_or_else(|| {
+                    panic!(
+                        "Key commands table names `{cmd_str}`, whose `{token}` is not a real rwv subcommand"
+                    )
+                });
+            }
         }
-        let workweave_cmd = cli_cmd.find_subcommand("workweave").expect("checked above");
         assert!(
-            workweave_cmd.find_subcommand("create").is_some(),
-            "Key commands table names `workweave create`, which is not a real subcommand"
+            rows_checked >= 5,
+            "parsed only {rows_checked} Key commands rows — parser regression, not a thin table"
         );
     }
 
