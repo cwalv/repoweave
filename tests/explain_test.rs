@@ -13,27 +13,9 @@
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
+use repoweave::explain::known_verbs;
 use std::path::PathBuf;
 use std::process::Command;
-
-const ACCEPTANCE_VERBS: &[&str] = &[
-    "status",
-    "doctor",
-    "sync",
-    "sync-to",
-    "push",
-    "fetch",
-    "update",
-    "prime",
-    "explain",
-    "workweave",
-    "abort",
-    "add",
-    "remove",
-    "lock",
-    "activate",
-    "init",
-];
 
 fn rwv() -> AssertCommand {
     AssertCommand::cargo_bin("rwv").expect("rwv binary built")
@@ -43,7 +25,7 @@ fn rwv() -> AssertCommand {
 fn explain_index_lists_every_acceptance_verb() {
     let assert = rwv().arg("explain").assert().success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    for verb in ACCEPTANCE_VERBS {
+    for verb in known_verbs() {
         assert!(
             stdout.contains(verb),
             "index missing verb '{verb}'; full stdout:\n{stdout}"
@@ -201,7 +183,7 @@ fn explain_far_typo_no_spurious_suggestion() {
 
 #[test]
 fn every_acceptance_verb_has_a_discoverable_explain_entry() {
-    for verb in ACCEPTANCE_VERBS {
+    for verb in known_verbs() {
         rwv()
             .args(["explain", verb])
             .assert()

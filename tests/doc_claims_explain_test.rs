@@ -18,30 +18,12 @@
 //! diff-friendly assertion message so the offending lines are
 //! visible.
 //!
-//! The acceptance verb set mirrors `tests/explain_test.rs`'s
-//! `ACCEPTANCE_VERBS` — keep the two lists in sync.
+//! The acceptance verb set is `repoweave::explain::known_verbs()` — the same
+//! registry `tests/explain_test.rs` and the runtime dispatch read.
 
 use assert_cmd::Command as AssertCommand;
+use repoweave::explain::known_verbs;
 use std::path::PathBuf;
-
-const ACCEPTANCE_VERBS: &[&str] = &[
-    "status",
-    "doctor",
-    "sync",
-    "sync-to",
-    "push",
-    "fetch",
-    "update",
-    "prime",
-    "explain",
-    "workweave",
-    "abort",
-    "add",
-    "remove",
-    "lock",
-    "activate",
-    "init",
-];
 
 fn rwv() -> AssertCommand {
     AssertCommand::cargo_bin("rwv").expect("rwv binary should be buildable")
@@ -186,18 +168,18 @@ fn explain_init_matches_committed_doc() {
 /// Single-shot acceptance test: every verb in the acceptance set
 /// matches its committed doc. The per-verb tests above give precise
 /// failure messages; this one gives a single signal that the whole
-/// acceptance surface is pinned in case `ACCEPTANCE_VERBS` ever grows
+/// acceptance surface is pinned in case `known_verbs()` ever grows
 /// without each entry getting its own test function.
 #[test]
 fn every_acceptance_verb_matches_committed_doc() {
-    for verb in ACCEPTANCE_VERBS {
+    for verb in known_verbs() {
         assert_byte_identical(verb);
     }
 }
 
 /// Bound the acceptance set: every `<verb>.md` in
 /// `docs/reference/explain/` (except `index.md`) corresponds to a
-/// verb in `ACCEPTANCE_VERBS`. Without this, someone could add a new
+/// verb in `known_verbs()`. Without this, someone could add a new
 /// verb file under `docs/reference/explain/` and the byte-identity
 /// check would silently skip it.
 #[test]
@@ -218,11 +200,11 @@ fn acceptance_verb_set_covers_every_explain_doc() {
         on_disk.push(stem.to_string());
     }
     on_disk.sort();
-    let mut declared: Vec<String> = ACCEPTANCE_VERBS.iter().map(|s| s.to_string()).collect();
+    let mut declared: Vec<String> = known_verbs().map(|s| s.to_string()).collect();
     declared.sort();
     assert_eq!(
         on_disk, declared,
-        "every <verb>.md under docs/reference/explain/ must appear in ACCEPTANCE_VERBS\n\
+        "every <verb>.md under docs/reference/explain/ must appear in known_verbs()\n\
          on disk: {on_disk:?}\n\
          declared: {declared:?}"
     );

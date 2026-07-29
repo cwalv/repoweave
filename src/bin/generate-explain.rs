@@ -44,6 +44,7 @@ use schemars::schema_for;
 
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
+use repoweave::explain;
 use repoweave::fetch::FetchJsonOutput;
 use repoweave::plugins::envelope_vars;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
@@ -887,6 +888,35 @@ fn check_cli_md_coverage(
                  with a reason)"
             ));
         }
+    }
+    errors
+}
+
+/// Check that `verbs` (this file's registry) and `runtime_verbs`
+/// (`repoweave::explain::known_verbs()`, the runtime dispatch table in
+/// `src/explain.rs`) name exactly the same set of verbs.
+///
+/// Returns one error per verb present in only one of the two; empty means clean.
+fn check_verb_registry_consistency(verbs: &[Verb], runtime_verbs: &[&str]) -> Vec<String> {
+    let generator: HashSet<&str> = verbs.iter().map(|v| v.name).collect();
+    let runtime: HashSet<&str> = runtime_verbs.iter().copied().collect();
+    let mut only_generator: Vec<&str> = generator.difference(&runtime).copied().collect();
+    let mut only_runtime: Vec<&str> = runtime.difference(&generator).copied().collect();
+    only_generator.sort();
+    only_runtime.sort();
+
+    let mut errors: Vec<String> = Vec::new();
+    for verb in only_generator {
+        errors.push(format!(
+            "verb-registry: `{verb}` is in verbs() (src/bin/generate-explain.rs) \
+             but not in repoweave::explain::known_verbs() (src/explain.rs)"
+        ));
+    }
+    for verb in only_runtime {
+        errors.push(format!(
+            "verb-registry: `{verb}` is in repoweave::explain::known_verbs() \
+             (src/explain.rs) but not in verbs() (src/bin/generate-explain.rs)"
+        ));
     }
     errors
 }
@@ -2309,6 +2339,21 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // --- verb-registry gate -----------------------------------------------
+    // verbs() above and repoweave::explain::known_verbs() (the runtime
+    // dispatch table in src/explain.rs) must name the same set of verbs, or
+    // `rwv explain <verb>` and the generated docs/schemas part ways silently.
+    let runtime_verbs: Vec<&str> = explain::known_verbs().collect();
+    let registry_errors = check_verb_registry_consistency(&verbs, &runtime_verbs);
+    if !registry_errors.is_empty() {
+        let msg = registry_errors.join("\n");
+        anyhow::bail!(
+            "verb registry mismatch:\n{msg}\n\n\
+             Fix: add or remove the verb in both places so the two registries \
+             name the same set."
+        );
+    }
+
     // --- Link-cleanliness gate -------------------------------------------
     // Every relative markdown link in every .md file under docs/ must resolve
     // on disk; rustdoc intra-doc syntax must not appear in assembled output
@@ -2848,6 +2893,60 @@ mod tests {
             errors.is_empty(),
             "allowlisted verb should not be reported, got:\n{}",
             errors.join("\n")
+        );
+    }
+
+    /// Matching registries — passes.
+    #[test]
+    fn verb_registry_consistency_passes_when_sets_match() {
+        let verbs = vec![
+            Verb {
+                name: "fetch",
+                summary: "clone or fetch",
+                schema: None,
+            },
+            Verb {
+                name: "status",
+                summary: "show status",
+                schema: None,
+            },
+        ];
+        let runtime_verbs = vec!["fetch", "status"];
+        let errors = check_verb_registry_consistency(&verbs, &runtime_verbs);
+        assert!(
+            errors.is_empty(),
+            "expected no errors when both registries agree, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A verb present in `verbs()` but dropped from the runtime dispatch
+    /// table (or vice versa) is reported by name (seeded-failure proof).
+    #[test]
+    fn verb_registry_consistency_fails_on_one_sided_verb() {
+        let verbs = vec![
+            Verb {
+                name: "fetch",
+                summary: "clone or fetch",
+                schema: None,
+            },
+            Verb {
+                name: "status",
+                summary: "show status",
+                schema: None,
+            },
+        ];
+        // "status" is missing from the runtime side only.
+        let runtime_verbs = vec!["fetch"];
+        let errors = check_verb_registry_consistency(&verbs, &runtime_verbs);
+        assert!(
+            !errors.is_empty(),
+            "expected an error when the two registries disagree"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("status"),
+            "error should name the disagreeing verb, got:\n{combined}"
         );
     }
 

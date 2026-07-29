@@ -7,7 +7,7 @@
 //! assembles markdown from hand-written templates + schemars-derived JSON
 //! schemas, writing artifacts to `docs/reference/explain/*.md` and
 //! `docs/reference/schemas/*.json`. This module embeds those artifacts via
-//! `include_str!()` and dispatches with a trivial match.
+//! `include_str!()` and dispatches with a trivial lookup.
 
 // Generated artifacts. The `generate-explain` binary writes these from
 // templates + Rust types; CI fails if they drift.
@@ -29,29 +29,32 @@ const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
 const INIT_EXPLAIN: &str = include_str!("../docs/reference/explain/init.md");
 
-/// The complete set of verbs recognized by `rwv explain`.
-///
-/// This slice feeds the did-you-mean suggester. It must be kept in sync by hand
-/// with the dispatch `match` arms below — the two are independent literals and
-/// are not linked at compile time.
-pub const KNOWN_VERBS: &[&str] = &[
-    "status",
-    "doctor",
-    "sync",
-    "sync-to",
-    "fetch",
-    "update",
-    "push",
-    "prime",
-    "explain",
-    "workweave",
-    "abort",
-    "add",
-    "remove",
-    "lock",
-    "activate",
-    "init",
+/// Every verb `rwv explain` recognizes, paired with its embedded bundle, in
+/// index order. The one registry: dispatch and [`known_verbs`] both read it,
+/// so a verb added or removed here changes both at once.
+const VERB_BUNDLES: &[(&str, &str)] = &[
+    ("status", STATUS_EXPLAIN),
+    ("doctor", DOCTOR_EXPLAIN),
+    ("sync", SYNC_EXPLAIN),
+    ("sync-to", SYNC_TO_EXPLAIN),
+    ("fetch", FETCH_EXPLAIN),
+    ("update", UPDATE_EXPLAIN),
+    ("push", PUSH_EXPLAIN),
+    ("prime", PRIME_EXPLAIN),
+    ("explain", EXPLAIN_EXPLAIN),
+    ("workweave", WORKWEAVE_EXPLAIN),
+    ("abort", ABORT_EXPLAIN),
+    ("add", ADD_EXPLAIN),
+    ("remove", REMOVE_EXPLAIN),
+    ("lock", LOCK_EXPLAIN),
+    ("activate", ACTIVATE_EXPLAIN),
+    ("init", INIT_EXPLAIN),
 ];
+
+/// The complete set of verbs recognized by `rwv explain`, in index order.
+pub fn known_verbs() -> impl Iterator<Item = &'static str> {
+    VERB_BUNDLES.iter().map(|&(name, _)| name)
+}
 
 /// Compute the Levenshtein edit distance between two strings.
 ///
@@ -81,7 +84,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[n]
 }
 
-/// Return the closest verb from `KNOWN_VERBS` if its edit distance from
+/// Return the closest verb from [`known_verbs`] if its edit distance from
 /// `input` is within the suggestion threshold, otherwise `None`.
 ///
 /// Threshold: distance ≤ 2. This accepts single-character typos up to
@@ -89,9 +92,8 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// like "frobnicate".
 fn suggest(input: &str) -> Option<&'static str> {
     const THRESHOLD: usize = 2;
-    KNOWN_VERBS
-        .iter()
-        .map(|&v| (v, levenshtein(input, v)))
+    known_verbs()
+        .map(|v| (v, levenshtein(input, v)))
         .filter(|&(_, d)| d <= THRESHOLD)
         .min_by_key(|&(_, d)| d)
         .map(|(v, _)| v)
@@ -106,23 +108,8 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
         None => {
             print!("{INDEX_EXPLAIN}");
         }
-        Some("status") => print!("{STATUS_EXPLAIN}"),
-        Some("doctor") => print!("{DOCTOR_EXPLAIN}"),
-        Some("sync") => print!("{SYNC_EXPLAIN}"),
-        Some("sync-to") => print!("{SYNC_TO_EXPLAIN}"),
-        Some("fetch") => print!("{FETCH_EXPLAIN}"),
-        Some("update") => print!("{UPDATE_EXPLAIN}"),
-        Some("push") => print!("{PUSH_EXPLAIN}"),
-        Some("prime") => print!("{PRIME_EXPLAIN}"),
-        Some("explain") => print!("{EXPLAIN_EXPLAIN}"),
-        Some("workweave") => print!("{WORKWEAVE_EXPLAIN}"),
-        Some("abort") => print!("{ABORT_EXPLAIN}"),
-        Some("add") => print!("{ADD_EXPLAIN}"),
-        Some("remove") => print!("{REMOVE_EXPLAIN}"),
-        Some("lock") => print!("{LOCK_EXPLAIN}"),
-        Some("activate") => print!("{ACTIVATE_EXPLAIN}"),
-        Some("init") => print!("{INIT_EXPLAIN}"),
-        Some(unknown) => {
+        Some(verb) => match VERB_BUNDLES.iter().find(|&&(name, _)| name == verb) {
+            Some(&(_, bundle)) => print!("{bundle}"),
             // Non-core verb: explain is reflection over core's committed,
             // CI-checked surfaces. Extending it to exec third-party binaries
             // would make rwv's reflection surface only as trustworthy as the
@@ -132,15 +119,17 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
             // not a plugin dispatch. Any other name is redirected to the
             // plugin's own `--help`, which is the plugin's responsibility to
             // document.
-            if let Some(candidate) = suggest(unknown) {
-                anyhow::bail!(
-                    "no explain entry for '{unknown}'; did you mean: {candidate}? \
-                     Try `rwv explain` for the full index."
-                );
-            } else {
-                anyhow::bail!("external command; try `rwv {unknown} --help`");
+            None => {
+                if let Some(candidate) = suggest(verb) {
+                    anyhow::bail!(
+                        "no explain entry for '{verb}'; did you mean: {candidate}? \
+                         Try `rwv explain` for the full index."
+                    );
+                } else {
+                    anyhow::bail!("external command; try `rwv {verb} --help`");
+                }
             }
-        }
+        },
     }
     Ok(())
 }
