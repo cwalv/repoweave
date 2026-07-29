@@ -2178,8 +2178,10 @@ pub struct LegacyWorkweaveMarkerFile {
 /// are missing the required `parent:` field.
 ///
 /// A marker is "legacy" if the YAML is valid but `parent:` is absent or null.
-/// Files that fail to parse at all are not included (they are a different
-/// failure mode).
+/// A directory whose marker fails to parse at all, or whose legacy marker has
+/// no `primary:` of its own to report, is not included — both are
+/// [`crate::workspace::legacy_marker_primary`]'s call, the single parse of
+/// `.rwv-workweave` behind this scan.
 pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveMarkerFile> {
     let mut found = Vec::new();
     for container in workweave_containers_for_scan(ws_root) {
@@ -2192,27 +2194,11 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
             if !dir.is_dir() {
                 continue;
             }
-            let marker_path = dir.join(".rwv-workweave");
-            if !marker_path.is_file() {
-                continue;
-            }
-            let content = match std::fs::read_to_string(&marker_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let raw: serde_yaml::Value = match serde_yaml::from_str(&content) {
-                Ok(v) => v,
-                Err(_) => continue, // unparseable — not our concern here
-            };
-            // Legacy if `parent` is absent or null.
-            if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
-                // Extract primary path.
-                if let Some(primary_str) = raw.get("primary").and_then(|v| v.as_str()) {
-                    found.push(LegacyWorkweaveMarkerFile {
-                        marker_path,
-                        primary: PathBuf::from(primary_str),
-                    });
-                }
+            if let Some(primary) = crate::workspace::legacy_marker_primary(&dir) {
+                found.push(LegacyWorkweaveMarkerFile {
+                    marker_path: dir.join(crate::workspace::WORKWEAVE_MARKER_FILE),
+                    primary,
+                });
             }
         }
     }
@@ -2256,10 +2242,12 @@ fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
 /// Returns `true` if the file was rewritten, `false` if it was already
 /// up to date.
 pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
-    let dir = finding
-        .marker_path
-        .parent()
-        .expect(".rwv-workweave marker path always has a parent directory");
+    let dir = finding.marker_path.parent().unwrap_or_else(|| {
+        panic!(
+            "{} marker path always has a parent directory",
+            crate::workspace::WORKWEAVE_MARKER_FILE
+        )
+    });
     crate::workspace::WorkweaveMarker::migrate_legacy(dir)
 }
 
@@ -2285,14 +2273,16 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
     let mut marker = crate::workspace::WorkweaveMarker::read(marker_dir)
         .with_context(|| {
             format!(
-                "failed to read {}/.rwv-workweave for --fix",
-                marker_dir.display()
+                "failed to read {}/{} for --fix",
+                marker_dir.display(),
+                crate::workspace::WORKWEAVE_MARKER_FILE
             )
         })?
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "{}/.rwv-workweave vanished before --fix could re-point it",
-                marker_dir.display()
+                "{}/{} vanished before --fix could re-point it",
+                marker_dir.display(),
+                crate::workspace::WORKWEAVE_MARKER_FILE
             )
         })?;
 
@@ -2305,8 +2295,9 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
     marker.repoint_parent(primary);
     marker.write(marker_dir).with_context(|| {
         format!(
-            "failed to write {}/.rwv-workweave during --fix",
-            marker_dir.display()
+            "failed to write {}/{} during --fix",
+            marker_dir.display(),
+            crate::workspace::WORKWEAVE_MARKER_FILE
         )
     })?;
     Ok(true)
@@ -2845,7 +2836,7 @@ pub fn scan_workweave_tree_integrity(
     let mut marker_entries: Vec<MarkerEntry> = Vec::new();
 
     for dir in &dirs {
-        let marker_path = dir.join(".rwv-workweave");
+        let marker_path = dir.join(crate::workspace::WORKWEAVE_MARKER_FILE);
 
         if !marker_path.exists() {
             // No marker file at all → unregistered directory.

@@ -1908,6 +1908,69 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
     );
 }
 
+/// A `.rwv-workweave` marker that fails to parse at all (not "legacy", just
+/// broken) is not reported as one — that failure mode belongs elsewhere.
+/// Pins the behaviour `scan_for_legacy_workweave_markers` had before
+/// rwv-hdy7s0.12 routed it through `observe_marker`, which classifies the
+/// same failure as `Unreadable` rather than `Legacy`.
+#[test]
+fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let ww_dir_container = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    // Not valid YAML at all.
+    std::fs::write(ww_dir.join(".rwv-workweave"), "not: [valid: yaml").unwrap();
+
+    let stdout = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout_str = String::from_utf8_lossy(&stdout);
+    assert!(
+        !stdout_str.contains("legacy workweave marker"),
+        "an unparseable marker is a different failure mode, not \
+         legacy-workweave-marker; got:\n{stdout_str}"
+    );
+}
+
+/// A legacy marker (missing `parent:`) that also has no `primary:` of its
+/// own is not reported — the finding exists to tell `--fix` what to
+/// backfill, and there is nothing to backfill from. Pins the same
+/// pre-rwv-hdy7s0.12 behaviour as the unparseable case above.
+#[test]
+fn doctor_does_not_report_a_legacy_marker_with_no_primary() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let ww_dir_container = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    // Legacy shape (no `parent:`), but also no `primary:`.
+    std::fs::write(ww_dir.join(".rwv-workweave"), "project: my-app\n").unwrap();
+
+    let stdout = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout_str = String::from_utf8_lossy(&stdout);
+    assert!(
+        !stdout_str.contains("legacy workweave marker"),
+        "a legacy marker with no primary: has nothing for --fix to \
+         backfill from and must not be reported; got:\n{stdout_str}"
+    );
+}
+
 /// `rwv doctor` does NOT warn when the project carries the replay-exclusion entry.
 #[test]
 fn check_silent_when_project_has_replay_exclusion() {

@@ -1390,29 +1390,36 @@ enum MarkerPresence {
     Defective {
         defect: MarkerDefect,
         project_hint: Option<ProjectName>,
+        primary_hint: Option<PathBuf>,
     },
 }
 
 /// Parse `.rwv-workweave` once, for both the readers that need a marker and
 /// the readers that must classify a broken one.
 ///
-/// `project_hint` is carried out of the defective arms because a root whose
-/// marker no verb may act on still presents a project to surfacing, and this
-/// is the last point where anything can read it.
+/// `project_hint` and `primary_hint` are carried out of the defective arms
+/// because a root whose marker no verb may act on still presents a project
+/// (for surfacing) and, if the defect is [`MarkerDefect::Legacy`], a primary
+/// (for `rwv doctor`'s legacy-marker report) — and this is the last point
+/// anything can read either from the raw YAML.
 fn observe_marker(marker_path: &Path) -> MarkerPresence {
     if !marker_path.exists() {
         return MarkerPresence::Absent;
     }
     let unreadable =
-        |detail: String, project_hint: Option<ProjectName>| MarkerPresence::Defective {
-            defect: MarkerDefect::Unreadable { detail },
-            project_hint,
+        |detail: String, project_hint: Option<ProjectName>, primary_hint: Option<PathBuf>| {
+            MarkerPresence::Defective {
+                defect: MarkerDefect::Unreadable { detail },
+                project_hint,
+                primary_hint,
+            }
         };
     let content = match std::fs::read_to_string(marker_path) {
         Ok(content) => content,
         Err(e) => {
             return unreadable(
                 format!("failed to read {}: {e}", marker_path.display()),
+                None,
                 None,
             );
         }
@@ -1426,6 +1433,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
                     marker_path.display()
                 ),
                 None,
+                None,
             );
         }
     };
@@ -1435,10 +1443,15 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
         .map(str::trim)
         .filter(|project| !project.is_empty())
         .and_then(|project| ProjectName::new(project).ok());
+    let primary_hint = raw
+        .get("primary")
+        .and_then(|v| v.as_str())
+        .map(PathBuf::from);
     if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
         return MarkerPresence::Defective {
             defect: MarkerDefect::Legacy,
             project_hint,
+            primary_hint,
         };
     }
     match serde_yaml::from_value(raw) {
@@ -1449,7 +1462,28 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
                 marker_path.display()
             ),
             project_hint,
+            primary_hint,
         ),
+    }
+}
+
+/// The `primary:` value of a legacy `.rwv-workweave` marker (missing the
+/// required `parent:` field) at `dir` — what `rwv doctor --fix` would
+/// backfill, for `rwv doctor`'s legacy-marker scan, which reports on the
+/// marker rather than constructing a [`WorkweaveMarker`] from it.
+///
+/// `None` covers every case but the one it names: no marker at `dir`, a
+/// marker that reads as usable, one broken some other way
+/// ([`MarkerDefect::Unreadable`], [`MarkerDefect::DanglingPrimary`]), or a
+/// legacy marker that has no `primary:` of its own to report.
+pub(crate) fn legacy_marker_primary(dir: &Path) -> Option<PathBuf> {
+    match observe_marker(&dir.join(WORKWEAVE_MARKER_FILE)) {
+        MarkerPresence::Defective {
+            defect: MarkerDefect::Legacy,
+            primary_hint,
+            ..
+        } => primary_hint,
+        _ => None,
     }
 }
 
@@ -1496,6 +1530,7 @@ pub fn observe_root(dir: &Path) -> anyhow::Result<Option<RootObservation>> {
         MarkerPresence::Defective {
             defect,
             project_hint,
+            ..
         } => RootObservation::MarkerUnverifiable {
             marker_path,
             defect,
