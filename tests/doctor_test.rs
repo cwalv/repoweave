@@ -1925,10 +1925,14 @@ fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
     // Not valid YAML at all.
     std::fs::write(ww_dir.join(".rwv-workweave"), "not: [valid: yaml").unwrap();
 
+    // `.success()` first: a negative string assertion alone would also pass
+    // if doctor crashed on this input instead of quietly skipping it, which
+    // would hide exactly the malformed-marker failure this bead is about.
     let stdout = rwv_cmd()
         .arg("doctor")
         .current_dir(&root)
         .assert()
+        .success()
         .get_output()
         .stdout
         .clone();
@@ -1956,10 +1960,12 @@ fn doctor_does_not_report_a_legacy_marker_with_no_primary() {
     // Legacy shape (no `parent:`), but also no `primary:`.
     std::fs::write(ww_dir.join(".rwv-workweave"), "project: my-app\n").unwrap();
 
+    // `.success()` first, same reasoning as the unparseable case above.
     let stdout = rwv_cmd()
         .arg("doctor")
         .current_dir(&root)
         .assert()
+        .success()
         .get_output()
         .stdout
         .clone();
