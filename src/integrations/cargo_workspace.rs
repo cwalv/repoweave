@@ -589,6 +589,10 @@ impl Integration for CargoWorkspace {
         true
     }
 
+    fn detection_manifests(&self) -> &[&str] {
+        &["Cargo.toml"]
+    }
+
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
 

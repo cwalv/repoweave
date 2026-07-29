@@ -33,9 +33,10 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::integration::{is_enabled, Integration, IntegrationContext, Severity};
+use crate::integration::{Integration, Severity};
 use crate::integration_runner::{
-    build_detection_cache, run_activate_hooks, run_activations, run_checks, run_verifications,
+    build_detection_cache, enabled_integrations, run_activate_hooks, run_activations, run_checks,
+    run_verifications,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
@@ -245,7 +246,7 @@ fn activate_at(
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     // Integration content step.
-    let detection_cache = build_detection_cache(root, manifest.iter_entries());
+    let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
     let ctx_base =
         session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
 
@@ -611,36 +612,16 @@ fn compute_owned_set(
     project: &ProjectName,
     manifest: &Manifest,
 ) -> std::collections::BTreeMap<String, String> {
-    let project_dir = root.join("projects").join(project.as_str());
     let session = WorkspaceSession::new(root);
-    let detection_cache = build_detection_cache(root, manifest.iter_entries());
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     let default_config = IntegrationConfig::default();
 
     let mut owned: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
-    for integration in &integrations {
-        let config = manifest
-            .integrations
-            .get(integration.name())
-            .unwrap_or(&default_config);
-        if !is_enabled(*integration, config) {
-            continue;
-        }
-        let int_ctx = IntegrationContext {
-            output_dir: &project_dir,
-            workspace_root: root,
-            project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config,
-            all_repos_on_disk: session.repos_on_disk(),
-            all_project_paths: session.project_paths(),
-            detection_cache: &detection_cache,
-            workweave: manifest.workweave.as_ref(),
-        };
+    for (integration, config) in enabled_integrations(&integrations, manifest, &default_config) {
+        let int_ctx = ctx_base.build_context(config, manifest);
         for f in integration
             .generated_files(&int_ctx)
             .into_iter()
@@ -953,9 +934,9 @@ pub fn member_incompatibilities(
     manifest: &Manifest,
 ) -> Vec<crate::integration::Issue> {
     let session = WorkspaceSession::new(root);
-    let detection_cache = build_detection_cache(root, manifest.iter_entries());
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
     let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
 }

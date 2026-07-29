@@ -96,6 +96,10 @@ impl Integration for GoWork {
         true
     }
 
+    fn detection_manifests(&self) -> &[&str] {
+        &["go.mod"]
+    }
+
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("go.mod");
         if paths.is_empty() {

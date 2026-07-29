@@ -7723,6 +7723,7 @@ pub fn run_check(
 
     for project in &world.input.projects {
         let detection_cache = crate::integration_runner::build_detection_cache(
+            &integrations,
             &workspace_dir,
             project.manifest.iter_entries(),
         );
@@ -8146,8 +8147,13 @@ fn collect_doctor_violations(
     // exit status stays 0. The scan needs an `IntegrationContext`, which is
     // why it is not part of `find_violations`.
     {
+        use crate::integration::Integration;
+        let builtin = crate::integrations::builtin_integrations();
+        let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+        let cargo = crate::integrations::CargoWorkspace;
         for project in &input.projects {
             let detection_cache = crate::integration_runner::build_detection_cache(
+                &integrations,
                 workspace_dir,
                 project.manifest.iter_entries(),
             );
@@ -8160,7 +8166,7 @@ fn collect_doctor_violations(
             let cargo_cfg = project
                 .manifest
                 .integrations
-                .get("cargo-workspace")
+                .get(cargo.name())
                 .unwrap_or(&default_cfg);
             let cargo_ctx = ctx_base.build_context(cargo_cfg, &project.manifest);
             if let Ok(vs) = scan_cargo_ecosystem(&cargo_ctx) {

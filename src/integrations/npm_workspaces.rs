@@ -133,6 +133,10 @@ impl Integration for NpmWorkspaces {
         true
     }
 
+    fn detection_manifests(&self) -> &[&str] {
+        &["package.json"]
+    }
+
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         if paths.is_empty() {

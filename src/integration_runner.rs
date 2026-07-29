@@ -7,7 +7,7 @@
 //! Errors from individual integrations are captured as `Issue`s rather than
 //! aborting — one integration failing should not prevent others from running.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
@@ -38,21 +38,29 @@ pub struct IntegrationContextBase<'a> {
     pub workweave: Option<&'a crate::manifest::WorkweaveConfig>,
 }
 
-/// The set of manifest filenames pre-computed into the detection cache.
-pub const KNOWN_MANIFESTS: &[&str] = &[
-    "Cargo.toml",
-    "package.json",
-    "go.mod",
-    "pyproject.toml",
-    "go.sum",
-];
+/// The manifest filenames `integrations` detect repos by, deduplicated across
+/// the ecosystems that share one (npm and pnpm both read `package.json`).
+///
+/// This is the detection cache's vocabulary, and the integrations about to run
+/// are the only thing that decides it.
+pub fn detection_vocabulary(integrations: &[&dyn Integration]) -> BTreeSet<String> {
+    let mut vocabulary = BTreeSet::new();
+    for integration in integrations {
+        for manifest_file in integration.detection_manifests() {
+            vocabulary.insert((*manifest_file).to_string());
+        }
+    }
+    vocabulary
+}
 
-/// Build a detection cache for the given workspace root and repos.
+/// Build a detection cache covering every filename `integrations` declare in
+/// [`Integration::detection_manifests`].
 ///
 /// `repos` may be any iterator of `(&RepoPath, &RepoEntry)` pairs — callers
 /// should pass `manifest.iter_entries()` rather than `&manifest.repositories`
 /// directly.
 pub fn build_detection_cache<'a>(
+    integrations: &[&dyn Integration],
     workspace_root: &Path,
     repos: impl IntoIterator<
         Item = (
@@ -61,24 +69,21 @@ pub fn build_detection_cache<'a>(
         ),
     >,
 ) -> HashMap<String, Vec<String>> {
-    let repos: Vec<_> = repos.into_iter().collect();
-    let mut cache = HashMap::new();
-    for &manifest_file in KNOWN_MANIFESTS {
-        let mut paths: Vec<String> = repos
-            .iter()
-            .filter(|(_, e)| e.role.is_active())
-            .filter(|(rp, _)| {
-                workspace_root
-                    .join(rp.as_str())
-                    .join(manifest_file)
-                    .exists()
-            })
-            .map(|(rp, _)| rp.as_str().to_string())
-            .collect();
-        paths.sort();
-        cache.insert(manifest_file.to_string(), paths);
-    }
-    cache
+    let repos: Vec<(RepoPath, RepoEntry)> = repos
+        .into_iter()
+        .map(|(rp, e)| (rp.clone(), e.clone()))
+        .collect();
+    detection_vocabulary(integrations)
+        .into_iter()
+        .map(|manifest_file| {
+            let paths = crate::integration::detect_repos_with_manifest_impl(
+                workspace_root,
+                &repos,
+                &manifest_file,
+            );
+            (manifest_file, paths)
+        })
+        .collect()
 }
 
 /// Active repos the manifest declares whose directory is not on disk under
@@ -128,6 +133,28 @@ impl<'a> IntegrationContextBase<'a> {
     }
 }
 
+/// The integrations `manifest` enables, each paired with the config it runs
+/// under: the `integrations:` entry keyed by its own `name()`, or
+/// `default_config` when the manifest has no entry.
+///
+/// The single statement of what "enabled" means for a run. Drivers whose
+/// per-integration work reduces to `Vec<Issue>` go through
+/// [`for_each_enabled`]; a caller that needs anything else out of each
+/// integration iterates this rather than re-deriving the lookup and the gate.
+pub fn enabled_integrations<'a>(
+    integrations: &'a [&'a dyn Integration],
+    manifest: &'a Manifest,
+    default_config: &'a IntegrationConfig,
+) -> impl Iterator<Item = (&'a dyn Integration, &'a IntegrationConfig)> + 'a {
+    integrations.iter().filter_map(move |integration| {
+        let config = manifest
+            .integrations
+            .get(integration.name())
+            .unwrap_or(default_config);
+        is_enabled(*integration, config).then_some((*integration, config))
+    })
+}
+
 /// Iterate over enabled integrations, calling `f` for each one. Errors
 /// returned by `f` are captured as `Issue`s with `Severity::Error` so that
 /// one failing integration does not prevent others from running.
@@ -139,17 +166,8 @@ fn for_each_enabled(
     let default_config = IntegrationConfig::default();
     let mut issues = Vec::new();
 
-    for integration in integrations {
-        let config = manifest
-            .integrations
-            .get(integration.name())
-            .unwrap_or(&default_config);
-
-        if !is_enabled(*integration, config) {
-            continue;
-        }
-
-        match f(*integration, config) {
+    for (integration, config) in enabled_integrations(integrations, manifest, &default_config) {
+        match f(integration, config) {
             Ok(new_issues) => issues.extend(new_issues),
             Err(e) => {
                 issues.push(Issue {

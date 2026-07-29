@@ -2,6 +2,7 @@
 
 pub mod contract;
 pub mod doctor_corpus;
+pub mod src_scan;
 
 use std::path::PathBuf;
 use std::process::Command;

@@ -398,6 +398,10 @@ impl Integration for UvWorkspace {
         true
     }
 
+    fn detection_manifests(&self) -> &[&str] {
+        &["pyproject.toml"]
+    }
+
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("pyproject.toml");
         if paths.is_empty() {

@@ -168,6 +168,26 @@ pub trait Integration {
     /// Whether this integration runs without explicit opt-in.
     fn default_enabled(&self) -> bool;
 
+    /// The manifest filenames this integration detects member repos by — the
+    /// complete argument set it passes to
+    /// [`IntegrationContext::detect_repos_with_manifest`].
+    ///
+    /// The runner pre-computes one detection list per filename declared here
+    /// across the integrations it is about to run. A filename an integration
+    /// detects by but does not declare misses the cache and silently falls
+    /// back to a live filesystem scan on every call; a filename declared here
+    /// and detected by nobody is a cache slot no reader has.
+    ///
+    /// Ecosystem-tool output the integration generates but never scans for
+    /// (`go.sum`, `Cargo.lock`) does not belong here — those are
+    /// [`Integration::generated_files`].
+    ///
+    /// The default is empty: an integration whose member list comes from
+    /// config rather than from the filesystem detects nothing.
+    fn detection_manifests(&self) -> &[&str] {
+        &[]
+    }
+
     /// Generate config files and run install commands.
     /// Called during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, and `rwv remove`.
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()>;
