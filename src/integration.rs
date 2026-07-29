@@ -5,6 +5,7 @@
 //! and check (read-only inspection).
 
 use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, WorkweaveConfig};
+use crate::workspace::ContainerKind;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -37,6 +38,12 @@ pub struct IntegrationContext<'a> {
     /// of the project directory. Bound to the weave the verb is acting on:
     /// the primary root at primary, the workweave directory inside one.
     pub workspace_root: &'a Path,
+
+    /// Which kind of container `workspace_root` is. The verb that resolved
+    /// the workspace already answered this when it resolved a `Checkout`;
+    /// an integration that wants the answer reads it here rather than
+    /// re-deriving it by testing `workspace_root` for a marker file.
+    pub container_kind: ContainerKind,
 
     /// The active project name.
     pub project: &'a ProjectName,

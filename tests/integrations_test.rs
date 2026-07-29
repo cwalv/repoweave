@@ -39,6 +39,7 @@ use repoweave::integrations::*;
 use repoweave::manifest::{
     IntegrationConfig, Manifest, ProjectName, RepoPath, Role, WorkweaveConfig,
 };
+use repoweave::workspace::ContainerKind;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;
@@ -72,6 +73,7 @@ fn make_ctx<'a>(
     IntegrationContext {
         output_dir: root,
         workspace_root: root,
+        container_kind: ContainerKind::Primary,
         project,
         repos: manifest
             .iter_entries()
@@ -98,6 +100,7 @@ fn make_ctx_with_workweave<'a>(
     IntegrationContext {
         output_dir: root,
         workspace_root: root,
+        container_kind: ContainerKind::Primary,
         project,
         repos: manifest
             .iter_entries()
@@ -5992,6 +5995,7 @@ mod gita {
         let ctx = IntegrationContext {
             output_dir,
             workspace_root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -6070,6 +6074,7 @@ mod gita {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -6376,6 +6381,7 @@ mod vscode_workspace {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -6419,6 +6425,7 @@ mod vscode_workspace {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -6509,6 +6516,7 @@ mod vscode_workspace {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -6583,6 +6591,7 @@ mod vscode_workspace {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -6958,6 +6967,7 @@ mod vscode_workspace_scenarios {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()
@@ -10432,9 +10442,13 @@ mod vscode_workspace_container_kind {
     use super::*;
     use repoweave::integrations::VscodeWorkspace;
 
-    /// A context whose disk view is stated explicitly. The exclude set is a
-    /// function of these two lists, so varying them is how these tests model a
-    /// full view (primary) against a partial one (workweave).
+    /// A context whose disk view and container kind are both stated
+    /// explicitly. The exclude set is a function of `repos_on_disk` and
+    /// `project_paths`, so varying those is how these tests model a full
+    /// view (primary) against a partial one (workweave); `kind` is what the
+    /// integration actually branches on, and callers pass it independently
+    /// of whatever `root` looks like on disk.
+    #[allow(clippy::too_many_arguments)]
     fn ctx_with_view<'a>(
         root: &'a Path,
         project: &'a ProjectName,
@@ -10443,10 +10457,12 @@ mod vscode_workspace_container_kind {
         cache: &'a HashMap<String, Vec<String>>,
         repos_on_disk: &'a [RepoPath],
         project_paths: &'a [String],
+        kind: ContainerKind,
     ) -> IntegrationContext<'a> {
         IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: kind,
             project,
             repos: manifest
                 .iter_entries()
@@ -10460,8 +10476,11 @@ mod vscode_workspace_container_kind {
         }
     }
 
-    /// Make `root` a workweave root. The marker's presence is the whole of the
-    /// container-kind test, so writing it is the whole of the setup.
+    /// Lay down a `.rwv-workweave` marker at `root`, so the on-disk shape
+    /// matches a real workweave root. The container kind fed to the
+    /// integration under test comes from `ctx_with_view`'s `kind` argument,
+    /// not from this file — a resolved `Checkout` is what production code
+    /// threads through, and this marker is scenery for that, not the input.
     fn as_workweave_root(root: &Path) {
         write_file(
             root,
@@ -10529,7 +10548,14 @@ mod vscode_workspace_container_kind {
         let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
         let projects = vec!["test-project".to_string()];
         let ctx = ctx_with_view(
-            root, &project, &manifest, &config, &cache, &on_disk, &projects,
+            root,
+            &project,
+            &manifest,
+            &config,
+            &cache,
+            &on_disk,
+            &projects,
+            ContainerKind::Workweave,
         );
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -10595,6 +10621,7 @@ mod vscode_workspace_container_kind {
             &cache,
             &wide_disk,
             &wide_projects,
+            ContainerKind::Primary,
         );
         VscodeWorkspace.activate(&primary_ctx).unwrap();
         let authored = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
@@ -10617,6 +10644,7 @@ mod vscode_workspace_container_kind {
             &cache,
             &narrow_disk,
             &narrow_projects,
+            ContainerKind::Workweave,
         );
         VscodeWorkspace.activate(&workweave_ctx).unwrap();
         let regenerated =
@@ -10656,7 +10684,14 @@ mod vscode_workspace_container_kind {
         ];
         let projects = vec!["test-project".to_string()];
         let ctx = ctx_with_view(
-            root, &project, &manifest, &config, &cache, &on_disk, &projects,
+            root,
+            &project,
+            &manifest,
+            &config,
+            &cache,
+            &on_disk,
+            &projects,
+            ContainerKind::Workweave,
         );
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -10697,7 +10732,14 @@ mod vscode_workspace_container_kind {
         let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
         let projects = vec!["test-project".to_string()];
         let ctx = ctx_with_view(
-            root, &project, &manifest, &config, &cache, &on_disk, &projects,
+            root,
+            &project,
+            &manifest,
+            &config,
+            &cache,
+            &on_disk,
+            &projects,
+            ContainerKind::Primary,
         );
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -10736,7 +10778,14 @@ mod vscode_workspace_container_kind {
         let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
         let projects = vec!["test-project".to_string()];
         let ctx = ctx_with_view(
-            root, &project, &manifest, &config, &cache, &on_disk, &projects,
+            root,
+            &project,
+            &manifest,
+            &config,
+            &cache,
+            &on_disk,
+            &projects,
+            ContainerKind::Workweave,
         );
 
         let issues = VscodeWorkspace.verify(&ctx).unwrap();
@@ -10778,7 +10827,14 @@ mod vscode_workspace_container_kind {
         ];
         let projects = vec!["test-project".to_string()];
         let ctx = ctx_with_view(
-            root, &project, &manifest, &config, &cache, &on_disk, &projects,
+            root,
+            &project,
+            &manifest,
+            &config,
+            &cache,
+            &on_disk,
+            &projects,
+            ContainerKind::Primary,
         );
 
         let issues = VscodeWorkspace.verify(&ctx).unwrap();

@@ -12,6 +12,7 @@ use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
+use crate::workspace::ContainerKind;
 
 /// Shared base data for constructing `IntegrationContext` per integration.
 pub struct IntegrationContextBase<'a> {
@@ -22,6 +23,12 @@ pub struct IntegrationContextBase<'a> {
     pub output_dir: std::path::PathBuf,
     /// Workspace root where repos live on disk.
     pub workspace_root: &'a Path,
+    /// Which kind of container `workspace_root` is: the primary weave
+    /// directory, or a workweave's. Set by whichever caller resolved the
+    /// `Checkout` this base was built from — an integration reading
+    /// `workspace_root` back off disk to answer the same question would be
+    /// re-deriving a fact its caller already had.
+    pub container_kind: ContainerKind,
     /// Active project name.
     pub project: &'a ProjectName,
     /// All git repos found on disk under registry directories.
@@ -119,6 +126,7 @@ impl<'a> IntegrationContextBase<'a> {
         IntegrationContext {
             output_dir: &self.output_dir,
             workspace_root: self.workspace_root,
+            container_kind: self.container_kind,
             project: self.project,
             repos: manifest
                 .iter_entries()
@@ -459,6 +467,7 @@ mod tests {
         IntegrationContextBase {
             output_dir: std::path::PathBuf::from("/workspace"),
             workspace_root: Path::new("/workspace"),
+            container_kind: ContainerKind::Primary,
             project,
             all_repos_on_disk: &[],
             all_project_paths: &[],

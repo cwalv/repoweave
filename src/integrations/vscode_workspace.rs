@@ -18,7 +18,7 @@ use crate::integrations::merge::{
     drift_issues, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc, RwvGeneratedMarker,
 };
 use crate::registry::split_canonical_local_path;
-use crate::workspace::is_workweave_root;
+use crate::workspace::ContainerKind;
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -167,11 +167,12 @@ pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Ve
 /// them collapsed them against its own full scan, which this one cannot
 /// reproduce; the union is at the key level, not the repo level.
 ///
-/// The kind test is [`is_workweave_root`] on the container's weave root — a raw
-/// existence test for the marker, not a project resolution, so it rests on no
-/// precedence between the marker and the primary-only pointer. A root
-/// illegally carrying both files (which `rwv doctor` reports and can repair)
-/// takes the monotone arm — the arm that cannot lose content.
+/// The kind test is `ctx.container_kind` — the caller resolved it once, from
+/// the same `Checkout` that answers precedence between the marker and the
+/// primary-only pointer, so this function does not re-derive it from
+/// `workspace_root`. A root illegally carrying both files (which
+/// `rwv doctor` reports and can repair) resolves to whichever kind the
+/// caller's `Checkout` settled on, and that arm cannot lose content.
 fn expected_generated_set(
     ctx: &IntegrationContext,
     prev: &HashSet<String>,
@@ -213,7 +214,7 @@ fn expected_generated_set(
         }
     }
 
-    if is_workweave_root(ctx.workspace_root) {
+    if ctx.container_kind == ContainerKind::Workweave {
         for key in prev {
             if key == DOTFILES_SENTINEL {
                 continue;
@@ -680,6 +681,7 @@ mod tests {
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: manifest
                 .iter_entries()

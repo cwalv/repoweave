@@ -7884,6 +7884,7 @@ fn collect_doctor_issues(
             &project.name,
             &detection_cache,
             project.manifest.workweave.as_ref(),
+            ctx.checkout.kind(),
         );
         issues.extend(run_checks(&integrations, &project.manifest, &ctx_base));
 
@@ -7906,7 +7907,11 @@ fn collect_doctor_issues(
             // unconditionally, so from a workweave it would rewrite the
             // PRIMARY project's managed files — `activate_intent_at` takes the
             // weave dir, and `workspace_dir` is `ctx.active_path()`.
-            match crate::activate::activate_intent_at(project.name.as_str(), workspace_dir) {
+            match crate::activate::activate_intent_at(
+                project.name.as_str(),
+                workspace_dir,
+                ctx.checkout.kind(),
+            ) {
                 Ok(()) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
                     project.name
@@ -8408,6 +8413,7 @@ fn collect_doctor_violations(
                 &project.name,
                 &detection_cache,
                 project.manifest.workweave.as_ref(),
+                ctx.checkout.kind(),
             );
             let default_cfg = crate::manifest::IntegrationConfig::default();
             let cargo_cfg = project

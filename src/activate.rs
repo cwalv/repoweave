@@ -42,8 +42,8 @@ use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
 use crate::workspace::{
-    is_workweave_root, read_weave_root_project, set_active_project, Checkout, WorkspaceContext,
-    WorkspaceSession,
+    is_workweave_root, read_weave_root_project, set_active_project, Checkout, ContainerKind,
+    WorkspaceContext, WorkspaceSession,
 };
 
 /// Which class of verb is driving activation.
@@ -150,13 +150,23 @@ pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<
 ///   the hooks, and the tool writes *through* the link into the canonical
 ///   file. Skip it and the tool drops a real file at the weave root that no
 ///   repo tracks and no later verify pass can see.
-pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()> {
+///
+/// `kind` is the caller's answer to which kind of root `weave_dir` is —
+/// this function has no `Checkout` of its own to derive it from, so the
+/// caller (which resolved one to pick `weave_dir` in the first place) passes
+/// it through.
+pub fn activate_intent_at(
+    project: &str,
+    weave_dir: &Path,
+    kind: ContainerKind,
+) -> anyhow::Result<()> {
     activate_at(
         weave_dir,
         project,
         false,
         ActivateOptions::default(),
         ActivationMode::Intent,
+        kind,
     )
 }
 
@@ -174,6 +184,7 @@ pub fn activate_intent_with_options(
         false,
         opts,
         ActivationMode::Intent,
+        ctx.checkout.kind(),
     )
 }
 
@@ -212,6 +223,7 @@ pub fn activate_with_options(
         false,
         opts,
         ActivationMode::Context,
+        ctx.checkout.kind(),
     )
 }
 
@@ -227,12 +239,18 @@ pub fn activate_with_options(
 /// In `Intent` mode the integrations' `activate()` is called (regenerate and
 /// commit). In `Context` mode the integrations' `verify()` is called instead
 /// (surface + verify, never author).
+///
+/// `kind`: which kind of root `root` is, for `IntegrationContext` — every
+/// caller already knows this from the `Checkout` it resolved (or, for the
+/// two workweave-flavoured entry points, from being that entry point), so it
+/// is passed in rather than re-derived here.
 fn activate_at(
     root: &Path,
     project: &str,
     skip_missing_sources: bool,
     opts: ActivateOptions,
     mode: ActivationMode,
+    kind: ContainerKind,
 ) -> anyhow::Result<()> {
     let project_name = ProjectName::new(project)?;
     let project_dir = root.join("projects").join(project);
@@ -247,8 +265,12 @@ fn activate_at(
 
     // Integration content step.
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base =
-        session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = session.context_base(
+        &project_name,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+        kind,
+    );
 
     match mode {
         ActivationMode::Intent => {
@@ -546,6 +568,7 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
         true,
         ActivateOptions { no_install: true },
         ActivationMode::Context,
+        ContainerKind::Workweave,
     )
 }
 
@@ -569,6 +592,7 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
         true,
         ActivateOptions { no_install: true },
         ActivationMode::Intent,
+        ContainerKind::Workweave,
     )
 }
 
@@ -593,6 +617,16 @@ pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The [`ContainerKind`] of a bare `root`, for the two functions below that
+/// receive one without a resolved `Checkout` to read it from.
+fn container_kind_of(root: &Path) -> ContainerKind {
+    if is_workweave_root(root) {
+        ContainerKind::Workweave
+    } else {
+        ContainerKind::Primary
+    }
+}
+
 /// Compute the owner-scoped surfacing set for `project` at `root`: the union
 /// of `generated_files()` and `managed_files()` across all enabled
 /// integrations, mapping each file to the integration that declares it.
@@ -607,6 +641,13 @@ pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
 /// Returns `(path -> declaring-integration-name)`. Iteration order is sorted
 /// by path (`BTreeMap`), matching the deterministic ordering the previous
 /// `BTreeSet` provided to symlink creation.
+///
+/// `compute_owned_set` and [`member_incompatibilities`] are reached with a
+/// bare `root: &Path`, from callers with no resolved `Checkout` to hand
+/// over — [`container_kind_of`] is the same marker test [`activate_at`]'s
+/// Context-mode tail already uses, and is what lets both keep that
+/// signature rather than widen it for a value neither currently reads back
+/// out of an integration.
 fn compute_owned_set(
     root: &Path,
     project: &ProjectName,
@@ -616,7 +657,12 @@ fn compute_owned_set(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = session.context_base(
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+        container_kind_of(root),
+    );
     let default_config = IntegrationConfig::default();
 
     let mut owned: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
@@ -940,7 +986,12 @@ pub fn member_incompatibilities(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = session.context_base(
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+        container_kind_of(root),
+    );
     crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
 }
 

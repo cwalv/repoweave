@@ -307,6 +307,7 @@ impl Integration for NpmWorkspaces {
 mod tests {
     use super::*;
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
+    use crate::workspace::ContainerKind;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -332,6 +333,7 @@ mod tests {
         IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project,
             repos: manifest
                 .iter_entries()

@@ -11,6 +11,7 @@ use repoweave::integration::{
 };
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::RefName;
+use repoweave::workspace::ContainerKind;
 
 mod common;
 
@@ -150,6 +151,7 @@ fn active_repos_excludes_reference() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -194,6 +196,7 @@ fn active_repos_includes_primary_fork_dependency() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -234,6 +237,7 @@ fn mock_activate_receives_correct_context() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -298,6 +302,7 @@ fn mock_check_returns_issues() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -402,6 +407,7 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     let ctx = IntegrationContext {
         output_dir,
         workspace_root,
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -443,6 +449,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
     let ctx = IntegrationContext {
         output_dir,
         workspace_root,
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -479,6 +486,7 @@ fn context_output_dir_and_workspace_root_can_be_same() {
     let ctx = IntegrationContext {
         output_dir: root,
         workspace_root: root,
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -513,6 +521,7 @@ fn default_activate_hook_is_noop() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -597,6 +606,7 @@ fn overridden_activate_hook_is_called() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -635,6 +645,7 @@ fn default_generated_files_returns_empty() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -674,6 +685,7 @@ fn cargo_workspace_generated_files() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -697,6 +709,7 @@ fn cargo_workspace_generated_files() {
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos_with_manifest
             .iter()
@@ -734,6 +747,7 @@ fn npm_workspaces_generated_files() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -757,6 +771,7 @@ fn npm_workspaces_generated_files() {
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos_with_manifest
             .iter()
@@ -797,6 +812,7 @@ fn pnpm_workspaces_generated_files() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -820,6 +836,7 @@ fn pnpm_workspaces_generated_files() {
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos_with_manifest
             .iter()
@@ -861,6 +878,7 @@ fn go_work_generated_files() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -888,6 +906,7 @@ fn go_work_generated_files() {
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos_with_manifest
             .iter()
@@ -919,6 +938,7 @@ fn uv_workspace_generated_files() {
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -942,6 +962,7 @@ fn uv_workspace_generated_files() {
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos_with_manifest
             .iter()
@@ -977,6 +998,7 @@ fn gita_generated_files() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -1007,6 +1029,7 @@ fn vscode_workspace_generated_files_includes_project_name() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -1045,6 +1068,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
+        container_kind: ContainerKind::Primary,
         project: &project,
         repos: repos
             .iter()
@@ -1079,6 +1103,7 @@ mod fo_cnpjy_3 {
     use repoweave::activate::{activate, activate_intent_with_options, ActivateOptions};
     use repoweave::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
     use repoweave::manifest::ProjectName;
+    use repoweave::workspace::ContainerKind;
 
     // -----------------------------------------------------------------------
     // Tiny fake Integration impl — keeps the framework tests free of any
@@ -1196,6 +1221,7 @@ mod fo_cnpjy_3 {
         let ctx = IntegrationContext {
             output_dir: Path::new("/ws"),
             workspace_root: Path::new("/ws"),
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: Vec::new(),
             config: &config,
@@ -1254,6 +1280,7 @@ mod fo_cnpjy_3 {
         let ctx = IntegrationContext {
             output_dir: Path::new("/ws"),
             workspace_root: Path::new("/ws"),
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: Vec::new(),
             config: &config,
@@ -1404,6 +1431,7 @@ mod fo_cnpjy_3 {
         let ctx = IntegrationContext {
             output_dir: Path::new("/ws"),
             workspace_root: Path::new("/ws"),
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: Vec::new(),
             config: &config,
@@ -1506,6 +1534,7 @@ mod fo_cnpjy_3 {
         let ctx = IntegrationContext {
             output_dir: &project_dir,
             workspace_root: &ws,
+            container_kind: ContainerKind::Primary,
             project: &project,
             repos: Vec::new(),
             config: &config,

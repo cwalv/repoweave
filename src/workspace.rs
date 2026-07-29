@@ -178,6 +178,26 @@ pub enum Checkout {
     },
 }
 
+impl Checkout {
+    /// Project this checkout onto its [`ContainerKind`], discarding the
+    /// per-variant payload (name, dir, project, parent).
+    pub fn kind(&self) -> ContainerKind {
+        match self {
+            Checkout::Primary { .. } => ContainerKind::Primary,
+            Checkout::Workweave { .. } => ContainerKind::Workweave,
+        }
+    }
+}
+
+/// [`Checkout`] without its payload — what an integration needs to know
+/// about the container it is running in, and all it needs: which of the two
+/// kinds, not which workweave or which project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerKind {
+    Primary,
+    Workweave,
+}
+
 /// Well-known directory names that identify a workspace root.
 fn workspace_marker_names() -> Vec<String> {
     let mut names: Vec<String> = builtin_registry_names()
@@ -497,15 +517,24 @@ impl WorkspaceSession {
     /// through to integrations so they can detect cross-section collisions
     /// such as a name claimed by both `static-files.files` and
     /// `workweave.link`.
+    ///
+    /// `container_kind` is the caller's answer, not a value this method
+    /// derives: a session scans a root without knowing which [`Checkout`]
+    /// resolved it, so the kind travels in from whichever caller resolved
+    /// one — via [`Checkout::kind`] — or, for the callers that never
+    /// resolve a `Checkout` at all, from [`is_workweave_root`] on the same
+    /// root.
     pub fn context_base<'a>(
         &'a self,
         project: &'a ProjectName,
         detection_cache: &'a std::collections::HashMap<String, Vec<String>>,
         workweave: Option<&'a crate::manifest::WorkweaveConfig>,
+        container_kind: ContainerKind,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
             output_dir: self.root.join("projects").join(project.as_str()),
             workspace_root: &self.root,
+            container_kind,
             project,
             all_repos_on_disk: &self.repos_on_disk,
             all_project_paths: &self.project_paths,
@@ -2214,6 +2243,49 @@ mod tests {
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
         }
+    }
+
+    /// The kind carried into `IntegrationContext` matches the resolved
+    /// `Checkout`, for both a primary run and a workweave run — the one
+    /// production path from a real `WorkspaceContext` down to the value an
+    /// integration reads.
+    #[test]
+    fn container_kind_reaches_integration_context_matching_the_resolved_checkout() {
+        use crate::integration::IntegrationContext;
+        use crate::manifest::IntegrationConfig;
+
+        let manifest = Manifest::from_yaml_str("repositories: {}\n").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = std::collections::HashMap::new();
+
+        // Primary.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let project = ProjectName::new("web-app").unwrap();
+        let session = WorkspaceSession::new(&root);
+        let base = session.context_base(&project, &cache, None, ctx.checkout.kind());
+        let int_ctx: IntegrationContext = base.build_context(&config, &manifest);
+        assert_eq!(ctx.checkout.kind(), ContainerKind::Primary);
+        assert_eq!(int_ctx.container_kind, ctx.checkout.kind());
+
+        // Workweave.
+        let workweaves_dir = tmp.path().join(".workweaves");
+        let weave_dir = workweaves_dir.join("feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        let primary_canon = root.canonicalize().unwrap();
+        let marker = WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app").unwrap(),
+            parent: primary_canon,
+        };
+        marker.write(&weave_dir).unwrap();
+        let ww_ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ww_session = WorkspaceSession::new(&weave_dir);
+        let ww_base = ww_session.context_base(&project, &cache, None, ww_ctx.checkout.kind());
+        let ww_int_ctx: IntegrationContext = ww_base.build_context(&config, &manifest);
+        assert_eq!(ww_ctx.checkout.kind(), ContainerKind::Workweave);
+        assert_eq!(ww_int_ctx.container_kind, ww_ctx.checkout.kind());
     }
 
     #[test]

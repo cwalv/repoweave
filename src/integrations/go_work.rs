@@ -752,6 +752,7 @@ fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<St
 mod tests {
     use super::*;
     use crate::manifest::{Manifest, ProjectName, Role};
+    use crate::workspace::ContainerKind;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -784,6 +785,7 @@ mod tests {
         IntegrationContext {
             output_dir: root,
             workspace_root: root,
+            container_kind: ContainerKind::Primary,
             project,
             repos: manifest
                 .iter_entries()

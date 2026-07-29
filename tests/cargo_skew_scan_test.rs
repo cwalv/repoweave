@@ -20,6 +20,7 @@ use repoweave::integrations::cargo_workspace::{
     CargoSkewOccurrence, CargoWorkspace, PatchShadowingRecord,
 };
 use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
+use repoweave::workspace::ContainerKind;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -59,6 +60,7 @@ fn make_ctx<'a>(
     IntegrationContext {
         output_dir: root,
         workspace_root: root,
+        container_kind: ContainerKind::Primary,
         project,
         repos: manifest
             .iter_entries()
