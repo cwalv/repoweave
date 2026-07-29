@@ -190,9 +190,7 @@ impl FromStr for SyncStrategy {
 // ---------------------------------------------------------------------------
 
 /// Which top-level verb started this op.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpVerb {
     /// Single-step sync (existing `rwv sync`).

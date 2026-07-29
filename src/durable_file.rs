@@ -179,7 +179,11 @@ mod tests {
                     s.spawn(move || create_new(&path, format!("{i}").as_bytes()).is_ok())
                 })
                 .collect();
-            handles.into_iter().filter_map(|h| h.join().ok()).filter(|won| *won).count()
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().ok())
+                .filter(|won| *won)
+                .count()
         });
         assert_eq!(winners, 1);
         assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());

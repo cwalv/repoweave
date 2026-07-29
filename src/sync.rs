@@ -2545,7 +2545,9 @@ fn guard_and_mark<'a>(
         // reachable project commits in Phase 1'. Recorded in the audit-trail
         // `overrides` field so cleanup preserves the project savepoint as a
         // tombstone and --continue resumes with the same consent.
-        record.overrides.push(op_state::Override::DiscardLocalCommits);
+        record
+            .overrides
+            .push(op_state::Override::DiscardLocalCommits);
     }
     if !record.overrides.is_empty() {
         // Only rewrite when we actually have overrides — otherwise the
@@ -4337,7 +4339,10 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let owner = op_state::read_owner(&ctx.owner_workspace_dir)?;
     let discard_tombstone = owner
         .as_ref()
-        .map(|r| r.overrides.contains(&op_state::Override::DiscardLocalCommits))
+        .map(|r| {
+            r.overrides
+                .contains(&op_state::Override::DiscardLocalCommits)
+        })
         .unwrap_or(false);
 
     if !discard_tombstone {

@@ -12,8 +12,8 @@ use repoweave::check::{
     WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
-use repoweave::op_state::OpVerb;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
+use repoweave::op_state::OpVerb;
 use repoweave::vcs::ResolvedRevisionId;
 use std::path::PathBuf;
 
