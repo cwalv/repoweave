@@ -15,13 +15,15 @@ use crate::selector::RepoFilter;
 use crate::vcs::{
     vcs_for, HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
 };
-use crate::workspace::{member_checkout_dir, Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{
+    member_checkout_dir, Checkout, MemberCheckout, Resolution, WorkspaceContext,
+};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 /// Schema URL for `rwv update --json` output. Pins to the committed artifact
@@ -173,7 +175,7 @@ type RepoOutcome = Result<String, String>;
 struct WorkItem {
     repo_path: RepoPath,
     entry: RepoEntry,
-    absolute_path: PathBuf,
+    checkout: MemberCheckout,
     /// HEAD SHA before the advance (`None` if unreadable — e.g. repo
     /// missing or git error).
     old_sha: Option<String>,
@@ -219,16 +221,16 @@ fn update_for_project(
         .iter_entries()
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, entry)| {
-            let abs = member_checkout_dir(rp, primary_root, workweave_dir);
+            let checkout = member_checkout_dir(rp, primary_root, workweave_dir);
             let vcs = vcs_for(entry.vcs_type);
             let old_sha = vcs
-                .head_revision(&abs)
+                .head_revision(checkout.path())
                 .ok()
                 .map(|r| r.display_str().to_owned());
             WorkItem {
                 repo_path: rp.clone(),
                 entry: entry.clone(),
-                absolute_path: abs,
+                checkout,
                 old_sha,
                 vcs,
             }
@@ -251,8 +253,7 @@ fn update_for_project(
             item.vcs.as_ref(),
             &item.repo_path,
             &item.entry,
-            primary_root,
-            workweave_dir,
+            &item.checkout,
             detach_checkouts,
             &reporter,
             use_reporter,
@@ -271,7 +272,7 @@ fn update_for_project(
 
     for (item, outcome) in work_items.iter().zip(outcomes) {
         let branch = item.entry.version.as_str().to_owned();
-        let abs_str = item.absolute_path.to_string_lossy().to_string();
+        let abs_str = item.checkout.path().to_string_lossy().to_string();
 
         let record = match outcome {
             Ok(new_sha) => {
@@ -460,17 +461,16 @@ fn advance_one(
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
-    primary_root: &Path,
-    workweave_dir: Option<&Path>,
+    checkout: &MemberCheckout,
     detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
     use_reporter: bool,
 ) -> RepoOutcome {
-    let repo_dir = member_checkout_dir(repo_path, primary_root, workweave_dir);
-    // Which checkout this run is advancing decides which ref is the legal
+    let repo_dir = checkout.path();
+    // Which checkout this member is advancing decides which ref is the legal
     // object of the MOVE — the canonical's tracking counterpart, or the
     // workweave's ephemeral ref.
-    let in_workweave = workweave_dir.is_some_and(|wd| repo_dir.starts_with(wd));
+    let in_workweave = checkout.is_workweave_slot();
 
     if !repo_dir.exists() {
         // `rwv fetch` (no SOURCE) re-clones missing members of the active
@@ -503,7 +503,7 @@ fn advance_one(
     }
     let mut cmd = git_command();
     cmd.args(["fetch", "--all", "--tags", "--prune"])
-        .current_dir(&repo_dir);
+        .current_dir(repo_dir);
     let outcome = match run_subprocess_with_reporter(&mut cmd, reporter) {
         Ok(o) => o,
         Err(e) => {
@@ -538,7 +538,7 @@ fn advance_one(
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
     let branch_ref = RefName::new(branch);
-    let resolved = match vcs.resolve_branch_on_remote(&repo_dir, entry.role, &branch_ref) {
+    let resolved = match vcs.resolve_branch_on_remote(repo_dir, entry.role, &branch_ref) {
         Ok(r) => r,
         Err(_) => {
             return Err(format!(
@@ -556,7 +556,7 @@ fn advance_one(
         vcs,
         repo_path,
         entry,
-        &repo_dir,
+        repo_dir,
         in_workweave,
         &resolved,
         detach_checkouts,
@@ -564,7 +564,7 @@ fn advance_one(
 
     // Capture the new SHA after checkout for JSON reporting.
     let new_sha = vcs
-        .head_revision(&repo_dir)
+        .head_revision(repo_dir)
         .ok()
         .map(|r| r.display_str().to_owned())
         .unwrap_or_else(|| resolved.to_string());

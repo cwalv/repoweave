@@ -71,16 +71,17 @@ pub fn generate_lock(
     let mut repositories = BTreeMap::new();
 
     for (repo_path, entry) in &manifest.repositories {
-        let repo_dir = crate::workspace::member_checkout_dir(
+        let checkout = crate::workspace::member_checkout_dir(
             repo_path,
             workspace_root,
             workweave.map(|(_, wd)| wd),
         );
+        let repo_dir = checkout.path();
 
         let vcs = vcs_for(entry.vcs_type);
 
         // Check for uncommitted changes unless --dirty is set.
-        if !dirty && vcs.has_uncommitted_changes(&repo_dir)? {
+        if !dirty && vcs.has_uncommitted_changes(repo_dir)? {
             anyhow::bail!(
                 "repo {} has uncommitted changes; commit or use --dirty to override",
                 repo_path
@@ -103,7 +104,7 @@ pub fn generate_lock(
         // about the branch first would print advice ahead of the error that
         // says the commit does not exist.
         let detached = match vcs
-            .head_attachment(&repo_dir)
+            .head_attachment(repo_dir)
             .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?
         {
             HeadAttachment::Attached(_) | HeadAttachment::Unborn(_) => None,
@@ -119,7 +120,7 @@ pub fn generate_lock(
         // contains "unborn HEAD" — return it as-is; the message already names
         // the repo path and the fix.
         let version = vcs
-            .head_revision(&repo_dir)
+            .head_revision(repo_dir)
             .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?;
 
         // Detached HEAD: warn but do not refuse. Lock runs inside automation

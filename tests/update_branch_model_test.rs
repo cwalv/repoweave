@@ -371,10 +371,11 @@ fn update_counts_sha_deltas_not_repos_visited() {
 // `rwv sync` when it cannot.
 // ============================================================================
 
-/// Add a workweave whose slot for the manifest repo is a real worktree of the
-/// canonical store, on its own ephemeral branch.
-fn add_workweave(fx: &Fixture, ephemeral: &str) -> PathBuf {
-    let dir = fx.workspace.join(".workweaves").join("my-app--dev");
+/// Create a workweave's marker and manifest without materializing a
+/// worktree for the manifest repo — the layout `member_checkout_dir` falls
+/// back to the canonical clone for.
+fn add_workweave_without_slot(fx: &Fixture, name: &str) -> PathBuf {
+    let dir = fx.workspace.join(".workweaves").join(name);
     std::fs::create_dir_all(dir.join("projects/my-app")).unwrap();
     for f in ["rwv.yaml", "rwv.lock"] {
         std::fs::copy(
@@ -392,6 +393,13 @@ fn add_workweave(fx: &Fixture, ephemeral: &str) -> PathBuf {
         ),
     )
     .unwrap();
+    dir
+}
+
+/// Add a workweave whose slot for the manifest repo is a real worktree of the
+/// canonical store, on its own ephemeral branch.
+fn add_workweave(fx: &Fixture, ephemeral: &str) -> PathBuf {
+    let dir = add_workweave_without_slot(fx, "my-app--dev");
     let slot = dir.join(&fx.repo_path);
     std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
     git_run(
@@ -457,4 +465,34 @@ fn update_inside_a_workweave_points_at_rwv_sync_when_it_is_not_a_fast_forward() 
 
     assert_eq!(git_run(&slot, &["rev-parse", "HEAD"]), diverged);
     assert_eq!(current_branch(&slot).as_deref(), Some("my-app--dev"));
+}
+
+// ============================================================================
+// A workweave that has not materialized a given member: the run is inside a
+// workweave, but this member's checkout is the canonical clone, not a slot.
+// ============================================================================
+
+#[test]
+fn update_inside_a_workweave_falls_through_to_the_canonical_clone_when_the_member_has_no_slot() {
+    let fx = build_workspace();
+    let ww = add_workweave_without_slot(&fx, "my-app--dev");
+    let tip = fx.advance_remote();
+
+    rwv().arg("update").current_dir(&ww).assert().success();
+
+    assert_eq!(
+        fx.head(),
+        tip,
+        "no slot exists for this member, so the canonical clone is what advanced"
+    );
+    assert_eq!(
+        current_branch(&fx.canonical).as_deref(),
+        Some("main"),
+        "the counterpart branch moved — the canonical arm ran, not the \
+         workweave arm, which would have moved an ephemeral ref instead"
+    );
+    assert!(
+        !ww.join(&fx.repo_path).exists(),
+        "the run must not have materialized a slot as a side effect"
+    );
 }

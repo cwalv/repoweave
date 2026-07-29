@@ -188,23 +188,46 @@ fn workspace_marker_names() -> Vec<String> {
     names
 }
 
-/// Where a manifest member's checkout is for this run.
+/// Where a manifest member's checkout is for this run, and which of the two
+/// kinds it turned out to be.
 ///
 /// A workweave holds worktrees only for the members materialized in it, so
-/// the answer is per member, not per invocation: the workweave's slot when
-/// it exists on disk, primary's canonical clone otherwise.
+/// this is a per-member fact, not a per-invocation one: a run inside a
+/// workweave still resolves to `Primary` for a member that has no slot
+/// there.
+#[derive(Debug, Clone)]
+pub enum MemberCheckout {
+    /// The workweave materialized this member; the path is its slot.
+    WorkweaveSlot(PathBuf),
+    /// No workweave is in play, or this member has no slot in it; the path
+    /// is primary's canonical clone.
+    Primary(PathBuf),
+}
+
+impl MemberCheckout {
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::WorkweaveSlot(p) | Self::Primary(p) => p,
+        }
+    }
+
+    pub fn is_workweave_slot(&self) -> bool {
+        matches!(self, Self::WorkweaveSlot(_))
+    }
+}
+
 pub fn member_checkout_dir(
     repo_path: &RepoPath,
     primary_root: &Path,
     workweave_dir: Option<&Path>,
-) -> PathBuf {
+) -> MemberCheckout {
     if let Some(wd) = workweave_dir {
         let candidate = wd.join(repo_path.as_path());
         if candidate.exists() {
-            return candidate;
+            return MemberCheckout::WorkweaveSlot(candidate);
         }
     }
-    primary_root.join(repo_path.as_path())
+    MemberCheckout::Primary(primary_root.join(repo_path.as_path()))
 }
 
 /// Returns true if `dir` looks like a workspace root (contains projects/ or
