@@ -399,12 +399,7 @@ fn update_for_project(
             None => crate::activate::activate_intent(project_name.as_str(), ctx),
         }
         .context("failed to regenerate integration content after update")?;
-        authored = crate::activate::owned_paths(
-            active_root,
-            project_name,
-            &project.manifest,
-            ctx.checkout.kind(),
-        );
+        authored = crate::activate::owned_paths(active_root, project_name, &project.manifest);
 
         // Report at the moment of causation. Advancing members can raise what
         // they require above a go.work go-line (or any other
@@ -419,12 +414,9 @@ fn update_for_project(
         // Sharing the unfiltered branch deliberately: a filtered update leaves
         // the managed files alone and proves nothing about the members it
         // skipped, so it has no post-MOVE state worth reporting on either.
-        for issue in crate::activate::member_incompatibilities(
-            active_root,
-            project_name,
-            &project.manifest,
-            ctx.checkout.kind(),
-        ) {
+        for issue in
+            crate::activate::member_incompatibilities(active_root, project_name, &project.manifest)
+        {
             eprintln!("[warning] {}: {}", issue.integration, issue.message);
         }
     }

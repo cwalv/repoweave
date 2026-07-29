@@ -42,9 +42,7 @@ use crate::integration_runner::{
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
-use crate::workspace::{
-    observe_root, ContainerKind, RootObservation, WorkspaceContext, WorkspaceSession,
-};
+use crate::workspace::{observe_root, RootObservation, WorkspaceContext, WorkspaceSession};
 
 /// Which class of verb is driving activation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,23 +148,13 @@ pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<
 ///   the hooks, and the tool writes *through* the link into the canonical
 ///   file. Skip it and the tool drops a real file at the weave root that no
 ///   repo tracks and no later verify pass can see.
-///
-/// `kind` is the caller's answer to which kind of root `weave_dir` is —
-/// this function has no `Checkout` of its own to derive it from, so the
-/// caller (which resolved one to pick `weave_dir` in the first place) passes
-/// it through.
-pub fn activate_intent_at(
-    project: &str,
-    weave_dir: &Path,
-    kind: ContainerKind,
-) -> anyhow::Result<()> {
+pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()> {
     activate_at(
         weave_dir,
         project,
         false,
         ActivateOptions::default(),
         ActivationMode::Intent,
-        kind,
     )
 }
 
@@ -184,7 +172,6 @@ pub fn activate_intent_with_options(
         false,
         opts,
         ActivationMode::Intent,
-        ctx.checkout.kind(),
     )
 }
 
@@ -226,7 +213,6 @@ pub fn activate_with_options(
         false,
         opts,
         ActivationMode::Context,
-        ContainerKind::Primary,
     )?;
 
     // Project SELECTION, after activation rather than inside it. An activate
@@ -247,18 +233,12 @@ pub fn activate_with_options(
 /// In `Intent` mode the integrations' `activate()` is called (regenerate and
 /// commit). In `Context` mode the integrations' `verify()` is called instead
 /// (surface + verify, never author).
-///
-/// `kind`: which kind of root `root` is, for `IntegrationContext` — every
-/// caller already knows this from the `Checkout` it resolved (or, for the
-/// two workweave-flavoured entry points, from being that entry point), so it
-/// is passed in rather than re-derived here.
 fn activate_at(
     root: &Path,
     project: &str,
     skip_missing_sources: bool,
     opts: ActivateOptions,
     mode: ActivationMode,
-    kind: ContainerKind,
 ) -> anyhow::Result<()> {
     let project_name = ProjectName::new(project)?;
     let project_dir = root.join("projects").join(project);
@@ -273,12 +253,8 @@ fn activate_at(
 
     // Integration content step.
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(
-        &project_name,
-        &detection_cache,
-        manifest.workweave.as_ref(),
-        kind,
-    );
+    let ctx_base =
+        session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
 
     match mode {
         ActivationMode::Intent => {
@@ -563,7 +539,6 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
         true,
         ActivateOptions { no_install: true },
         ActivationMode::Context,
-        ContainerKind::Workweave,
     )
 }
 
@@ -587,7 +562,6 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
         true,
         ActivateOptions { no_install: true },
         ActivationMode::Intent,
-        ContainerKind::Workweave,
     )
 }
 
@@ -626,23 +600,16 @@ pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
 /// Returns `(path -> declaring-integration-name)`. Iteration order is sorted
 /// by path (`BTreeMap`), matching the deterministic ordering the previous
 /// `BTreeSet` provided to symlink creation.
-///
-/// `kind` travels in for the same reason it does everywhere else: nothing
-/// here re-derives which sort of root `root` is. Callers that resolved a
-/// `Checkout` pass its kind; the three below that read `root`'s identity for
-/// its presented project take the kind off that same observation.
 fn compute_owned_set(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-    kind: ContainerKind,
 ) -> std::collections::BTreeMap<String, String> {
     let session = WorkspaceSession::new(root);
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base =
-        session.context_base(project, &detection_cache, manifest.workweave.as_ref(), kind);
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     let default_config = IntegrationConfig::default();
 
     let mut owned: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
@@ -669,9 +636,8 @@ pub(crate) fn owned_paths(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-    kind: ContainerKind,
 ) -> BTreeSet<String> {
-    compute_owned_set(root, project, manifest, kind)
+    compute_owned_set(root, project, manifest)
         .into_keys()
         .collect()
 }
@@ -698,12 +664,7 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         return Ok(BTreeSet::new());
     }
     let manifest = Manifest::from_path(&manifest_path)?;
-    Ok(owned_paths(
-        root,
-        &active,
-        &manifest,
-        observed.container_kind(),
-    ))
+    Ok(owned_paths(root, &active, &manifest))
 }
 
 /// Surface the owner-scoped symlink set for `project` into `root` (the
@@ -746,14 +707,11 @@ pub fn surface_symlinks(
         .as_ref()
         .and_then(RootObservation::presented_project)
         .cloned();
-    let kind = observed
-        .as_ref()
-        .map_or(ContainerKind::Primary, RootObservation::container_kind);
     let presents_project = mode == SurfacingMode::Select || presented.as_ref() == Some(project);
 
     // 1. Collect the owner-scoped surfacing set, narrowed to the
     //    per-project-named paths when `project` is not what the root presents.
-    let owned = compute_owned_set(root, project, manifest, kind);
+    let owned = compute_owned_set(root, project, manifest);
     let mut new_owned: BTreeSet<String> = owned.keys().cloned().collect();
     if !presents_project {
         new_owned.retain(|file| is_project_named(file, project));
@@ -978,14 +936,12 @@ pub fn member_incompatibilities(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-    kind: ContainerKind,
 ) -> Vec<crate::integration::Issue> {
     let session = WorkspaceSession::new(root);
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base =
-        session.context_base(project, &detection_cache, manifest.workweave.as_ref(), kind);
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
 }
 
@@ -1028,15 +984,13 @@ pub fn verify_surfacing(
     let project_dir = root.join("projects").join(project.as_str());
     // `observe_root` is total, so the discarded error arm is unreachable; a
     // root that answers nothing presents nothing, which is the same `None`.
-    let observed = observe_root(root).ok().flatten();
-    let presents_project = observed
+    let presents_project = observe_root(root)
+        .ok()
+        .flatten()
         .as_ref()
         .and_then(RootObservation::presented_project)
         == Some(project);
-    let kind = observed
-        .as_ref()
-        .map_or(ContainerKind::Primary, RootObservation::container_kind);
-    let owned = compute_owned_set(root, project, manifest, kind);
+    let owned = compute_owned_set(root, project, manifest);
     let mut issues = Vec::new();
 
     if presents_project {

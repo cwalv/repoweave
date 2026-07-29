@@ -421,6 +421,7 @@ pub fn discover_project_paths(root: &Path) -> Vec<String> {
 /// [`WorkspaceSession::context_base`] to build an [`IntegrationContextBase`].
 pub struct WorkspaceSession {
     pub root: PathBuf,
+    container_kind: ContainerKind,
     repos_on_disk: Vec<RepoPath>,
     project_paths: Vec<String>,
 }
@@ -428,13 +429,23 @@ pub struct WorkspaceSession {
 impl WorkspaceSession {
     /// Build a `WorkspaceSession` by running the standard scan triad:
     /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_project_paths()`.
+    ///
+    /// `observe_root` is total, so the discarded error arm is unreachable; a
+    /// directory that answers nothing is not a weave root of either kind, and
+    /// the primary shape is what every verb that reaches here already assumes
+    /// of an unmarked directory.
     pub fn new(root: &Path) -> Self {
         let registries = builtin_registries();
         let vcs = crate::vcs::probe_vcs();
         let repos_on_disk = scan_repos_on_disk(root, &registries, vcs.as_ref());
         let project_paths = discover_project_paths(root);
+        let container_kind = observe_root(root)
+            .ok()
+            .flatten()
+            .map_or(ContainerKind::Primary, |observed| observed.container_kind());
         Self {
             root: root.to_path_buf(),
+            container_kind,
             repos_on_disk,
             project_paths,
         }
@@ -462,23 +473,23 @@ impl WorkspaceSession {
     /// such as a name claimed by both `static-files.files` and
     /// `workweave.link`.
     ///
-    /// `container_kind` is the caller's answer, not a value this method
-    /// derives: a session scans a root without knowing which [`Checkout`]
-    /// resolved it, so the kind travels in from whichever caller resolved
-    /// one — via [`Checkout::kind`] — or, for the callers that never
-    /// resolve a `Checkout` at all, off the [`RootObservation`] they read
-    /// the root's presented project from anyway.
+    /// `container_kind` is derived for the same reason `output_dir` is: it
+    /// qualifies `workspace_root`, the integration that reads it reads it
+    /// against that same directory, and a caller free to state it separately
+    /// is free to describe one root while naming another. The session settles
+    /// it once from its own root ([`RootObservation::container_kind`]), so the
+    /// pair cannot disagree — a caller holding a resolved [`Checkout`] and a
+    /// root from somewhere else has nowhere left to say the mismatch.
     pub fn context_base<'a>(
         &'a self,
         project: &'a ProjectName,
         detection_cache: &'a std::collections::HashMap<String, Vec<String>>,
         workweave: Option<&'a crate::manifest::WorkweaveConfig>,
-        container_kind: ContainerKind,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
             output_dir: self.root.join("projects").join(project.as_str()),
             workspace_root: &self.root,
-            container_kind,
+            container_kind: self.container_kind,
             project,
             all_repos_on_disk: &self.repos_on_disk,
             all_project_paths: &self.project_paths,
@@ -2367,10 +2378,31 @@ mod tests {
         }
     }
 
+    /// A primary root and a workweave root beside it, both real enough for
+    /// `WorkspaceContext::resolve` to land on them.
+    fn primary_and_workweave_roots(tmp: &Path) -> (PathBuf, PathBuf) {
+        let root = make_workspace(tmp, "ws");
+        let weave_dir = tmp.join(".workweaves").join("feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        let primary_canon = root.canonicalize().unwrap();
+        WorkweaveMarker::new(
+            primary_canon.clone(),
+            ProjectName::new("web-app").unwrap(),
+            &primary_canon,
+        )
+        .write(&weave_dir)
+        .unwrap();
+        (root, weave_dir)
+    }
+
     /// The kind carried into `IntegrationContext` matches the resolved
     /// `Checkout`, for both a primary run and a workweave run — the one
     /// production path from a real `WorkspaceContext` down to the value an
     /// integration reads.
+    ///
+    /// The session derives the kind from its own root and the `Checkout`
+    /// resolves it by walking, so the two sides are computed independently and
+    /// this asserts they agree.
     #[test]
     fn container_kind_reaches_integration_context_matching_the_resolved_checkout() {
         use crate::integration::IntegrationContext;
@@ -2379,35 +2411,61 @@ mod tests {
         let manifest = Manifest::from_yaml_str("repositories: {}\n").unwrap();
         let config = IntegrationConfig::default();
         let cache = std::collections::HashMap::new();
-
-        // Primary.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = make_workspace(tmp.path(), "ws");
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
         let project = ProjectName::new("web-app").unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, weave_dir) = primary_and_workweave_roots(tmp.path());
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
         let session = WorkspaceSession::new(&root);
-        let base = session.context_base(&project, &cache, None, ctx.checkout.kind());
+        let base = session.context_base(&project, &cache, None);
         let int_ctx: IntegrationContext = base.build_context(&config, &manifest);
         assert_eq!(ctx.checkout.kind(), ContainerKind::Primary);
         assert_eq!(int_ctx.container_kind, ctx.checkout.kind());
 
-        // Workweave.
-        let workweaves_dir = tmp.path().join(".workweaves");
-        let weave_dir = workweaves_dir.join("feat");
-        std::fs::create_dir_all(&weave_dir).unwrap();
-        let primary_canon = root.canonicalize().unwrap();
-        let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
-            project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon,
-        };
-        marker.write(&weave_dir).unwrap();
         let ww_ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
         let ww_session = WorkspaceSession::new(&weave_dir);
-        let ww_base = ww_session.context_base(&project, &cache, None, ww_ctx.checkout.kind());
+        let ww_base = ww_session.context_base(&project, &cache, None);
         let ww_int_ctx: IntegrationContext = ww_base.build_context(&config, &manifest);
         assert_eq!(ww_ctx.checkout.kind(), ContainerKind::Workweave);
         assert_eq!(ww_int_ctx.container_kind, ww_ctx.checkout.kind());
+    }
+
+    /// The kind describes the root the session was built at, not the checkout
+    /// the invocation resolved.
+    ///
+    /// Both crossings are asserted, because each alone is satisfied by a
+    /// constant: a session at primary answers `Primary` while the invocation
+    /// sits in a workweave, and a session at the workweave answers `Workweave`
+    /// while the invocation sits at primary. `activate_intent` is the crossing
+    /// that reaches production — it authors at `primary_path()` from whatever
+    /// checkout the operator invoked it in.
+    #[test]
+    fn container_kind_describes_the_session_root_not_the_resolved_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, weave_dir) = primary_and_workweave_roots(tmp.path());
+
+        let primary_ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let workweave_ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        assert_eq!(primary_ctx.checkout.kind(), ContainerKind::Primary);
+        assert_eq!(workweave_ctx.checkout.kind(), ContainerKind::Workweave);
+
+        assert_eq!(
+            WorkspaceSession::new(primary_ctx.primary_path()).container_kind,
+            ContainerKind::Primary
+        );
+        assert_eq!(
+            WorkspaceSession::new(workweave_ctx.primary_path()).container_kind,
+            ContainerKind::Primary
+        );
+        assert_eq!(
+            WorkspaceSession::new(workweave_ctx.active_path()).container_kind,
+            ContainerKind::Workweave
+        );
+        assert_eq!(
+            WorkspaceSession::new(&weave_dir).container_kind,
+            ContainerKind::Workweave
+        );
     }
 
     #[test]

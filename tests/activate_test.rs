@@ -809,6 +809,66 @@ fn activate_different_project_from_workweave_is_rejected() {
     );
 }
 
+/// `activate_intent` targets primary unconditionally, including when the
+/// resolved checkout is a workweave.
+///
+/// This is the contract `check.rs` relies on: doctor's `--fix` content arm
+/// calls `activate_intent_at` with `ctx.active_path()` *because* the
+/// unparameterized `activate_intent` would author at primary from inside a
+/// workweave. Swapping `primary_path()` for `active_path()` here would make
+/// `activate_intent_at` redundant and silently change which weave every intent
+/// verb authors into, so the root it binds to is pinned rather than left to the
+/// two production callers (`add_remove` and `update`) that only ever reach it
+/// through their `Checkout::Primary` arm.
+///
+/// Both weaves carry a project dir with a gita-enabled manifest, so each is a
+/// viable authoring target and the assertion pair distinguishes them: authoring
+/// at the wrong root fails the second assertion, not merely the first.
+#[test]
+fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    let gita_manifest = "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/test/server.git\n    version: main\n    role: owned\nintegrations:\n  gita:\n    enabled: true\n";
+
+    let primary_project_dir = ws.join("projects/web-app");
+    std::fs::create_dir_all(&primary_project_dir).unwrap();
+    std::fs::write(primary_project_dir.join("rwv.yaml"), gita_manifest).unwrap();
+    std::fs::create_dir_all(ws.join("github/acme/server")).unwrap();
+    std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
+
+    let workweave_dir = tmp.path().join("ws--intent");
+    let workweave_project_dir = workweave_dir.join("projects/web-app");
+    std::fs::create_dir_all(&workweave_project_dir).unwrap();
+    std::fs::write(workweave_project_dir.join("rwv.yaml"), gita_manifest).unwrap();
+    std::fs::create_dir_all(workweave_dir.join("github/acme/server")).unwrap();
+    let primary_canon = ws.canonicalize().unwrap();
+    WorkweaveMarker::new(
+        primary_canon.clone(),
+        ProjectName::new("web-app").unwrap(),
+        &primary_canon,
+    )
+    .write(&workweave_dir)
+    .unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve(&workweave_dir, None).unwrap();
+    assert_eq!(ctx.active_path(), workweave_dir.canonicalize().unwrap());
+    repoweave::activate::activate_intent_with_options(
+        "web-app",
+        &ctx,
+        repoweave::activate::ActivateOptions { no_install: true },
+    )
+    .expect("intent activation from a workweave checkout should succeed");
+
+    assert!(
+        primary_project_dir.join("gita/repos.csv").exists(),
+        "intent-mode authoring should land in primary's project dir"
+    );
+    assert!(
+        !workweave_project_dir.join("gita/repos.csv").exists(),
+        "intent-mode authoring must not land in the workweave the checkout resolved to"
+    );
+}
+
 // ============================================================================
 // No ecosystem files -- still activates and writes .rwv-active
 // ============================================================================
