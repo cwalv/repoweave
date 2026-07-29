@@ -963,25 +963,13 @@ pub fn run() -> anyhow::Result<()> {
                         // Bare `rwv sync-to` — must be inside a workweave. Reuse
                         // the invocation context we already resolved above.
                         match &ctx.checkout {
-                            crate::workspace::Checkout::Workweave { dir, .. } => {
-                                let marker = crate::workspace::WorkweaveMarker::read(dir)?
-                                    .ok_or_else(|| {
-                                        anyhow::anyhow!(
-                                            "bare `rwv sync-to` requires a \
-                                                 `.rwv-workweave` marker in the workweave; \
-                                                 found none at {}",
-                                            dir.display()
-                                        )
-                                    })?;
+                            crate::workspace::Checkout::Workweave { parent, .. } => {
                                 // Replace the raw `failed to canonicalize …
                                 // (os error 2)` a dangling parent would
                                 // otherwise produce with friendly
                                 // doctor-remediation text.
-                                sync::check_parent_not_dangling(
-                                    &marker.parent,
-                                    ctx.primary_path(),
-                                )?;
-                                sync::SyncSource::Path(marker.parent)
+                                sync::check_parent_not_dangling(parent, ctx.primary_path())?;
+                                sync::SyncSource::Path(parent.clone())
                             }
                             crate::workspace::Checkout::Primary { .. } => {
                                 anyhow::bail!(

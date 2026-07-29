@@ -3174,10 +3174,13 @@ pub fn workweave_log(
 ) -> anyhow::Result<()> {
     use crate::workspace::Checkout;
 
-    let (ww_name, ww_dir, project) = match &ctx.checkout {
+    let (ww_name, ww_dir, project, parent_path) = match &ctx.checkout {
         Checkout::Workweave {
-            name, dir, project, ..
-        } => (name.clone(), dir.clone(), project.clone()),
+            name,
+            dir,
+            project,
+            parent,
+        } => (name.clone(), dir.clone(), project.clone(), parent.clone()),
         Checkout::Primary { .. } => {
             bail!(
                 "`rwv workweave log` reports a workweave's history relative to its \
@@ -3187,14 +3190,6 @@ pub fn workweave_log(
         }
     };
 
-    let marker = WorkweaveMarker::read(&ww_dir)?.ok_or_else(|| {
-        anyhow!(
-            "`rwv workweave log` requires a `.rwv-workweave` marker in the workweave; \
-             found none at {}",
-            ww_dir.display()
-        )
-    })?;
-    let parent_path = marker.parent.clone();
     if !parent_path.exists() {
         // Reuse the friendly dangling-parent remediation the sync path uses.
         crate::sync::check_parent_not_dangling(&parent_path, ctx.primary_path())?;

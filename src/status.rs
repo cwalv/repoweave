@@ -206,16 +206,14 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
 
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    // Recorded parent path from the `.rwv-workweave` marker (workweave-level;
-    // identical for every repo). `None` in the primary weave, where there is
-    // no marker and hence no recorded parent. Read from the marker — never
-    // reconstructed from a branch name (which is wrong for stacked or
-    // adopted-to-primary parents).
-    let recorded_parent: Option<std::path::PathBuf> =
-        crate::workspace::WorkweaveMarker::read(&workspace_dir)
-            .ok()
-            .flatten()
-            .map(|m| m.parent);
+    // Recorded parent path (workweave-level; identical for every repo).
+    // `None` in the primary weave, where there is no marker and hence no
+    // recorded parent. Never reconstructed from a branch name (which is
+    // wrong for stacked or adopted-to-primary parents).
+    let recorded_parent: Option<std::path::PathBuf> = match &ctx.checkout {
+        Checkout::Primary { .. } => None,
+        Checkout::Workweave { parent, .. } => Some(parent.clone()),
+    };
 
     let mut entries: Vec<RepoStatus> = Vec::new();
 

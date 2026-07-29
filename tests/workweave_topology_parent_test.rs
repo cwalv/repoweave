@@ -185,6 +185,15 @@ fn canon(p: &Path) -> String {
         .to_string()
 }
 
+/// Run `rwv lock --commit` from a workspace root.
+fn rwv_lock_commit(workspace_root: &Path) {
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(workspace_root)
+        .assert()
+        .success();
+}
+
 // ===========================================================================
 // 1. Adoption on delete — 0 / 1 / N children
 // ===========================================================================
@@ -956,5 +965,79 @@ fn workweave_log_diff_json_includes_project_repo() {
     assert!(
         diff_text.contains("feature.md") || diff_text.contains("feature description"),
         "project_repo diff must include the unique change; got:\n{diff_text}"
+    );
+}
+
+// ===========================================================================
+// 6. sync / sync-to use the recorded parent, not primary — stacked case
+// ===========================================================================
+
+/// Bare `rwv sync-to` (no target) from a workweave forked from ANOTHER
+/// workweave lands upward onto that STACKED parent, not primary. This is
+/// the case that distinguishes the marker's `parent` field from `primary` —
+/// a resolver that fell back to primary would pass the primary-forked
+/// equivalent of this test while landing the work in the wrong place here.
+#[test]
+fn bare_sync_to_follows_recorded_stacked_parent() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    let wwb_sha = commit_file(
+        &wwb.manifest_repo,
+        "wwb.txt",
+        "from wwb\n",
+        "wwb: add wwb.txt",
+    );
+    rwv_lock_commit(&wwb.root);
+
+    rwv()
+        .args(["sync-to", "--strategy=ff"])
+        .current_dir(&wwb.root)
+        .assert()
+        .success();
+
+    let wwa_lib_head = git_out(&["rev-parse", "HEAD"], &wwa.manifest_repo);
+    assert_eq!(
+        wwa_lib_head, wwb_sha,
+        "bare sync-to must land on the recorded parent wwa, not primary"
+    );
+    let primary_lib_head = git_out(&["rev-parse", "HEAD"], &main.manifest_repo);
+    assert_ne!(
+        primary_lib_head, wwb_sha,
+        "primary must not advance — bare sync-to targets only the immediate recorded parent"
+    );
+}
+
+/// `rwv sync <source>` from a workweave whose recorded parent is ANOTHER
+/// workweave (not primary) must NOT warn about crossing siblings when the
+/// explicit source IS that recorded parent — the case that would misfire if
+/// the sibling-sync check compared the source against primary instead of the
+/// marker's stacked parent.
+#[test]
+fn sibling_sync_no_warning_when_source_is_recorded_stacked_parent() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let wwa = create_workweave(&main, "wwa", None);
+    let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+
+    let output = rwv()
+        .args(["sync", &wwa.root.to_string_lossy()])
+        .current_dir(&wwb.root)
+        .output()
+        .expect("rwv sync should run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("siblings") && !stderr.contains("skips the recorded parent"),
+        "syncing from the recorded (stacked) parent must not warn about crossing \
+         siblings; got: {stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "sync from the recorded parent should succeed; stderr: {stderr}"
     );
 }

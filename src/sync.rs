@@ -2348,22 +2348,15 @@ fn guard_and_mark<'a>(
     let resolved_arg = match source {
         Some(s) => s.clone(),
         None => match (verb, &cwd_ctx.checkout) {
-            // Bare `rwv sync` inside a workweave: read parent from the marker.
-            (MachineVerb::Sync, Checkout::Workweave { dir, .. }) => {
-                let marker = crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "bare `rwv sync` requires a `.rwv-workweave` marker in the \
-                         workweave; found none at {} (re-create the workweave or pass \
-                         an explicit source)",
-                        dir.display()
-                    )
-                })?;
+            // Bare `rwv sync` inside a workweave: use the marker's recorded
+            // parent, carried on `Checkout::Workweave` since `resolve`.
+            (MachineVerb::Sync, Checkout::Workweave { parent, .. }) => {
                 // A dangling parent (retired/deleted out-of-band) would
                 // otherwise die on a raw `failed to canonicalize … (os error
                 // 2)` inside WorkspaceContext::resolve. Detect it here and
                 // emit the friendly doctor-remediation text instead.
-                check_parent_not_dangling(&marker.parent, cwd_ctx.primary_path())?;
-                SyncSource::Path(marker.parent)
+                check_parent_not_dangling(parent, cwd_ctx.primary_path())?;
+                SyncSource::Path(parent.clone())
             }
             (MachineVerb::Sync, Checkout::Primary { .. }) => {
                 anyhow::bail!(
@@ -2864,7 +2857,12 @@ fn verbs_match(invoked: MachineVerb, recorded: MachineVerb) -> bool {
 /// and source is another workweave that is NOT CWD's parent → crosses tree
 /// branches; warn (don't refuse — the operator may have a reason).
 fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path, emit_text: bool) {
-    if let Checkout::Workweave { dir: cwd_ww, .. } = &cwd_ctx.checkout {
+    if let Checkout::Workweave {
+        dir: cwd_ww,
+        parent: cwd_parent,
+        ..
+    } = &cwd_ctx.checkout
+    {
         // Resolve the source workspace's location to compare. Best-effort.
         let source_ctx = match WorkspaceContext::resolve(source_workspace_dir, None) {
             Ok(c) => c,
@@ -2878,12 +2876,10 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
                 .canonicalize()
                 .unwrap_or_else(|_| source_ww.to_path_buf());
             if cwd_canonical != source_canonical {
-                let cwd_parent = crate::workspace::WorkweaveMarker::read(cwd_ww)
-                    .ok()
-                    .flatten()
-                    .map(|m| m.parent)
-                    .map(|p| p.canonicalize().unwrap_or(p));
-                if cwd_parent.as_ref() != Some(&source_canonical) && emit_text {
+                let cwd_parent = cwd_parent
+                    .canonicalize()
+                    .unwrap_or_else(|_| cwd_parent.clone());
+                if cwd_parent != source_canonical && emit_text {
                     eprintln!(
                         "warning: syncing across workweave siblings ({} → {}); \
                          this skips the recorded parent (informational — proceeding).",
