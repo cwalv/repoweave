@@ -41,8 +41,10 @@ use crate::integration_runner::{
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
-use crate::registry::builtin_registries;
-use crate::workspace::{observe_root, RootObservation, WorkspaceContext, WorkspaceSession};
+use crate::workspace::{
+    observe_root, project_dir, project_rel_dir, strip_projects_prefix, workspace_marker_names,
+    RootObservation, WorkspaceContext, WorkspaceSession,
+};
 
 /// Which class of verb is driving activation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,7 +243,7 @@ fn activate_at(
     mode: ActivationMode,
 ) -> anyhow::Result<()> {
     let project_name = ProjectName::new(project)?;
-    let project_dir = root.join("projects").join(project);
+    let project_dir = project_dir(root, project);
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)?;
 
@@ -429,18 +431,15 @@ fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
             break;
         }
     }
-    // Expect `projects` next.
-    match comps.next() {
-        Some(c) if c.as_os_str() == "projects" => {}
-        _ => return false,
-    }
-    // Skip the project segment (one component).
-    if comps.next().is_none() {
+    let sited: std::path::PathBuf = comps.collect();
+    let Some(under_projects) = strip_projects_prefix(&sited) else {
+        return false;
+    };
+    let mut below_project = under_projects.components();
+    if below_project.next().is_none() {
         return false;
     }
-    // Whatever remains is the file path under `projects/<project>/`.
-    let tail: std::path::PathBuf = comps.collect();
-    tail == rel_from_root
+    below_project.as_path() == rel_from_root
 }
 
 fn remove_activation_symlinks_in(
@@ -480,17 +479,8 @@ fn remove_activation_symlinks_in(
                 }
             }
         } else if meta.file_type().is_dir() {
-            // Skip well-known workspace directories to avoid unnecessary
-            // recursion. The set of registry directory names is the canonical
-            // source — open-coding it here means a new registry (e.g.
-            // codeberg) added to `registry.rs` would silently recurse into
-            // a registry tree. Derive from `builtin_registries()` + the
-            // workspace constants. Audit A3.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                let is_registry_dir = builtin_registries()
-                    .iter()
-                    .any(|r| r.name().as_str() == name);
-                if is_registry_dir || name == "projects" || name == ".git" {
+                if workspace_marker_names().iter().any(|m| m == name) || name == ".git" {
                     continue;
                 }
             }
@@ -651,10 +641,7 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         Some(name) => name.clone(),
         None => return Ok(BTreeSet::new()),
     };
-    let manifest_path = root
-        .join("projects")
-        .join(active.as_str())
-        .join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, active.as_str()).join(Manifest::FILE_NAME);
     if !manifest_path.exists() {
         return Ok(BTreeSet::new());
     }
@@ -696,7 +683,7 @@ pub fn surface_symlinks(
     skip_missing_sources: bool,
     mode: SurfacingMode,
 ) -> anyhow::Result<()> {
-    let project_dir = root.join("projects").join(project.as_str());
+    let project_dir = project_dir(root, project.as_str());
     let observed = observe_root(root);
     let presented = observed
         .as_ref()
@@ -838,8 +825,7 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
     for _ in 0..depth {
         relative_target.push("..");
     }
-    relative_target.push("projects");
-    relative_target.push(project);
+    relative_target.push(project_rel_dir(project));
     relative_target.push(file);
     relative_target
 }
@@ -861,7 +847,7 @@ fn is_project_named(file: &str, project: &ProjectName) -> bool {
 /// [`relative_symlink_target`] produces for a top-level file. Any other target
 /// is not rwv's surfacing of `name`.
 fn surfaced_project(target: &Path, name: &str) -> Option<ProjectName> {
-    let rest = target.strip_prefix("projects").ok()?;
+    let rest = strip_projects_prefix(target)?;
     let project = rest.parent()?;
     if project.as_os_str().is_empty() || rest.file_name()? != std::ffi::OsStr::new(name) {
         return None;
@@ -976,7 +962,7 @@ pub fn verify_surfacing(
 ) -> Vec<crate::integration::Issue> {
     use crate::integration::{Issue, IssueKind, Severity};
 
-    let project_dir = root.join("projects").join(project.as_str());
+    let project_dir = project_dir(root, project.as_str());
     let presents_project = observe_root(root)
         .as_ref()
         .and_then(RootObservation::presented_project)

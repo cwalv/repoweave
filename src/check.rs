@@ -7,7 +7,10 @@ use crate::git::git_command;
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
-use crate::workspace::Resolution;
+use crate::workspace::{
+    discover_project_paths, project_dir, project_rel_path, projects_dir, strip_projects_prefix,
+    Resolution,
+};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -2079,23 +2082,10 @@ pub struct LegacyRolePrimaryManifest {
 pub fn scan_workspace_for_legacy_role_primary(
     workspace_dir: &Path,
 ) -> Vec<LegacyRolePrimaryManifest> {
-    let projects_dir = workspace_dir.join("projects");
+    let projects_root = projects_dir(workspace_dir);
     let mut found = Vec::new();
-    if !projects_dir.is_dir() {
-        return found;
-    }
-    let entries = match std::fs::read_dir(&projects_dir) {
-        Ok(e) => e,
-        Err(_) => return found,
-    };
-    let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let project_dir = entry.path();
-        if !project_dir.is_dir() {
-            continue;
-        }
-        scan_project_dir_for_legacy(&projects_dir, &project_dir, &mut found);
+    for name in discover_project_paths(workspace_dir) {
+        scan_project_dir_for_legacy(&projects_root, &projects_root.join(name), &mut found);
     }
     found
 }
@@ -3216,7 +3206,7 @@ pub fn scan_phantom_merge_drivers(
     for project in projects {
         // The project repo carries `.gitattributes` too — it is where the
         // lock's own declaration lives — and is not a manifest entry.
-        let project_repo = RepoPath::new(format!("projects/{}", project.name)).ok();
+        let project_repo = RepoPath::new(project_rel_path(project.name.as_str())).ok();
         for repo in project_repo
             .iter()
             .chain(project.manifest.iter_repo_paths())
@@ -3619,7 +3609,7 @@ fn workweave_checkouts(
             .into_iter()
             .map(|repo| workweave_dir.join(repo.as_path()))
             .collect();
-    out.push(workweave_dir.join("projects").join(project_name));
+    out.push(project_dir(workweave_dir, project_name));
     out.retain(|abs| abs.is_dir() && classify_checkout(abs) != CheckoutKind::ReferenceAlias);
     out
 }
@@ -4139,7 +4129,7 @@ fn canonical_stores(
     }
 
     for project in crate::workweave_index::projects_on_disk(ws_root) {
-        let path = ws_root.join("projects").join(project.as_str());
+        let path = project_dir(ws_root, project.as_str());
         // "Not a repo" is a typed error, not a state, so the enumeration
         // can ask the question directly instead of guessing from a
         // collapsed `None`.
@@ -4913,8 +4903,8 @@ fn branch_discipline_in_scope(
         // is the active project. Without this arm every project-repo finding
         // would be filtered out of the default (project-scoped) run, which
         // is the scope hole this arm closes.
-        if let Some(name) = rel_str.strip_prefix("projects/") {
-            return name == active_project;
+        if let Some(name) = strip_projects_prefix(Path::new(&rel_str)) {
+            return name.to_string_lossy() == active_project;
         }
         if let Ok(rp) = RepoPath::new(rel_str) {
             return known_repos.contains(&rp);
@@ -7180,7 +7170,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
     let mut any_drift = false;
 
     for pname in &project_names {
-        let project_dir = workspace_dir.join("projects").join(pname);
+        let project_dir = project_dir(&workspace_dir, pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
             Err(e) => {
@@ -7336,10 +7326,7 @@ fn apply_workspace_repairs(
     let project_scope = world.project_scope();
 
     if let Some(active_name) = read_active_project(ctx.primary_path()) {
-        let project_dir = ctx
-            .primary_path()
-            .join("projects")
-            .join(active_name.as_str());
+        let project_dir = project_dir(ctx.primary_path(), active_name.as_str());
         if !project_dir.is_dir() {
             match crate::workspace::clear_active_project(ctx.primary_path()) {
                 Ok(()) => println!(
@@ -7456,10 +7443,7 @@ fn apply_workspace_repairs(
     fix_errors.extend(migration_errs);
 
     for project in &world.input.projects {
-        let project_repo = world
-            .workspace_dir
-            .join("projects")
-            .join(project.name.as_str());
+        let project_repo = project_dir(&world.workspace_dir, project.name.as_str());
         if !project_repo.is_dir() {
             continue;
         }
@@ -7522,10 +7506,7 @@ fn apply_workspace_repairs(
     }
 
     for project in &world.input.projects {
-        let project_repo = world
-            .workspace_dir
-            .join("projects")
-            .join(project.name.as_str());
+        let project_repo = project_dir(&world.workspace_dir, project.name.as_str());
         if !project_repo.is_dir() {
             continue;
         }
@@ -8133,7 +8114,6 @@ fn load_doctor_world(
         }
     }
 
-    let projects_dir = workspace_dir.join("projects");
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
     let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
@@ -8143,63 +8123,45 @@ fn load_doctor_world(
         crate::manifest::ResolvedLockFile,
     > = std::collections::HashMap::new();
 
-    if projects_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
-            .filter_map(|e| e.ok())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
+    for name in discover_project_paths(&workspace_dir) {
+        let dir = project_dir(&workspace_dir, &name);
+        let manifest_path = dir.join(Manifest::FILE_NAME);
+        if !manifest_path.exists() {
+            continue;
+        }
 
-        for entry in entries {
-            let project_dir = entry.path();
-            if !project_dir.is_dir() {
-                continue;
-            }
-            let manifest_path = project_dir.join(Manifest::FILE_NAME);
-            if !manifest_path.exists() {
-                continue;
-            }
-            let rel_dir = project_dir
-                .strip_prefix(&workspace_dir)
-                .unwrap_or(&project_dir);
-            let name_from_rel = rel_dir
-                .strip_prefix("projects")
-                .unwrap_or(rel_dir)
-                .to_string_lossy()
-                .into_owned();
-
-            if !scope_all {
-                if let Some(ref active) = active_project {
-                    if name_from_rel != active.as_str() {
-                        continue;
-                    }
+        if !scope_all {
+            if let Some(ref active) = active_project {
+                if name != active.as_str() {
+                    continue;
                 }
             }
+        }
 
-            match Project::from_dir(&project_dir) {
-                Ok(project) => {
-                    // Resolving against the on-disk repos is what makes the
-                    // canonical-SHA equality in `find_violations` work
-                    // uniformly for tag-form, branch-form and SHA-form locks.
-                    // An entry that will not resolve is kept as a failure
-                    // rather than dropped: dropping it leaves the repo with no
-                    // `head_revisions` entry, which reads as healthy.
-                    if let Some(raw_lock) = project.lock.clone() {
-                        let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
-                        for (unresolved, _raw_rev) in failures {
-                            lock_resolve_failures.push((project.name.clone(), unresolved));
-                        }
-                        resolved_locks.insert(project.name.clone(), resolved);
+        match Project::from_dir(&dir) {
+            Ok(project) => {
+                // Resolving against the on-disk repos is what makes the
+                // canonical-SHA equality in `find_violations` work
+                // uniformly for tag-form, branch-form and SHA-form locks.
+                // An entry that will not resolve is kept as a failure
+                // rather than dropped: dropping it leaves the repo with no
+                // `head_revisions` entry, which reads as healthy.
+                if let Some(raw_lock) = project.lock.clone() {
+                    let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
+                    for (unresolved, _raw_rev) in failures {
+                        lock_resolve_failures.push((project.name.clone(), unresolved));
                     }
-
-                    for repo_path in project.manifest.iter_repo_paths() {
-                        known_repos.insert(repo_path.clone());
-                    }
-                    projects.push(project);
+                    resolved_locks.insert(project.name.clone(), resolved);
                 }
-                Err(e) => {
-                    if let Ok(project_name) = crate::manifest::ProjectName::new(name_from_rel) {
-                        unparseable_projects.push((project_name, manifest_path, e.to_string()));
-                    }
+
+                for repo_path in project.manifest.iter_repo_paths() {
+                    known_repos.insert(repo_path.clone());
+                }
+                projects.push(project);
+            }
+            Err(e) => {
+                if let Ok(project_name) = crate::manifest::ProjectName::new(name) {
+                    unparseable_projects.push((project_name, manifest_path, e.to_string()));
                 }
             }
         }
@@ -8288,10 +8250,7 @@ fn collect_doctor_violations(
     {
         use crate::workspace::read_active_project;
         if let Some(active_name) = read_active_project(ctx.primary_path()) {
-            let project_dir = ctx
-                .primary_path()
-                .join("projects")
-                .join(active_name.as_str());
+            let project_dir = project_dir(ctx.primary_path(), active_name.as_str());
             if !project_dir.is_dir() {
                 violations.push(CheckViolation::DanglingActiveProject {
                     project: active_name,
@@ -8516,7 +8475,7 @@ fn collect_doctor_violations(
             .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
             .collect();
     for project in &input.projects {
-        let project_rel = format!("projects/{}", project.name);
+        let project_rel = project_rel_path(project.name.as_str());
         let project_repo_path = match RepoPath::new(project_rel.clone()) {
             Ok(rp) => rp,
             Err(_) => continue,
@@ -8566,7 +8525,7 @@ fn collect_doctor_violations(
     ));
 
     for project in &input.projects {
-        let project_repo = workspace_dir.join("projects").join(project.name.as_str());
+        let project_repo = project_dir(workspace_dir, project.name.as_str());
         if !project_repo.is_dir() {
             continue;
         }

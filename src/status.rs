@@ -2,7 +2,7 @@
 
 use crate::manifest::Project;
 use crate::vcs::{vcs_for, ResolvedRevisionId, Vcs};
-use crate::workspace::{Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -218,7 +218,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
     let mut entries: Vec<RepoStatus> = Vec::new();
 
     for pname in project_names_for_ctx(ctx) {
-        let project_dir = workspace_dir.join("projects").join(&pname);
+        let project_dir = project_dir(&workspace_dir, &pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
             Err(e) => {

@@ -36,7 +36,8 @@ use crate::vcs::{
     ResolvedRevisionId, Vcs,
 };
 use crate::workspace::{
-    parse_weave_dir_name, read_active_project, weave_dir_name, WorkweaveMarker,
+    parse_weave_dir_name, project_dir, project_rel_dir, project_rel_path, read_active_project,
+    weave_dir_name, WorkweaveMarker,
 };
 use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
@@ -845,7 +846,7 @@ pub fn preflight_check_heads(
     let mut missing: Vec<String> = Vec::new();
 
     // Check project repo.
-    let project_dir = source_root.join("projects").join(project.as_str());
+    let project_dir = project_dir(source_root, project.as_str());
     if project_vcs.is_repo(&project_dir) && project_vcs.head_revision(&project_dir).is_err() {
         missing.push(format!(
             "project {name} has no commits yet — run \
@@ -1378,7 +1379,7 @@ pub fn create_workweave(
     // in those repos is not captured. The project dir is special because we
     // explicitly overlay its working-tree `rwv.yaml`/`rwv.lock` below.
     if !capture_dirty {
-        let project_dir = source_root.join("projects").join(project.as_str());
+        let project_dir = project_dir(source_root, project.as_str());
         if project_vcs.is_repo(&project_dir) {
             match project_vcs.dirty_file_names(&project_dir) {
                 Ok(dirty) if !dirty.is_empty() => {
@@ -1647,8 +1648,8 @@ pub fn create_workweave(
     // Create worktree for the project repo (if it is a git repo).
     // If the project directory exists but is not a git repo, copy it into the
     // workweave so that activate_workweave can find rwv.yaml there.
-    let project_dir = source_root.join("projects").join(project.as_str());
-    let project_wt_dest = workweave_dir.join("projects").join(project.as_str());
+    let project_wt_dest = project_dir(&workweave_dir, project.as_str());
+    let project_dir = project_dir(source_root, project.as_str());
     if project_vcs.is_repo(&project_dir) {
         // B8: project-worktree creation failure must NOT silently fall
         // through to a static directory copy. The copy fallback is for
@@ -1957,15 +1958,13 @@ pub fn collect_dirty_paths(
     let mut dirty = Vec::new();
 
     // Project worktree.
-    let project_wt = workweave_dir.join("projects").join(project.as_str());
+    let project_wt = project_dir(workweave_dir, project.as_str());
     if project_vcs.is_repo(&project_wt) {
+        let rel = project_rel_path(project.as_str());
         match project_vcs.has_uncommitted_changes(&project_wt) {
-            Ok(true) => dirty.push(format!("projects/{}", project.as_str())),
+            Ok(true) => dirty.push(rel),
             Ok(false) => {}
-            Err(e) => dirty.push(format!(
-                "projects/{}: status check failed: {e}",
-                project.as_str()
-            )),
+            Err(e) => dirty.push(format!("{rel}: status check failed: {e}")),
         }
     }
 
@@ -2101,14 +2100,14 @@ fn collect_diverged_paths(
         }
     };
 
-    let project_rel = Path::new("projects").join(project.as_str());
+    let project_rel = project_rel_dir(project.as_str());
     let project_wt = workweave_dir.join(&project_rel);
     if project_vcs.is_repo(&project_wt) {
         check(
             project_vcs,
             &project_wt,
             &project_rel,
-            format!("projects/{}", project.as_str()),
+            project_rel_path(project.as_str()),
         );
     }
 
@@ -2280,13 +2279,8 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     };
 
     // Project worktree.
-    let project_rel = Path::new("projects").join(project.as_str());
-    let project_wt = workweave_dir.join(&project_rel);
-    check(
-        project_vcs,
-        &project_wt,
-        format!("projects/{}", project.as_str()),
-    );
+    let project_wt = project_dir(workweave_dir, project.as_str());
+    check(project_vcs, &project_wt, project_rel_path(project.as_str()));
 
     // Manifest repos.
     for (repo_path, entry) in manifest.iter_entries() {
@@ -2877,7 +2871,7 @@ fn delete_workweave_inner_at(
     // arms are the same operation over the same receipt set, so whether
     // `.git` was a file and whether `remove_worktree` returned `Ok` do not
     // change which receipts are owed a DESTROY.
-    let project_rel = Path::new("projects").join(project.as_str());
+    let project_rel = project_rel_dir(project.as_str());
     let project_dir_fallback = ws_root.join(&project_rel);
     let project_worktree = workweave_dir.join(&project_rel);
     // Resolve the project worktree's actual canonical store, same as for
@@ -2890,7 +2884,7 @@ fn delete_workweave_inner_at(
     );
     if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
         if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
-            let msg = format!("projects/{}: {e}", project.as_str());
+            let msg = format!("{}: {e}", project_rel_path(project.as_str()));
             eprintln!("rwv workweave delete: error: {msg}");
             errors.push(msg);
         }
@@ -2907,7 +2901,7 @@ fn delete_workweave_inner_at(
         &mut registry,
         &project_store,
         &ephemeral,
-        &format!("projects/{}", project.as_str()),
+        &project_rel_path(project.as_str()),
         &project_baseline_tips,
         discard_unmerged,
     );
@@ -3089,10 +3083,7 @@ pub fn doctor_scan_container(
 
 /// Load the project manifest from the workspace.
 fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manifest> {
-    let manifest_path = ws_root
-        .join("projects")
-        .join(project.as_str())
-        .join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(ws_root, project.as_str()).join(Manifest::FILE_NAME);
     Manifest::from_path(&manifest_path)
 }
 
@@ -3297,8 +3288,8 @@ pub fn workweave_log(
     // parent's project checkout, exactly as the parent marker recorded it —
     // no branch-name reconstruction.
     let project_repo = {
-        let ww_project = ww_dir.join("projects").join(project.as_str());
-        let parent_project = parent_path.join("projects").join(project.as_str());
+        let ww_project = project_dir(&ww_dir, project.as_str());
+        let parent_project = project_dir(&parent_path, project.as_str());
         let vcs = project_vcs();
 
         let mut note: Option<String> = None;

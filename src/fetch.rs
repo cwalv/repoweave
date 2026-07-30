@@ -13,7 +13,7 @@ use crate::vcs::{
     project_vcs, vcs_for, HeadAttachment, RawRefName, ResolvedRevisionId, TrackingRef, Vcs,
     VcsError,
 };
-use crate::workspace::{Resolution, WorkspaceContext};
+use crate::workspace::{project_dir, projects_dir, Resolution, WorkspaceContext};
 use anyhow::{bail, Context};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -189,7 +189,7 @@ pub fn run_fetch(
     let (url, owner) = resolve_source(source)?;
     let url_str = url.to_string();
     let name = registry::repo_name_from_source(&url_str);
-    let projects_dir = workspace_root.join("projects");
+    let projects_dir = projects_dir(workspace_root);
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
     if project_dir.exists() {
@@ -276,7 +276,7 @@ pub fn run_fetch_in_place(
     // Per-workspace state (rwv.yaml, rwv.lock) lives under active_path — the
     // workweave when in one, primary otherwise. Mirrors add_remove.rs's
     // find_project_dir.
-    let project_dir = ctx.active_path().join("projects").join(name.as_str());
+    let project_dir = project_dir(ctx.active_path(), name.as_str());
 
     // Clone destination (canonical store) is always primary's slot — clone-
     // topology I1. Passing primary_path() as workspace_root routes fetch_one

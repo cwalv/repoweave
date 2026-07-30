@@ -15,7 +15,7 @@ use crate::vcs::{
     DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName, HeadAttachment, RefName,
     ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
-use crate::workspace::{Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -2394,7 +2394,7 @@ fn guard_and_mark<'a>(
     };
 
     let cwd_project_name = find_project_name(cwd_ctx)?;
-    let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
+    let cwd_project_dir = project_dir(&cwd_workspace_dir, cwd_project_name.as_str());
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
     // and sync-to's <tgt> — replay pulls from there in either case).
@@ -2410,7 +2410,7 @@ fn guard_and_mark<'a>(
         };
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
         let pname = find_project_name(&source_ctx)?;
-        let dir = source_ctx.active_path().join("projects").join(&pname);
+        let dir = project_dir(source_ctx.active_path(), pname.as_str());
         let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
         (dir, workspace_name(&source_ctx), pname, is_workweave)
     };
@@ -2605,7 +2605,7 @@ fn guard_and_mark<'a>(
             tc.ok().and_then(|c| find_project_name(&c).ok())
         };
         if let Some(tpname) = target_project_name {
-            let target_project_dir = dest_workspace_dir.join("projects").join(&tpname);
+            let target_project_dir = project_dir(&dest_workspace_dir, tpname.as_str());
             let _ = create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(&target_project_dir) {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
@@ -2769,7 +2769,7 @@ fn load_continuing_context<'a>(
     //                   engine.dest   = record.target (advance-target writes target).
     //                   record.source (owner CWD) is tracked separately via cwd_project_dir.
     let cwd_project_name = find_project_name(&cwd_ctx)?;
-    let cwd_project_dir = owner_workspace_dir.join("projects").join(&cwd_project_name);
+    let cwd_project_dir = project_dir(&owner_workspace_dir, cwd_project_name.as_str());
 
     let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
         MachineVerb::Sync => (
@@ -2794,7 +2794,7 @@ fn load_continuing_context<'a>(
     let (source_project_dir, source_workspace_name) = {
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, other_project_override)?;
         let pname = find_project_name(&source_ctx)?;
-        let dir = source_ctx.active_path().join("projects").join(&pname);
+        let dir = project_dir(source_ctx.active_path(), pname.as_str());
         (dir, workspace_name(&source_ctx))
     };
 
@@ -4326,7 +4326,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // canonical path equals CWD, so this is also correct for the non-retire
     // case.
     let primary = ctx.cwd_ctx.primary_path();
-    let canonical_project_dir = primary.join("projects").join(ctx.cwd_project_name.as_str());
+    let canonical_project_dir = project_dir(primary, ctx.cwd_project_name.as_str());
 
     // Drop savepoints. Exception: when --discard-local-commits bypassed the
     // Phase 1' ancestor check (recorded as the `discard-local-commits`
@@ -4376,7 +4376,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .ok()
             .and_then(|c| find_project_name(&c).ok());
         if let Some(tpname) = target_project_name {
-            let target_project_dir = ctx.dest_workspace_dir.join("projects").join(&tpname);
+            let target_project_dir = project_dir(&ctx.dest_workspace_dir, tpname.as_str());
             delete_savepoint(ctx.project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) = Project::from_dir_skip_lock(&target_project_dir) {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
@@ -4815,7 +4815,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let cwd_restore_id = restore_id_for(&workspace_dir);
 
     let cwd_project_name = find_project_name(ctx)?;
-    let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
+    let cwd_project_dir = project_dir(&workspace_dir, cwd_project_name.as_str());
     // Use the lockless loader: abort's contract is "the state is bad, get me
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
@@ -4906,10 +4906,8 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                         continue;
                     }
                 };
-                let extra_project_dir = extra_ctx
-                    .active_path()
-                    .join("projects")
-                    .join(&extra_project_name);
+                let extra_project_dir =
+                    project_dir(extra_ctx.active_path(), extra_project_name.as_str());
                 let extra_project = match Project::from_dir_skip_lock(&extra_project_dir) {
                     Ok(p) => p,
                     Err(e) => {

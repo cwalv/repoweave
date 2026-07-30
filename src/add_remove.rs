@@ -6,7 +6,7 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::{vcs_for, EphemeralRefName, HeadAttachment, RefName, Vcs};
-use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
@@ -36,7 +36,7 @@ use std::path::{Path, PathBuf};
 /// project's manifest.
 fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)> {
     let name = ctx.require_active_project_on_disk()?.clone();
-    let dir = ctx.active_path().join("projects").join(name.as_str());
+    let dir = project_dir(ctx.active_path(), name.as_str());
     Ok((name, dir))
 }
 
@@ -146,10 +146,7 @@ fn create_worktree_in_workweave(
 /// member set is whole.
 fn activate_for_workspace(ctx: &WorkspaceContext, project: &ProjectName) -> anyhow::Result<()> {
     let root = ctx.active_path();
-    let manifest_path = root
-        .join("projects")
-        .join(project.as_str())
-        .join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
@@ -762,10 +759,7 @@ fn find_other_projects_with_roles(
         if &project == active_project {
             continue;
         }
-        let manifest_path = workspace_root
-            .join("projects")
-            .join(project.as_str())
-            .join(Manifest::FILE_NAME);
+        let manifest_path = project_dir(workspace_root, project.as_str()).join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             if let Some(entry) = manifest.get_entry(repo_path) {
                 referencing.push((project, entry.role));

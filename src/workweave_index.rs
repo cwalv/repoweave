@@ -86,6 +86,7 @@ use crate::manifest::ProjectName;
 use crate::vcs::{
     EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
 };
+use crate::workspace::{discover_project_paths, project_dir};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -188,10 +189,7 @@ struct RefReceipt {
 
 /// The absolute path of the index file for `(primary_root, project)`.
 pub fn index_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    primary_root
-        .join("projects")
-        .join(project.as_str())
-        .join(INDEX_FILENAME)
+    project_dir(primary_root, project.as_str()).join(INDEX_FILENAME)
 }
 
 /// The default container for a primary workspace: `<parent-of-root>/.workweaves`.
@@ -846,7 +844,7 @@ fn same_store(recorded: &Path, query_key: &Path) -> bool {
 /// `tracked-index` finding is the correctness net if a committed copy
 /// slips through.
 pub fn ensure_ignore_entry(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
-    let project_dir = primary_root.join("projects").join(project.as_str());
+    let project_dir = project_dir(primary_root, project.as_str());
     ensure_ignored_in_dir(&project_dir, INDEX_FILENAME)
 }
 
@@ -967,19 +965,10 @@ fn append_ignore_line(target: &Path, filename: &str) -> anyhow::Result<()> {
 /// `rwv.yaml` are still included (a project can register workweaves before
 /// its manifest is populated).
 pub fn projects_on_disk(primary_root: &Path) -> Vec<ProjectName> {
-    let projects_dir = primary_root.join("projects");
-    let entries = match std::fs::read_dir(&projects_dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
-    let mut names: Vec<ProjectName> = entries
-        .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter_map(|s| ProjectName::new(s).ok())
-        .collect();
-    names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    names
+    discover_project_paths(primary_root)
+        .into_iter()
+        .filter_map(|name| ProjectName::new(name).ok())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

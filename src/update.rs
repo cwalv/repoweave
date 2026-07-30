@@ -199,7 +199,7 @@ fn update_for_project(
 ) -> anyhow::Result<()> {
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
-    let project_dir = active_root.join("projects").join(project_name.as_str());
+    let project_dir = crate::workspace::project_dir(active_root, project_name.as_str());
     let project = Project::from_dir(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 

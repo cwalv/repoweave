@@ -1606,34 +1606,13 @@ pub struct Project {
 }
 
 impl Project {
-    /// Derive a project name from a project directory path.
-    ///
-    /// Handles both relative and absolute paths by finding the `projects/`
-    /// component anywhere in the path:
-    ///
-    /// - `projects/web-app`           → `"web-app"`
-    /// - `projects/chatly/web-app`    → `"chatly/web-app"`
-    /// - `/home/user/ws/projects/web-app` → `"web-app"`
-    /// - `/home/user/ws/projects/chatly/web-app` → `"chatly/web-app"`
-    ///
-    /// Falls back to the last path component when no `projects/` ancestor is
-    /// found (e.g., a bare temp dir used in tests).
+    /// Derive a project name from a project directory path, falling back to
+    /// the last path component for a directory that is not sited in a weave
+    /// (e.g., a bare temp dir used in tests).
     fn name_from_dir(dir: &Path) -> String {
-        // Fast path: relative path starting with "projects/" (original behavior).
-        if let Ok(rest) = dir.strip_prefix("projects") {
-            return rest.to_string_lossy().into_owned();
+        if let Some(name) = crate::workspace::project_name_from_dir(dir) {
+            return name;
         }
-
-        // Absolute path: find the "projects" component and take everything after it.
-        let components: Vec<_> = dir.components().collect();
-        if let Some(idx) = components.iter().rposition(|c| c.as_os_str() == "projects") {
-            let rest: PathBuf = components[idx + 1..].iter().collect();
-            if !rest.as_os_str().is_empty() {
-                return rest.to_string_lossy().into_owned();
-            }
-        }
-
-        // Fallback: use the last component (e.g., bare temp dir without "projects").
         dir.file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| dir.to_string_lossy().into_owned())

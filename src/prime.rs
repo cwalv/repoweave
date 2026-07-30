@@ -7,7 +7,9 @@
 //! Silent (exit 0, no output) when not inside a repoweave workspace.
 
 use crate::manifest::{Manifest, ProjectName, RepoPath};
-use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workspace::{
+    discover_project_paths, project_dir, projects_dir, Checkout, WorkspaceContext,
+};
 
 /// Run `rwv prime` against an already-resolved workspace context.
 ///
@@ -83,11 +85,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
 
     // -- Repository table -------------------------------------------------------
     if let Some(p) = project {
-        let manifest_path = ctx
-            .primary_path()
-            .join("projects")
-            .join(p.as_str())
-            .join(Manifest::FILE_NAME);
+        let manifest_path = project_dir(ctx.primary_path(), p.as_str()).join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             out.push('\n');
             render_repo_table(&mut out, &manifest);
@@ -187,25 +185,15 @@ fn render_directory_layout(
         }
     }
 
-    // Projects dir
-    let projects_dir = ctx.primary_path().join("projects");
-    if projects_dir.is_dir() {
+    if projects_dir(ctx.primary_path()).is_dir() {
         out.push_str("  projects/\n");
-        if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-            let mut names: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect();
-            names.sort();
-            for name in &names {
-                let marker = if project.map(|p| p.as_str()) == Some(name.as_str()) {
-                    " (active)"
-                } else {
-                    ""
-                };
-                out.push_str(&format!("    {name}/{marker}\n"));
-            }
+        for name in discover_project_paths(ctx.primary_path()) {
+            let marker = if project.map(|p| p.as_str()) == Some(name.as_str()) {
+                " (active)"
+            } else {
+                ""
+            };
+            out.push_str(&format!("    {name}/{marker}\n"));
         }
     }
 

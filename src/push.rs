@@ -11,7 +11,7 @@ use crate::selector::RepoFilter;
 use crate::vcs::{
     project_vcs, vcs_for, HeadAttachment, PublishRef, RawRefName, RawRevisionId, TrackingRef, Vcs,
 };
-use crate::workspace::{Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -158,7 +158,7 @@ pub fn run_push(
 
     let project_name = ctx.require_active_project_on_disk()?.clone();
     let primary_root = ctx.primary_path().to_path_buf();
-    let project_dir = primary_root.join("projects").join(project_name.as_str());
+    let project_dir = project_dir(&primary_root, project_name.as_str());
 
     let project = Project::from_dir(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
@@ -621,7 +621,7 @@ pub fn run_push(
     //    place; the project repo is always Role::Owned at the trait
     //    layer (it's the canonical-tip carrier; not declared in any
     //    manifest).
-    let project_path_str = format!("projects/{}", project_name.as_str());
+    let project_path_str = project_rel_path(project_name.as_str());
     let project_abs_str = project_dir.to_string_lossy().into_owned();
 
     if !json {
@@ -790,7 +790,7 @@ fn short_sha(s: &str) -> String {
 /// can mirror primary's layout when staging fixtures.
 #[allow(dead_code)]
 pub(crate) fn project_repo_dir(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    primary_root.join("projects").join(project.as_str())
+    project_dir(primary_root, project.as_str())
 }
 
 #[cfg(test)]

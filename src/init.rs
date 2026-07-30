@@ -28,7 +28,7 @@ use crate::git::git_command;
 use crate::manifest::{LockFile, Manifest, RepoUrl};
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::project_vcs;
-use crate::workspace::{require_workspace_or_empty, WorkspaceContext};
+use crate::workspace::{project_dir, projects_dir, require_workspace_or_empty, WorkspaceContext};
 use anyhow::Context;
 use std::path::Path;
 
@@ -61,7 +61,7 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
     // subsequent `WorkspaceContext::resolve` call in `init`/`init_adopt` finds
     // a workspace root.
     if WorkspaceContext::resolve(cwd, None).is_err() {
-        let projects_dir = cwd.join("projects");
+        let projects_dir = projects_dir(cwd);
         std::fs::create_dir_all(&projects_dir)
             .with_context(|| format!("failed to create {}", projects_dir.display()))?;
         eprintln!(
@@ -91,7 +91,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     // not compute pre-bootstrap).
     bootstrap_workspace_if_empty(origin_dir)?;
     let ctx = WorkspaceContext::resolve(origin_dir, None)?;
-    let project_dir = ctx.primary_path().join("projects").join(name);
+    let project_dir = project_dir(ctx.primary_path(), name);
 
     // Collision check
     if project_dir.exists() {
@@ -216,7 +216,7 @@ pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
     // Resolve the source to a clone URL and project name.
     let (clone_url, project_name) = resolve_adopt_source(source)?;
 
-    let project_dir = root.join("projects").join(&project_name);
+    let project_dir = project_dir(root, &project_name);
 
     // Collision check
     if project_dir.exists() {

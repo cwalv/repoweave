@@ -203,13 +203,68 @@ pub enum ContainerKind {
     Workweave,
 }
 
+// ---------------------------------------------------------------------------
+// Weave layout: every project lives at `projects/<name>`
+// ---------------------------------------------------------------------------
+
+/// The directory every project's files live under, relative to a weave root.
+const PROJECTS_DIR: &str = "projects";
+
+/// `<root>/projects` — where a weave keeps its projects.
+pub(crate) fn projects_dir(root: &Path) -> PathBuf {
+    root.join(PROJECTS_DIR)
+}
+
+/// `<root>/projects/<project>` — where one project's files live.
+pub(crate) fn project_dir(root: &Path, project: &str) -> PathBuf {
+    projects_dir(root).join(project)
+}
+
+/// `projects/<project>` — the same directory, relative to a weave root.
+pub(crate) fn project_rel_dir(project: &str) -> PathBuf {
+    Path::new(PROJECTS_DIR).join(project)
+}
+
+/// `projects/<project>` with forward slashes, whatever the platform.
+///
+/// The spelling [`RepoPath`] and the wire formats require; [`project_rel_dir`]
+/// renders backslashes on Windows and cannot serve them.
+pub(crate) fn project_rel_path(project: &str) -> String {
+    format!("{PROJECTS_DIR}/{project}")
+}
+
+/// What sits below `projects/` in `path`, or `None` when `path` neither starts
+/// with the segment nor reaches past it.
+pub(crate) fn strip_projects_prefix(path: &Path) -> Option<&Path> {
+    let rest = path.strip_prefix(PROJECTS_DIR).ok()?;
+    (!rest.as_os_str().is_empty()).then_some(rest)
+}
+
+/// The project a directory belongs to, from either a weave-relative path or an
+/// absolute one: everything below the last `projects/` segment, so
+/// `/w/projects/chatly/web-app` yields `chatly/web-app`.
+///
+/// `None` when there is no such segment — a bare directory that is not sited
+/// in a weave at all.
+pub(crate) fn project_name_from_dir(dir: &Path) -> Option<String> {
+    if let Some(rest) = strip_projects_prefix(dir) {
+        return Some(rest.to_string_lossy().into_owned());
+    }
+    let components: Vec<_> = dir.components().collect();
+    let idx = components
+        .iter()
+        .rposition(|c| c.as_os_str() == PROJECTS_DIR)?;
+    let rest: PathBuf = components[idx + 1..].iter().collect();
+    (!rest.as_os_str().is_empty()).then(|| rest.to_string_lossy().into_owned())
+}
+
 /// Well-known directory names that identify a workspace root.
-fn workspace_marker_names() -> Vec<String> {
+pub(crate) fn workspace_marker_names() -> Vec<String> {
     let mut names: Vec<String> = builtin_registry_names()
         .iter()
         .map(|n| n.as_str().to_owned())
         .collect();
-    names.push("projects".to_string());
+    names.push(PROJECTS_DIR.to_string());
     names
 }
 
@@ -299,12 +354,7 @@ fn home_ceiling_blocks(current: &Path, parent: &Path, home: Option<&Path>) -> bo
 /// notions of "active" into one (`.rwv-active`).
 pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
     let rel = cwd.strip_prefix(root).ok()?;
-    let mut components = rel.components();
-    let first = components.next()?;
-    if first.as_os_str() != "projects" {
-        return None;
-    }
-    let project_name = components.next()?;
+    let project_name = strip_projects_prefix(rel)?.components().next()?;
     ProjectName::new(project_name.as_os_str().to_string_lossy().to_string()).ok()
 }
 
@@ -422,7 +472,7 @@ pub fn scan_repos_on_disk(
 ///
 /// Returns a sorted list of directory names found under `{root}/projects/`.
 pub fn discover_project_paths(root: &Path) -> Vec<String> {
-    let projects_dir = root.join("projects");
+    let projects_dir = projects_dir(root);
     let mut names = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&projects_dir) {
         for entry in entries.flatten() {
@@ -505,7 +555,7 @@ impl WorkspaceSession {
         workweave: Option<&'a crate::manifest::WorkweaveConfig>,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
-            output_dir: self.root.join("projects").join(project.as_str()),
+            output_dir: project_dir(&self.root, project.as_str()),
             workspace_root: &self.root,
             container_kind: self.container_kind,
             project,
@@ -957,8 +1007,7 @@ impl WorkspaceContext {
     pub fn require_active_project_on_disk(&self) -> anyhow::Result<&ProjectName> {
         let name = self.require_active_project()?;
 
-        // Check that `projects/<name>/` exists on disk.
-        let project_dir = self.primary_path().join("projects").join(name.as_str());
+        let project_dir = project_dir(self.primary_path(), name.as_str());
         if project_dir.is_dir() {
             return Ok(name);
         }
@@ -1031,11 +1080,8 @@ impl WorkspaceContext {
                 lines.push(format!("Weave: {}", self.primary_root.display()));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
-                    let manifest_path = self
-                        .primary_root
-                        .join("projects")
-                        .join(p.as_str())
-                        .join(Manifest::FILE_NAME);
+                    let manifest_path =
+                        project_dir(&self.primary_root, p.as_str()).join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
@@ -1046,11 +1092,8 @@ impl WorkspaceContext {
                 lines.push(format!("Weave: {}", self.primary_root.display()));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
-                    let manifest_path = self
-                        .primary_root
-                        .join("projects")
-                        .join(p.as_str())
-                        .join(Manifest::FILE_NAME);
+                    let manifest_path =
+                        project_dir(&self.primary_root, p.as_str()).join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
@@ -1071,18 +1114,9 @@ impl WorkspaceContext {
             }
         }
 
-        // List available projects
-        let projects_dir = self.primary_root.join("projects");
-        if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-            let mut project_names: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.file_name().to_string_lossy().into_owned())
-                .collect();
-            project_names.sort();
-            if !project_names.is_empty() {
-                lines.push(format!("Projects: {}", project_names.join(", ")));
-            }
+        let project_names = discover_project_paths(&self.primary_root);
+        if !project_names.is_empty() {
+            lines.push(format!("Projects: {}", project_names.join(", ")));
         }
 
         lines.join("\n")

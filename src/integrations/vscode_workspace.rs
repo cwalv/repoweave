@@ -18,7 +18,7 @@ use crate::integrations::merge::{
     drift_issues, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc, RwvGeneratedMarker,
 };
 use crate::registry::split_canonical_local_path;
-use crate::workspace::ContainerKind;
+use crate::workspace::{project_rel_path, ContainerKind};
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
@@ -210,7 +210,7 @@ fn expected_generated_set(
     let active_project = ctx.project.as_str();
     for project_path in ctx.all_project_paths {
         if project_path != active_project {
-            keys.insert(format!("projects/{}", project_path), true);
+            keys.insert(project_rel_path(project_path), true);
         }
     }
 
