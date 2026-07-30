@@ -329,8 +329,9 @@ workweave-create) also run the read-only verify pass:
   that is present and parseable but whose bytes differ from the **last
   rwv-accepted generation** is reported as a warning: the activation hook
   records a SHA-256 of each accepted generation in `.rwv-owned-digests`
-  (next to the lock in the project directory), and verify compares. This catches an out-of-band `cargo` invocation rewriting the
-  lock as valid TOML. The finding is report-not-mandate — never
+  (next to the lock in the project directory), and verify compares. This
+  catches an out-of-band `cargo` invocation rewriting the lock as valid
+  TOML. The finding is report-not-mandate — never
   auto-repaired; the operator either re-runs activation (accepting and
   re-stamping the new content) or restores the file. Workspaces without
   digest state (pre-upgrade) skip this comparison silently.
