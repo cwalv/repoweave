@@ -2035,27 +2035,26 @@ impl MemberIncompatibility {
 // last accepted it — a purely structural signal (no wall-clock, no
 // registry access).
 //
-// State file: `.rwv-owned-digests` next to the CANONICAL generated file
-// (the `.rwv-active` / `.rwv-op` naming family). Format: a flat JSON map
+// State file: `.rwv-owned-digests` in the directory the caller names (the
+// `.rwv-active` / `.rwv-op` naming family). Format: a flat JSON map
 // `filename -> "sha256:<hex>"` — room for future entries as more
 // integrations adopt the axis. The file is advisory bookkeeping: it is
 // wholly rewritten by the next stamp, so corruption is self-healing and
 // never worth failing a verify pass over.
 //
-// "Canonical" matters: generated files live in the project dir and are
-// SURFACED at the weave root via symlinks. Every verb now binds
-// `output_dir` to the project dir — `WorkspaceSession::context_base`
-// derives it rather than accepting it — so the stamp and the check already
-// mean the same file. Both helpers still resolve symlinks on the file path
-// and anchor the state file to the resolved file's directory; that is now
-// belt-and-braces, not the load-bearing reconciliation it was while doctor
-// bound the weave-root view.
+// The directory every helper here wants is `output_dir`, and no signature
+// can say so: generated files live in the project dir and are SURFACED at
+// the weave root via symlinks, for the ACTIVE project alone. A caller that
+// named the weave root would key the ledger by whichever project happens to
+// be active. `WorkspaceSession::context_base` derives `output_dir` rather
+// than accepting one, which is what leaves callers with nothing else to
+// name.
 //
 // cargo-workspace is the first consumer; uv/npm/pnpm lockfiles have the
 // identical story and can port by calling the same three helpers.
 
-/// File name of the rwv-owned digest state file, written next to the
-/// canonical (symlink-resolved) generated files it records.
+/// File name of the rwv-owned digest state file, written in the same
+/// directory as the generated files it records.
 ///
 /// `tests/` cannot see this constant — it is a separate, external crate —
 /// and spells the name as the literal `".rwv-owned-digests"` instead.
@@ -2090,26 +2089,6 @@ fn owned_digest(content: &[u8]) -> String {
     hex
 }
 
-/// Resolve where `file_path`'s digest state lives: the directory containing
-/// the symlink-RESOLVED file, plus the file's name (the map key).
-///
-/// This is the convergence trick described in the section comment: the
-/// stamp site holds the project-dir path while doctor's verify holds the
-/// weave-root symlink path, and both must land on the same state file. If
-/// the path cannot be canonicalized (file gone — callers check existence
-/// first, but stay total), fall back to the literal path.
-fn owned_digest_state_location(file_path: &Path) -> (std::path::PathBuf, Option<String>) {
-    let canonical = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
-    let file_name = canonical
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned());
-    let dir = canonical
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    (dir, file_name)
-}
-
 /// Read the digest state map from `state_dir`, tolerating absence and
 /// corruption (both yield an empty map — the file is advisory bookkeeping
 /// that the next stamp rewrites wholesale).
@@ -2121,9 +2100,8 @@ fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, String> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
-/// Record `content`'s digest for the generated file at `file_path` in the
-/// state file next to the canonical (symlink-resolved) file, creating it if
-/// needed and preserving other files' entries.
+/// Record `content`'s digest for `file_name` in `dir`'s state file, creating
+/// it if needed and preserving other files' entries.
 ///
 /// Call this at the moment rwv ACCEPTS a generation — the end of the
 /// activation hook that ran the ecosystem generator. The stamp is what makes
@@ -2132,42 +2110,29 @@ fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, String> {
 ///
 /// An unparseable existing state file is replaced wholesale (its entries are
 /// unreadable anyway; the fresh stamp is the only recovery).
-pub fn stamp_owned_digest(file_path: &Path, content: &[u8]) -> anyhow::Result<()> {
-    let (state_dir, file_name) = owned_digest_state_location(file_path);
-    let Some(file_name) = file_name else {
-        anyhow::bail!(
-            "cannot stamp owned digest: {} has no file name",
-            file_path.display()
-        );
-    };
-    let mut map = read_owned_digests(&state_dir);
-    map.insert(file_name, owned_digest(content));
-    let path = state_dir.join(OWNED_DIGESTS_FILE);
+pub fn stamp_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> anyhow::Result<()> {
+    let mut map = read_owned_digests(dir);
+    map.insert(file_name.to_string(), owned_digest(content));
+    let path = dir.join(OWNED_DIGESTS_FILE);
     let json = serde_json::to_string_pretty(&map)
         .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
     std::fs::write(&path, json)
         .with_context(|| format!("writing owned-digest state {}", path.display()))?;
     // Hygiene at the write chokepoint: keep the machine-local state file out
     // of VCS. Best effort — an ignore failure must never fail the stamp itself.
-    let _ = workweave_index::ensure_ignored_in_dir(&state_dir, OWNED_DIGESTS_FILE);
+    let _ = workweave_index::ensure_ignored_in_dir(dir, OWNED_DIGESTS_FILE);
     Ok(())
 }
 
-/// Compare `content` against the digest recorded for the generated file at
-/// `file_path` (state file resolved next to the canonical file — symlinked
-/// views converge with the stamp site).
+/// Compare `content` against the digest `dir`'s state file records for
+/// `file_name`.
 ///
 /// Total (never errors): a missing state file, a missing entry, or an
 /// unparseable state file all yield [`OwnedDigestCheck::NotRecorded`] — the
 /// caller skips the axis silently. This is the backward-compat contract for
 /// pre-upgrade workspaces that have generated files but no digest state.
-pub fn check_owned_digest(file_path: &Path, content: &[u8]) -> OwnedDigestCheck {
-    let (state_dir, file_name) = owned_digest_state_location(file_path);
-    let Some(file_name) = file_name else {
-        return OwnedDigestCheck::NotRecorded;
-    };
-    let map = read_owned_digests(&state_dir);
-    match map.get(&file_name) {
+pub fn check_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> OwnedDigestCheck {
+    match read_owned_digests(dir).get(file_name) {
         None => OwnedDigestCheck::NotRecorded,
         Some(recorded) if *recorded == owned_digest(content) => OwnedDigestCheck::Matches,
         Some(_) => OwnedDigestCheck::Differs,
@@ -3278,7 +3243,7 @@ replace example.com/legacy => ./vendor/legacy
         fn check_without_state_file_is_not_recorded() {
             let tmp = TempDir::new().unwrap();
             assert_eq!(
-                check_owned_digest(&tmp.path().join("Cargo.lock"), b"anything"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"anything"),
                 OwnedDigestCheck::NotRecorded,
                 "absent state file must skip silently (backward compat)"
             );
@@ -3287,9 +3252,9 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn check_without_entry_is_not_recorded() {
             let tmp = TempDir::new().unwrap();
-            stamp_owned_digest(&tmp.path().join("uv.lock"), b"other file").unwrap();
+            stamp_owned_digest(tmp.path(), "uv.lock", b"other file").unwrap();
             assert_eq!(
-                check_owned_digest(&tmp.path().join("Cargo.lock"), b"anything"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"anything"),
                 OwnedDigestCheck::NotRecorded,
                 "state file present but no entry for this file must skip silently"
             );
@@ -3298,10 +3263,9 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn stamp_then_check_same_content_matches() {
             let tmp = TempDir::new().unwrap();
-            let lock = tmp.path().join("Cargo.lock");
-            stamp_owned_digest(&lock, b"version = 3\n").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
             assert_eq!(
-                check_owned_digest(&lock, b"version = 3\n"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n"),
                 OwnedDigestCheck::Matches
             );
         }
@@ -3309,10 +3273,9 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn stamp_then_check_mutated_content_differs() {
             let tmp = TempDir::new().unwrap();
-            let lock = tmp.path().join("Cargo.lock");
-            stamp_owned_digest(&lock, b"version = 3\n").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
             assert_eq!(
-                check_owned_digest(&lock, b"version = 4\n"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"version = 4\n"),
                 OwnedDigestCheck::Differs,
                 "any byte-level mutation must be visible"
             );
@@ -3321,16 +3284,15 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn restamp_updates_recorded_digest() {
             let tmp = TempDir::new().unwrap();
-            let lock = tmp.path().join("Cargo.lock");
-            stamp_owned_digest(&lock, b"old").unwrap();
-            stamp_owned_digest(&lock, b"new").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"old").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"new").unwrap();
             assert_eq!(
-                check_owned_digest(&lock, b"new"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"new"),
                 OwnedDigestCheck::Matches,
                 "re-stamp must accept the new content"
             );
             assert_eq!(
-                check_owned_digest(&lock, b"old"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"old"),
                 OwnedDigestCheck::Differs,
                 "the previously-recorded digest must be replaced"
             );
@@ -3339,17 +3301,15 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn stamp_preserves_other_entries() {
             let tmp = TempDir::new().unwrap();
-            let cargo_lock = tmp.path().join("Cargo.lock");
-            let uv_lock = tmp.path().join("uv.lock");
-            stamp_owned_digest(&cargo_lock, b"cargo bytes").unwrap();
-            stamp_owned_digest(&uv_lock, b"uv bytes").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"cargo bytes").unwrap();
+            stamp_owned_digest(tmp.path(), "uv.lock", b"uv bytes").unwrap();
             assert_eq!(
-                check_owned_digest(&cargo_lock, b"cargo bytes"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"cargo bytes"),
                 OwnedDigestCheck::Matches,
                 "stamping a second file must not clobber the first entry"
             );
             assert_eq!(
-                check_owned_digest(&uv_lock, b"uv bytes"),
+                check_owned_digest(tmp.path(), "uv.lock", b"uv bytes"),
                 OwnedDigestCheck::Matches
             );
         }
@@ -3357,23 +3317,25 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn corrupt_state_file_is_not_recorded_and_stamp_recovers() {
             let tmp = TempDir::new().unwrap();
-            let lock = tmp.path().join("Cargo.lock");
             std::fs::write(tmp.path().join(OWNED_DIGESTS_FILE), "not json {{{").unwrap();
             // Corrupt state never errors and never mis-reports: skip silently.
             assert_eq!(
-                check_owned_digest(&lock, b"x"),
+                check_owned_digest(tmp.path(), "Cargo.lock", b"x"),
                 OwnedDigestCheck::NotRecorded,
                 "corrupt state file must be treated as advisory and skipped"
             );
             // A fresh stamp rewrites the file wholesale — self-healing.
-            stamp_owned_digest(&lock, b"x").unwrap();
-            assert_eq!(check_owned_digest(&lock, b"x"), OwnedDigestCheck::Matches);
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"x").unwrap();
+            assert_eq!(
+                check_owned_digest(tmp.path(), "Cargo.lock", b"x"),
+                OwnedDigestCheck::Matches
+            );
         }
 
         #[test]
         fn state_file_is_json_map_with_sha256_prefixed_digests() {
             let tmp = TempDir::new().unwrap();
-            stamp_owned_digest(&tmp.path().join("Cargo.lock"), b"content").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"content").unwrap();
             let text = std::fs::read_to_string(tmp.path().join(OWNED_DIGESTS_FILE)).unwrap();
             let map: BTreeMap<String, String> = serde_json::from_str(&text).unwrap();
             let digest = map.get("Cargo.lock").expect("entry must exist");
@@ -3388,54 +3350,81 @@ replace example.com/legacy => ./vendor/legacy
             );
         }
 
-        /// The convergence trick that makes doctor and activate agree: the
-        /// stamp site holds the canonical project-dir path while doctor's
-        /// verify holds a weave-root symlink path. Both must resolve to ONE
-        /// state file (next to the canonical file).
+        /// The ledger's location is a function of the named directory alone.
+        ///
+        /// A symlink at `<dir>/<file>` whose target sits in another directory
+        /// is the one fixture that separates that from anchoring the ledger
+        /// beside the generated file's real inode — the two agree everywhere
+        /// else, because the kernel resolves symlinked *directory* components
+        /// on the way to `<dir>/.rwv-owned-digests` regardless. Anchoring to
+        /// the target would put the ledger where none of this module's readers
+        /// look, starting with [`carry_attested_owned_files`].
         #[cfg(unix)]
         #[test]
-        fn stamp_at_canonical_check_via_symlink_converge() {
+        fn ledger_anchors_to_the_named_directory() {
             let tmp = TempDir::new().unwrap();
             let project_dir = tmp.path().join("projects/web-app");
+            let elsewhere = tmp.path().join("elsewhere");
             std::fs::create_dir_all(&project_dir).unwrap();
-            let canonical = project_dir.join("Cargo.lock");
-            std::fs::write(&canonical, b"version = 3\n").unwrap();
+            std::fs::create_dir_all(&elsewhere).unwrap();
+            std::fs::write(elsewhere.join("Cargo.lock"), b"version = 3\n").unwrap();
+            std::os::unix::fs::symlink(
+                elsewhere.join("Cargo.lock"),
+                project_dir.join("Cargo.lock"),
+            )
+            .unwrap();
 
-            // Weave-root symlink view (what doctor's verify sees).
-            let root_view = tmp.path().join("Cargo.lock");
-            std::os::unix::fs::symlink(&canonical, &root_view).unwrap();
+            stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 3\n").unwrap();
 
-            // Stamp with the canonical path (activation-hook context).
-            stamp_owned_digest(&canonical, b"version = 3\n").unwrap();
-
-            // State file must be next to the canonical file, NOT the symlink.
             assert!(
                 project_dir.join(OWNED_DIGESTS_FILE).exists(),
-                "state file must anchor to the canonical file's directory"
+                "the stamp must write the ledger in the directory it was given"
             );
             assert!(
-                !tmp.path().join(OWNED_DIGESTS_FILE).exists(),
-                "no state file at the symlink's directory"
+                !elsewhere.join(OWNED_DIGESTS_FILE).exists(),
+                "and nowhere else — the file's target directory is not the caller's"
             );
+            assert_eq!(
+                check_owned_digest(&project_dir, "Cargo.lock", b"version = 3\n"),
+                OwnedDigestCheck::Matches
+            );
+            assert_eq!(
+                check_owned_digest(&elsewhere, "Cargo.lock", b"version = 3\n"),
+                OwnedDigestCheck::NotRecorded,
+                "the check must read the same directory the stamp wrote"
+            );
+        }
 
-            // Check through the SYMLINK view converges on the same record.
-            assert_eq!(
-                check_owned_digest(&root_view, b"version = 3\n"),
-                OwnedDigestCheck::Matches,
-                "symlink view must find the canonical-side stamp"
-            );
-            assert_eq!(
-                check_owned_digest(&root_view, b"version = 4\n"),
-                OwnedDigestCheck::Differs,
-                "mutation must be visible through the symlink view too"
-            );
+        /// [`carry_attested_owned_files`] takes the directory straight and has
+        /// no file path to resolve, so a stamp that resolved one would put the
+        /// ledger somewhere the fork cannot read: the source would hand over
+        /// nothing and the copy would arrive unattested, silently.
+        #[cfg(unix)]
+        #[test]
+        fn carry_reads_the_ledger_the_stamp_wrote_for_a_symlinked_file() {
+            let tmp = TempDir::new().unwrap();
+            let source = tmp.path().join("source");
+            let elsewhere = tmp.path().join("elsewhere");
+            let dest = tmp.path().join("dest");
+            for dir in [&source, &elsewhere, &dest] {
+                std::fs::create_dir_all(dir).unwrap();
+            }
+            std::fs::write(elsewhere.join("Cargo.lock"), b"version = 3\n").unwrap();
+            std::os::unix::fs::symlink(elsewhere.join("Cargo.lock"), source.join("Cargo.lock"))
+                .unwrap();
+            stamp_owned_digest(&source, "Cargo.lock", b"version = 3\n").unwrap();
 
-            // And stamping through the symlink view updates the same record.
-            stamp_owned_digest(&root_view, b"version = 4\n").unwrap();
             assert_eq!(
-                check_owned_digest(&canonical, b"version = 4\n"),
-                OwnedDigestCheck::Matches,
-                "symlink-side stamp must update the canonical record"
+                carry_attested_owned_files(&source, &dest).unwrap(),
+                vec!["Cargo.lock"]
+            );
+            assert_eq!(
+                std::fs::read(dest.join("Cargo.lock")).unwrap(),
+                b"version = 3\n"
+            );
+            assert_eq!(
+                check_owned_digest(&dest, "Cargo.lock", b"version = 3\n"),
+                OwnedDigestCheck::Matches
             );
         }
 
@@ -3446,8 +3435,7 @@ replace example.com/legacy => ./vendor/legacy
             // check. This mirrors the workweave_index::write chokepoint for
             // .rwv-workweave-index.
             let tmp = TempDir::new().unwrap();
-            let lock = tmp.path().join("Cargo.lock");
-            stamp_owned_digest(&lock, b"version = 3\n").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
 
             let gitignore = tmp.path().join(".gitignore");
             assert!(
@@ -3465,9 +3453,8 @@ replace example.com/legacy => ./vendor/legacy
         fn stamp_ignore_is_idempotent() {
             // A second stamp must not duplicate the ignore entry.
             let tmp = TempDir::new().unwrap();
-            let lock = tmp.path().join("Cargo.lock");
-            stamp_owned_digest(&lock, b"v1").unwrap();
-            stamp_owned_digest(&lock, b"v2").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1").unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"v2").unwrap();
 
             let gitignore = tmp.path().join(".gitignore");
             let content = std::fs::read_to_string(&gitignore).unwrap();
@@ -3489,13 +3476,12 @@ replace example.com/legacy => ./vendor/legacy
             std::fs::create_dir_all(&source).unwrap();
             std::fs::create_dir_all(&dest).unwrap();
 
-            let accepted = tmp.path().join("source/accepted.lock");
-            std::fs::write(&accepted, b"accepted bytes").unwrap();
-            stamp_owned_digest(&accepted, b"accepted bytes").unwrap();
+            std::fs::write(source.join("accepted.lock"), b"accepted bytes").unwrap();
+            stamp_owned_digest(&source, "accepted.lock", b"accepted bytes").unwrap();
 
-            let drifted = tmp.path().join("source/drifted.lock");
+            let drifted = source.join("drifted.lock");
             std::fs::write(&drifted, b"stamped bytes").unwrap();
-            stamp_owned_digest(&drifted, b"stamped bytes").unwrap();
+            stamp_owned_digest(&source, "drifted.lock", b"stamped bytes").unwrap();
             std::fs::write(&drifted, b"bytes written behind rwv's back").unwrap();
 
             let carried = carry_attested_owned_files(&source, &dest).unwrap();
@@ -3506,7 +3492,7 @@ replace example.com/legacy => ./vendor/legacy
                 b"accepted bytes"
             );
             assert_eq!(
-                check_owned_digest(&dest.join("accepted.lock"), b"accepted bytes"),
+                check_owned_digest(&dest, "accepted.lock", b"accepted bytes"),
                 OwnedDigestCheck::Matches
             );
             assert_eq!(
@@ -3514,10 +3500,7 @@ replace example.com/legacy => ./vendor/legacy
                 b"bytes written behind rwv's back"
             );
             assert_eq!(
-                check_owned_digest(
-                    &dest.join("drifted.lock"),
-                    b"bytes written behind rwv's back"
-                ),
+                check_owned_digest(&dest, "drifted.lock", b"bytes written behind rwv's back"),
                 OwnedDigestCheck::Differs,
                 "the copy must inherit the source's record, not a fresh stamp of \
                  content rwv never accepted"
@@ -3532,10 +3515,9 @@ replace example.com/legacy => ./vendor/legacy
             std::fs::create_dir_all(&source).unwrap();
             std::fs::create_dir_all(&dest).unwrap();
 
-            let present = source.join("Cargo.lock");
-            std::fs::write(&present, b"version = 4\n").unwrap();
-            stamp_owned_digest(&present, b"version = 4\n").unwrap();
-            stamp_owned_digest(&source.join("deleted.lock"), b"gone").unwrap();
+            std::fs::write(source.join("Cargo.lock"), b"version = 4\n").unwrap();
+            stamp_owned_digest(&source, "Cargo.lock", b"version = 4\n").unwrap();
+            stamp_owned_digest(&source, "deleted.lock", b"gone").unwrap();
 
             let carried = carry_attested_owned_files(&source, &dest).unwrap();
             assert_eq!(carried, vec!["Cargo.lock"]);
@@ -3544,7 +3526,7 @@ replace example.com/legacy => ./vendor/legacy
                 "an entry whose file is gone has nothing to reproduce"
             );
             assert_eq!(
-                check_owned_digest(&dest.join("deleted.lock"), b"gone"),
+                check_owned_digest(&dest, "deleted.lock", b"gone"),
                 OwnedDigestCheck::NotRecorded,
                 "and the copy must not attest a file it does not hold"
             );

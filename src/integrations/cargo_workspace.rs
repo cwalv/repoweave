@@ -860,13 +860,10 @@ impl Integration for CargoWorkspace {
         // `verify()` later compares on-disk bytes against this record; an
         // out-of-band cargo rewrite (valid TOML — invisible to the parse
         // check) then surfaces as a digest-mismatch WARNING. cargo wrote
-        // through the workspace-root symlink into the canonical file at
-        // output_dir (the surfacing step precedes hooks and intentionally
-        // creates dangling lockfile symlinks so generated content flows
-        // back into the project directory). The helper resolves symlinks
-        // and anchors the state file next to the CANONICAL file, so stamp
-        // and check converge on one record no matter which view of the
-        // weave a caller holds.
+        // through the workspace-root symlink into the file at output_dir (the
+        // surfacing step precedes hooks and intentionally creates dangling
+        // lockfile symlinks so generated content flows back into the project
+        // directory).
         let lock_path = ctx.output_dir.join("Cargo.lock");
 
         // "cargo wrote through the symlink" is the happy path, not a
@@ -899,7 +896,7 @@ impl Integration for CargoWorkspace {
                 lock_path.display()
             )
         })?;
-        stamp_owned_digest(&lock_path, &lock_bytes)
+        stamp_owned_digest(ctx.output_dir, "Cargo.lock", &lock_bytes)
             .context("recording accepted-generation digest for Cargo.lock")?;
 
         Ok(())
@@ -1348,13 +1345,11 @@ impl CargoWorkspace {
         // ── DRIFT (recorded-digest mismatch) ──────────────────────────────
         // The file is valid TOML but may still have been rewritten
         // out-of-band since rwv last accepted a generation. Compare against
-        // the digest `activate_hook` stamped. The helper resolves symlinks,
-        // so this converges with the stamp regardless of whether `path` is
-        // the project-dir file (activate context) or the weave-root symlink
-        // (doctor context). `NotRecorded` (state file or entry absent, e.g.
-        // a pre-upgrade workspace) skips the axis silently — backward
-        // compat, never an error.
-        match check_owned_digest(&path, text.as_bytes()) {
+        // the digest `activate_hook` stamped, in the same `output_dir` the
+        // stamp named. `NotRecorded` (state file or entry absent, e.g. a
+        // pre-upgrade workspace) skips the axis silently — backward compat,
+        // never an error.
+        match check_owned_digest(ctx.output_dir, "Cargo.lock", text.as_bytes()) {
             OwnedDigestCheck::Differs => {
                 vec![fully_owned_digest_mismatch_issue(self.name(), &path)]
             }

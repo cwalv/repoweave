@@ -5627,7 +5627,7 @@ mod s7_cargo_doctor {
         // stamp — the hook itself needs real cargo; e2e covers it).
         let accepted = "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.1.0\"\n";
         write_file(root, "Cargo.lock", accepted);
-        stamp_owned_digest(&root.join("Cargo.lock"), accepted.as_bytes()).unwrap();
+        stamp_owned_digest(root, "Cargo.lock", accepted.as_bytes()).unwrap();
 
         // Out-of-band cargo rewrite: still perfectly valid TOML — the parse
         // check CANNOT see this. (A dep version was bumped.)
@@ -5688,7 +5688,7 @@ mod s7_cargo_doctor {
         let root = tmp.path();
 
         write_file(root, "Cargo.lock", "version = 3\n");
-        stamp_owned_digest(&root.join("Cargo.lock"), b"version = 3\n").unwrap();
+        stamp_owned_digest(root, "Cargo.lock", b"version = 3\n").unwrap();
 
         // Out-of-band rewrite → mismatch.
         let rewritten = "version = 4\n";
@@ -5702,7 +5702,7 @@ mod s7_cargo_doctor {
 
         // ACCEPT exit: re-activation re-runs the hook, which re-stamps the
         // now-current content.
-        stamp_owned_digest(&root.join("Cargo.lock"), rewritten.as_bytes()).unwrap();
+        stamp_owned_digest(root, "Cargo.lock", rewritten.as_bytes()).unwrap();
 
         let issues = CargoWorkspace.verify(&ctx).unwrap();
         assert!(
@@ -5722,7 +5722,7 @@ mod s7_cargo_doctor {
 
         let accepted = "version = 3\n";
         write_file(root, "Cargo.lock", accepted);
-        stamp_owned_digest(&root.join("Cargo.lock"), accepted.as_bytes()).unwrap();
+        stamp_owned_digest(root, "Cargo.lock", accepted.as_bytes()).unwrap();
         write_file(root, "Cargo.lock", "version = 4\n");
 
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
@@ -5790,7 +5790,7 @@ mod s7_cargo_doctor {
         // Stamped, matching Cargo.lock.
         let lock = "version = 3\n";
         write_file(root, "Cargo.lock", lock);
-        stamp_owned_digest(&root.join("Cargo.lock"), lock.as_bytes()).unwrap();
+        stamp_owned_digest(root, "Cargo.lock", lock.as_bytes()).unwrap();
         let digest_before = std::fs::read_to_string(root.join(".rwv-owned-digests")).unwrap();
 
         let config = IntegrationConfig::default();
@@ -5833,7 +5833,7 @@ mod s7_cargo_doctor {
         let root = tmp.path();
 
         write_file(root, "Cargo.lock", "version = 3\n");
-        stamp_owned_digest(&root.join("Cargo.lock"), b"version = 3\n").unwrap();
+        stamp_owned_digest(root, "Cargo.lock", b"version = 3\n").unwrap();
         // Mutation produced garbage, not valid TOML.
         write_file(root, "Cargo.lock", "half a write [[[");
 

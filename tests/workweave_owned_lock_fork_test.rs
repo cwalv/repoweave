@@ -201,10 +201,13 @@ repositories:
     git(&["commit", "-m", "activate"], &project_dir);
 
     if let Some(content) = source_lock {
-        let lock = project_dir.join("Cargo.lock");
-        std::fs::write(&lock, content).unwrap();
-        repoweave::integrations::merge::stamp_owned_digest(&lock, content.as_bytes())
-            .expect("stamping the source lock should succeed");
+        std::fs::write(project_dir.join("Cargo.lock"), content).unwrap();
+        repoweave::integrations::merge::stamp_owned_digest(
+            &project_dir,
+            "Cargo.lock",
+            content.as_bytes(),
+        )
+        .expect("stamping the source lock should succeed");
 
         // The carry, not the worktree checkout, is the only route this lock
         // can reach a workweave by.
