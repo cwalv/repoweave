@@ -92,9 +92,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The `.rwv-workweave-index` file name (dotted, machine-local).
-///
-/// Kept as a constant so the ignore-hygiene layer and doctor's tracked-index
-/// scan can reference the same string.
 const INDEX_FILENAME: &str = ".rwv-workweave-index";
 
 /// The recorded workweave registry for one `(primary, project)` pair.
