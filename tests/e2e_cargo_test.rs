@@ -322,7 +322,7 @@ fn cargo_release_version_pin_workflow() {
     );
 }
 
-/// R34 end-to-end regression (fo-t9x0l1.4): an out-of-band cargo invocation
+/// R34 end-to-end regression: an out-of-band cargo invocation
 /// rewriting the fully-owned `Cargo.lock` as VALID TOML must surface a
 /// digest-mismatch WARNING in `rwv doctor` — pre-fix, doctor exited 0 with
 /// no report at all.
@@ -449,9 +449,9 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
     );
 }
 
-/// fo-t9x0l1.3 end-to-end: `patch-surface: cargo-config` reaches a
-/// nested-workspace opt-out via cargo's UPWARD config discovery. The
-/// bead's whole point.
+/// End-to-end: `patch-surface: cargo-config` reaches a
+/// nested-workspace opt-out via cargo's UPWARD config discovery. That's
+/// the whole point.
 ///
 /// Setup:
 /// - Active weave member `github/chatly/protocol` (a package).

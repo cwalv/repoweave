@@ -473,7 +473,7 @@ integrations:
 }
 
 // ===========================================================================
-// rwv-c5h regression
+// static-files / workweave.link collision regression
 //
 // When the same name appears in BOTH `integrations.static-files.files` AND
 // `workweave.link`, the operator gets two layers of protection:
@@ -482,7 +482,7 @@ integrations:
 //   2. `static-files.activate()` itself bails with the same message in
 //      Intent-mode entry paths (where the framework runs check-then-bail).
 //
-// Pre-fix (rwv-c5h): the workweave.link entry was silently nuked by
+// Pre-fix: the workweave.link entry was silently nuked by
 // remove_activation_symlinks during workweave creation and replaced with a
 // relative symlink to the project's own (partial) checkout.
 //
@@ -496,7 +496,7 @@ fn static_files_collides_with_workweave_link_errors_loud() {
 
     let project_dir = ws.join("projects/my-project");
 
-    // .beads is the shipped repro from rwv-c5h: a static file the user
+    // .beads is the shipped repro: a static file the user
     // wanted shared via workweave.link, mistakenly also listed in
     // static-files.files. Materialize the file so the missing-file warning
     // doesn't muddle the assertion.

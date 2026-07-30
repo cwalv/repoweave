@@ -1,6 +1,6 @@
 //! Tests for snapshot reads (§6 of the sync design doc).
 //!
-//! Acceptance criteria from fo-jsbr3i.5:
+//! Acceptance criteria:
 //!
 //!   - No working-tree reads of source manifest/lock remain in the engine:
 //!     verified by the `sync_reads_committed_lock_not_working_tree` test, which

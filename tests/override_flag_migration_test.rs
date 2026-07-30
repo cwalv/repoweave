@@ -79,7 +79,7 @@ fn push_force_is_not_migrated() {
 #[test]
 fn fetch_detach_working_branch_names_detach_checkouts() {
     // Not a `--force` alias: `--detach-working-branch` was itself a shipped
-    // flag name (fo-r8ahsp.5) that the branch model renames directly.
+    // flag name that the branch model renames directly.
     let stderr = stderr_of(&[
         "fetch",
         "https://example.com/x.git",

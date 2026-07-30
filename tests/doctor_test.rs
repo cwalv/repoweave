@@ -753,7 +753,7 @@ fn check_fix_writes_replay_exclusion() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-yk0rlj: legacy `merge=ours` migration under `doctor --fix`
+// Legacy `merge=ours` migration under `doctor --fix`
 // ---------------------------------------------------------------------------
 
 /// Helper: run a `git` command in `dir` capturing output; panic on failure.
@@ -1910,9 +1910,9 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
 
 /// A `.rwv-workweave` marker that fails to parse at all (not "legacy", just
 /// broken) is not reported as one — that failure mode belongs elsewhere.
-/// Pins the behaviour `scan_for_legacy_workweave_markers` had before
-/// rwv-hdy7s0.12 routed it through `observe_marker`, which classifies the
-/// same failure as `Unreadable` rather than `Legacy`.
+/// Pins the behaviour `scan_for_legacy_workweave_markers` had before it was
+/// routed through `observe_marker`, which classifies the same failure as
+/// `Unreadable` rather than `Legacy`.
 #[test]
 fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
     let tmp = common::tempdir().unwrap();
@@ -1927,7 +1927,7 @@ fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
 
     // `.success()` first: a negative string assertion alone would also pass
     // if doctor crashed on this input instead of quietly skipping it, which
-    // would hide exactly the malformed-marker failure this bead is about.
+    // would hide exactly the malformed-marker failure under test.
     let stdout = rwv_cmd()
         .arg("doctor")
         .current_dir(&root)
@@ -1947,7 +1947,7 @@ fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
 /// A legacy marker (missing `parent:`) that also has no `primary:` of its
 /// own is not reported — the finding exists to tell `--fix` what to
 /// backfill, and there is nothing to backfill from. Pins the same
-/// pre-rwv-hdy7s0.12 behaviour as the unparseable case above.
+/// pre-observe_marker behaviour as the unparseable case above.
 #[test]
 fn doctor_does_not_report_a_legacy_marker_with_no_primary() {
     let tmp = common::tempdir().unwrap();
@@ -2382,7 +2382,7 @@ fn default_scope_json_no_orphan_when_active_project_set() {
 }
 
 // ===========================================================================
-// Unborn HEAD: doctor names the state, not the raw git error (fo-oueuv7.4)
+// Unborn HEAD: doctor names the state, not the raw git error
 // ===========================================================================
 
 /// Helper: create an empty git repo with no commits (unborn HEAD).
@@ -2409,7 +2409,7 @@ fn doctor_unborn_head_member_names_state_not_raw_git_error() {
     //
     // The check subsystem collects `head_read_failures` and formats each
     // one as `{repo_path}: HEAD unreadable ({err_msg})`. The `err_msg` is
-    // the `VcsError::CommandFailed.stderr` field — which, after fo-oueuv7.4,
+    // the `VcsError::CommandFailed.stderr` field, which now
     // contains "unborn HEAD ..." instead of the raw git message.
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
@@ -2486,7 +2486,7 @@ fn doctor_unborn_head_member_includes_action_hint() {
 }
 
 // ===========================================================================
-// Repair-verb naming audit (fo-oueuv7.2)
+// Repair-verb naming audit
 //
 // Every user-facing error/warning must name the rwv verb that repairs it.
 // House pattern: name the state → name the verb → name the escape hatch.
@@ -2580,8 +2580,7 @@ fn dangling_reference_names_rwv_fetch_repair_verb() {
          got:\n{combined}"
     );
     // The stale honest-manual advice must be gone: no `git clone …` in the
-    // message body. (This is the acceptance criterion from fo-8cbhpg.3: the
-    // repair verb replaces the manual advice.)
+    // message body — the repair verb replaces the manual advice.
     assert!(
         !combined.contains("git clone"),
         "dangling-reference message must NOT advise manual `git clone` \

@@ -3,7 +3,7 @@
 //! Writing `.rwv-active` into a workweave root puts a second, unread copy of
 //! the workweave's own identity beside the marker that already names it —
 //! the state `rwv doctor` reports as `weave-root-identity-conflict`. Until
-//! this bead the prohibition was a runtime `if` in front of a free
+//! now the prohibition was a runtime `if` in front of a free
 //! `set_active_project(root, project)`: correct, and invisible to anything
 //! but review. A caller reaching that function with a marker root compiled
 //! fine.

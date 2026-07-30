@@ -552,7 +552,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 // disk, and `init --adopt` clones only the project repo, so that arm is
 // always empty at adopt time. A fixture that relies on it produces a no-op in
 // BOTH activation modes — a test that passes whether or not the behaviour
-// under test is correct (bead fo-qecw1w).
+// under test is correct.
 //
 // The gate's second arm is the way in: a repo named by
 // `integrations.cargo-workspace.members.<repo>` counts as active cargo work

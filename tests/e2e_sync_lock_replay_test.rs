@@ -647,7 +647,7 @@ fn sync_ff_preserves_lock_only_commits() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-yk0rlj: durable driver-config plant + legacy-needle bail message
+// Durable driver-config plant + legacy-needle bail message
 // ---------------------------------------------------------------------------
 
 /// The rebase-strategy sync invariant PLANTS the durable
@@ -725,7 +725,7 @@ fn sync_rebase_plants_merge_driver_config() {
 }
 
 /// When the CWD project repo's committed `.gitattributes` still carries
-/// the LEGACY `rwv.lock merge=ours` line (pre-fo-yk0rlj rename), the
+/// the LEGACY `rwv.lock merge=ours` line (pre-rename), the
 /// invariant bails with a migration-specific message that directs the
 /// operator at `rwv doctor --fix`. It must NOT silently accept the
 /// legacy needle — sync's guarantee is the new spelling that closes the
@@ -823,7 +823,7 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-yk0rlj: BARE git rebase — planted config alone must carry the exclusion
+// BARE git rebase — planted config alone must carry the exclusion
 // ---------------------------------------------------------------------------
 
 /// Run a BARE git command via `std::process::Command` — deliberately NOT
@@ -869,7 +869,7 @@ fn lock_yaml(manifest_repo: &Path, version: &str) -> String {
     )
 }
 
-/// The literal fo-yk0rlj / tc-jxrv incident shape, driven end-to-end by a
+/// The literal incident shape this closes, driven end-to-end by a
 /// git process rwv did not spawn:
 ///
 /// A rebase stops on a genuine non-lock conflict; the operator resolves it
@@ -1078,9 +1078,9 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv-native `--continue` end-to-end (fo-w2ajvn.1)
+// rwv-native `--continue` end-to-end
 //
-// The fo-yk0rlj set of tests above proves that BARE `git rebase --continue`
+// The set of tests above proves that BARE `git rebase --continue`
 // is safe after the durable driver plant. This section proves the operator
 // no longer has to reach for bare git at all — `rwv sync --continue` itself
 // drives a stopped rebase through the remaining picks (including a lock-only
@@ -1175,7 +1175,7 @@ fn assert_mid_rebase(dir: &Path, expected: bool, msg: &str) {
     );
 }
 
-/// Golden path for fo-w2ajvn.1: a `rwv sync --strategy=rebase` that stops on
+/// Golden path: a `rwv sync --strategy=rebase` that stops on
 /// a genuine non-lock conflict in the project repo can be resumed by the
 /// operator with `resolve + git add + rwv sync --continue` — no `git rebase
 /// --continue` step. `--continue` MUST drive the entire remaining op:
@@ -1231,8 +1231,8 @@ fn sync_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() {
     // before `--continue` in the project repo's config. If `--continue`
     // still resolves the lock-only pick without conflict, it's because the
     // inline `-c merge.rwv-ours.driver=true` in Vcs::rebase_continue is
-    // doing the work — the whole point of the bead's "re-supplying driver
-    // flags on replay re-entry" title.
+    // doing the work: re-supplying driver flags on replay re-entry is the
+    // whole point.
     let project_git_dir_str = bare_git_ok(&["rev-parse", "--git-dir"], &ww.project_dir);
     let project_git_dir = if PathBuf::from(&project_git_dir_str).is_absolute() {
         PathBuf::from(project_git_dir_str)
@@ -1370,8 +1370,9 @@ fn sync_continue_with_unstaged_resolution_bails_and_second_continue_succeeds() {
          --continue after staging succeeds; stderr was:\n{stderr}"
     );
 
-    // The message must mention the conflict / continue path (sibling bead
-    // fo-w2ajvn.2 owns exact wording; assert only the load-bearing tokens).
+    // The message must mention the conflict / continue path (exact wording
+    // is pinned by a sibling test elsewhere; assert only the load-bearing
+    // tokens here).
     assert!(
         stderr.contains("rebase") && (stderr.contains("continue") || stderr.contains("conflict")),
         "expected bail stderr to name rebase + continue/conflict; got:\n{stderr}"

@@ -1,5 +1,5 @@
 //! E2E acceptance tests for `rwv abort`'s two hardening rails
-//! (design § 5, fo-jsbr3i.4):
+//! (design § 5):
 //!
 //! 1. **Pre-abort reference**: a durable `refs/rwv/pre-abort/<op-id>` ref
 //!    is written at every restored repo's tip BEFORE the restore happens,
@@ -605,7 +605,7 @@ fn pre_abort_refs_persist_after_clean_abort() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-502xyn: legible refusal output
+// Legible refusal output
 // ---------------------------------------------------------------------------
 
 /// When repos are skipped (no savepoint) or untouched, they must NOT produce

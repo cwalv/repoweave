@@ -1,6 +1,6 @@
-//! Integration tests for the `rwv sync` pre-flight dirt scan (fo-oueuv7.1).
+//! Integration tests for the `rwv sync` pre-flight dirt scan.
 //!
-//! Covers the four adversarial scenarios from the bead spec:
+//! Covers four adversarial scenarios:
 //!
 //! 1. Dirty tracked file in the destination CWD manifest repo → eager refusal
 //!    BEFORE any mutation (no op-state, no savepoints, tips untouched).

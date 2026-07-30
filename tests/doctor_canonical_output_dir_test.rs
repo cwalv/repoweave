@@ -1,4 +1,4 @@
-//! Regression tests for fo-3hi8yj: `rwv doctor` bound the integrations'
+//! Regression tests: `rwv doctor` bound the integrations'
 //! `output_dir` to the weave root, where a project's managed and generated
 //! files appear only as surfacing symlinks — and only for the **active**
 //! project. Activation binds it to `projects/<project>/`, where those files

@@ -12,8 +12,8 @@
 //! vacuity guard, which asserts the needle still exists at its owner: there
 //! is no owner left. The guard here is a positive control on the replacement
 //! instead. `observe_root` must appear in both the module that defines it and
-//! the module whose callers this bead converted, so an empty result for the
-//! deleted names is evidence of deletion and not of a scan pointed at an
+//! the module whose callers were converted to call it, so an empty result for
+//! the deleted names is evidence of deletion and not of a scan pointed at an
 //! empty corpus, a renamed file, or a broken filter.
 
 mod common;

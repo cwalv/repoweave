@@ -1015,7 +1015,7 @@ mod go_work {
     // prove the canonicalize-and-skip fix in activate_via_go_tool holds.
 
     #[test]
-    fn fo_l22tpw_pre_existing_symlink_does_not_truncate() {
+    fn pre_existing_symlink_does_not_truncate() {
         let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "go-symlink-project");
 
@@ -1048,15 +1048,15 @@ mod go_work {
 
         assert!(
             !after.is_empty(),
-            "fo-l22tpw: go.work must not be truncated by symlink self-copy; got empty file"
+            "go.work must not be truncated by symlink self-copy; got empty file"
         );
         assert!(
             after.contains("go 1.20"),
-            "fo-l22tpw: go 1.20 must survive; got:\n{after}"
+            "go 1.20 must survive; got:\n{after}"
         );
         assert!(
             after.contains("github/org/module-a"),
-            "fo-l22tpw: module-a must be added to use block; got:\n{after}"
+            "module-a must be added to use block; got:\n{after}"
         );
     }
 }
@@ -1064,7 +1064,7 @@ mod go_work {
 // ===========================================================================
 // Regression test: tempdir sandbox must never pollute primary
 //
-// fo-eli0oa: running `rwv add --new` from a tempdir workspace was observed to
+// Regression: running `rwv add --new` from a tempdir workspace was observed to
 // write files into the real primary workspace (/home/.../foundations/) when the
 // sandbox's workspace resolution escaped the tempdir boundary.  This test
 // asserts that ALL writes from `rwv add` stay inside the tempdir.
@@ -1078,12 +1078,12 @@ mod go_work {
 // ===========================================================================
 
 #[test]
-fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
+fn add_writes_only_inside_tempdir_sandbox() {
     let tmp = common::tempdir().unwrap();
     let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "sandbox-project");
 
     // Use a distinctive repo path that would be easy to spot if it leaked.
-    let repo_path = "github/fo-eli0oa-sentinel/sandbox-leak-test";
+    let repo_path = "github/sandbox-leak-sentinel/sandbox-leak-test";
 
     // The repo dir must NOT exist in the tempdir yet.
     let expected_dest = ws.join(repo_path);
@@ -1102,7 +1102,7 @@ fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
     // The repo dir MUST exist inside the sandbox after rwv add.
     assert!(
         expected_dest.exists(),
-        "fo-eli0oa regression: rwv add must create the repo inside the tempdir sandbox; \
+        "regression: rwv add must create the repo inside the tempdir sandbox; \
          expected {}",
         expected_dest.display()
     );
@@ -1114,7 +1114,7 @@ fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
     let leaked_path = process_cwd.join(repo_path);
     assert!(
         !leaked_path.exists(),
-        "fo-eli0oa regression: rwv add must NOT write outside the tempdir sandbox; \
+        "regression: rwv add must NOT write outside the tempdir sandbox; \
          found {} which is outside the tempdir {}",
         leaked_path.display(),
         tmp.path().display()
@@ -1124,7 +1124,7 @@ fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
     // ancestor of the tempdir (i.e., not at /tmp/github/... or /github/...).
     assert!(
         expected_dest.starts_with(tmp.path()),
-        "fo-eli0oa regression: repo dir must be a descendant of the tempdir root; \
+        "regression: repo dir must be a descendant of the tempdir root; \
          got {} which is not under {}",
         expected_dest.display(),
         tmp.path().display()

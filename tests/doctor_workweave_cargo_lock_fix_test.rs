@@ -1,4 +1,4 @@
-//! Regression tests for fo-m99m77: `rwv doctor --fix` reported the
+//! Regression tests: `rwv doctor --fix` reported the
 //! cargo-workspace `Cargo.lock` as regenerable and then did not regenerate
 //! it, and the create-time and doctor-time reports of that finding named two
 //! different paths.
@@ -334,7 +334,7 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
 /// before `doctor --fix` — cargo finds the workspace through the root
 /// `Cargo.toml` symlink and drops a real lock beside it.
 ///
-/// Pinned because the honest failure is the whole point of the bead: `--fix`
+/// Pinned because the honest failure is the whole point: `--fix`
 /// must not report success when the file it names is still missing.
 #[test]
 fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {

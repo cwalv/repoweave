@@ -1,11 +1,11 @@
 //! E2E tests for `rwv fetch` in-place mode (no SOURCE argument).
 //!
-//! Covers the settled repair verb for dangling references (fo-8cbhpg.3):
+//! Covers the settled repair verb for dangling references:
 //! `rwv fetch` with no SOURCE re-materializes missing manifest members of
 //! the active project, aligning each clone to `rwv.lock` (or branch HEAD
 //! when the lock has no entry).
 //!
-//! Adversarial coverage per the bead's high test bar:
+//! Adversarial coverage:
 //! - missing member re-clone is BORN ATTACHED at the LOCKED SHA — not at
 //!   branch HEAD, and not detached (branch-model.md §5, `fetch` (absent
 //!   clone): R1's birth-target rule)

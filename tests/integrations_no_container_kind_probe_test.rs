@@ -1,4 +1,4 @@
-//! Pins the prohibition this bead exists to enforce: no integration
+//! Pins the prohibition this test enforces: no integration
 //! re-derives the container kind from a path. `IntegrationContext` carries
 //! `container_kind`, resolved once by whichever verb built the context —
 //! an integration testing `workspace_root` for the workweave marker itself

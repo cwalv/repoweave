@@ -1,6 +1,6 @@
 //! Tripwire: `RWV_WORKWEAVE_DIR` must never be read in `src/` again.
 //!
-//! fo-ffq8a1 deleted the last read of this deprecated env var; rwv's
+//! The last read of this deprecated env var is gone; rwv's
 //! env-input inventory is `$HOME` only (docs/env-input-allowlist.txt). This
 //! pins that under plain `cargo test`, rather than relying solely on
 //! `cargo run --bin generate-explain`'s env-input-allowlist check, which a

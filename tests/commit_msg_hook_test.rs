@@ -1,6 +1,6 @@
-//! Pins rwv-fx6z: `.githooks/commit-msg` must strip `Claude-Session:`
-//! trailers from a commit message before it lands, and must not touch any
-//! other line.
+//! Pins the prohibition this test enforces: `.githooks/commit-msg` must strip
+//! `Claude-Session:` trailers from a commit message before it lands, and must
+//! not touch any other line.
 //!
 //! Each test points a fresh repo's `core.hooksPath` at this checkout's
 //! `.githooks` and drives a real `git commit`, so it exercises the hook the

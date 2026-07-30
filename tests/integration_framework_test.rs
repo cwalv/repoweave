@@ -1296,7 +1296,7 @@ mod fo_cnpjy_3 {
             verify_out.is_empty(),
             "verify() default must be empty; check() findings flow through run_checks, \
              not run_verifications. An integration opts into drift detection by overriding \
-             verify() explicitly (epic fo-cnpjy C4–C13 per-port ports)."
+             verify() explicitly (C4–C13 per-port ports)."
         );
         // check() is unaffected — still emits env preconditions.
         let check_out = integration.check(&ctx).unwrap();
@@ -1355,10 +1355,10 @@ mod fo_cnpjy_3 {
     // 4. Owner-scoped symlink removal — preserves symlinks NOT in any
     //    active integration's managed/generated set.
     //
-    // This is the framework-level rwv-c5h shape (the full per-integration
-    // story is C13's). Plants a user-owned symlink at a name no active
-    // integration claims, then re-activates and verifies the symlink
-    // survives.
+    // This is the framework-level don't-reap-what-we-don't-own shape (the
+    // full per-integration story is C13's). Plants a user-owned symlink at a
+    // name no active integration claims, then re-activates and verifies the
+    // symlink survives.
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1400,7 +1400,7 @@ mod fo_cnpjy_3 {
             user_link.symlink_metadata().is_ok(),
             "user-owned symlink (name NOT in any integration's owned set) \
              must be preserved by the owner-scoped removal predicate. \
-             This is the framework-level rwv-c5h fix."
+             This is the framework-level don't-reap-what-we-don't-own fix."
         );
     }
 

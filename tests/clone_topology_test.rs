@@ -4,7 +4,7 @@
 //! `docs/explanation/joints/clone-topology.md`:
 //!
 //! 1. `standalone-in-workweave` — a workweave hosts a full clone of a
-//!    manifest repo (inverted primary, the fo-a0spgj case).
+//!    manifest repo (an inverted primary).
 //! 2. `disconnected-weave-clone` — the canonical slot is a full clone, but
 //!    the workweave checkouts of the same repo use a *different* canonical
 //!    store; the weave-path clone publishes an unread object DAG.
@@ -154,8 +154,8 @@ fn build_primary_with_canonical(parent: &Path) -> (PathBuf, PathBuf) {
 // ===========================================================================
 
 /// A workweave's checkout of the manifest repo is itself a full clone (its
-/// own .git/ directory), not a linked worktree of the canonical store. This
-/// is the fo-a0spgj inversion.
+/// own .git/ directory), not a linked worktree of the canonical store: an
+/// inverted primary.
 #[test]
 fn standalone_in_workweave_is_reported() {
     let tmp = common::tempdir().unwrap();
@@ -362,7 +362,7 @@ fn lone_canonical_with_no_workweaves_is_clean() {
 }
 
 // ===========================================================================
-// Reference-alias carve-out (fo-5mhtf3.2)
+// Reference-alias carve-out
 //
 // A `reference` repo is materialized as a *symlink* to the single canonical
 // weave-root clone, not a worktree. `git rev-parse --git-common-dir` follows
@@ -374,7 +374,7 @@ fn lone_canonical_with_no_workweaves_is_clean() {
 // single-canonical-store invariant by identity rather than violating it.
 //
 // The adversarial requirement: the carve-out must distinguish a symlink-alias
-// (valid) from a *real* standalone store (the genuine fo-a0spgj inversion).
+// (valid) from a *real* standalone store (the genuine inversion case).
 // If the skip is too broad, it blinds the scanner to real corruption.
 // ===========================================================================
 
@@ -424,7 +424,7 @@ fn symlinked_reference_in_workweave_is_clean() {
     );
 }
 
-/// THE CRITICAL ADVERSARIAL TEST: a *real* fo-a0spgj inversion — an actual
+/// THE CRITICAL ADVERSARIAL TEST: a *real* inversion — an actual
 /// standalone clone (a real `.git` directory, NOT a symlink) living inside a
 /// workweave — STILL fires `standalone-in-workweave`, even with a symlinked
 /// reference present in a sibling workweave. The carve-out must distinguish

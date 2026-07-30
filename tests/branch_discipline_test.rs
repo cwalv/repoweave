@@ -1,4 +1,4 @@
-//! Tests for branch-discipline checks (`rwv doctor`, fo-hycb06.2).
+//! Tests for branch-discipline checks (`rwv doctor`).
 //!
 //! Enforces the I3 invariant from `docs/explanation/joints/clone-topology.md`
 //! (every workweave repo checkout sits on its owned
@@ -474,7 +474,7 @@ fn healthy_canonical_on_main_is_clean() {
     );
 }
 
-/// §7.2 arm 1, and the [S] scenario this bead inverts: a canonical sitting on
+/// §7.2 arm 1, and the [S] scenario this test inverts: a canonical sitting on
 /// a **hand-made** `<a>--<b>/<c>` branch is on an operator branch, not on one
 /// of rwv's. Name shape is not ownership (R2), so doctor leaves it alone.
 ///
@@ -1213,7 +1213,7 @@ fn ephemeral_branch_with_existing_workweave_is_clean() {
 }
 
 // ===========================================================================
-// Project-scope isolation (fo-q5pj2e): --fix without --all must NOT delete
+// Project-scope isolation: --fix without --all must NOT delete
 // stale ephemeral branches belonging to OTHER projects.
 // ===========================================================================
 
@@ -1237,7 +1237,7 @@ fn set_active_project(ws: &Path, project_name: &str) {
 /// a safe-class stale ephemeral branch in a repo owned by project-b.  With
 /// `--all`, the deletion must happen normally.
 ///
-/// Regression for fo-q5pj2e: before the fix, branch-discipline --fix walked
+/// Regression: before the fix, branch-discipline --fix walked
 /// the entire weave regardless of scope, deleting branches across projects.
 #[test]
 fn fix_stale_ephemeral_branch_scoped_to_active_project() {
@@ -1423,7 +1423,7 @@ fn json_output_includes_branch_discipline_kind() {
 }
 
 // ===========================================================================
-// Reference-alias carve-out (fo-5mhtf3.2)
+// Reference-alias carve-out
 //
 // A `reference` repo is materialized as a symlink to the canonical clone, so
 // it sits on the canonical's shared non-ephemeral branch (e.g. `main`) by

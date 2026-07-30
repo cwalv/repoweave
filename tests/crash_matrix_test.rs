@@ -1,4 +1,4 @@
-//! Crash-matrix sweep for the phase machine (design § 4–5, 9; fo-jsbr3i.7).
+//! Crash-matrix sweep for the phase machine (design § 4–5, 9).
 //!
 //! ## What this battery proves
 //!
@@ -14,14 +14,14 @@
 //!    plant a post-crash foreign commit, the `foreign-tip` refusal fires
 //!    instead (nonzero exit, tip unchanged, op-state retained).
 //!
-//! Each cell also names the recorded epic decisions it pins. Specifically:
+//! Each cell also names the recorded decisions it pins. Specifically:
 //!   - the per-session re-pin of the source snapshot on `--continue`
 //!     (`continue_after_source_mutation`);
 //!   - named-override consent persistence
 //!     (`override_resume_fidelity_discard_local_commits`);
 //!   - lease-side vs owner-side invariance for sync-to (the
 //!     "owner-rooted engine, invocation-CWD-rooted op-state" rule from
-//!     fo-jsbr3i.2's lease-side --continue case).
+//!     the lease-side --continue case).
 //!
 //! ## Why on-disk synthesis is the accepted approach
 //!
@@ -74,8 +74,8 @@
 //!
 //! Both invocation sides (owner and lease):
 //!   - for sync-to cells, every phase has at least one cell that exercises
-//!     lease-side --continue AND lease-side abort. fo-jsbr3i.2 already
-//!     caught two invocation-side inversion bugs; the matrix locks them
+//!     lease-side --continue AND lease-side abort. Two invocation-side
+//!     inversion bugs were already caught this way; the matrix locks them
 //!     down per phase.
 //!
 //! Override resume fidelity (one cell):
@@ -97,7 +97,7 @@
 //!   is the matrix sweep that makes the shrunk state space provable.
 //! - The destructive-ops tripwire (`destructive_ops_audit_test.rs`) tracks
 //!   `update-ref`, `--hard`, `remove_file` etc. We audit (but do not edit)
-//!   the allowlist for the final epic shape.
+//!   the allowlist for the final shape.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -293,7 +293,7 @@ struct OwnerRecordYaml {
     target: String,
     retire: bool,
     phase: &'static str,
-    /// (repo-path-or-"(project)", sha) entries — replay-phase intent (fo-6rysot).
+    /// (repo-path-or-"(project)", sha) entries — replay-phase intent.
     advanced_tips: Vec<(String, String)>,
     /// (repo-path-or-"(project)", sha) entries.
     converged_tips: Vec<(String, String)>,
@@ -912,7 +912,7 @@ fn cell_e_replay_sync_to_owner_continue() {
 /// Cell `E(replay) / sync-to / lease-side`: identical setup to the
 /// owner-side cell above, but `--continue` is invoked from the lease
 /// workspace (primary). End state must be identical — `load_continuing_context`
-/// re-roots the engine at the owner. (fo-jsbr3i.2 invocation-side rule.)
+/// re-roots the engine at the owner (the invocation-side rule).
 #[test]
 fn cell_e_replay_sync_to_lease_continue() {
     let tmp = common::tempdir().unwrap();
@@ -1021,7 +1021,7 @@ fn cell_e_replay_sync_to_lease_abort() {
     );
 }
 
-/// Regression (fo-xau023): op records hold operator-supplied paths verbatim,
+/// Regression: op records hold operator-supplied paths verbatim,
 /// which may reach a workspace through a symlink (macOS's `/var` →
 /// `/private/var` tempdirs, symlinked weaveroots), while the invocation CWD
 /// resolves canonically. Abort's workspace-identity comparisons must be
@@ -1754,7 +1754,7 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
     );
 }
 
-/// Regression (fo-i8eq4e): `sync-to --retire` leaks live-orphaned pre-op
+/// Regression: `sync-to --retire` leaks live-orphaned pre-op
 /// savepoints. Phase order is `… → retire → cleanup`, so retire deletes the
 /// workweave BEFORE cleanup drops savepoints. The buggy cleanup dropped
 /// savepoints through the now-deleted workweave paths (`ctx.cwd_project_dir`,
@@ -1844,8 +1844,8 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
 }
 
 /// Cell `E(retire) / sync-to / lease-side`: same set-up as above, invoked
-/// from the lease workspace. The recorded epic decision (fo-jsbr3i.2) is
-/// that this MUST be observationally identical.
+/// from the lease workspace. The recorded decision is that this MUST be
+/// observationally identical.
 #[test]
 fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
     let tmp = common::tempdir().unwrap();
@@ -1962,7 +1962,7 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
 }
 
 // ===========================================================================
-// NAMED-OVERRIDE RESUME FIDELITY (one cell, pins fo-jsbr3i.6's decision)
+// NAMED-OVERRIDE RESUME FIDELITY (one cell)
 // ===========================================================================
 
 /// `discard-local-commits` recorded at fresh start, crash mid-replay (record=
@@ -2171,10 +2171,10 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
 }
 
 // ===========================================================================
-// ADVANCEMENT-INTENT JOURNAL CELLS (fo-6rysot.4)
+// ADVANCEMENT-INTENT JOURNAL CELLS
 //
-// Seven (phase × kill-point) cells for the `advanced_tips` journal field
-// introduced by fo-6rysot.2 and verified by fo-6rysot.3. Each cell
+// Seven (phase × kill-point) cells for the `advanced_tips` journal field.
+// Each cell
 // synthesises the exact on-disk state a kill at that point would leave,
 // then asserts real end states (repo tips, marker/op-state presence, exit
 // code) — never implementation echoes.
@@ -2234,7 +2234,7 @@ fn make_primary_ahead_sync(parent: &Path) -> (Workspace, Workspace, String, Stri
 // Abort: every repo is Untouched (HEAD == savepoint). Zero refusals.
 // ---------------------------------------------------------------------------
 
-/// Cell 1 (fo-6rysot §8.1): crash after entry advanced_tips write, before any
+/// Cell 1 (§8.1): crash after entry advanced_tips write, before any
 /// advance. Every repo is at its savepoint; abort classifies all as Untouched.
 /// Zero refusals, success exit.
 #[test]
@@ -2247,7 +2247,7 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
     // ww's server starts at initial_sha; must equal ww_server_pre.
     assert_eq!(ww_server_pre, initial_sha);
 
-    let op_id = "fo-6rysot-cell1-entry-write-no-advances";
+    let op_id = "crash-matrix-cell1-entry-write-no-advances";
     plant_owner_record(
         &ww.root,
         &OwnerRecordYaml {
@@ -2301,7 +2301,7 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
 //        Zero refusals.
 // ---------------------------------------------------------------------------
 
-/// Cell 2 (fo-6rysot §8.2): crash mid-fan-out with server advanced to its
+/// Cell 2 (§8.2): crash mid-fan-out with server advanced to its
 /// advanced_tips target and project still at savepoint. Abort attributes the
 /// server via intent (RestoredFromIntent) and the project as Untouched.
 /// Zero refusals, success exit.
@@ -2327,7 +2327,7 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
         "fixture must advance ww's server to the ff-target"
     );
 
-    let op_id = "fo-6rysot-cell2-mid-fanout";
+    let op_id = "crash-matrix-cell2-mid-fanout";
     plant_owner_record(
         &ww.root,
         &OwnerRecordYaml {
@@ -2380,7 +2380,7 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
 //        Zero refusals.
 // ---------------------------------------------------------------------------
 
-/// Cell 3 (fo-6rysot §8.3): rebase captured — project at fresh T1, write 2
+/// Cell 3 (§8.3): rebase captured — project at fresh T1, write 2
 /// persisted advanced_tips[(project)] = T1. Abort attributes T1 via intent,
 /// restores to savepoint. Zero refusals.
 #[test]
@@ -2421,7 +2421,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
         "phase1prime: rebased onto source",
     );
 
-    let op_id = "fo-6rysot-cell3-rebase-captured";
+    let op_id = "crash-matrix-cell3-rebase-captured";
     plant_owner_record(
         &ww.root,
         &OwnerRecordYaml {
@@ -2471,7 +2471,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 //        retained, pre-abort ref written. Asserts the documented floor (§6).
 // ---------------------------------------------------------------------------
 
-/// Cell 4 (fo-6rysot §8.4): rebase one-write window — project at T1 but
+/// Cell 4 (§8.4): rebase one-write window — project at T1 but
 /// advanced_tips[(project)] absent. T1 is foreign from abort's perspective.
 /// Asserts the documented floor: nonzero exit, op-state retained, pre-abort
 /// ref present, tip unchanged.
@@ -2490,7 +2490,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
         "phase1prime: rebased (one-write-window crash)",
     );
 
-    let op_id = "fo-6rysot-cell4-one-write-window";
+    let op_id = "crash-matrix-cell4-one-write-window";
     plant_owner_record(
         &ww.root,
         &OwnerRecordYaml {
@@ -2559,7 +2559,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
 //        Zero refusals.
 // ---------------------------------------------------------------------------
 
-/// Cell 5 (fo-6rysot §8.5): crash after relock with advanced_tips cleared and
+/// Cell 5 (§8.5): crash after relock with advanced_tips cleared and
 /// converged_tips populated. Project at T2. Abort attributes T2 via
 /// converged_tips (existing behaviour, no regression).
 #[test]
@@ -2579,7 +2579,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
         "lock: relock post-rebase",
     );
 
-    let op_id = "fo-6rysot-cell5-after-relock";
+    let op_id = "crash-matrix-cell5-after-relock";
     plant_owner_record(
         &ww.root,
         &OwnerRecordYaml {
@@ -2637,7 +2637,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 // Exactly the foreign repo refuses; project restores.
 // ---------------------------------------------------------------------------
 
-/// Cell 6 (fo-6rysot §8.6): mixed — server carries a post-crash operator commit
+/// Cell 6 (§8.6): mixed — server carries a post-crash operator commit
 /// (foreign); project advanced to its advanced_tips target. Exactly the server
 /// refuses; project auto-restores. Regression test for the 2026-06-10 incident.
 #[test]
@@ -2675,7 +2675,7 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
         "foreign: operator commit post-crash",
     );
 
-    let op_id = "fo-6rysot-cell6-mixed";
+    let op_id = "crash-matrix-cell6-mixed";
     plant_owner_record(
         &ww.root,
         &OwnerRecordYaml {
@@ -2746,13 +2746,13 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
 // ---------------------------------------------------------------------------
 // Cell 7: degradation — owner record with no advanced_tips key.
 //
-// Synthesises a record written by a pre-fo-6rysot binary: the YAML has no
+// Synthesises a record written by a pre-field binary: the YAML has no
 // `advanced_tips` field at all (serde(default) → empty map). Abort must
 // behave exactly as before the field existed: repos at savepoint are Untouched,
 // converged-tip repos are RestoredFromConverged, foreign tips still refuse.
 // ---------------------------------------------------------------------------
 
-/// Cell 7 (fo-6rysot §8.7): degradation — record with no `advanced_tips` key
+/// Cell 7 (§8.7): degradation — record with no `advanced_tips` key
 /// (pre-field record). Abort must parse the empty-map default and behave
 /// identically to pre-change behaviour. Repos at savepoint are Untouched.
 #[test]
@@ -2764,7 +2764,7 @@ fn cell_advanced_tips_degradation_no_field_abort_behaves_as_pre_change() {
     let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
     assert_eq!(ww_server_pre, sha);
 
-    let op_id = "fo-6rysot-cell7-degradation";
+    let op_id = "crash-matrix-cell7-degradation";
 
     // Write the owner record WITHOUT the advanced_tips key — exactly as a
     // pre-field binary would have written it. The serde(default) attribute

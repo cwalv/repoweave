@@ -779,7 +779,7 @@ fn lock_does_not_run_integration_hooks() {
 #[test]
 fn lock_all_is_removed_cli_error() {
     // `rwv lock-all` should be rejected: `unknown verb` (external-subcommand
-    // dispatch, fo-681vre.1, when no `rwv-lock-all` binary is on PATH) or
+    // dispatch, when no `rwv-lock-all` binary is on PATH) or
     // one of the historical clap wordings. The PATH is pinned to an empty
     // dir so a stray plugin installed on the test host cannot hide the
     // regression.
@@ -1484,7 +1484,6 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
 
 // ---------------------------------------------------------------------------
 // Regression: `rwv lock` succeeds over a conflict-markered rwv.lock
-// (fo-yk0rlj bug 2)
 // ---------------------------------------------------------------------------
 //
 // Before the fix, `rwv lock` loaded the project via `Project::from_dir`,
@@ -1570,7 +1569,7 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
 }
 
 // ---------------------------------------------------------------------------
-// 17. Detached HEAD member: lock succeeds with a warning (fo-oueuv7.4)
+// 17. Detached HEAD member: lock succeeds with a warning
 // ---------------------------------------------------------------------------
 
 /// Helper: initialise a git repo, detach HEAD at the tip, and return the SHA.
@@ -1702,7 +1701,7 @@ fn lock_normal_head_no_detached_warning() {
 }
 
 // ---------------------------------------------------------------------------
-// 18. Unborn HEAD member: lock refuses with a clear message (fo-oueuv7.4)
+// 18. Unborn HEAD member: lock refuses with a clear message
 // ---------------------------------------------------------------------------
 
 /// Helper: create an empty git repo with no commits (unborn HEAD).
@@ -1729,7 +1728,7 @@ fn lock_unborn_head_member_refuses_with_clear_message() {
     //   - names the state ("unborn HEAD")
     //   - tells the operator what to do ("make an initial commit")
     //
-    // Before fo-oueuv7.4 the raw git error ("ambiguous argument 'HEAD'")
+    // Before this fix, the raw git error ("ambiguous argument 'HEAD'")
     // leaked to the terminal.
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");

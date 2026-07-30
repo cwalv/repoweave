@@ -457,7 +457,7 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
     // --discard-local-commits bypasses Phase 1 ancestor check so the ff
     // failure surfaces in Phase 2 (where the per-repo outcome is produced)
     // rather than failing fast pre-outcome-generation.
-    // ( Adapted from --force per spec fo-jsbr3i.6.)
+    // (Adapted from --force.)
     let assert = rwv()
         .args([
             "sync",
@@ -509,8 +509,8 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
 /// `sync --discard-local-commits` consents to discarding committed divergence
 /// (recoverable via the pre-op savepoint), not uncommitted work — a dirty
 /// CWD project repo must refuse before any side effects, and the content must
-/// survive. (Adapted from sync_force_refuses_when_cwd_project_dirty per spec
-/// fo-jsbr3i.6 — same end-state assertions, new flag spelling.)
+/// survive. (Adapted from sync_force_refuses_when_cwd_project_dirty —
+/// same end-state assertions, new flag spelling.)
 #[test]
 fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
     let tmp = common::tempdir().unwrap();
@@ -608,7 +608,7 @@ fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
     // stale lock (pointing at a fake SHA) still triggers the lock-freshness
     // precondition.
     //
-    // Why the commit is required (fo-oueuv7.1, verified): an UNCOMMITTED
+    // Why the commit is required (verified): an UNCOMMITTED
     // hand-written fake-SHA lock is GENUINE user dirt by the dirt scan's
     // structural attribution — its blob was never committed anywhere, so it
     // classifies as live working-tree edits, not shared-ref-advance drift —

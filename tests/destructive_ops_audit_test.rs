@@ -175,10 +175,9 @@ const ALLOWLIST: &[Allowed] = &[
         justification: "destroy_local_ref, and nothing else — the two \
             unguarded sites this entry used to cover are gone. \
             create_worktree's force-delete-and-retry (whose \"deletes a STALE \
-            branch\" claim fo-opmmoz.7 measured FALSE) and delete_branch \
-            (which fo-opmmoz.7 and .8 each independently stopped calling, \
-            leaving it with no caller at all) were both DELETED by \
-            fo-opmmoz.10 along with the rest of the old Vcs surface. The \
+            branch\" claim was measured FALSE) and delete_branch \
+            (which independently lost its last caller) were both DELETED \
+            along with the rest of the old Vcs surface. The \
             force-delete of a ref rwv holds no receipt for is now \
             unreachable because the code that could do it does not exist. \
             destroy_local_ref: the branch-model DESTROY \
@@ -203,8 +202,7 @@ const ALLOWLIST: &[Allowed] = &[
             a DIRTY worktree here, so what protects each caller has to be \
             named per caller — the previous blanket \"every caller checks \
             for uncommitted changes and unique commits first\" was measured \
-            false by fo-opmmoz.10 for the rollback callers, which check \
-            neither. \
+            false for the rollback callers, which check neither. \
             (1) delete_workweave (manifest repos, and the project repo): \
             behind the dirty refusal unless --discard-uncommitted and the \
             unmerged refusal unless DiscardUnmergedConsent (see the \
@@ -242,7 +240,7 @@ const ALLOWLIST: &[Allowed] = &[
             push.rs rather than inside the VCS impl (branch-model.md §4.3; \
             Q6 decides what that site passes). Its predecessor \
             push_with_role — which read `current_ref` inside the impl — was \
-            deleted by fo-opmmoz.10, so there is no longer a publish path \
+            deleted, so there is no longer a publish path \
             that force-pushes a ref nobody chose.",
     },
     Allowed {
@@ -250,7 +248,7 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "\"checkout\"",
         count: 4,
         justification: "The bare `checkout()` that used to head this list is \
-            DELETED (fo-opmmoz.10): fetch and update had already moved to \
+            DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
             before writing anything (branch-model.md §5), and with its last \
             caller gone the method went with the rest of the old surface. \
@@ -320,12 +318,11 @@ const ALLOWLIST: &[Allowed] = &[
             shared helper factored from verified_restore_savepoint(); called \
             only from the mid-op, intent, and converged branches — each \
             gated on their respective attributable-tip precondition before \
-            the helper is reached (design § 5; fo-jsbr3i.4, fo-6rysot.3, \
-            fo-wbbqof.9). The unverified restore_savepoint() that used to \
-            sit between these two — a bare `reset --hard` on the public \
-            trait, gated by nothing — was deleted by fo-opmmoz.10, so \
-            verified_restore_savepoint is the only way to reach a \
-            savepoint-driven rewind.",
+            the helper is reached (design § 5). The unverified \
+            restore_savepoint() that used to sit between these two — a bare \
+            `reset --hard` on the public trait, gated by nothing — was \
+            deleted, so verified_restore_savepoint is the only way to reach \
+            a savepoint-driven rewind.",
     },
     Allowed {
         file: "git.rs",
@@ -335,8 +332,8 @@ const ALLOWLIST: &[Allowed] = &[
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
             sync.rs). (3) create_pre_abort_ref(): writes \
             refs/rwv/pre-abort/<op-id> at HEAD before any abort-time \
-            restore; information-preserving rail (design § 5; \
-            fo-jsbr3i.4) — abort is itself undoable via this ref and the \
+            restore; information-preserving rail (design § 5) — abort is \
+            itself undoable via this ref and the \
             ref is never deleted by abort cleanup. None touch user refs.",
     },
     Allowed {
@@ -444,8 +441,8 @@ const ALLOWLIST: &[Allowed] = &[
             BEFORE strip_deactivate (which removes the marker) and calls this \
             only when we owned the file, so an unmarked, hand-authored \
             pyproject.toml keeps its workspace-true sources and is never \
-            emptied or deleted. fo-ekvtxm added that gate — before it the \
-            call was unconditional; the guard is mutation-verified by the \
+            emptied or deleted. Before this gate the call was unconditional; \
+            the guard is mutation-verified by the \
             deactivate_leaves_unmarked_* tests in uv_workspace.rs.",
     },
     Allowed {

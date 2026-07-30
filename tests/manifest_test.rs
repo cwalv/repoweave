@@ -445,8 +445,8 @@ fn cargo_workspace_config_patch_committed_paths_string() {
     assert_eq!(cfg.patch, PatchMode::CommittedPaths);
 }
 
-/// `patch: derived` (the fo-t9x0l1.2 tier — registry-dep match against
-/// the in-weave package-name index) parses to `PatchMode::Derived`.
+/// `patch: derived` (the registry-dep tier — matches against the in-weave
+/// package-name index) parses to `PatchMode::Derived`.
 #[test]
 fn cargo_workspace_config_patch_derived_string() {
     let cfg = parse_cargo_config("patch: derived\n");

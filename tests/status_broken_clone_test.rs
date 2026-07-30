@@ -1,7 +1,7 @@
 //! Integration tests for `rwv status` broken-clone states: `[missing]` and
 //! `[unreachable]`.
 //!
-//! Doc claims anchored here (fo-oueuv7.3):
+//! Doc claims anchored here:
 //!
 //!   - When a member clone directory is absent from disk, `rwv status` emits
 //!     `relation: "missing"` (not `"no_lock"`), both in human-readable and

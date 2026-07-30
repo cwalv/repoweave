@@ -867,7 +867,7 @@ fn sync_to_retire_clean_path_deletes_workweave() {
 /// uncommitted TRACKED changes when `sync-to --retire` runs, the op must refuse
 /// and leave the workweave intact for the operator to fix.
 ///
-/// Since `fo-4rpnkm.1` §1 (source-side cleanliness preflight), the refusal fires
+/// Since the source-side cleanliness preflight (§1), the refusal fires
 /// UP FRONT at op start — before any rebase or op-state write — rather than at
 /// the post-sync retire dirty-check. This defines the "half-rebased op with a
 /// stale lock" state out of existence for the dirty-tree class; the refusal

@@ -1,4 +1,4 @@
-//! Pins the prohibition this bead exists to enforce: `--` is not spelled as
+//! Pins the prohibition this test enforces: `--` is not spelled as
 //! the `<project>--<name>` workweave separator anywhere outside
 //! `workspace.rs`. Everywhere else routes through `weave_dir_name`,
 //! `split_at_weave_separator`, or `parse_weave_dir_name`.

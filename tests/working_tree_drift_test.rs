@@ -646,7 +646,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
 
 /// When the primary clone dir is removed out-of-band the linked worktree in
 /// the workweave must be reported as "canonical clone … absent" (not "live
-/// edits"). This is the core re-attribution scenario from bead fo-8cbhpg.1.
+/// edits"). This is the core re-attribution scenario.
 #[test]
 fn doctor_reports_missing_canonical_not_live_edits() {
     let tmp = common::tempdir().unwrap();

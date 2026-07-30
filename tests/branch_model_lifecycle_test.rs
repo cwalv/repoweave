@@ -149,12 +149,12 @@ fn hand_made_branch_with_unique_commit(repo: &Path, name: &str, file: &str) -> S
 /// will be extended over.
 ///
 /// **What this does NOT yet pin.** `rwv doctor --fix` runs in the middle of
-/// this flow and leaves all three standing — but for its own reason, not this
-/// bead's: `check.rs` still decides ownership by parsing the name, and spares
-/// these only because each carries a commit that is not an ancestor of
-/// primary, which makes them live-class. §4.6(4) says that parser can be
-/// deleted outright once deletion goes through the registry; doing so is the
-/// check.rs cutover (fo-opmmoz.9). Until then a *safe-class* lookalike — same
+/// this flow and leaves all three standing — but for its own reason, not the
+/// one this file is about: `check.rs` still decides ownership by parsing the
+/// name, and spares these only because each carries a commit that is not an
+/// ancestor of primary, which makes them live-class. §4.6(4) says that parser
+/// can be deleted outright once deletion goes through the registry; doing so
+/// is the check.rs cutover. Until then a *safe-class* lookalike — same
 /// shape, no unique commit — is still deleted by `doctor --fix`, and adding
 /// that case here belongs with the change that fixes it.
 #[test]

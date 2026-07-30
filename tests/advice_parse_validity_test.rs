@@ -294,7 +294,7 @@ fn check_parse(cmd: &str) -> ParseVerdict {
     use clap::error::ErrorKind;
     let args: Vec<&str> = cmd.split_whitespace().collect();
     match Cli::try_parse_from(&args) {
-        // External-subcommand fallthrough (fo-681vre.1) makes clap accept any
+        // External-subcommand fallthrough makes clap accept any
         // token as a verb — it lands on `Commands::External`. But an advice
         // string that mentions e.g. `` `rwv frobnicate` `` is still meant as a
         // core-verb suggestion (advice strings are inside rwv's own source and

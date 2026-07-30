@@ -1,10 +1,10 @@
-//! Doc claim (docs/reference/cli.md, post fo-wdrl2r.2): each renamed override
+//! Doc claim (docs/reference/cli.md): each renamed override
 //! flag waives exactly the one precondition it is named for — never a
 //! neighbor.
 //!
 //! `workweave delete --force` used to gate two independent refusals (dirty
 //! worktree, unmerged commits) behind one name that only described the
-//! first. fo-wdrl2r.2 split it into `--discard-uncommitted` and
+//! first. The rename split it into `--discard-uncommitted` and
 //! `--discard-unmerged-commits`. A happy-path test per flag would have
 //! passed even under the old bug, since each scenario only ever constructed
 //! the one precondition its flag was meant to waive. The tests below
@@ -309,7 +309,7 @@ fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
 }
 
 /// Both flags together clear both preconditions — the `git branch -D`
-/// contract fo-wdrl2r.2's doc update describes.
+/// contract the doc update describes.
 #[test]
 fn workweave_delete_both_discard_flags_clear_both_preconditions() {
     let tmp = common::tempdir().unwrap();

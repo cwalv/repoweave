@@ -1,4 +1,4 @@
-//! Adversarial coverage for `fo-4rpnkm.1` (Design-B Corrections 2 & 3):
+//! Adversarial coverage for Design-B Corrections 2 & 3:
 //! source-side cleanliness preflight, benign-staleness classification (reusing
 //! `status::LockRelation`), op-start auto-relock with commit-count output, and
 //! tips-as-truth pulls from a workweave source.

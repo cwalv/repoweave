@@ -666,8 +666,8 @@ integrations:\n  gita:\n    enabled: true\n",
 
     // Plant a user-owned symlink at `gita/extras.txt` pointing into the
     // project — `extras.txt` is NOT in any integration's owned set.
-    // Under the new owner-scoped predicate this MUST be preserved
-    // (rwv-c5h shape: don't reap what we don't own).
+    // Under the owner-scoped predicate this MUST be preserved: don't reap
+    // what we don't own.
     let user_relative_target = std::path::PathBuf::from("../projects/web-app/gita/extras.txt");
     let user_nested_link = ws.join("gita/extras.txt");
     symlink(&user_relative_target, &user_nested_link).unwrap();

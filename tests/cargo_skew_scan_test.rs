@@ -1,5 +1,4 @@
-//! Version-skew observatory + same-key patch shadowing scanner tests
-//! (fo-t9x0l1.1).
+//! Version-skew observatory + same-key patch shadowing scanner tests.
 //!
 //! Two read-only scans in `cargo_workspace.rs` feed `rwv doctor`:
 //!
@@ -733,8 +732,8 @@ fn scan_cargo_ecosystem_silent_when_no_cargo_members() {
 #[test]
 fn scan_members_auto_enumerates_nested_workspace_sub_crates_grok_build_shape() {
     // The activation-time `partition` hard-errors on a repo that declares
-    // its own [workspace]. The scan-time `scan_members` must not — and now
-    // (fo-8cbhpg.2) it auto-enumerates the nested workspace's own
+    // its own [workspace]. The scan-time `scan_members` must not — instead
+    // it auto-enumerates the nested workspace's own
     // [workspace].members globs so sub-crates surface in the version-skew
     // scan without any per-repo operator config.
     //
@@ -886,7 +885,7 @@ fn patch_shadowing_dedupes_repeated_findings_across_members() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-8cbhpg.2: auto-enumeration of nested workspace sub-crates
+// Auto-enumeration of nested workspace sub-crates
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1185,7 +1184,7 @@ fn scan_members_non_workspace_repos_unaffected() {
 
 #[test]
 fn nested_workspace_reference_repo_becomes_derived_patch_source() {
-    // fo-8cbhpg.2 scope addition: a reference-role repo that hosts only
+    // Scope addition: a reference-role repo that hosts only
     // sub-package crates (no root [package].name) must contribute its
     // sub-crates to the derived-patch index so member repos get patched
     // to the in-weave fork.

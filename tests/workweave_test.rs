@@ -246,7 +246,7 @@ fn workweave_create_mirrors_primary_layout() {
 }
 
 // ============================================================================
-// Workweave create -- project repo worktree (new in rwv-2h1)
+// Workweave create -- project repo worktree
 // ============================================================================
 
 #[test]
@@ -339,7 +339,7 @@ fn delete_workweave_removes_project_worktree() {
 }
 
 // ============================================================================
-// Workweave create -- artifact processing (new in rwv-2h1)
+// Workweave create -- artifact processing
 // ============================================================================
 
 #[test]
@@ -1163,7 +1163,7 @@ fn delete_nonexistent_workweave_errors_gracefully() {
 }
 
 // ============================================================================
-// Ephemeral branch cleanup (rwv-9mp)
+// Ephemeral branch cleanup
 // ============================================================================
 
 /// Helper: list every local branch name in a git repo.
@@ -2502,7 +2502,7 @@ fn workweave_delete_clean_succeeds_without_waivers() {
 }
 
 // ============================================================================
-// rwv-c7h: workweave create reads working-tree rwv.yaml (uncommitted edits)
+// Workweave create reads working-tree rwv.yaml (uncommitted edits)
 // ============================================================================
 
 #[test]
@@ -3054,7 +3054,6 @@ fn create_workweave_succeeds_when_all_repos_have_commits() {
 
 // ===========================================================================
 // R25 rollback: failed create leaves canonical repos exactly as before
-// (fo-e56ly6.3)
 // ===========================================================================
 
 /// Plant a failing `post-checkout` hook in `repo`.
@@ -3309,7 +3308,7 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
 
 // ===========================================================================
 // R25: workweave create failure caused by a git hook names the hook
-// (fo-oueuv7.2 repair-verb audit)
+// (repair-verb audit)
 // ===========================================================================
 
 /// When `git worktree add` fails because a git repository hook (e.g.

@@ -1,4 +1,4 @@
-//! E2E coverage for fo-4rpnkm.3 — rwv topology + parent exposure.
+//! E2E coverage for rwv topology + parent exposure.
 //!
 //! Exercises the Correction-5 + parent-exposure surface:
 //!   1. retire/delete ADOPT living children (0/1/N children; grandparent vs
@@ -223,7 +223,7 @@ fn delete_with_zero_children_adopts_nothing() {
     assert!(!ww.root.exists(), "workweave dir should be gone");
 }
 
-/// Cross-verb mutex (fo-4rpnkm.2, Correction 1 COVERAGE): `workweave delete`
+/// Cross-verb mutex (Correction 1 COVERAGE): `workweave delete`
 /// refuses while an op involves the target workweave, naming the in-flight op.
 /// The workweave must NOT be destroyed — `rwv abort` (not delete) clears a
 /// stale record.

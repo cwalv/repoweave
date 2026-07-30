@@ -120,7 +120,7 @@ fn doctor_large_workspace_completes_under_budget() {
     // that — the test exists primarily as a regression gate against
     // future O(n²) blow-ups in the scan loop (the original regression
     // was >30s at 81×13), not as a tight benchmark. 8s flaked on shared
-    // macOS CI runners (fo-f78ts4), hence the generous ceiling.
+    // macOS CI runners, hence the generous ceiling.
     let budget = std::time::Duration::from_secs(30);
 
     let tmp = common::tempdir().unwrap();

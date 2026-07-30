@@ -1,5 +1,5 @@
 //! E2E tests for the framework-level **Axis-1 surfacing** check wired into
-//! `rwv doctor` and its `--fix` re-surfacing primitive (fo-huwqqc).
+//! `rwv doctor` and its `--fix` re-surfacing primitive.
 //!
 //! The surfacing check is a SECOND CONSUMER of the same
 //! `generated_files() ∪ managed_files()` union that drives symlink CREATION:
@@ -10,7 +10,7 @@
 //! these tests pin that doctor now flags it, and that `--fix` re-surfaces via
 //! the step-2 primitive (`surface_symlinks`) rather than re-running
 //! `activate_intent` (which would be a project re-selection — illegal in a
-//! workweave per fo-9fnae).
+//! workweave).
 
 mod common;
 

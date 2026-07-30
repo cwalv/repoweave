@@ -9,7 +9,7 @@
 //! - Drift safety: re-running the generator over the committed tree
 //!   produces no changes (templates + Rust types are in sync).
 //! - {{MSG:auto_relock}} resolves in the assembled sync-to doc and matches the
-//!   string `repoweave::sync::auto_relock_commit_message` emits (fo-m26yws).
+//!   string `repoweave::sync::auto_relock_commit_message` emits.
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
@@ -130,7 +130,7 @@ fn explain_self_referential_entry() {
 
 #[test]
 fn explain_unknown_verb_exits_nonzero_with_friendly_pointer() {
-    // With external-subcommand fallthrough (fo-681vre.1), `rwv explain <foo>`
+    // With external-subcommand fallthrough, `rwv explain <foo>`
     // for a non-core `foo` that is NOT a close typo of a core verb redirects
     // the operator to `rwv foo --help`. explain deliberately never execs PATH
     // content — plugins own their own `--help`.
@@ -167,8 +167,8 @@ fn explain_close_typo_suggests_sync_to() {
 #[test]
 fn explain_far_typo_no_spurious_suggestion() {
     // "frobnicate" is unrelated to any known verb — the "did you mean" hint
-    // must not fire spuriously. With external-subcommand fallthrough
-    // (fo-681vre.1) the message redirects to the plugin's own `--help` for
+    // must not fire spuriously. With external-subcommand fallthrough,
+    // the message redirects to the plugin's own `--help` for
     // any non-close input; the "did you mean" absence guarantee stays.
     rwv()
         .args(["explain", "frobnicate"])
@@ -265,7 +265,7 @@ fn generator_produces_no_drift_against_committed_artifacts() {
 /// 1. The assembled `sync-to.md` must contain the exact string that
 ///    `repoweave::sync::auto_relock_commit_message` emits (with the `<source>`
 ///    sentinel the generator uses).  This proves the doc and the code share one
-///    origin and will never silently diverge again (fo-m26yws).
+///    origin and will never silently diverge again.
 ///
 /// 2. No raw `{{MSG:…}}` placeholder must survive in any assembled explain doc
 ///    (the generator resolves all of them or aborts with an error, but this

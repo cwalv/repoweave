@@ -409,7 +409,7 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
 
     // Run sync-to; expect failure due to conflict in step 1.
     // --allow-stale-lock replaces the removed --force for bypassing
-    // the lock-freshness precondition (adapted per spec fo-jsbr3i.6).
+    // the lock-freshness precondition.
     let assert = rwv()
         .args([
             "sync-to",
@@ -1150,7 +1150,7 @@ fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
 // Nested workweaves: a workweave created from a workweave lands its work in
 // the PARENT workweave, not primary. The delete/retire merged-check must
 // accept parent-contained work — checking primary alone would refuse every
-// child retire until the whole epic ships.
+// child retire until the parent's own work also reaches primary.
 // ---------------------------------------------------------------------------
 
 /// Primary (manifest+lock committed) plus a parent workweave forked from it

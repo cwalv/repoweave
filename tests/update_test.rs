@@ -391,7 +391,7 @@ fn update_union_role_and_repo_selectors() {
 }
 
 // ============================================================================
-// Missing clone: honest repair advice (fo-oueuv7.2 repair-verb audit)
+// Missing clone: honest repair advice (repair-verb audit)
 // ============================================================================
 
 /// A manifest entry whose clone is absent on disk must produce an error that

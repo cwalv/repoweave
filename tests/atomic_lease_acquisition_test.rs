@@ -1,6 +1,6 @@
-//! Atomic-acquisition regression tests for `sync` / `sync-to` (fo-u57y0b).
+//! Atomic-acquisition regression tests for `sync` / `sync-to`.
 //!
-//! The guard→mark TOCTOU that this bead closes:
+//! The guard→mark TOCTOU closed here:
 //!
 //! * previously, `check_no_op_in_progress` was a read; two concurrent invocations
 //!   both passed it and only collided later at the git layer (R7 root cause).

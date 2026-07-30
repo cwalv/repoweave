@@ -1,4 +1,4 @@
-//! External-subcommand dispatch (fo-681vre.1).
+//! External-subcommand dispatch.
 //!
 //! Covers the AC:
 //!   - Builtin shadowing: a PATH `rwv-status` is never dispatched.

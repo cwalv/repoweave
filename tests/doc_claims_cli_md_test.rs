@@ -14,7 +14,7 @@
 //!
 //! The gate is intentionally one-directional for cli.md: cli.md may *omit*
 //! flags (e.g. internal/hidden flags), but must not *invent* flags that do not
-//! exist in clap. This catches the fo-0tr5vl root cause: a removed flag
+//! exist in clap. This catches the root cause it was built for: a removed flag
 //! (`--force` on sync/sync-to) remained in cli.md through a green CI.
 //!
 //! # Omission is allowed; a wrong value is not

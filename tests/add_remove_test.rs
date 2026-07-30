@@ -1218,13 +1218,12 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
 }
 
 // ============================================================================
-// fo-hycb06.7 — clone placement: git-common-dir + ephemeral branch
+// Clone placement: git-common-dir + ephemeral branch
 //
-// These tests are the acceptance criteria for the fo-a0spgj regression
-// scenario: canonical clone lives under the primary weave (not under
-// .workweaves/), the workweave's copy is a linked worktree whose
-// git-common-dir resolves back to the canonical clone, and the worktree
-// is on the expected ephemeral branch `{project}--{weave}/{branch}`.
+// These tests cover the regression scenario: canonical clone lives under the
+// primary weave (not under .workweaves/), the workweave's copy is a linked
+// worktree whose git-common-dir resolves back to the canonical clone, and
+// the worktree is on the expected ephemeral branch `{project}--{weave}/{branch}`.
 //
 // Covered arms:
 //   URL arm:        `rwv add <file://…>` from a workweave
@@ -1280,7 +1279,7 @@ fn current_branch(repo: &std::path::Path) -> Option<String> {
 
 #[test]
 fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
-    // Acceptance criterion (fo-hycb06.7):
+    // Acceptance criterion:
     // After `rwv add <url>` from a workweave:
     //   1. The canonical clone lives under primary (not .workweaves/).
     //   2. The workweave's copy has git-common-dir pointing into the
@@ -1384,7 +1383,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
 #[test]
 fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
-    // Acceptance criterion (fo-hycb06.7), local-path arm:
+    // Acceptance criterion, local-path arm:
     // `rwv add <github/owner/repo>` (path to an existing clone under primary)
     // from a workweave must produce the same placement guarantee as the URL
     // arm — canonical clone stays in primary, workweave gets a linked
@@ -1480,7 +1479,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
 // ============================================================================
 // R29 — shared-clone warning: warn when a second project registers an
-// already-cloned repo path (audit scenario from bead fo-oueuv7.5).
+// already-cloned repo path.
 //
 // The warning must:
 //   1. Fire when a second project adds a repo_path that is already registered

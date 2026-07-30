@@ -20,8 +20,8 @@
 //!
 //! **Why `#[ignore]` rather than letting tests fail?** The spec offered both;
 //! we picked `#[ignore]` because (a) the port work items land incrementally over
-//! Phase 3 and a permanently-red suite would block other work items in the epic
-//! from confirming their own greens, and (b) `cargo test -- --ignored`
+//! Phase 3 and a permanently-red suite would block other port work from
+//! confirming its own greens, and (b) `cargo test -- --ignored`
 //! enumerates every RED test in one run, which is the visibility the spec
 //! wants for port authors. The `#[ignore]` annotation always names the spec
 //! that will flip it.
@@ -88,7 +88,7 @@ fn make_ctx<'a>(
 }
 
 /// Build an IntegrationContext with an attached workweave config. Used by
-/// static-files collision tests (rwv-c5h regression).
+/// the static-files / workweave.link collision tests.
 fn make_ctx_with_workweave<'a>(
     root: &'a Path,
     project: &'a ProjectName,
@@ -3387,7 +3387,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     }
 
     // -----------------------------------------------------------------------
-    // fo-t9x0l1.2 — PatchMode::Derived (registry-dep tier)
+    // PatchMode::Derived (registry-dep tier)
     //
     // Design ref: Finding 1 of
     // projects/foundations/docs/repoweave/grok-build-export-findings.md
@@ -4021,7 +4021,7 @@ acme-lib = { path = "github/acme/lib" }
     }
 
     // -----------------------------------------------------------------------
-    // fo-t9x0l1.3 — PatchSurface::CargoConfig (nesting-immune lens)
+    // PatchSurface::CargoConfig (nesting-immune lens)
     //
     // Design ref: Finding 2 of
     // projects/foundations/docs/repoweave/grok-build-export-findings.md
@@ -4029,7 +4029,7 @@ acme-lib = { path = "github/acme/lib" }
     // P3/P7 relative-path resolution, P4 upward discovery through nested
     // workspaces, P5b shadowing).
     //
-    // The bead's WHOLE POINT is the nested-workspace case: cargo hard-errors
+    // The whole point here is the nested-workspace case: cargo hard-errors
     // when it discovers a nested `[workspace]` inside another workspace
     // member, so those repos must opt out of the weave workspace — and once
     // they do, the workspace-manifest `[patch]` NEVER reaches their builds.
@@ -4714,7 +4714,7 @@ mod s7_cargo_doctor {
     /// Filter verify() output to hybrid-Cargo.toml findings only.
     ///
     /// The pre-§7.6 tests in this module were written when `verify()` only
-    /// inspected the hybrid `Cargo.toml`. §7.6 (fo-t9x0l1.4 / R34) extended
+    /// inspected the hybrid `Cargo.toml`. §7.6 (R34) extended
     /// `verify()` to also inspect the fully-owned `Cargo.lock`. To keep those
     /// pre-existing tests focused on their original semantic axis
     /// (Cargo.toml states) without seeding an unrelated Cargo.lock in each
@@ -5248,7 +5248,7 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.6 Fully-owned Cargo.lock verify (fo-t9x0l1.4 / R34)
+    // §7.6 Fully-owned Cargo.lock verify (R34)
     //
     // The three-state verify() shape (MISSING / DRIFT / USER-HELD) was
     // originally hybrid-only; USER-HELD requires an owned-key + marker pair
@@ -5417,7 +5417,7 @@ mod s7_cargo_doctor {
     /// Regression: fully-owned Cargo.lock MUST NOT be reported as USER-HELD
     /// even in the pathological case where a file is present without markers.
     /// USER-HELD is a hybrid-marker concept and does not apply to fully-owned
-    /// files (TL guidance: "never USER-HELD").
+    /// files.
     #[test]
     fn s7_6_cargo_lock_never_reports_user_held() {
         let (tmp, project, manifest, config, cache) = s7_6_fixture();
@@ -7688,7 +7688,7 @@ mod activate_hooks {
         );
     }
 
-    /// R13 (fo-oueuv7.2): when `cargo generate-lockfile` fails, the error
+    /// R13: when `cargo generate-lockfile` fails, the error
     /// must hint at `integrations.cargo-workspace.exclude` and `members`
     /// config as the resolution paths for duplicate crate names.
     ///
@@ -8154,9 +8154,9 @@ mod static_files {
         );
     }
 
-    // ----- rwv-c5h: collision with workweave.link -----------
+    // ----- collision with workweave.link -----------
 
-    /// rwv-c5h regression: when the same name is declared in both
+    /// Regression: when the same name is declared in both
     /// `static-files.files` and `workweave.link`, `activate()` MUST bail with a
     /// hard error rather than silently letting the framework's predicate
     /// tiebreak. The error message must name both integrations so the operator
@@ -8190,7 +8190,7 @@ mod static_files {
         );
     }
 
-    /// rwv-c5h regression: `check()` MUST surface the collision as
+    /// Regression: `check()` MUST surface the collision as
     /// `Severity::Error` so `rwv doctor` fails loudly pre-activate (the
     /// signal that motivates the framework predicate).
     #[test]
@@ -8347,7 +8347,7 @@ mod static_files {
     // §6 static-files — RED scenarios
     // -----------------------------------------------------------------------
     //
-    // §6.static-files.1 (rwv-c5h reproduction) is already covered above by
+    // §6.static-files.1 is already covered above by
     // `activate_fails_when_name_collides_with_workweave_link` /
     // `check_emits_error_for_workweave_link_collision` (the C13 hard-error
     // path). This realizes the remaining plan scenarios:
@@ -8380,7 +8380,7 @@ mod static_files {
     #[cfg(unix)]
     #[test]
     #[ignore = "RED: owner-scoped symlink removal is framework-level; \
-                turned green by fo-cnpjy.3 + fo-cnpjy.13 via e2e flow. \
+                turned green by C3 + C13 via e2e flow. \
                 The Integration::deactivate trait method cannot express this \
                 — it tests the framework's symlink-reaping predicate, which \
                 is the C3/C13 fix."]
@@ -8408,7 +8408,7 @@ mod static_files {
         // scenario is "extended if needed" — extension lands when the
         // framework-call seam exists.
         panic!(
-            "placeholder — fold into e2e under fo-cnpjy.3 + fo-cnpjy.13; \
+            "placeholder — fold into e2e under C3 + C13; \
              see plan §8 e2e plan"
         );
     }

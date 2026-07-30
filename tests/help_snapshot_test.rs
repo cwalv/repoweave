@@ -2,8 +2,8 @@
 //!
 //! Pins the exact stdout from `rwv --help` so that accidental reordering,
 //! addition, or removal of subcommands is caught by CI.  The expected string
-//! was captured from the compiled binary after the fo-wbbqof.6 refactor
-//! (flattened Commands enum, declaration-order grouping, no labeled sections).
+//! was captured from the compiled binary after the Commands enum was
+//! flattened (declaration-order grouping, no labeled sections).
 //!
 //! The "External commands" section appears in `--help` only when `rwv-*`
 //! executables are found on PATH. This test pins the PATH to an empty

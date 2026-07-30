@@ -36,8 +36,8 @@ fn rwv() -> Command {
 ///
 /// Both are needed because the two paths reach a below-members pin by different
 /// code: the fallback defers to `merge_activate`'s DefaultOnly rule, while the
-/// tool path has to actively undo the raise `go work use` performs. Until
-/// fo-2r5yxh that undo did not exist and the tool path could not hold a pin at
+/// tool path has to actively undo the raise `go work use` performs. Before
+/// that undo existed the tool path could not hold a pin at
 /// all, which is why this helper was the *only* way to exercise the arm.
 /// `doctor` authors nothing and needs no such pinning.
 fn rwv_without_go() -> Command {
@@ -509,8 +509,8 @@ fn update_reports_breach_it_newly_created() {
 ///
 /// `update` regenerates `go.work` through `activate()`, and with `go` on PATH
 /// that runs `go work use`, which raises the go directive to the members'
-/// strongest requirement. rwv restores the operator's pin afterwards
-/// (fo-2r5yxh); if it stopped doing so, the breach would be silently *repaired*
+/// strongest requirement. rwv restores the operator's pin afterwards;
+/// if it stopped doing so, the breach would be silently *repaired*
 /// into a raise and there would be nothing left to report — so this test fails
 /// on the finding, not just on the pin.
 ///

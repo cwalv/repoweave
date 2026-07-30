@@ -6,7 +6,7 @@
 //! from there. Relative path arguments elsewhere on the command line resolve
 //! against this directory.
 //!
-//! These tests cover the AC items from the bead description:
+//! These tests cover:
 //!   - Address a workweave from /tmp via -C
 //!   - `init -C <dir>` bootstraps there
 //!   - Relative-arg resolution (origin is used as base for resolution)
@@ -316,9 +316,9 @@ fn c_flag_workweave_name_shape_gets_corrective_error() {
 
 /// Same check for a more complex name with numeric suffix.
 #[test]
-fn c_flag_workweave_name_with_bead_id_gets_corrective_error() {
+fn c_flag_workweave_name_with_numeric_suffix_gets_corrective_error() {
     rwv()
-        .args(["-C", "foundations--fo-11iipc", "resolve"])
+        .args(["-C", "foundations--patch2", "resolve"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("-w/--workweave"));

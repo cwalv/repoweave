@@ -1,8 +1,8 @@
 //! Per-phase idempotent re-entry tests for the sync phase machine.
 //!
-//! Acceptance criteria for spec fo-jsbr3i.2: phase functions are individually
+//! Acceptance criteria: phase functions are individually
 //! exercised for idempotent re-entry. The full (phase × kill-point) crash
-//! matrix is sibling fo-jsbr3i.7's scope; here we just pin that re-entering
+//! matrix is the crash-matrix sweep's scope; here we just pin that re-entering
 //! each phase from a quiescent state is a no-op-shaped success.
 //!
 //! Mechanism: write an owner record at the target phase (sometimes with
@@ -690,7 +690,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // Retire phase: phase=retire record survives a merged-check failure,
 // --continue retries, abort restores both sides.
 //
-// Acceptance criteria for spec fo-jsbr3i.3:
+// Acceptance criteria:
 //   1. Merged-check failure leaves phase=retire record AND target lease.
 //   2. --continue completes retire after the operator reconciles.
 //   3. Abort from phase=retire restores source (CWD workweave) and target.
@@ -700,7 +700,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 ///
 /// `converged_tips` mirrors what relock records on a real op: a phase=retire
 /// record has always been through relock, so abort's HEAD-verified restore
-/// (fo-jsbr3i.4) classifies post-advance-target tips via these entries.
+/// classifies post-advance-target tips via these entries.
 fn write_sync_to_retire_record(
     owner: &Path,
     source: &Path,
@@ -958,7 +958,7 @@ fn retire_abort_restores_source_and_target() {
 
     // Plant phase=retire record + lease. The op is mid-retire. A real
     // phase=retire record has been through relock, which recorded the
-    // converged tips — abort's HEAD-verified restore (fo-jsbr3i.4) needs
+    // converged tips — abort's HEAD-verified restore needs
     // them to classify the post-advance-target tips as attributable.
     write_sync_to_retire_record(
         &ww.root,

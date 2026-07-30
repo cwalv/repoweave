@@ -1,6 +1,6 @@
 //! Tier-0 topology behaviour for `workweave delete`.
 //!
-//! These tests pin the bug-fix from fo-hycb06.6: under the clone-topology
+//! These tests pin the bug-fix: under the clone-topology
 //! joint, `workweave delete` (and the delete step of `sync-to --retire`)
 //! MUST resolve each per-repo worktree's actual canonical store on disk
 //! rather than assuming `<ws_root>/<repo_path>` is the parent. When the
@@ -241,7 +241,7 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
 
 /// When a workweave checkout is itself a canonical store that OTHER
 /// worktrees link into (the catastrophic case the joint flags as
-/// fo-a0spgj hazard 2), delete must refuse with a named precondition
+/// hazard 2), delete must refuse with a named precondition
 /// pointing at `rwv doctor`. The refusal is NOT bypassable with the discard
 /// waivers.
 #[test]

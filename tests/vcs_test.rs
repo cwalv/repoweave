@@ -968,7 +968,7 @@ fn has_replay_exclusion_true_when_line_present() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-yk0rlj rename: legacy `merge=ours` migration
+// Legacy `merge=ours` migration
 // ---------------------------------------------------------------------------
 
 /// `has_replay_exclusion` must NOT accept the legacy `merge=ours` line.
@@ -1531,9 +1531,9 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
     // Sanity: the durable merge-driver config MUST be unset, so the test
-    // proves `rebase_continue` re-supplies the flag inline (the whole point
-    // of the bead — the resume rung must not silently depend on the plant
-    // any more than the initial `Vcs::rebase` does).
+    // proves `rebase_continue` re-supplies the flag inline: the resume rung
+    // must not silently depend on the plant any more than the initial
+    // `Vcs::rebase` does.
     let pre = common::git()
         .args(["config", "--local", "--get", "merge.rwv-ours.driver"])
         .current_dir(p)

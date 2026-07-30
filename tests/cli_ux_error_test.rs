@@ -1,4 +1,4 @@
-//! CLI error/help UX regressions (rwv-b2z, epic fo-gyt1tq).
+//! CLI error/help UX regressions.
 //!
 //! Two problem classes, fixed uniformly in `src/cli/dispatch.rs` via pre-parse
 //! raw-arg interception (see the rwv CLI UX audit,
@@ -17,13 +17,13 @@ mod common;
 use common::rwv;
 use predicates::prelude::*;
 
-/// `rwv workweave foundations fo-city` must name the problem as a missing
+/// `rwv workweave foundations banana` must name the problem as a missing
 /// subcommand, list the available subcommands, and offer the `create`-shaped
-/// did-you-mean — NOT clap's opaque "unexpected argument 'fo-city'".
+/// did-you-mean — NOT clap's opaque "unexpected argument 'banana'".
 #[test]
 fn workweave_bare_name_is_reframed_as_missing_subcommand() {
     rwv()
-        .args(["workweave", "foundations", "fo-city"])
+        .args(["workweave", "foundations", "banana"])
         .assert()
         .failure()
         .stderr(
@@ -38,7 +38,7 @@ fn workweave_bare_name_is_reframed_as_missing_subcommand() {
                 .and(predicate::str::contains("log"))
                 .and(predicate::str::contains("set-container"))
                 .and(predicate::str::contains("Did you mean"))
-                .and(predicate::str::contains("create fo-city"))
+                .and(predicate::str::contains("create banana"))
                 // The old clap message must be gone.
                 .and(predicate::str::contains("unexpected argument").not()),
         );
@@ -76,12 +76,12 @@ fn workweave_subcommand_typo_defers_to_clap() {
 #[test]
 fn workweave_bare_name_with_help_has_no_footer() {
     rwv()
-        .args(["workweave", "foundations", "fo-city", "--help"])
+        .args(["workweave", "foundations", "banana", "--help"])
         .assert()
         .failure()
         .stderr(
             predicate::str::contains("is not a valid subcommand")
-                .and(predicate::str::contains("create fo-city"))
+                .and(predicate::str::contains("create banana"))
                 .and(predicate::str::contains("try '--help'").not()),
         );
 }
@@ -102,7 +102,7 @@ fn setup_invalid_subcommand_with_help_has_no_footer() {
 }
 
 /// `rwv unknown-verb --help` — top-level unknown verb. With external-
-/// subcommand fallthrough (fo-681vre.1) an unknown verb at the top level
+/// subcommand fallthrough, an unknown verb at the top level
 /// resolves through the plugin path: rwv looks for `rwv-unknown-verb` on
 /// `$PATH`, and when not found emits the rwv-side unknown-verb error.
 /// `--help` is captured as an argument to the (would-be) plugin, so the

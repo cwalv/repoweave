@@ -1,4 +1,4 @@
-//! Foundational tests for reference-repo symlink materialization (fo-5mhtf3.1).
+//! Foundational tests for reference-repo symlink materialization.
 //!
 //! A `role: reference` repo is materialized as a SYMLINK to the canonical
 //! weave-root clone (`<primary_root>/<repo_path>`) instead of cutting a

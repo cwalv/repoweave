@@ -5,7 +5,7 @@
 //! cwd, then look up the workweave path from the project's registry with
 //! `.rwv-workweave` marker round-trip validation.
 //!
-//! These tests cover the acceptance criteria from the bead description:
+//! These tests cover:
 //!   - `-w` from primary cwd
 //!   - `-w` composed with `-C` from /tmp
 //!   - Unknown-name error listing candidates

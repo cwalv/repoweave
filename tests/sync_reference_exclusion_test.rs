@@ -1,4 +1,4 @@
-//! E2E coverage for the sync reference-exclusion (fo-5mhtf3.3).
+//! E2E coverage for the sync reference-exclusion.
 //!
 //! A `role: reference` repo is materialized as a SYMLINK
 //! (`CheckoutKind::ReferenceAlias`) aliasing the single canonical weave-root

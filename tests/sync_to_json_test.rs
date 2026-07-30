@@ -1,6 +1,6 @@
 //! Regression and doc-claim tests for `rwv sync-to --json` observability fields.
 //!
-//! Covers the new fields added in fo-w977z:
+//! Covers the new fields added:
 //! - `source_workweave` — name of the workweave CWD was invoked from (or null).
 //! - `target` — absolute path of the target workspace.
 //! - `retired` — true iff `--retire` was passed AND the workweave was deleted.
@@ -113,7 +113,7 @@ const SERVER_PATH: &str = "github/example/server";
 /// the marker-based resolution path (step 1 in `WorkspaceContext::resolve`).
 /// Without it, `rwv` falls back to the `{primary}--{name}` naming convention
 /// and infers the project name from the left-hand side of the directory name
-/// (e.g. "primary" from `primary--fo-test`), which doesn't match the actual
+/// (e.g. "primary" from `primary--sample-weave`), which doesn't match the actual
 /// project "web-app".
 fn write_workweave_marker(ww_dir: &Path, primary: &Path, project: &str, workweave_name: &str) {
     // The marker format is:
@@ -129,8 +129,8 @@ fn write_workweave_marker(ww_dir: &Path, primary: &Path, project: &str, workweav
 }
 
 /// A workspace layout with a primary weave and one workweave sharing repos via
-/// `git worktree add`. The workweave is named `fo-test` so tests can assert
-/// that `source_workweave` == `"fo-test"`.
+/// `git worktree add`. The workweave is named `sample-weave` so tests can assert
+/// that `source_workweave` == `"sample-weave"`.
 ///
 /// The workweave has advanced by one commit so `sync-to` has real work to do.
 /// Returns `(primary_root, ww_root, primary_server_dir, ww_server_dir,
@@ -164,7 +164,7 @@ fn make_workweave_ahead_fixture(
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     // Workweave: materialise as git worktrees from the primary repos.
-    // Name the directory simply as the workweave name (e.g. "fo-test") so the
+    // Name the directory simply as the workweave name (e.g. "sample-weave") so the
     // marker-based resolution path is unambiguous and doesn't conflict with the
     // legacy `{primary}--{name}` convention (which uses the sibling's dir name
     // as the project, not `.rwv-active`).
@@ -220,8 +220,8 @@ fn make_workweave_ahead_fixture(
 // ===========================================================================
 // Round-trip test: sync-to --retire --json from a workweave
 //
-// Acceptance criteria (spec fo-w977z):
-//   - `source_workweave` matches the workweave name ("fo-test")
+// Acceptance criteria:
+//   - `source_workweave` matches the workweave name ("sample-weave")
 //   - `retired == true`
 //   - per-outcome `step3_advance.to_sha` matches `git rev-parse HEAD` of the
 //     target's manifest repo (primary's server) post-sync
@@ -235,7 +235,7 @@ fn make_workweave_ahead_fixture(
 #[test]
 fn sync_to_retire_json_round_trip() {
     let tmp = common::tempdir().unwrap();
-    let workweave_name = "fo-test";
+    let workweave_name = "sample-weave";
     let (primary, ww, primary_server, _ww_server, _primary_project, _ww_project, advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), workweave_name);
 
@@ -591,7 +591,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
 /// `target_path` derivation block called
 /// `WorkspaceContext::resolve(cwd, None).expect("cwd must be resolvable")` as
 /// its error fallback — which panicked with a backtrace instead of surfacing
-/// the real "no repoweave workspace found" error (fo-wbbqof.2).
+/// the real "no repoweave workspace found" error.
 ///
 /// After the fix the binary must:
 ///   - exit non-zero,

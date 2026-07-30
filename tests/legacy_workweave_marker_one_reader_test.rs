@@ -1,6 +1,6 @@
-//! Pins the prohibition rwv-hdy7s0.12 exists to enforce: `.rwv-workweave` is
+//! Pins the prohibition this test enforces: `.rwv-workweave` is
 //! parsed in exactly one place, `workspace.rs`'s `observe_marker`. Before
-//! this bead, `check.rs`'s `scan_for_legacy_workweave_markers` re-implemented
+//! this, `check.rs`'s `scan_for_legacy_workweave_markers` re-implemented
 //! the same classification by hand — a second lenient reader that a grep for
 //! the `WORKWEAVE_MARKER_FILE` constant could not catch, because it spelled
 //! the filename as the literal `".rwv-workweave"` instead of the constant.
@@ -76,8 +76,8 @@ fn no_module_outside_workspace_parses_the_workweave_marker() {
         "`.rwv-workweave` must be parsed only in src/workspace.rs, through \
          observe_marker (directly, or via legacy_marker_primary, \
          WorkweaveMarker::read, or WorkweaveMarker::migrate_legacy) — a \
-         module that reads and classifies the file itself is the bug \
-         rwv-hdy7s0.12 fixed. parse-shape hits: {parse_hits:#?}, join-shape \
+         module that reads and classifies the file itself is the bug this \
+         test pins the fix for. parse-shape hits: {parse_hits:#?}, join-shape \
          hits: {join_hits:#?}"
     );
 }

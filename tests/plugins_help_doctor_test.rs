@@ -1,5 +1,4 @@
-//! Integration tests for plugin discovery, help section, and doctor inventory
-//! (fo-681vre.3).
+//! Integration tests for plugin discovery, help section, and doctor inventory.
 //!
 //! Covers the AC:
 //!   - `rwv --help` shows an "External commands" section with fixture plugin.
