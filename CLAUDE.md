@@ -68,18 +68,22 @@ surface already uses (`docs/reference/doctor-findings.md` is keyed by the
 `rwv doctor --json` `kind`; a second namespace is a thing to keep in sync,
 not a feature).
 
-Two shapes stay banned everywhere in `src/` and `docs/`, string literals and
-generated surfaces included, because they encode no route a reader can take:
+Two shapes stay banned, string literals and generated surfaces included,
+because they encode no route a reader can take:
 
-- **a tracker ID** — `fo-…`, `#1234`, `PROJ-56`. `check_no_tracker_ids` in
-  `src/bin/generate-explain.rs` enforces it.
+- **a tracker ID** — `fo-…`, `#1234`, `PROJ-56`. Banned everywhere,
+  `tests/` included: `check_no_tracker_ids` in `src/bin/generate-explain.rs`
+  enforces it. A test may name the regression it pins in its own words; the
+  ID itself is not the way to do that — that provenance is what the commit
+  that added the test already carries.
 - **a comment whose entire content is a reference** — `// See
-  docs/explanation/joints/clone-topology.md.`. Delete it and write the
-  sentence it was standing in for. A resolving trailing pointer is fine after
-  the comment has said the thing.
+  docs/explanation/joints/clone-topology.md.`. Banned in `src/` and `docs/`.
+  Delete it and write the sentence it was standing in for. A resolving
+  trailing pointer is fine after the comment has said the thing.
 
-`tests/` is outside these rules. A test may name the regression it pins and
-describe the scenario it reproduces.
+`tests/` is exempt from the bare-reference shape only: `check_doc_citations`
+reads `src/` only, and a test describing the fixture tree it builds in a
+temp directory is not citing a document.
 
 **When letter and spirit disagree, spirit wins and the letter is a bug — file
 it.** A rewrite of the rulebook that leaves a specific clause misfiring is
