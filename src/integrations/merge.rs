@@ -2056,7 +2056,10 @@ impl MemberIncompatibility {
 
 /// File name of the rwv-owned digest state file, written next to the
 /// canonical (symlink-resolved) generated files it records.
-pub const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
+///
+/// `tests/` cannot see this constant — it is a separate, external crate —
+/// and spells the name as the literal `".rwv-owned-digests"` instead.
+const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
 
 /// Outcome of comparing on-disk content against the recorded digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

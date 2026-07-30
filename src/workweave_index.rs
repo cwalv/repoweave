@@ -95,7 +95,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Kept as a constant so the ignore-hygiene layer and doctor's tracked-index
 /// scan can reference the same string.
-pub const INDEX_FILENAME: &str = ".rwv-workweave-index";
+const INDEX_FILENAME: &str = ".rwv-workweave-index";
 
 /// The recorded workweave registry for one `(primary, project)` pair.
 ///

@@ -5608,7 +5608,7 @@ mod s7_cargo_doctor {
     // covered by the e2e battery in e2e_cargo_test.rs.
     // -----------------------------------------------------------------------
 
-    use repoweave::integrations::merge::{stamp_owned_digest, OWNED_DIGESTS_FILE};
+    use repoweave::integrations::merge::stamp_owned_digest;
 
     /// The R34 regression test proper.
     ///
@@ -5752,7 +5752,7 @@ mod s7_cargo_doctor {
 
         // Any valid-TOML content; no .rwv-owned-digests anywhere.
         write_file(root, "Cargo.lock", "version = 3\n");
-        assert!(!root.join(OWNED_DIGESTS_FILE).exists());
+        assert!(!root.join(".rwv-owned-digests").exists());
 
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
         let issues = CargoWorkspace.verify(&ctx).unwrap();
@@ -5791,7 +5791,7 @@ mod s7_cargo_doctor {
         let lock = "version = 3\n";
         write_file(root, "Cargo.lock", lock);
         stamp_owned_digest(&root.join("Cargo.lock"), lock.as_bytes()).unwrap();
-        let digest_before = std::fs::read_to_string(root.join(OWNED_DIGESTS_FILE)).unwrap();
+        let digest_before = std::fs::read_to_string(root.join(".rwv-owned-digests")).unwrap();
 
         let config = IntegrationConfig::default();
         let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
@@ -5809,7 +5809,7 @@ mod s7_cargo_doctor {
         CargoWorkspace.activate(&ctx).unwrap();
 
         // Digest state untouched.
-        let digest_after = std::fs::read_to_string(root.join(OWNED_DIGESTS_FILE)).unwrap();
+        let digest_after = std::fs::read_to_string(root.join(".rwv-owned-digests")).unwrap();
         assert_eq!(
             digest_before, digest_after,
             "fixing an unrelated issue must not touch the digest state"
