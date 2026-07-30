@@ -20,7 +20,7 @@ members = [
 ]
 ```
 
-Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `uv.lock` is committable persistent state, `.venv/` is gitignored tool state.
+Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `.venv/` is gitignored tool state; `uv.lock` is fully rwv-owned, and its commit-vs-gitignore status is the operator's choice — see [Committed files and committability](./index.md#committed-files-and-committability).
 
 ## Install hook
 

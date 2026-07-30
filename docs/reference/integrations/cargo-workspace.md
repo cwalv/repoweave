@@ -53,8 +53,10 @@ resolver = "2"
 
 The file lives in the project directory and is symlinked to the weave
 directory. Committable. Cargo lock (`Cargo.lock`) and build artifacts
-(`target/`) are produced by Cargo — `Cargo.lock` is committable persistent
-state, `target/` is gitignored tool state.
+(`target/`) are produced by Cargo — `target/` is gitignored tool state;
+`Cargo.lock` is fully rwv-owned, and its commit-vs-gitignore status is the
+operator's choice — see [Committed files and
+committability](./index.md#committed-files-and-committability).
 
 ## Three Rust artifacts
 
@@ -63,7 +65,7 @@ A Cargo workspace weave produces three distinct lock/manifest artifacts with sep
 | Artifact | Produced by | Pins | Committable |
 |---|---|---|---|
 | `Cargo.toml` (managed) | `rwv activate` | Workspace shape — which repos are members | Yes |
-| `Cargo.lock` | `cargo generate-lockfile` (install hook) | External crate versions from crates.io | Yes |
+| `Cargo.lock` | `cargo generate-lockfile` (install hook) | External crate versions from crates.io | Operator's choice ([details](./index.md#committed-files-and-committability)) |
 | `rwv.lock` | `rwv lock` | Internal repo revisions (git SHAs) | Yes |
 
 `Cargo.lock` answers "which version of `serde`?"; `rwv.lock` answers "which commit of `github/chatly/protocol`?". They operate at different layers — external ecosystem vs. internal repo graph — and neither subsumes the other.

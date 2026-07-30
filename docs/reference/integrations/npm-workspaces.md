@@ -23,7 +23,7 @@ Generates a `package.json` with a `workspaces` array listing every project repo 
 }
 ```
 
-Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `package-lock.json` is committable persistent state, `node_modules/` is gitignored tool state.
+Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `node_modules/` is gitignored tool state; `package-lock.json` is fully rwv-owned, and its commit-vs-gitignore status is the operator's choice — see [Committed files and committability](./index.md#committed-files-and-committability).
 
 ## Multi-package repos
 
