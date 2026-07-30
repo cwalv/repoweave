@@ -1404,14 +1404,10 @@ fn find_tracker_id(line: &str) -> Option<String> {
 
 /// Collect every file the src/+docs/ textual gates scan: all of `src/`, all
 /// `.md` under `docs/`, plus `docs/env-input-allowlist.txt` (the one
-/// non-`.md` doc file these gates care about). Shared by `check_no_tracker_ids`
-/// and `check_no_consumer_vocabulary` so the two gates never drift apart on
-/// scope.
-///
-/// `tests/` is deliberately not included — its tracker IDs name the
-/// regression each case pins, and its prose is free to describe the
-/// consumer-specific scenario a test reproduces; both are a different
-/// question from what these gates enforce on shipped `src/`+`docs/`.
+/// non-`.md` doc file these gates care about). Feeds `src_rs_files`, the
+/// scope of `check_doc_citations` and `check_doc_symbol_refs` — both stay
+/// `tests/`-exempt, per the citation rule's own carve-out for a test naming
+/// the regression it pins and describing the scenario it reproduces.
 fn src_and_docs_files(root: &Path) -> Vec<PathBuf> {
     let mut files = collect_rs_files(&root.join("src"));
     files.extend(collect_md_files(&root.join("docs"), &[]));
@@ -1419,16 +1415,40 @@ fn src_and_docs_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Scan `src/` and `docs/` for tracker IDs in comments, error strings, and
-/// published prose.
+/// `src_and_docs_files` plus every `.rs` file under `tests/`.
+///
+/// Scope for `check_no_tracker_ids` and `check_no_consumer_vocabulary` only —
+/// the citation and symbol gates stay on the narrower `src_and_docs_files`.
+/// A tracker ID or a consumer word is a dead end for a standalone cloner
+/// wherever it sits, tests included, so unlike the citation carve-out these
+/// two gates do not exempt `tests/`.
+fn src_docs_and_tests_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = src_and_docs_files(root);
+    files.extend(collect_rs_files(&root.join("tests")));
+    files
+}
+
+/// Scan `src/`, `docs/` and `tests/` for tracker IDs in comments, error
+/// strings, and published prose.
 ///
 /// Code is ground truth and architecture docs carry rationale; a tracker ID
-/// in either surface points a reader at something they cannot open, and it
-/// reaches users directly through `rwv explain` (whose pages are `include_str!`'d
-/// from `docs/reference/explain/`) and through `anyhow::bail!` text.
+/// in any of these surfaces points a reader at something they cannot open,
+/// and it reaches users directly through `rwv explain` (whose pages are
+/// `include_str!`'d from `docs/reference/explain/`) and through
+/// `anyhow::bail!` text. `tests/` gets no carve-out: a test comment may name
+/// the regression it pins in its own words, but not by an ID a standalone
+/// cloner cannot look up — that provenance is what the commit that added the
+/// test already carries.
 fn check_no_tracker_ids(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    for path in src_and_docs_files(root) {
+    let files = src_docs_and_tests_files(root);
+    if files.is_empty() {
+        return vec![format!(
+            "tracker-ID check: no source/doc/test files found under {}",
+            root.display()
+        )];
+    }
+    for path in files {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
@@ -2081,11 +2101,14 @@ fn contains_word(haystack: &str, word: &str) -> bool {
     })
 }
 
-/// Scan `src/` and `docs/` for `CONSUMER_VOCABULARY`, at word boundaries.
+/// Scan `src/`, `docs/` and `tests/` for `CONSUMER_VOCABULARY`, at word
+/// boundaries.
 ///
-/// Same file scope and `tests/` exemption as `check_no_tracker_ids` (via
-/// the shared `src_and_docs_files`) — this is the words-not-IDs sibling of
-/// that gate, with one further exception: this file
+/// Same file scope as `check_no_tracker_ids` (via the shared
+/// `src_docs_and_tests_files`) — this is the words-not-IDs sibling of that
+/// gate and, like it, carries no `tests/` exemption: a consumer word is a
+/// dead end for a standalone cloner in a test comment exactly as much as in
+/// `src/`. One further exception: this file
 /// (`src/bin/generate-explain.rs`) is skipped. It defines
 /// `CONSUMER_VOCABULARY` and must spell each word out literally to check
 /// for it, so scanning it here would have the gate flag its own
@@ -2094,8 +2117,15 @@ fn contains_word(haystack: &str, word: &str) -> bool {
 /// gate's docs-only scope.
 fn check_no_consumer_vocabulary(root: &Path) -> Vec<String> {
     let self_path = Path::new("src/bin/generate-explain.rs");
+    let files = src_docs_and_tests_files(root);
+    if files.is_empty() {
+        return vec![format!(
+            "consumer-vocabulary check: no source/doc/test files found under {}",
+            root.display()
+        )];
+    }
     let mut errors = Vec::new();
-    for path in src_and_docs_files(root) {
+    for path in files {
         let rel = path.strip_prefix(root).unwrap_or(&path).to_owned();
         if rel == self_path {
             continue;
@@ -2470,8 +2500,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     // --- tracker-ID gate -------------------------------------------------
-    // No tracker IDs in src/ or docs/. The rule decayed once already after a
-    // manual scrub, so it is enforced here rather than remembered.
+    // No tracker IDs in src/, docs/, or tests/. The rule decayed once
+    // already after a manual scrub, so it is enforced here rather than
+    // remembered.
     let tracker_errors = check_no_tracker_ids(&root);
     if !tracker_errors.is_empty() {
         let msg = tracker_errors.join("\n");
@@ -2524,8 +2555,8 @@ fn main() -> anyhow::Result<()> {
 
     // --- consumer-vocabulary gate ------------------------------------------
     // No consumer-specific words (the words-not-IDs sibling of the
-    // tracker-ID gate above) in src/ or docs/. A standalone cloner has no
-    // referent for them.
+    // tracker-ID gate above) in src/, docs/, or tests/. A standalone cloner
+    // has no referent for them.
     let consumer_vocab_errors = check_no_consumer_vocabulary(&root);
     if !consumer_vocab_errors.is_empty() {
         let msg = consumer_vocab_errors.join("\n");
@@ -3383,6 +3414,88 @@ mod tests {
         assert!(
             errors.is_empty(),
             "TLS/HTML/settle contain the letters `tl` but not the word, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `tests/` carries no exemption from this gate — a hit planted there,
+    /// with no `src/` present at all, must still be reported.
+    #[test]
+    fn consumer_vocabulary_check_reaches_tests_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tests_dir = tmp.path().join("tests");
+        fs::create_dir_all(&tests_dir).unwrap();
+        fs::write(
+            tests_dir.join("some_test.rs"),
+            "//! Pins the epic decision this bead exists to enforce.\n",
+        )
+        .unwrap();
+        let errors = check_no_consumer_vocabulary(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("tests/some_test.rs")
+                    && e.contains("consumer vocabulary `epic`")),
+            "expected an `epic` hit under tests/, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("tests/some_test.rs")
+                    && e.contains("consumer vocabulary `bead`")),
+            "expected a `bead` hit under tests/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A tracker ID in `src/` is reported — the seeded-failure pin this check
+    /// had none of before.
+    ///
+    /// The planted ID is assembled from two literals rather than written as
+    /// one: this file is itself scanned by `check_no_tracker_ids` (it carries
+    /// no self-file exemption, unlike `check_no_consumer_vocabulary`), and a
+    /// literal tracker ID here would fail the real gate on this repo.
+    #[test]
+    fn tracker_id_check_fails_on_fo_prefixed_id() {
+        let planted_id = format!("{}-{}", "fo", "ab12cd.3");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            format!("// Regression per {planted_id}.\npub fn f() {{}}\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors.iter().any(|e| e.contains(&planted_id)),
+            "expected a tracker-ID hit, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `tests/` carries no exemption from this gate either — a tracker ID
+    /// planted there, with no `src/` present at all, must still be reported.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
+    #[test]
+    fn tracker_id_check_reaches_tests_dir() {
+        let planted_id = format!("{}-{}", "fo", "ab12cd.3");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tests_dir = tmp.path().join("tests");
+        fs::create_dir_all(&tests_dir).unwrap();
+        fs::write(
+            tests_dir.join("some_test.rs"),
+            format!("// Regression per {planted_id}.\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("tests/some_test.rs") && e.contains(&planted_id)),
+            "expected a tracker-ID hit under tests/, got:\n{}",
             errors.join("\n")
         );
     }
