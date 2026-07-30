@@ -1590,7 +1590,7 @@ mod go_work {
         write_file(
             root,
             "github/chatly/server/go.mod",
-            "module github.com/chatly/server\n\ngo 1.22\n",
+            "module github.com/chatly/server\n\ngo 1.21\n",
         );
 
         let manifest = make_manifest(vec![
@@ -8778,16 +8778,21 @@ mod s8_cross_port_default_only {
     ///
     /// No pre-existing go.work.  DefaultOnly seeds the go-line from
     /// `max_go_version` across member go.mod files (a sensible non-literal default).
+    ///
+    /// 1.20 (not this file's usual 1.26): this test goes through activate()
+    /// with `go` on PATH, and 1.21 is the oldest go release with GOTOOLCHAIN
+    /// switching, so a fixture at or below that never makes `go work` reach
+    /// the network for a toolchain download.
     #[test]
     fn s8_go_work_default_only_seeds_on_greenfield() {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
-        // Member go.mod declares go 1.23.
+        // Member go.mod declares go 1.20.
         write_file(
             root,
             "github/acme/server/go.mod",
-            "module github.com/acme/server\n\ngo 1.23\n",
+            "module github.com/acme/server\n\ngo 1.20\n",
         );
 
         // No go.work — greenfield.
@@ -8803,18 +8808,13 @@ mod s8_cross_port_default_only {
 
         let content = std::fs::read_to_string(root.join("go.work")).unwrap();
 
-        // DefaultOnly seeds go version from max_go_version (not a hardcoded literal).
-        // The version may be 1.23 (from go.mod) or higher if `go` is on PATH
-        // and reports a newer toolchain version; in either case it must be ≥ 1.23
-        // and it must be present.
+        // DefaultOnly seeds go version from max_go_version (not a hardcoded
+        // literal): restore_go_directive puts the value rwv computed back after
+        // `go work use`, so the seed is exactly what the go.mod reported, on
+        // both the tool and hand-edit paths.
         assert!(
-            content.contains("go "),
-            "greenfield go.work must have a go-line seeded by DefaultOnly; got:\n{content}"
-        );
-        // The seeded version must not be below what the go.mod reports.
-        assert!(
-            !content.contains("go 1.21"),
-            "greenfield must not seed an arbitrarily low fallback version; got:\n{content}"
+            content.contains("go 1.20"),
+            "greenfield go.work must seed go 1.20 from max_go_version; got:\n{content}"
         );
     }
 
@@ -9832,7 +9832,7 @@ mod s7_go_work_doctor {
         write_file(
             root,
             &format!("{repo}/go.mod"),
-            "module example.com/x\n\ngo 1.22\n",
+            "module example.com/x\n\ngo 1.20\n",
         );
     }
 
@@ -9927,7 +9927,7 @@ mod s7_go_work_doctor {
             root,
             "go.work",
             concat!(
-                "go 1.22\n\n",
+                "go 1.20\n\n",
                 "// managed by repoweave\n",
                 "use (\n",
                 "\t./github/acme/server\n",
@@ -9974,7 +9974,7 @@ mod s7_go_work_doctor {
             root,
             "go.work",
             concat!(
-                "go 1.22\n\n",
+                "go 1.20\n\n",
                 "// managed by repoweave\n",
                 "use (\n",
                 "\t./github/acme/server\n",
@@ -10028,7 +10028,7 @@ mod s7_go_work_doctor {
         write_file(
             root,
             "go.work",
-            "go 1.22\n\nuse (\n\t./github/acme/server\n)\n",
+            "go 1.20\n\nuse (\n\t./github/acme/server\n)\n",
         );
         write_go_mod(root, "github/acme/server");
 
@@ -10071,7 +10071,7 @@ mod s7_go_work_doctor {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
-        let original = "go 1.22\n\nuse (\n\t./github/acme/server\n)\n";
+        let original = "go 1.20\n\nuse (\n\t./github/acme/server\n)\n";
         write_file(root, "go.work", original);
         write_go_mod(root, "github/acme/server");
 
