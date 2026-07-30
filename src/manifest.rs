@@ -118,6 +118,20 @@ impl<'de> serde::Deserialize<'de> for RepoPath {
     }
 }
 
+/// The one member of the repo-path keyspace that is not a [`RepoPath`]: the
+/// project repo, which every per-repo map and JSON record keys alongside the
+/// manifest's own repos.
+const PROJECT_REPO_KEY: &str = "(project)";
+
+/// The key standing for the project repo where a [`RepoPath`] would sit.
+///
+/// The parenthesised spelling cannot collide with a `RepoPath`, which is a
+/// relative directory path. Borrowed rather than owned: most sites are map
+/// lookups, which want a `&str`.
+pub(crate) fn project_repo_key() -> &'static str {
+    PROJECT_REPO_KEY
+}
+
 /// A project name, possibly multi-segment (e.g., `web-app` or `chatly/web-app`).
 ///
 /// # Construction cannot be treated as infallible

@@ -429,6 +429,14 @@ impl Vcs for FakeVcs {
         unsupported("create_savepoint")
     }
 
+    fn savepoint_label(&self, _op_id: &str) -> String {
+        unsupported("savepoint_label")
+    }
+
+    fn savepoint_namespace(&self) -> String {
+        unsupported("savepoint_namespace")
+    }
+
     fn resolve_savepoint(&self, _repo: &Path, _op_id: &str) -> Option<ResolvedRevisionId> {
         unsupported("resolve_savepoint")
     }

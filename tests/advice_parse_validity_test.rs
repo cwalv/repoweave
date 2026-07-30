@@ -349,17 +349,21 @@ fn advice_invocations_all_parse() {
 
     // Canaries: these specific normalized strings must appear in the extracted
     // set.  A missing canary means extraction or normalization has a gap.
-    // `rwv sync` is the bare form because no advice string hardcodes
-    // `rwv sync --continue` any more: the doctor's stale-op-state message was
-    // the last one, and it now derives the verb from the record. The flagged
-    // shape is still covered by the `sync-to` canary above it.
+    // Both verbs are the bare form because no advice string hardcodes a
+    // `--continue` invocation any more: every resume hint interpolates
+    // `op_state::resume_command`, whose own literal names a placeholder verb
+    // and is dropped by skip rule B. The resume text therefore reaches no
+    // parse check at all — `OpVerb`'s Display strings are all that stand
+    // behind it. `rwv sync-to --retire` carries the hyphenated-verb-plus-long-
+    // flag shape the `--continue` canary used to.
     let canaries: &[&str] = &[
         "rwv doctor --fix",
-        "rwv sync-to --continue",
+        "rwv sync-to --retire",
         "rwv lock",
         "rwv abort",
         "rwv fetch",
         "rwv sync",
+        "rwv sync-to",
     ];
     for &canary in canaries {
         assert!(

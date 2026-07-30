@@ -779,11 +779,12 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
         let elapsed = elapsed_since(&record.started_at);
         return Ok(Some(anyhow::anyhow!(
             "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
-             Rerun with `rwv {verb} --continue` from that workspace after resolving, \
+             Rerun with `{resume}` from that workspace after resolving, \
              or `rwv abort` to discard.",
             verb = record.verb,
             phase = record.phase,
             dir = dir.display(),
+            resume = resume_command(record.verb),
         )));
     }
     // Lease: follow the pointer to the owner record so the refusal carries
@@ -799,12 +800,13 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
                 return Ok(Some(anyhow::anyhow!(
                     "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
                      workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
-                     Rerun with `rwv {verb} --continue` from the owner workspace after \
+                     Rerun with `{resume}` from the owner workspace after \
                      resolving, or `rwv abort` to discard.",
                     verb = record.verb,
                     phase = record.phase,
                     dir = dir.display(),
                     owner = lease.owner.display(),
+                    resume = resume_command(record.verb),
                 )));
             }
             _ => {

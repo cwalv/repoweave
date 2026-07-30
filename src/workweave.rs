@@ -30,7 +30,7 @@
 
 use crate::cli::consent::DiscardUnmergedConsent;
 use crate::git::git_command;
-use crate::manifest::{LockFile, Manifest, ProjectName, Role, WorkweaveName};
+use crate::manifest::{project_repo_key, LockFile, Manifest, ProjectName, Role, WorkweaveName};
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
     ResolvedRevisionId, Vcs,
@@ -3145,10 +3145,10 @@ pub struct WorkweaveLogOutput {
     /// Per-repo results, one per manifest repo.
     pub repos: Vec<WorkweaveLogRepo>,
     /// Log result for the project repo (`projects/<project>/.git`). Omitted
-    /// when the project repo's working tree is not found. Uses the
-    /// `"(project)"` sentinel in its `path` field, matching the convention
-    /// sync-to uses for `project_repo_advance`. Separate keyed field (not a
-    /// peer in `repos[]`) to mirror the sync-to JSON representation.
+    /// when the project repo's working tree is not found. Carries
+    /// `project_repo_key` in its `path` field, matching the convention sync-to
+    /// uses for `project_repo_advance`. Separate keyed field (not a peer in
+    /// `repos[]`) to mirror the sync-to JSON representation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_repo: Option<WorkweaveLogRepo>,
 }
@@ -3283,10 +3283,8 @@ pub fn workweave_log(
         });
     }
 
-    // The project repo uses the `"(project)"` sentinel for its path field,
-    // matching the convention sync-to uses. Parent tip is read from the
-    // parent's project checkout, exactly as the parent marker recorded it —
-    // no branch-name reconstruction.
+    // Parent tip is read from the parent's project checkout, exactly as the
+    // parent marker recorded it — no branch-name reconstruction.
     let project_repo = {
         let ww_project = project_dir(&ww_dir, project.as_str());
         let parent_project = project_dir(&parent_path, project.as_str());
@@ -3345,7 +3343,7 @@ pub fn workweave_log(
         }
 
         Some(WorkweaveLogRepo {
-            path: "(project)".to_string(),
+            path: project_repo_key().to_string(),
             head: head.map(|r| r.as_str().to_string()),
             parent_tip: parent_tip.map(|r| r.as_str().to_string()),
             unique_commits,

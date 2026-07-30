@@ -2297,11 +2297,26 @@ pub trait Vcs: Send + Sync {
     /// For git: writes
     /// `refs/rwv/pre-op/<op_id>` pointing at `HEAD`. The ref namespace is an
     /// impl detail — callers pass the opaque `op_id` and never spell the
-    /// ref directly.
+    /// ref directly; those that must show an operator where the state went
+    /// take the name from [`Vcs::savepoint_label`] or
+    /// [`Vcs::savepoint_namespace`].
     ///
     /// Returns the captured `HEAD` revision so the caller can record it
     /// in op-state.
     fn create_savepoint(&self, repo: &Path, op_id: &str) -> Result<ResolvedRevisionId, VcsError>;
+
+    /// The operator-spellable, VCS-native name of the savepoint reference
+    /// keyed by `op_id`, for recovery hints that must name a resolvable
+    /// reference. The [`PreAbortRef::label`] of the savepoint side.
+    ///
+    /// For git: `refs/rwv/pre-op/<op_id>`.
+    fn savepoint_label(&self, op_id: &str) -> String;
+
+    /// The reference namespace savepoints live under, for operator text
+    /// written where no op exists yet to key a [`Vcs::savepoint_label`].
+    ///
+    /// For git: `refs/rwv/pre-op`.
+    fn savepoint_namespace(&self) -> String;
 
     /// Look up the savepoint captured under `op_id` in `repo`, returning
     /// the SHA it points at, or `None` when no such savepoint exists.

@@ -5,7 +5,8 @@
 
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
-    LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName, WorkweaveNameError,
+    project_repo_key, LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName,
+    WorkweaveNameError,
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
@@ -807,7 +808,8 @@ fn check_phase1_ancestor(
          To land them: rerun with `--strategy rebase`.\n\
          To bring source in sync first: sync the other direction.\n\
          To discard them (recoverable via `rwv abort`): rerun with `--discard-local-commits` \
-         (pre-sync state preserved in refs/rwv/pre-op/<id>).",
+         (pre-sync state preserved under {savepoints}).",
+        savepoints = vcs.savepoint_namespace(),
     );
 }
 
@@ -1514,7 +1516,7 @@ pub trait OutputHandler: Send + Sync {
     /// project repo. Called iff the branch pointer actually moved.
     ///
     /// `path` matches the key used in `record` (manifest-relative repo path,
-    /// or the sentinel `"(project)"` for the project repo).
+    /// or `project_repo_key` for the project repo).
     /// `from_sha` is the target's tip before the FF; `to_sha` is after.
     ///
     /// Default implementation is a no-op — suitable for text-mode and
@@ -1636,8 +1638,9 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
 pub struct JsonEnvelopeSyncToHandler<'a> {
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     /// Per-repo step-3 advance records keyed by the repo path string (same
-    /// key as `record`'s `path` argument, or `"(project)"` for the project
-    /// repo). Only populated when the target's branch pointer actually moved.
+    /// key as `record`'s `path` argument, or `project_repo_key` for the
+    /// project repo). Only populated when the target's branch pointer actually
+    /// moved.
     step3_advances: &'a Mutex<std::collections::HashMap<String, Step3AdvanceOutput>>,
 }
 
@@ -2285,12 +2288,13 @@ fn run_preconditions_after_acquire(
             .unwrap_or(true)
         {
             anyhow::bail!(
-                "--discard-local-commits precondition failed: project repo at {} has uncommitted \
+                "--discard-local-commits precondition failed: project repo at {dir} has uncommitted \
                  changes.\n\
                  --discard-local-commits discards committed divergence (recoverable via \
-                 refs/rwv/pre-op), but the hard-reset would destroy uncommitted changes \
+                 {savepoints}), but the hard-reset would destroy uncommitted changes \
                  unrecoverably. Commit or stash them, then re-run.",
-                cwd_project_dir.display(),
+                dir = cwd_project_dir.display(),
+                savepoints = project_vcs.savepoint_namespace(),
             );
         }
         !cwd_is_ancestor_or_equal(
@@ -2729,13 +2733,11 @@ fn load_continuing_context<'a>(
     };
     if !verbs_match(verb, recorded_verb) {
         anyhow::bail!(
-            "in-progress op is `{recorded}` but `rwv {invoked}` --continue was invoked. \
-             Run `rwv {recorded} --continue` instead, or `rwv abort` to discard.",
+            "in-progress op is `{recorded}` but `{invoked}` was invoked. \
+             Run `{resume}` instead, or `rwv abort` to discard.",
             recorded = record.verb,
-            invoked = match verb {
-                MachineVerb::Sync => "sync",
-                MachineVerb::SyncTo => "sync-to",
-            },
+            invoked = op_state::resume_command(verb.op_verb()),
+            resume = op_state::resume_command(record.verb),
         );
     }
 
@@ -2955,7 +2957,7 @@ fn check_dirty_target_preflight(
         .has_uncommitted_changes(target_project_dir)
         .unwrap_or(true)
     {
-        dirty.push("(project)".to_string());
+        dirty.push(project_repo_key().to_string());
     }
     if !dirty.is_empty() {
         anyhow::bail!(
@@ -3183,7 +3185,7 @@ fn check_dirty_preflight_sync(
                 user_dirt.push(label);
             }
         }
-        Err(_) => unreadable.push("(project)".to_string()),
+        Err(_) => unreadable.push(project_repo_key().to_string()),
     }
 
     if user_dirt.is_empty() && unreadable.is_empty() {
@@ -3933,10 +3935,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // === advanced_tips write 2: capture actual post-Phase-1' project repo tip ===
     //
     // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
-    // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite
-    // advanced_tips["(project)"] with the actual post-rebase HEAD.  This also
-    // covers the ff/discard-local-commits case (tip == source tip, idempotent
-    // overwrite).
+    // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite the
+    // project repo's advanced_tips entry with the actual post-rebase HEAD.
+    // This also covers the ff/discard-local-commits case (tip == source tip,
+    // idempotent overwrite).
     {
         let project_tip = ctx
             .project_vcs
@@ -3950,7 +3952,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .ok_or_else(|| {
                 anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
             })?
-            .insert("(project)".to_owned(), project_tip.as_str().to_owned());
+            .insert(
+                project_repo_key().to_owned(),
+                project_tip.as_str().to_owned(),
+            );
         op_state::write_owner(&ctx.owner_workspace_dir, &owner)
             .context("failed to write advanced_tips after Phase 1'")?;
     }
@@ -4110,7 +4115,7 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
         }
     }
     if let Ok(rev) = ctx.project_vcs.head_revision(&ctx.cwd_project_dir) {
-        converged.insert("(project)".to_owned(), rev.as_str().to_owned());
+        converged.insert(project_repo_key().to_owned(), rev.as_str().to_owned());
     }
     // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
     // advanced_tips and installs converged_tips in one move, so they land in the
@@ -4225,7 +4230,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if let Some(ref before) = project_target_tip_before {
                 if before != &cwd_project_tip {
                     ctx.handler.record_step3_advance(
-                        "(project)",
+                        project_repo_key(),
                         before.as_str(),
                         cwd_project_tip.as_str(),
                     );
@@ -4245,7 +4250,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             "sync-to advance-target failed for one or more repos (see above).\n\
              This should not happen after a clean replay; possible concurrent modification.\n\
              Op-state remains in both workspaces.\n\
-             Rerun `rwv sync-to --continue` after resolving, or `rwv abort` to roll back.",
+             Rerun `{resume}` after resolving, or `rwv abort` to roll back.",
+            resume = op_state::resume_command(ctx.verb),
         );
     }
 
@@ -4346,10 +4352,9 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     } else if emit_text {
         eprintln!(
             "note: --discard-local-commits discarded project commits; pre-sync state preserved at \
-             refs/rwv/pre-op/{op_id} (recover with `git reset --hard refs/rwv/pre-op/{op_id}` \
-             in {})",
-            ctx.cwd_project_dir.display(),
-            op_id = ctx.op_id,
+             {savepoint} (recover with `git reset --hard {savepoint}` in {dir})",
+            savepoint = ctx.project_vcs.savepoint_label(ctx.op_id.as_str()),
+            dir = ctx.cwd_project_dir.display(),
         );
     }
 
@@ -4419,6 +4424,8 @@ fn retire_workweave_after_sync_to(
     cwd_project_dir: &Path,
     target_workspace_dir: &Path,
 ) -> anyhow::Result<()> {
+    let resume = op_state::resume_command(op_state::OpVerb::SyncTo);
+
     // Reload manifest post-Phase 3 so we see any repos newly added by sync.
     let manifest_path = cwd_project_dir.join(Manifest::FILE_NAME);
     let manifest =
@@ -4460,13 +4467,13 @@ fn retire_workweave_after_sync_to(
     if !diverged.is_empty() {
         anyhow::bail!(
             "--retire: workweave's manifest repos differ from target after sync-to; \
-             refusing to delete:\n  {}\n\
+             refusing to delete:\n  {diverged}\n\
              \n\
              To reconcile: sync the divergent repo(s), then run:\n\
-               rwv sync-to --continue   # re-runs the retire check\n\
+               {resume}   # re-runs the retire check\n\
              \n\
              To roll back the entire op: `rwv abort`.",
-            diverged.join("\n  "),
+            diverged = diverged.join("\n  "),
         );
     }
 
@@ -4475,13 +4482,13 @@ fn retire_workweave_after_sync_to(
         crate::workweave::collect_dirty_paths(project_vcs, workweave_dir, project, &manifest);
     if !dirty.is_empty() {
         anyhow::bail!(
-            "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {}\n\
+            "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {dirty}\n\
              \n\
              Commit or discard the changes, then run:\n\
-               rwv sync-to --continue   # re-runs the retire check\n\
+               {resume}   # re-runs the retire check\n\
              \n\
              To roll back the entire op: `rwv abort`.",
-            dirty.join("\n  "),
+            dirty = dirty.join("\n  "),
         );
     }
 
@@ -4781,7 +4788,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     // The op's tip table is phase-scoped (`PhaseTips`): exactly one of the two
     // tables is populated at a time. `converged_tips` is the per-repo
     // attributable-tip table. Keys: repo path string (e.g. `github/foo/bar`)
-    // for manifest repos, `"(project)"` for the project repo. Empty before
+    // for manifest repos, `project_repo_key` for the project repo. Empty before
     // relock completes — in that case the attributable set reduces to
     // {savepoint, advanced_tips, mid-op}.
     //
@@ -4858,8 +4865,8 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     }
 
     // Restore CWD project repo.
-    let project_intent = advanced_tips.get("(project)").map(String::as_str);
-    let project_converged = converged_tips.get("(project)").map(String::as_str);
+    let project_intent = advanced_tips.get(project_repo_key()).map(String::as_str);
+    let project_converged = converged_tips.get(project_repo_key()).map(String::as_str);
     match abort_one_repo(
         project_vcs.as_ref(),
         &cwd_project_dir,
@@ -4869,7 +4876,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     ) {
         Ok(outcome) => report_abort_outcome(
             project_vcs.as_ref(),
-            "(project)",
+            project_repo_key(),
             &outcome,
             Some(cwd_project_dir.as_path()),
             &mut noise_summary,
@@ -4945,7 +4952,8 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                         }
                     }
                 }
-                let extra_project_converged = converged_tips.get("(project)").map(String::as_str);
+                let extra_project_converged =
+                    converged_tips.get(project_repo_key()).map(String::as_str);
                 match abort_one_repo(
                     project_vcs.as_ref(),
                     &extra_project_dir,
@@ -5449,8 +5457,7 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
             }
         }
 
-        // project_repo_advance: the "(project)" sentinel key.
-        let project_repo_advance = step3_map.remove("(project)");
+        let project_repo_advance = step3_map.remove(project_repo_key());
 
         // `retired` is true iff --retire was passed AND retire actually fired
         // (i.e., CWD was a workweave, not a primary weave) AND the machine

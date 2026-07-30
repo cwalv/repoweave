@@ -1382,6 +1382,14 @@ impl Vcs for GitVcs {
         Ok(head)
     }
 
+    fn savepoint_label(&self, op_id: &str) -> String {
+        savepoint_ref(op_id)
+    }
+
+    fn savepoint_namespace(&self) -> String {
+        SAVEPOINT_NAMESPACE.to_owned()
+    }
+
     fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId> {
         let ref_name = savepoint_ref(op_id);
         let out = Self::run(&["rev-parse", &ref_name], repo).ok()?;
@@ -1834,18 +1842,16 @@ impl Vcs for GitVcs {
     }
 
     fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        // `git for-each-ref` over `refs/rwv/pre-op/` returns every savepoint
-        // ref this repo holds. Strip the namespace prefix to recover the
+        // `git for-each-ref` over the savepoint namespace returns every
+        // savepoint ref this repo holds. Strip the prefix to recover the
         // opaque op-id the caller originally supplied to `create_savepoint`.
-        let output = Self::run(
-            &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
-            repo,
-        )?;
+        let prefix = format!("{SAVEPOINT_NAMESPACE}/");
+        let output = Self::run(&["for-each-ref", "--format=%(refname)", &prefix], repo)?;
         let op_ids = output
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty())
-            .filter_map(|l| l.strip_prefix("refs/rwv/pre-op/").map(str::to_owned))
+            .filter_map(|l| l.strip_prefix(&prefix).map(str::to_owned))
             .collect();
         Ok(op_ids)
     }
@@ -2270,14 +2276,18 @@ impl Vcs for GitVcs {
     }
 }
 
-/// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.
+/// The ref namespace savepoints live under.
+const SAVEPOINT_NAMESPACE: &str = "refs/rwv/pre-op";
+
+/// Build the savepoint ref path for `op_id`.
 ///
-/// The namespacing (`refs/rwv/pre-op/<id>`) is a git impl detail —
-/// callers of the [`Vcs`] trait pass an opaque `op_id` string and never
-/// spell the ref directly. Centralising the format here means create /
-/// resolve / drop / restore all agree on the layout.
+/// The namespacing is a git impl detail — callers of the [`Vcs`] trait pass
+/// an opaque `op_id` string and reach the name, when they must show it to an
+/// operator, through [`Vcs::savepoint_label`] or [`Vcs::savepoint_namespace`].
+/// Centralising the format here means create / resolve / drop / restore all
+/// agree on the layout.
 fn savepoint_ref(op_id: &str) -> String {
-    format!("refs/rwv/pre-op/{op_id}")
+    format!("{SAVEPOINT_NAMESPACE}/{op_id}")
 }
 
 /// Build the pre-abort ref path for `op_id` under the rwv pre-abort namespace.
