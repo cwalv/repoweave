@@ -82,7 +82,40 @@ fn write_manifest(root: &Path, members: &[&str]) {
              version: main\n    role: owned\n"
         ));
     }
+    // vscode-workspace detects every repo rather than a manifest file, so it
+    // reports its own drift over a zero-repo project and would supply a second
+    // fixable finding. `doctor --fix` gates the repair on the finding set being
+    // non-empty, not on which integration spoke, so leaving it enabled lets an
+    // unrelated finding drive the repair these tests attribute to the strip.
+    yaml.push_str("integrations:\n  vscode-workspace:\n    enabled: false\n");
     std::fs::write(root.join("projects/demo/rwv.yaml"), yaml).unwrap();
+}
+
+/// The repair-driving findings `rwv doctor` reports, as `integration/kind`
+/// pairs, so a test can state which findings its `--fix` had available.
+fn fixable_findings(root: &Path) -> Vec<String> {
+    let out = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("doctor --json must emit JSON");
+    let mut found: Vec<String> = doc["issues"]
+        .as_array()
+        .expect("doctor --json must carry an issues array")
+        .iter()
+        .filter(|i| i["safe_to_fix"].as_bool().unwrap_or(false))
+        .map(|i| {
+            format!(
+                "{}/{}",
+                i["integration"].as_str().unwrap_or("?"),
+                i["kind"].as_str().unwrap_or("?")
+            )
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// Author the managed regions the way an intent verb would, and assert the
@@ -143,6 +176,12 @@ fn remove_of_the_last_member_strips_the_region_it_authored() {
     assert_region_gone(root, "go.work", GO_MEMBER, "managed by repoweave");
 }
 
+/// `doctor --fix` reaches the authoring path only because `verify()` reported
+/// the orphaned region: the repair is gated on the fixable-finding set being
+/// non-empty, not on which integration filled it. So the finding set is
+/// asserted before `--fix` runs — otherwise any unrelated fixable finding would
+/// drive the repair and this test would still pass with `verify()` silent,
+/// crediting the strip for a repair something else triggered.
 #[test]
 fn doctor_fix_strips_a_region_no_membership_justifies() {
     let tmp = common::tempdir().unwrap();
@@ -153,6 +192,17 @@ fn doctor_fix_strips_a_region_no_membership_justifies() {
     // Empty the manifest without an intent verb, so the stale region is the
     // only thing that can drive the repair.
     write_manifest(root, &[]);
+
+    assert_eq!(
+        fixable_findings(root),
+        vec![
+            "cargo-workspace/managed-file-drift",
+            "go-work/managed-file-drift"
+        ],
+        "the orphaned regions must be the ONLY findings available to drive \
+         --fix; another integration's fixable finding would make this test \
+         pass with verify() silent"
+    );
 
     common::rwv()
         .args(["doctor", "--fix"])
