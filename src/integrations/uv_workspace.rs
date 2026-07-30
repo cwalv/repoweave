@@ -76,8 +76,9 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
-    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, StripOutcome, TomlDoc,
+    drift_issues, keypath, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate,
+    toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, StripOutcome,
+    TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -96,6 +97,37 @@ impl UvWorkspace {
     /// on deactivate (per the `Ownership::DefaultOnly` contract in `merge.rs`).
     fn deactivate_owned_keys() -> Vec<KeyPath> {
         vec![keypath(["tool", "uv", "workspace", "members"])]
+    }
+
+    /// Remove rwv's `[tool.uv.workspace]` region and its workspace-true sources
+    /// from the `pyproject.toml` under `root`, leaving user-authored content
+    /// untouched.
+    ///
+    /// Both callers reach this from the same premise — rwv has no `members` list
+    /// to author — and they differ only in why: the project is going away, or its
+    /// uv membership emptied. Marker-gated and idempotent, so it is safe over an
+    /// absent file and over one the user holds the pen on.
+    fn strip_managed_region(root: &Path) -> anyhow::Result<()> {
+        let path = root.join("pyproject.toml");
+        if !path.exists() {
+            return Ok(());
+        }
+
+        // strip_deactivate removes `members` (and prunes empty
+        // [tool.uv.workspace]) gated on the per-key marker.
+        let outcome = strip_deactivate::<TomlDoc>(&path, &Self::deactivate_owned_keys())
+            .with_context(|| format!("strip-deactivate {}", path.display()))?;
+
+        // Now strip only {workspace=true} entries from [tool.uv.sources]
+        // (bespoke adapter — see module doc). Only when we owned the file: an
+        // unmarked, hand-authored pyproject.toml keeps its workspace-true
+        // sources, and is never emptied and deleted.
+        if outcome == StripOutcome::Stripped {
+            Self::strip_workspace_sources(&path)
+                .with_context(|| format!("strip-workspace-sources {}", path.display()))?;
+        }
+
+        Ok(())
     }
 
     /// Build the **primary** `(key, value)` pairs for `merge_activate`.
@@ -404,8 +436,12 @@ impl Integration for UvWorkspace {
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("pyproject.toml");
+        // The authored `members` list is a function of the manifest alone.
+        // Returning early instead would make it a function of history too: the
+        // last member's path stays behind, in a marked key rwv still owns and
+        // would no longer author.
         if paths.is_empty() {
-            return Ok(());
+            return Self::strip_managed_region(ctx.output_dir);
         }
 
         // Sort members for determinism.
@@ -436,28 +472,7 @@ impl Integration for UvWorkspace {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        let path = root.join("pyproject.toml");
-        if !path.exists() {
-            return Ok(());
-        }
-
-        let owned_keys = Self::deactivate_owned_keys();
-
-        // strip_deactivate removes `members` (and prunes empty
-        // [tool.uv.workspace]) gated on the per-key marker.
-        let outcome = strip_deactivate::<TomlDoc>(&path, &owned_keys)
-            .with_context(|| format!("strip-deactivate {}", path.display()))?;
-
-        // Now strip only {workspace=true} entries from [tool.uv.sources]
-        // (bespoke adapter — see module doc). Only when we owned the file: an
-        // unmarked, hand-authored pyproject.toml keeps its workspace-true
-        // sources, and is never emptied and deleted.
-        if outcome == StripOutcome::Stripped {
-            Self::strip_workspace_sources(&path)
-                .with_context(|| format!("strip-workspace-sources {}", path.display()))?;
-        }
-
-        Ok(())
+        Self::strip_managed_region(root)
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
@@ -493,7 +508,13 @@ impl Integration for UvWorkspace {
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let repo_paths = ctx.detect_repos_with_manifest("pyproject.toml");
         if repo_paths.is_empty() {
-            return Ok(vec![]);
+            return Ok(orphaned_region_issues::<TomlDoc>(
+                self.name(),
+                &ctx.output_dir.join("pyproject.toml"),
+                &Self::deactivate_owned_keys(),
+                "rwv.yaml declares no uv members, so [tool.uv.workspace] no \
+                 longer belongs to rwv.",
+            ));
         }
 
         let path = ctx.output_dir.join("pyproject.toml");
@@ -588,7 +609,94 @@ impl Integration for UvWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IssueKind;
+    use crate::manifest::{IntegrationConfig, ProjectName};
+    use crate::workspace::ContainerKind;
+    use std::collections::HashMap;
     use tempfile::TempDir;
+
+    /// A context over an empty manifest: no repo is declared, so nothing is
+    /// detected and the integration has no `members` list to author.
+    fn ctx_over_no_members<'a>(
+        root: &'a Path,
+        project: &'a ProjectName,
+        config: &'a IntegrationConfig,
+        cache: &'a HashMap<String, Vec<String>>,
+    ) -> IntegrationContext<'a> {
+        IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            container_kind: ContainerKind::Primary,
+            project,
+            repos: vec![],
+            config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: cache,
+            workweave: None,
+        }
+    }
+
+    /// The `members` list rwv authored while it had members must not outlive
+    /// them: an emptied membership strips it, along with the workspace-true
+    /// sources that only make sense beside it, and reports it until something
+    /// does.
+    #[test]
+    fn emptied_membership_strips_the_marked_members_list() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            "[project]\nname = \"demo\"\n\n[tool.uv.workspace]\n# managed by rwv\n\
+             members = [\"github/test/pkg\"]\n\n[tool.uv.sources]\npkg = { workspace = true }\n",
+        );
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        let issues = UvWorkspace.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
+        assert_eq!(issues[0].kind, IssueKind::ManagedFileDrift);
+        assert!(issues[0].safe_to_fix, "the strip is the fix");
+
+        UvWorkspace.activate(&ctx).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !after.contains("members") && !after.contains("workspace = true"),
+            "the marked region and its sources must be gone, got:\n{after}"
+        );
+        assert!(
+            after.contains("name = \"demo\""),
+            "user content must survive:\n{after}"
+        );
+    }
+
+    #[test]
+    fn emptied_membership_leaves_an_unmarked_members_list_alone() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let hand_written = "[tool.uv.workspace]\nmembers = [\"github/test/pkg\"]\n";
+        let path = write_file(&tmp, "pyproject.toml", hand_written);
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        assert!(
+            UvWorkspace.verify(&ctx).unwrap().is_empty(),
+            "with no members there is nothing to cut over to, so nothing to say"
+        );
+        UvWorkspace.activate(&ctx).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            hand_written,
+            "rwv must not strip a list it never marked"
+        );
+    }
 
     fn write_file(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
         let path = dir.path().join(name);

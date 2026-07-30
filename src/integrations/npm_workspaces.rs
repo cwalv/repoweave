@@ -1,7 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, JsonDoc, ManagedDoc,
-    OwnedValue, Ownership, StripOutcome, XRepoweaveMarker,
+    drift_issues, keypath, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate,
+    JsonDoc, ManagedDoc, OwnedValue, Ownership, StripOutcome, XRepoweaveMarker,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -139,7 +139,12 @@ impl Integration for NpmWorkspaces {
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("package.json");
+        // The authored `workspaces` list is a function of the manifest alone.
+        // Returning early instead would make it a function of history too: the
+        // last member's glob stays behind, in a marked key rwv still owns and
+        // would no longer author.
         if paths.is_empty() {
+            Self::strip_managed_region(ctx.output_dir)?;
             return Ok(());
         }
         let paths = expand_workspace_entries(ctx.workspace_root, paths);
@@ -164,15 +169,11 @@ impl Integration for NpmWorkspaces {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        let path = root.join("package.json");
-
-        // strip_deactivate: gates on x-repoweave marker; strips owned keys;
-        // prunes empty parents; deletes the file only if nothing else remains.
-        let owned_keys = deactivate_owned_keys();
-        let outcome = strip_deactivate::<JsonDoc<XRepoweaveMarker>>(&path, &owned_keys)?;
-
-        // Remove package-lock.json only when we owned package.json.
-        if outcome == StripOutcome::Stripped {
+        // Remove package-lock.json only when we owned package.json. An emptied
+        // membership does NOT reach this: a lockfile is a build product, not a
+        // claim about who owns the workspace list, and cargo-workspace already
+        // draws that line by leaving Cargo.lock alone on its strip.
+        if Self::strip_managed_region(root)? == StripOutcome::Stripped {
             let lock_path = root.join("package-lock.json");
             if lock_path.exists() {
                 std::fs::remove_file(&lock_path)
@@ -215,7 +216,13 @@ impl Integration for NpmWorkspaces {
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let repo_paths = ctx.detect_repos_with_manifest("package.json");
         if repo_paths.is_empty() {
-            return Ok(vec![]);
+            return Ok(orphaned_region_issues::<JsonDoc<XRepoweaveMarker>>(
+                self.name(),
+                &ctx.output_dir.join("package.json"),
+                &deactivate_owned_keys(),
+                "rwv.yaml declares no npm members, so workspaces no longer \
+                 belongs to rwv.",
+            ));
         }
 
         let path = ctx.output_dir.join("package.json");
@@ -303,6 +310,23 @@ impl Integration for NpmWorkspaces {
     }
 }
 
+impl NpmWorkspaces {
+    /// Remove rwv's `workspaces` key from the `package.json` under `root`,
+    /// leaving user-authored content untouched.
+    ///
+    /// Both callers reach this from the same premise — rwv has no `workspaces`
+    /// list to author — and they differ only in why: the project is going away,
+    /// or its npm membership emptied. Marker-gated and idempotent, so it is safe
+    /// over an absent file and over one the user holds the pen on. The outcome
+    /// is returned because `deactivate` also owns `package-lock.json`, and may
+    /// only remove it over a file rwv proved it owned.
+    fn strip_managed_region(root: &Path) -> anyhow::Result<StripOutcome> {
+        let path = root.join("package.json");
+        strip_deactivate::<JsonDoc<XRepoweaveMarker>>(&path, &deactivate_owned_keys())
+            .with_context(|| format!("npm-workspaces: strip {}", path.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,6 +375,129 @@ mod tests {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "").unwrap();
+    }
+
+    /// A context over an empty manifest: no repo is declared, so nothing is
+    /// detected and the integration has no `workspaces` list to author.
+    fn ctx_over_no_members<'a>(
+        root: &'a Path,
+        project: &'a ProjectName,
+        config: &'a IntegrationConfig,
+        cache: &'a HashMap<String, Vec<String>>,
+    ) -> IntegrationContext<'a> {
+        IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            container_kind: ContainerKind::Primary,
+            project,
+            repos: vec![],
+            config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: cache,
+            workweave: None,
+        }
+    }
+
+    /// The `workspaces` list rwv authored while it had members must not outlive
+    /// them: an emptied membership strips it, and reports it until something
+    /// does.
+    #[test]
+    fn emptied_membership_strips_the_marked_workspaces_key() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let path = root.join("package.json");
+        std::fs::write(
+            &path,
+            "{\n  \"name\": \"demo\",\n  \"workspaces\": [\"github/test/pkg\"],\n  \
+             \"x-repoweave\": { \"managed\": true }\n}\n",
+        )
+        .unwrap();
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        let issues = NpmWorkspaces.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
+        assert_eq!(issues[0].kind, IssueKind::ManagedFileDrift);
+        assert!(issues[0].safe_to_fix, "the strip is the fix");
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !after.contains("workspaces") && !after.contains("x-repoweave"),
+            "the marked region must be gone, got:\n{after}"
+        );
+        assert!(
+            after.contains("demo"),
+            "user content must survive:\n{after}"
+        );
+    }
+
+    /// `deactivate` removes `package-lock.json`; an emptied membership must
+    /// not. A lockfile is a build product, not a claim about who owns the
+    /// workspace list — cargo-workspace draws the same line by leaving
+    /// `Cargo.lock` alone on its strip.
+    ///
+    /// The `workspaces` assertion is what makes the lockfile assertion mean
+    /// something: it proves the strip ran at all.
+    #[test]
+    fn emptied_membership_keeps_the_lockfile() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let manifest = root.join("package.json");
+        std::fs::write(
+            &manifest,
+            "{\n  \"name\": \"demo\",\n  \"workspaces\": [\"github/test/pkg\"],\n  \
+             \"x-repoweave\": { \"managed\": true }\n}\n",
+        )
+        .unwrap();
+        let lock = root.join("package-lock.json");
+        std::fs::write(&lock, "{}\n").unwrap();
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+        assert!(
+            !std::fs::read_to_string(&manifest)
+                .unwrap()
+                .contains("workspaces"),
+            "the strip must have run for this test to be about the lockfile"
+        );
+        assert!(
+            lock.exists(),
+            "the strip must not reach a fully-owned build product"
+        );
+    }
+
+    #[test]
+    fn emptied_membership_leaves_an_unmarked_workspaces_key_alone() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let path = root.join("package.json");
+        let hand_written = "{\n  \"name\": \"demo\",\n  \"workspaces\": [\"pkg\"]\n}\n";
+        std::fs::write(&path, hand_written).unwrap();
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        assert!(
+            NpmWorkspaces.verify(&ctx).unwrap().is_empty(),
+            "with no members there is nothing to cut over to, so nothing to say"
+        );
+        NpmWorkspaces.activate(&ctx).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            hand_written,
+            "rwv must not strip a key it never marked"
+        );
     }
 
     /// Regression for the managed/generated split: `package.json` is hybrid

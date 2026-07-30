@@ -1,7 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
-    drift_issues, merge_activate, missing_issue, strip_deactivate, KeyPath, ManagedDoc, OwnedValue,
-    Ownership, YamlDoc,
+    drift_issues, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate, KeyPath,
+    ManagedDoc, OwnedValue, Ownership, YamlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -80,8 +80,12 @@ impl Integration for PnpmWorkspaces {
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("package.json");
+        // The authored `packages:` list is a function of the manifest alone.
+        // Returning early instead would make it a function of history too: the
+        // last member's glob stays behind, in a marked key rwv still owns and
+        // would no longer author.
         if paths.is_empty() {
-            return Ok(());
+            return Self::strip_managed_region(ctx.output_dir);
         }
 
         let path = ctx.output_dir.join("pnpm-workspace.yaml");
@@ -106,15 +110,7 @@ impl Integration for PnpmWorkspaces {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        let path = root.join("pnpm-workspace.yaml");
-
-        // Marker gate: strip_deactivate leaves the file alone if the marker
-        // is absent (user took the pen). Deletes only if empty after strip.
-        let owned_keys = [packages_key()];
-        strip_deactivate::<YamlDoc>(&path, &owned_keys)
-            .with_context(|| format!("pnpm-workspaces: deactivate {}", path.display()))?;
-
-        Ok(())
+        Self::strip_managed_region(root)
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
@@ -149,7 +145,13 @@ impl Integration for PnpmWorkspaces {
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let repo_paths = ctx.detect_repos_with_manifest("package.json");
         if repo_paths.is_empty() {
-            return Ok(vec![]);
+            return Ok(orphaned_region_issues::<YamlDoc>(
+                self.name(),
+                &ctx.output_dir.join("pnpm-workspace.yaml"),
+                &[packages_key()],
+                "rwv.yaml declares no npm members, so packages: no longer \
+                 belongs to rwv.",
+            ));
         }
 
         let path = ctx.output_dir.join("pnpm-workspace.yaml");
@@ -229,5 +231,110 @@ impl Integration for PnpmWorkspaces {
         // symlinked (via managed_files) but never gitignored, and
         // deactivate strips the owned region rather than deleting wholesale.
         vec!["pnpm-workspace.yaml".to_string()]
+    }
+}
+
+impl PnpmWorkspaces {
+    /// Remove rwv's `packages:` list from the `pnpm-workspace.yaml` under
+    /// `root`, leaving user-authored content untouched.
+    ///
+    /// Both callers reach this from the same premise — rwv has no `packages:`
+    /// list to author — and they differ only in why: the project is going away,
+    /// or its npm membership emptied. Marker-gated and idempotent, so it is safe
+    /// over an absent file and over one the user holds the pen on.
+    fn strip_managed_region(root: &Path) -> anyhow::Result<()> {
+        let path = root.join("pnpm-workspace.yaml");
+        strip_deactivate::<YamlDoc>(&path, &[packages_key()])
+            .with_context(|| format!("pnpm-workspaces: strip {}", path.display()))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::IssueKind;
+    use crate::manifest::{IntegrationConfig, ProjectName};
+    use crate::workspace::ContainerKind;
+    use std::collections::HashMap;
+    use tempfile::TempDir;
+
+    /// A context over an empty manifest: no repo is declared, so nothing is
+    /// detected and the integration has no `packages:` list to author.
+    fn ctx_over_no_members<'a>(
+        root: &'a Path,
+        project: &'a ProjectName,
+        config: &'a IntegrationConfig,
+        cache: &'a HashMap<String, Vec<String>>,
+    ) -> IntegrationContext<'a> {
+        IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            container_kind: ContainerKind::Primary,
+            project,
+            repos: vec![],
+            config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: cache,
+            workweave: None,
+        }
+    }
+
+    /// The `packages:` list rwv authored while it had members must not outlive
+    /// them: an emptied membership strips it, and reports it until something
+    /// does.
+    #[test]
+    fn emptied_membership_strips_the_marked_packages_list() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let path = root.join("pnpm-workspace.yaml");
+        std::fs::write(
+            &path,
+            "# managed by repoweave\npackages:\n  - github/test/pkg\n",
+        )
+        .unwrap();
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        let issues = PnpmWorkspaces.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
+        assert_eq!(issues[0].kind, IssueKind::ManagedFileDrift);
+        assert!(issues[0].safe_to_fix, "the strip is the fix");
+
+        PnpmWorkspaces.activate(&ctx).unwrap();
+        assert!(
+            !path.exists(),
+            "nothing user-authored remained, so the file goes: {}",
+            std::fs::read_to_string(&path).unwrap_or_default()
+        );
+    }
+
+    #[test]
+    fn emptied_membership_leaves_an_unmarked_list_alone() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let path = root.join("pnpm-workspace.yaml");
+        let hand_written = "packages:\n  - github/test/pkg\n";
+        std::fs::write(&path, hand_written).unwrap();
+
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+
+        assert!(
+            PnpmWorkspaces.verify(&ctx).unwrap().is_empty(),
+            "with no members there is nothing to cut over to, so nothing to say"
+        );
+        PnpmWorkspaces.activate(&ctx).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            hand_written,
+            "rwv must not strip a list it never marked"
+        );
     }
 }
