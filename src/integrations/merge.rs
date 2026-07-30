@@ -1849,6 +1849,48 @@ pub fn missing_issue(name: &str, path: &Path) -> Issue {
     }
 }
 
+/// The DRIFT issues for a managed region no current membership justifies.
+///
+/// The `verify()` arm for an integration with nothing to contribute: the
+/// authoring path strips its region in that state, so a marked region still on
+/// disk is drift. `expected` is empty by construction here, which is why this
+/// cannot go through [`drift_issues`] — an on-disk marked-but-empty region
+/// would compare equal to it and read as CLEAN, while authoring would still
+/// strip the marker.
+///
+/// Two states yield nothing, and both mean the same thing: the integration has
+/// no claim to make. An unmarked region belongs to the user. A region rwv
+/// cannot parse is one it cannot prove it owns, so a malformed file here is
+/// silence rather than the loud bail the authoring path takes over a file it
+/// does own.
+pub fn orphaned_region_issues<D: ManagedDoc>(
+    name: &str,
+    path: &Path,
+    owned_keys: &[KeyPath],
+    detail: &str,
+) -> Vec<Issue> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    let Ok(doc) = D::parse(&text) else {
+        return vec![];
+    };
+    if !doc.has_marker(owned_keys) {
+        return vec![];
+    }
+    vec![Issue {
+        integration: name.to_string(),
+        severity: Severity::Warning,
+        message: format!(
+            "{name} managed file has drift: {}; {detail} \
+             Run rwv doctor --fix to regenerate",
+            path.display()
+        ),
+        kind: IssueKind::ManagedFileDrift,
+        safe_to_fix: true,
+    }]
+}
+
 /// The canonical DRIFT-state issue for a **fully-owned** generated file whose
 /// on-disk content is unreadable or unparseable.
 ///
@@ -3228,6 +3270,62 @@ replace example.com/legacy => ./vendor/legacy
             assert!(i.safe_to_fix, "MISSING must be safe_to_fix=true");
             assert!(i.message.contains("managed file missing"));
             assert!(i.message.contains("rwv doctor --fix"));
+        }
+
+        fn write(dir: &TempDir, text: &str) -> std::path::PathBuf {
+            let path = dir.path().join("Cargo.toml");
+            std::fs::write(&path, text).unwrap();
+            path
+        }
+
+        fn orphaned(path: &Path) -> Vec<Issue> {
+            orphaned_region_issues::<TomlDoc>(
+                "cargo-workspace",
+                path,
+                &[keypath(["workspace", "members"])],
+                "detail",
+            )
+        }
+
+        #[test]
+        fn orphaned_marked_region_is_fixable_drift() {
+            let tmp = TempDir::new().unwrap();
+            let path = write(&tmp, "[workspace]\n# managed by rwv\nmembers = [\"a\"]\n");
+            let issues = orphaned(&path);
+            assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
+            assert_eq!(issues[0].kind, IssueKind::ManagedFileDrift);
+            assert!(
+                issues[0].safe_to_fix,
+                "the strip is the fix, so the finding must route to --fix"
+            );
+            assert!(issues[0].message.contains("rwv doctor --fix"));
+        }
+
+        #[test]
+        fn orphaned_unmarked_region_is_silent() {
+            let tmp = TempDir::new().unwrap();
+            let path = write(&tmp, "[workspace]\nmembers = [\"a\"]\n");
+            assert!(
+                orphaned(&path).is_empty(),
+                "an unmarked region is the user's; with no members there is \
+                 nothing to cut over to either"
+            );
+        }
+
+        #[test]
+        fn orphaned_malformed_file_is_silent() {
+            let tmp = TempDir::new().unwrap();
+            let path = write(&tmp, "[workspace\nmembers = ");
+            assert!(
+                orphaned(&path).is_empty(),
+                "a file rwv cannot parse is one it cannot prove it owns"
+            );
+        }
+
+        #[test]
+        fn orphaned_absent_file_is_silent() {
+            let tmp = TempDir::new().unwrap();
+            assert!(orphaned(&tmp.path().join("Cargo.toml")).is_empty());
         }
     }
 

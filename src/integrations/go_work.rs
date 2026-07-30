@@ -57,8 +57,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, GoWorkDoc, ManagedDoc,
-    MemberIncompatibility, OwnedValue, Ownership,
+    drift_issues, keypath, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate,
+    GoWorkDoc, KeyPath, ManagedDoc, MemberIncompatibility, OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;
@@ -108,8 +108,12 @@ impl Integration for GoWork {
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("go.mod");
+        // The authored `use` block is a function of the manifest alone.
+        // Returning early instead would make it a function of history too: the
+        // last member's path stays behind, in a marked key rwv still owns and
+        // would no longer author.
         if paths.is_empty() {
-            return Ok(());
+            return Self::strip_managed_region(ctx.output_dir);
         }
 
         let go_work_path = ctx.output_dir.join("go.work");
@@ -133,7 +137,7 @@ impl Integration for GoWork {
             let doc = GoWorkDoc::parse(&text).with_context(|| {
                 format!("parsing {} for ownership check", go_work_path.display())
             })?;
-            let owned_keys = vec![keypath(["use"])];
+            let owned_keys = Self::owned_keys();
             if !doc.has_marker(&owned_keys) && doc.key_present(&keypath(["use"])) {
                 // User-held: use block present but no rwv marker.
                 // Do NOT clobber the file. The ownership condition is surfaced
@@ -172,11 +176,7 @@ impl Integration for GoWork {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        let path = root.join("go.work");
-        // owned_keys = [["use"]] only — NEVER include ["go"] per C2 note.
-        let owned_keys = vec![keypath(["use"])];
-        strip_deactivate::<GoWorkDoc>(&path, &owned_keys)?;
-        Ok(())
+        Self::strip_managed_region(root)
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
@@ -216,7 +216,13 @@ impl Integration for GoWork {
 
         let repo_paths = ctx.detect_repos_with_manifest("go.mod");
         if repo_paths.is_empty() {
-            return Ok(vec![]);
+            return Ok(orphaned_region_issues::<GoWorkDoc>(
+                self.name(),
+                &ctx.output_dir.join("go.work"),
+                &Self::owned_keys(),
+                "rwv.yaml declares no go members, so the use block no longer \
+                 belongs to rwv.",
+            ));
         }
 
         let path = ctx.output_dir.join("go.work");
@@ -231,7 +237,7 @@ impl Integration for GoWork {
         let doc = GoWorkDoc::parse(&text)
             .with_context(|| format!("parsing {} for verify", path.display()))?;
 
-        let owned_keys = vec![keypath(["use"])];
+        let owned_keys = Self::owned_keys();
         let marker_present = doc.has_marker(&owned_keys);
         let owned_key_present = doc.key_present(&keypath(["use"]));
 
@@ -341,6 +347,26 @@ impl Integration for GoWork {
             return vec![];
         }
         vec!["go.work".to_string()]
+    }
+}
+
+impl GoWork {
+    /// The `go.work` keys rwv authors. `go` is deliberately absent: it is
+    /// `Ownership::DefaultOnly`, so an operator's value must survive a strip.
+    fn owned_keys() -> Vec<KeyPath> {
+        vec![keypath(["use"])]
+    }
+
+    /// Remove rwv's `use` block from the `go.work` under `root`, leaving
+    /// user-authored content untouched.
+    ///
+    /// Both callers reach this from the same premise — rwv has no `use` block to
+    /// author — and they differ only in why: the project is going away, or its
+    /// Go membership emptied. Marker-gated and idempotent, so it is safe over an
+    /// absent file and over one the user holds the pen on.
+    fn strip_managed_region(root: &Path) -> anyhow::Result<()> {
+        strip_deactivate::<GoWorkDoc>(&root.join("go.work"), &Self::owned_keys())?;
+        Ok(())
     }
 }
 

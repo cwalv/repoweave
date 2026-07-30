@@ -119,6 +119,12 @@ normalize whitespace but preserve keys and order.
 This makes `activate()` idempotent: re-activating over an already-activated file produces the
 same result as the first activation.
 
+A member set that has emptied — the integration detects no relevant repo, so it has no managed
+keys to write — is the degenerate case of the same rule, not an exemption from it. `activate()`
+strips its region there, by the invariant #5 states. Skipping the file instead would make the
+region a function of the membership *history*: a project that never had a Rust member and one
+that lost its last are the same manifest, and must reach the same file.
+
 ### 5. `deactivate()` is strip-not-delete
 
 Gate on the marker. Strip exactly the managed keys. Prune now-empty parent tables. **Delete the

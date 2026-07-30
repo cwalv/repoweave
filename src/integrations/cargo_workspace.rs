@@ -144,9 +144,9 @@
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
 use crate::integrations::merge::{
     check_owned_digest, drift_issues, fully_owned_digest_mismatch_issue,
-    fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue, stamp_owned_digest,
-    strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedDigestCheck,
-    OwnedValue, Ownership, TomlDoc,
+    fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue, orphaned_region_issues,
+    stamp_owned_digest, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult,
+    OwnedDigestCheck, OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use anyhow::Context;
@@ -596,12 +596,12 @@ impl Integration for CargoWorkspace {
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
 
-        // Early-return when there are no rust repos AND no configured members.
-        // A members-subpath repo (e.g. rvtty: no root Cargo.toml) is invisible
-        // to detect_repos_with_manifest but is the explicit signal that this
-        // repo contributes sub-package members; we must still proceed.
+        // The authored region is a function of the manifest alone. Returning
+        // early instead would make it a function of history too: the last
+        // member's path stays behind, in a marked key rwv still owns and would
+        // no longer author.
         if !Self::has_active_cargo_work(ctx, &cfg) {
-            return Ok(());
+            return Self::strip_managed_region(ctx.output_dir);
         }
 
         let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
@@ -690,51 +690,7 @@ impl Integration for CargoWorkspace {
         // `root` is the project_dir per the framework's deactivate contract
         // (`integration_runner::run_deactivations`). It is the same path
         // `output_dir` resolved to during activate.
-        let path = root.join("Cargo.toml");
-
-        // First pass: strip Author-owned keys (members, workspace.package).
-        // DefaultOnly keys (resolver) are excluded from this list — their
-        // values survive deactivation (operator may have customized them).
-        let author_keys = Self::deactivate_owned_keys();
-        strip_deactivate::<TomlDoc>(&path, &author_keys)
-            .with_context(|| format!("strip-deactivate {}", path.display()))?;
-
-        // Second pass: remove the `# managed by rwv` marker decor from
-        // DefaultOnly keys without removing their values. resolver is
-        // DefaultOnly — its value stays but the decoration must be cleaned up
-        // so the file doesn't carry stale rwv annotations post-deactivation.
-        Self::undecorate_default_only_keys(&path)
-            .with_context(|| format!("undecorate-default-only {}", path.display()))?;
-
-        // Third pass: strip rwv-marker-decorated `[patch.<registry>].*`
-        // entries. This is independent of the workspace marker — patch
-        // entries carry their own per-key marker decor, so they may need
-        // stripping even when `strip_deactivate` left the file unchanged
-        // (e.g. the user holds the pen on `[workspace]`). The generic
-        // strip_deactivate has no static handle on the dynamic
-        // patch.<registry>.<name> key set, so this is handled here.
-        //
-        // The strip runs against BOTH candidate surfaces unconditionally.
-        // Deactivate has no `IntegrationContext` and thus no `cfg`, so we
-        // can't tell which surface was in use at activate time — but the
-        // strip is marker-gated (only rwv-marker entries are removed) and
-        // idempotent (missing files are a no-op), so running it against
-        // both is safe. This also handles the surface-flip case: the
-        // operator toggles `patch-surface: manifest → cargo-config` (or
-        // vice versa) between activations, and a subsequent deactivate
-        // still cleans the stale surface.
-        Self::strip_marked_patch_entries(&path)
-            .with_context(|| format!("strip-patch {}", path.display()))?;
-        let cargo_config = root.join(".cargo").join("config.toml");
-        Self::strip_marked_patch_entries(&cargo_config)
-            .with_context(|| format!("strip-patch {}", cargo_config.display()))?;
-        // If the `.cargo/config.toml` becomes empty after the strip, delete
-        // it, then delete an empty `.cargo/` dir. Symmetric with the
-        // `strip_deactivate` file-deletion rule for hybrid files.
-        Self::prune_empty_cargo_config(root)
-            .with_context(|| format!("prune-cargo-config {}", root.display()))?;
-
-        Ok(())
+        Self::strip_managed_region(root)
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
@@ -953,7 +909,16 @@ impl Integration for CargoWorkspace {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
 
         if !Self::has_active_cargo_work(ctx, &cfg) {
-            return Ok(vec![]);
+            // Scoped to the manifest: with no members there is no lock content
+            // to predict and no patch surface to expect, so `[workspace]` is
+            // the only claim left to make.
+            return Ok(orphaned_region_issues::<TomlDoc>(
+                self.name(),
+                &ctx.output_dir.join("Cargo.toml"),
+                &Self::deactivate_owned_keys(),
+                "rwv.yaml declares no cargo members, so [workspace] no longer \
+                 belongs to rwv.",
+            ));
         }
 
         let mut issues = self.verify_cargo_toml(ctx, &cfg)?;
@@ -1378,6 +1343,61 @@ impl CargoWorkspace {
             // resolver is Ownership::DefaultOnly — not stripped on deactivate.
             keypath(["workspace", "package"]),
         ]
+    }
+
+    /// Remove rwv's managed region from the `Cargo.toml` (and the patch surface)
+    /// under `root`, leaving user-authored content untouched.
+    ///
+    /// Both callers reach this from the same premise — rwv has no `[workspace]`
+    /// to author — and they differ only in why: the project is going away, or
+    /// its Rust membership emptied. Marker-gated and idempotent throughout, so
+    /// it is safe over an absent file and over one the user holds the pen on.
+    fn strip_managed_region(root: &Path) -> anyhow::Result<()> {
+        let path = root.join("Cargo.toml");
+
+        // First pass: strip Author-owned keys (members, workspace.package).
+        // DefaultOnly keys (resolver) are excluded from this list — their
+        // values survive deactivation (operator may have customized them).
+        let author_keys = Self::deactivate_owned_keys();
+        strip_deactivate::<TomlDoc>(&path, &author_keys)
+            .with_context(|| format!("strip-deactivate {}", path.display()))?;
+
+        // Second pass: remove the `# managed by rwv` marker decor from
+        // DefaultOnly keys without removing their values. resolver is
+        // DefaultOnly — its value stays but the decoration must be cleaned up
+        // so the file doesn't carry stale rwv annotations post-deactivation.
+        Self::undecorate_default_only_keys(&path)
+            .with_context(|| format!("undecorate-default-only {}", path.display()))?;
+
+        // Third pass: strip rwv-marker-decorated `[patch.<registry>].*`
+        // entries. This is independent of the workspace marker — patch
+        // entries carry their own per-key marker decor, so they may need
+        // stripping even when `strip_deactivate` left the file unchanged
+        // (e.g. the user holds the pen on `[workspace]`). The generic
+        // strip_deactivate has no static handle on the dynamic
+        // patch.<registry>.<name> key set, so this is handled here.
+        //
+        // The strip runs against BOTH candidate surfaces unconditionally.
+        // This path has no `IntegrationContext` and thus no `cfg`, so we
+        // can't tell which surface was in use at activate time — but the
+        // strip is marker-gated (only rwv-marker entries are removed) and
+        // idempotent (missing files are a no-op), so running it against
+        // both is safe. This also handles the surface-flip case: the
+        // operator toggles `patch-surface: manifest → cargo-config` (or
+        // vice versa) between activations, and a subsequent strip
+        // still cleans the stale surface.
+        Self::strip_marked_patch_entries(&path)
+            .with_context(|| format!("strip-patch {}", path.display()))?;
+        let cargo_config = root.join(".cargo").join("config.toml");
+        Self::strip_marked_patch_entries(&cargo_config)
+            .with_context(|| format!("strip-patch {}", cargo_config.display()))?;
+        // If the `.cargo/config.toml` becomes empty after the strip, delete
+        // it, then delete an empty `.cargo/` dir. Symmetric with the
+        // `strip_deactivate` file-deletion rule for hybrid files.
+        Self::prune_empty_cargo_config(root)
+            .with_context(|| format!("prune-cargo-config {}", root.display()))?;
+
+        Ok(())
     }
 
     /// Remove the `# managed by rwv` decoration from DefaultOnly keys that
