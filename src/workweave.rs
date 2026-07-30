@@ -1763,6 +1763,23 @@ pub fn create_workweave(
         }
     }
 
+    // rwv-owned generated files are gitignore-eligible, so the worktree
+    // checkout above arrives without the source's. Regenerating them here
+    // would run an ecosystem resolver against a registry that has moved since
+    // the source resolved, giving the fork a different dependency set than the
+    // workspace it forked from; copying is what makes the two agree.
+    if project_dir.exists() && project_wt_dest.exists() {
+        if let Err(e) =
+            crate::integrations::merge::carry_attested_owned_files(&project_dir, &project_wt_dest)
+        {
+            eprintln!(
+                "rwv workweave create: warning: could not carry rwv-owned generated files \
+                 into projects/{}: {e}",
+                project.as_str()
+            );
+        }
+    }
+
     // Process WorkweaveConfig artifacts. Sources resolve against source_root
     // so artifacts follow the workspace being forked from.
     if let Some(ref ww_config) = manifest.workweave {

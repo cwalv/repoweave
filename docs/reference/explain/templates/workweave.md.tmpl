@@ -87,15 +87,23 @@ is the standard "ensure workweave exists" path.
    `role: reference` repos are instead **symlinked** to the canonical
    weave-root clone (`<primary_root>/{repo-path}`) — no worktree, no ephemeral
    branch (override with `--worktree-references`).
-2. `workweave:` artifacts from `rwv.yaml` — `copy:` entries are deep-copied;
+2. A copy of every rwv-owned generated file the source workspace has accepted
+   — its lockfiles, plus the `.rwv-owned-digests` record attesting them. These
+   are gitignore-eligible, so the worktrees above arrive without them, and
+   re-running the ecosystem generator here would resolve against a registry
+   that has moved since the source resolved: the new workweave would hold a
+   different dependency set than the workspace it forked from, with both
+   reading clean. Copying is what makes a build in the workweave and a build
+   at the source measure the same tree.
+3. `workweave:` artifacts from `rwv.yaml` — `copy:` entries are deep-copied;
    `link:` entries are absolute symlinks pointing at the source root.
-3. `.rwv-workweave` marker recording `{primary, project, parent}`. `parent`
+4. `.rwv-workweave` marker recording `{primary, project, parent}`. `parent`
    is the workspace forked from (= `source_root`), which becomes the default
    sync-to target for bare `rwv sync-to` from inside the workweave. No
    `.rwv-active` is written beside it: selection is primary-only, and a
    workweave's project is fixed here at creation.
-4. Integration activation (context verb: surfaces symlinks, skips install hooks).
-5. An entry in `projects/<project>/.rwv-workweave-index` recording the
+5. Integration activation (context verb: surfaces symlinks, skips install hooks).
+6. An entry in `projects/<project>/.rwv-workweave-index` recording the
    workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
    project repo's `.gitignore` so the machine-local index stays untracked.
 

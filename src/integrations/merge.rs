@@ -2174,6 +2174,44 @@ pub fn check_owned_digest(file_path: &Path, content: &[u8]) -> OwnedDigestCheck 
     }
 }
 
+/// Reproduce `source_dir`'s attested owned generated files in `dest_dir`:
+/// every file the source's state file names, plus the state file itself.
+/// Returns the names carried.
+///
+/// The ledger is the manifest of what to carry. A file rwv has accepted a
+/// generation for cannot be reproduced by re-running the generator — the
+/// ecosystem tool resolves against a registry that moves — so a copy is the
+/// only way a second checkout can hold the same content.
+///
+/// Recorded digests are carried verbatim rather than recomputed: a source
+/// sitting on drift it never accepted then reports that same drift on the
+/// copy, instead of the copy presenting it as an accepted generation.
+pub fn carry_attested_owned_files(
+    source_dir: &Path,
+    dest_dir: &Path,
+) -> anyhow::Result<Vec<String>> {
+    let mut carried = BTreeMap::new();
+    for (name, digest) in read_owned_digests(source_dir) {
+        let Ok(bytes) = std::fs::read(source_dir.join(&name)) else {
+            continue;
+        };
+        let dest = dest_dir.join(&name);
+        std::fs::write(&dest, &bytes)
+            .with_context(|| format!("copying attested owned file to {}", dest.display()))?;
+        carried.insert(name, digest);
+    }
+    if carried.is_empty() {
+        return Ok(vec![]);
+    }
+    let path = dest_dir.join(OWNED_DIGESTS_FILE);
+    let json = serde_json::to_string_pretty(&carried)
+        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("writing owned-digest state {}", path.display()))?;
+    let _ = workweave_index::ensure_ignored_in_dir(dest_dir, OWNED_DIGESTS_FILE);
+    Ok(carried.into_keys().collect())
+}
+
 /// The canonical DRIFT-state issue for a **fully-owned** generated file whose
 /// on-disk content no longer matches the digest recorded when rwv last
 /// accepted a generation ([`stamp_owned_digest`]).
@@ -3437,6 +3475,100 @@ replace example.com/legacy => ./vendor/legacy
             assert_eq!(
                 occurrences, 1,
                 "ignore entry must not be duplicated on re-stamp"
+            );
+        }
+
+        /// A source whose on-disk bytes have drifted from its record is the
+        /// case that separates carrying the recorded digest from recomputing
+        /// one: the copy must report the same drift the source does.
+        #[test]
+        fn carry_reproduces_content_and_the_source_verdict() {
+            let tmp = TempDir::new().unwrap();
+            let source = tmp.path().join("source");
+            let dest = tmp.path().join("dest");
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::create_dir_all(&dest).unwrap();
+
+            let accepted = tmp.path().join("source/accepted.lock");
+            std::fs::write(&accepted, b"accepted bytes").unwrap();
+            stamp_owned_digest(&accepted, b"accepted bytes").unwrap();
+
+            let drifted = tmp.path().join("source/drifted.lock");
+            std::fs::write(&drifted, b"stamped bytes").unwrap();
+            stamp_owned_digest(&drifted, b"stamped bytes").unwrap();
+            std::fs::write(&drifted, b"bytes written behind rwv's back").unwrap();
+
+            let carried = carry_attested_owned_files(&source, &dest).unwrap();
+            assert_eq!(carried, vec!["accepted.lock", "drifted.lock"]);
+
+            assert_eq!(
+                std::fs::read(dest.join("accepted.lock")).unwrap(),
+                b"accepted bytes"
+            );
+            assert_eq!(
+                check_owned_digest(&dest.join("accepted.lock"), b"accepted bytes"),
+                OwnedDigestCheck::Matches
+            );
+            assert_eq!(
+                std::fs::read(dest.join("drifted.lock")).unwrap(),
+                b"bytes written behind rwv's back"
+            );
+            assert_eq!(
+                check_owned_digest(
+                    &dest.join("drifted.lock"),
+                    b"bytes written behind rwv's back"
+                ),
+                OwnedDigestCheck::Differs,
+                "the copy must inherit the source's record, not a fresh stamp of \
+                 content rwv never accepted"
+            );
+        }
+
+        #[test]
+        fn carry_attests_only_what_it_copied() {
+            let tmp = TempDir::new().unwrap();
+            let source = tmp.path().join("source");
+            let dest = tmp.path().join("dest");
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::create_dir_all(&dest).unwrap();
+
+            let present = source.join("Cargo.lock");
+            std::fs::write(&present, b"version = 4\n").unwrap();
+            stamp_owned_digest(&present, b"version = 4\n").unwrap();
+            stamp_owned_digest(&source.join("deleted.lock"), b"gone").unwrap();
+
+            let carried = carry_attested_owned_files(&source, &dest).unwrap();
+            assert_eq!(carried, vec!["Cargo.lock"]);
+            assert!(
+                !dest.join("deleted.lock").exists(),
+                "an entry whose file is gone has nothing to reproduce"
+            );
+            assert_eq!(
+                check_owned_digest(&dest.join("deleted.lock"), b"gone"),
+                OwnedDigestCheck::NotRecorded,
+                "and the copy must not attest a file it does not hold"
+            );
+        }
+
+        #[test]
+        fn carry_from_a_source_with_no_record_writes_nothing() {
+            let tmp = TempDir::new().unwrap();
+            let source = tmp.path().join("source");
+            let dest = tmp.path().join("dest");
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::create_dir_all(&dest).unwrap();
+            std::fs::write(source.join("Cargo.lock"), b"unstamped").unwrap();
+
+            assert!(carry_attested_owned_files(&source, &dest)
+                .unwrap()
+                .is_empty());
+            assert!(
+                !dest.join(OWNED_DIGESTS_FILE).exists(),
+                "no record at the source means no record to carry"
+            );
+            assert!(
+                !dest.join("Cargo.lock").exists(),
+                "an unstamped file is not attested owned state"
             );
         }
 
