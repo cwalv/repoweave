@@ -2196,7 +2196,7 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
             }
             if let Some(primary) = crate::workspace::legacy_marker_primary(&dir) {
                 found.push(LegacyWorkweaveMarkerFile {
-                    marker_path: dir.join(crate::workspace::WORKWEAVE_MARKER_FILE),
+                    marker_path: crate::workspace::WorkweaveMarker::path_in(&dir),
                     primary,
                 });
             }
@@ -2242,12 +2242,10 @@ fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
 /// Returns `true` if the file was rewritten, `false` if it was already
 /// up to date.
 pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
-    let dir = finding.marker_path.parent().unwrap_or_else(|| {
-        panic!(
-            "{} marker path always has a parent directory",
-            crate::workspace::WORKWEAVE_MARKER_FILE
-        )
-    });
+    let dir = finding
+        .marker_path
+        .parent()
+        .expect(".rwv-workweave marker path always has a parent directory");
     crate::workspace::WorkweaveMarker::migrate_legacy(dir)
 }
 
@@ -2273,16 +2271,14 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
     let mut marker = crate::workspace::WorkweaveMarker::read(marker_dir)
         .with_context(|| {
             format!(
-                "failed to read {}/{} for --fix",
-                marker_dir.display(),
-                crate::workspace::WORKWEAVE_MARKER_FILE
+                "failed to read {}/.rwv-workweave for --fix",
+                marker_dir.display()
             )
         })?
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "{}/{} vanished before --fix could re-point it",
-                marker_dir.display(),
-                crate::workspace::WORKWEAVE_MARKER_FILE
+                "{}/.rwv-workweave vanished before --fix could re-point it",
+                marker_dir.display()
             )
         })?;
 
@@ -2295,9 +2291,8 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
     marker.repoint_parent(primary);
     marker.write(marker_dir).with_context(|| {
         format!(
-            "failed to write {}/{} during --fix",
-            marker_dir.display(),
-            crate::workspace::WORKWEAVE_MARKER_FILE
+            "failed to write {}/.rwv-workweave during --fix",
+            marker_dir.display()
         )
     })?;
     Ok(true)
@@ -2685,41 +2680,23 @@ fn scan_weave_root_identity(primary_root: &Path, active_path: &Path) -> Vec<Chec
     violations
 }
 
-/// Classify one candidate root: `None` when it does not carry both files.
+/// Classify one candidate root: `None` when it is not carrying both files.
 ///
-/// Existence tests, not parses, decide whether there is a conflict at all —
-/// an empty pointer or a legacy marker is still a present file and still two
-/// copies of one fact. Parsing only decides the sub-kind, via `observe_root`
-/// — the same reader `resolve` consumes, so this and resolution cannot
-/// diverge on what a root *is*.
+/// `observe_root` is the same reader `resolve` consumes, so this and
+/// resolution cannot diverge on what a root *is*, and the two arms a pointer
+/// beside a marker produces are the two this reports on. Neither turns on what
+/// either file parses to: an empty pointer or a legacy marker is still a
+/// present file and still two copies of one fact.
 fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<CheckViolation> {
-    use crate::workspace::{
-        observe_root, read_active_project, RootObservation, ACTIVE_PROJECT_FILE,
-        WORKWEAVE_MARKER_FILE,
-    };
+    use crate::workspace::{observe_root, ActivePointer, RootObservation};
 
-    if !root.join(ACTIVE_PROJECT_FILE).exists() || !root.join(WORKWEAVE_MARKER_FILE).exists() {
-        return None;
-    }
-    let pointer_project = read_active_project(root);
-
-    let unwitnessed = |detail: String| CheckViolation::WeaveRootIdentityConflict {
-        root: root.to_path_buf(),
-        pointer_project: pointer_project.clone(),
-        sub_kind: WeaveRootIdentityConflictKind::Unwitnessed { detail },
-    };
-
-    // Both files exist, per the guard above, so a marker present on disk
-    // observes as exactly one of the two arms that require the pointer too:
-    // `Disputed` (the marker verifies) or `MarkerUnverifiable` (it does not).
-    // `Workweave`, `Primary`, and `None` all require the pointer or the
-    // marker to be absent, so they cannot come back here.
-    let marker = match observe_root(root) {
-        Some(RootObservation::MarkerUnverifiable {
+    let (pointer_project, marker) = match observe_root(root)? {
+        RootObservation::MarkerUnverifiable {
             marker_path,
             defect,
+            pointer: ActivePointer::Present(pointer_project),
             ..
-        }) => {
+        } => {
             return Some(CheckViolation::WeaveRootIdentityConflict {
                 root: root.to_path_buf(),
                 pointer_project,
@@ -2729,8 +2706,16 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
                 },
             })
         }
-        Some(RootObservation::Disputed { marker, .. }) => marker,
+        RootObservation::Disputed {
+            marker, pointer, ..
+        } => (pointer, marker),
         _ => return None,
+    };
+
+    let unwitnessed = |detail: String| CheckViolation::WeaveRootIdentityConflict {
+        root: root.to_path_buf(),
+        pointer_project: pointer_project.clone(),
+        sub_kind: WeaveRootIdentityConflictKind::Unwitnessed { detail },
     };
 
     let primary_canonical = primary_root
@@ -2776,13 +2761,6 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
             marker.project()
         ))),
     }
-}
-
-/// Delete the redundant `.rwv-active` at a registered workweave root.
-fn fix_weave_root_identity(root: &Path) -> anyhow::Result<()> {
-    let pointer = root.join(crate::workspace::ACTIVE_PROJECT_FILE);
-    std::fs::remove_file(&pointer)
-        .with_context(|| format!("failed to remove {}", pointer.display()))
 }
 
 pub fn scan_workweave_tree_integrity(
@@ -2836,7 +2814,7 @@ pub fn scan_workweave_tree_integrity(
     let mut marker_entries: Vec<MarkerEntry> = Vec::new();
 
     for dir in &dirs {
-        let marker_path = dir.join(crate::workspace::WORKWEAVE_MARKER_FILE);
+        let marker_path = crate::workspace::WorkweaveMarker::path_in(dir);
 
         if !marker_path.exists() {
             // No marker file at all → unregistered directory.
@@ -7363,8 +7341,7 @@ fn apply_workspace_repairs(
             .join("projects")
             .join(active_name.as_str());
         if !project_dir.is_dir() {
-            let active_file = ctx.primary_path().join(".rwv-active");
-            match std::fs::remove_file(&active_file) {
+            match crate::workspace::clear_active_project(ctx.primary_path()) {
                 Ok(()) => println!(
                     "[fixed] core: cleared `.rwv-active` (was pointing at missing project `{}`)",
                     active_name
@@ -7390,7 +7367,7 @@ fn apply_workspace_repairs(
             ..
         } = &v
         {
-            match fix_weave_root_identity(root) {
+            match crate::workspace::clear_active_project(root) {
                 Ok(()) => println!(
                     "[fixed] core: deleted `.rwv-active` at {} \
                      (redundant with the `.rwv-workweave` marker of registered workweave \

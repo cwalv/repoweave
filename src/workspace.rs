@@ -313,10 +313,10 @@ pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
 // ---------------------------------------------------------------------------
 
 /// The pointer file naming the project a **primary** root presents.
-pub const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
+const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
 
 /// The marker file naming the project a **workweave** root belongs to.
-pub const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
+const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
 
 /// Read the active project from the `.rwv-active` file in the workspace root.
 ///
@@ -335,6 +335,31 @@ pub fn read_active_project(root: &Path) -> Option<ProjectName> {
         return None;
     }
     ProjectName::new(trimmed).ok()
+}
+
+/// Remove the `.rwv-active` pointer at `root`, leaving the root selecting no
+/// project.
+///
+/// A root with no pointer is already in the state this leaves it in, so the
+/// absent case succeeds: a caller made to probe first would be spelling the
+/// file name at its own site again to do it.
+pub fn clear_active_project(root: &Path) -> anyhow::Result<()> {
+    let path = root.join(ACTIVE_PROJECT_FILE);
+    match std::fs::remove_file(&path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).with_context(|| format!("failed to remove {}", path.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether `root` carries the `.rwv-active` pointer, and what it names.
+fn observe_active_pointer(root: &Path) -> ActivePointer {
+    if root.join(ACTIVE_PROJECT_FILE).exists() {
+        ActivePointer::Present(read_active_project(root))
+    } else {
+        ActivePointer::Absent
+    }
 }
 
 /// Scan registry directories under `root` for VCS repos on disk.
@@ -1186,6 +1211,11 @@ pub struct WorkweaveMarker {
 }
 
 impl WorkweaveMarker {
+    /// Where this type's file sits inside `dir`.
+    pub fn path_in(dir: &Path) -> PathBuf {
+        dir.join(WORKWEAVE_MARKER_FILE)
+    }
+
     /// Build a marker for a workweave forked from `parent_source`.
     ///
     /// `parent_source` is canonicalized into `parent` (falling back to the
@@ -1240,7 +1270,7 @@ impl WorkweaveMarker {
     /// `rwv doctor --fix` to migrate. All three fields (`primary`, `project`,
     /// `parent`) must be present; there is no silent backfill.
     pub fn read(dir: &Path) -> anyhow::Result<Option<Self>> {
-        let path = dir.join(WORKWEAVE_MARKER_FILE);
+        let path = Self::path_in(dir);
         match observe_marker(&path) {
             MarkerPresence::Absent => Ok(None),
             MarkerPresence::Usable(marker) => Ok(Some(marker)),
@@ -1249,7 +1279,7 @@ impl WorkweaveMarker {
     }
 
     pub fn write(&self, dir: &Path) -> anyhow::Result<()> {
-        let path = dir.join(".rwv-workweave");
+        let path = Self::path_in(dir);
         let content = serde_yaml::to_string(self).context("failed to serialize .rwv-workweave")?;
         std::fs::write(&path, content)
             .with_context(|| format!("failed to write {}", path.display()))?;
@@ -1265,7 +1295,7 @@ impl WorkweaveMarker {
     /// `Err` on I/O failure or if the file doesn't even have the `primary:`
     /// field a legacy marker requires.
     pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
-        let path = dir.join(".rwv-workweave");
+        let path = Self::path_in(dir);
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {} for --fix", path.display()))?;
         let mut raw: serde_yaml::Value = serde_yaml::from_str(&content)
@@ -1435,7 +1465,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
 /// ([`MarkerDefect::Unreadable`], [`MarkerDefect::DanglingPrimary`]), or a
 /// legacy marker that has no `primary:` of its own to report.
 pub(crate) fn legacy_marker_primary(dir: &Path) -> Option<PathBuf> {
-    match observe_marker(&dir.join(WORKWEAVE_MARKER_FILE)) {
+    match observe_marker(&WorkweaveMarker::path_in(dir)) {
         MarkerPresence::Defective {
             defect: MarkerDefect::Legacy,
             primary_hint,
@@ -1443,6 +1473,18 @@ pub(crate) fn legacy_marker_primary(dir: &Path) -> Option<PathBuf> {
         } => primary_hint,
         _ => None,
     }
+}
+
+/// The `.rwv-active` pointer as a root carries it.
+///
+/// Presence and content are separate facts. An empty pointer names no project
+/// and is still a present file — still a second copy of an identity the marker
+/// beside it already states — so a reader answering only "which project" would
+/// lose the state doctor reports on.
+#[derive(Debug)]
+pub enum ActivePointer {
+    Absent,
+    Present(Option<ProjectName>),
 }
 
 /// The identity evidence one directory carries.
@@ -1473,10 +1515,16 @@ pub enum RootObservation {
     /// shape of every workweave is the shape of a primary, so falling through
     /// hands the tree a primary's authority on the strength of its own broken
     /// claim to be something else.
+    ///
+    /// The only arm that carries the pointer's presence, because it is the
+    /// only one where the presence is still an open question: `Workweave` and
+    /// `Disputed` are the two halves a verified marker splits into on exactly
+    /// that test.
     MarkerUnverifiable {
         marker_path: PathBuf,
         defect: MarkerDefect,
         project_hint: Option<ProjectName>,
+        pointer: ActivePointer,
     },
 }
 
@@ -1486,7 +1534,7 @@ pub enum RootObservation {
 /// it. Every other answer is terminal for the walk, including the two that no
 /// verb may act on.
 pub fn observe_root(dir: &Path) -> Option<RootObservation> {
-    let marker_path = dir.join(WORKWEAVE_MARKER_FILE);
+    let marker_path = WorkweaveMarker::path_in(dir);
     let observation = match observe_marker(&marker_path) {
         MarkerPresence::Defective {
             defect,
@@ -1496,6 +1544,7 @@ pub fn observe_root(dir: &Path) -> Option<RootObservation> {
             marker_path,
             defect,
             project_hint,
+            pointer: observe_active_pointer(dir),
         },
         MarkerPresence::Usable(marker) => {
             if !is_workspace_root(&marker.primary) {
@@ -1505,15 +1554,17 @@ pub fn observe_root(dir: &Path) -> Option<RootObservation> {
                     defect: MarkerDefect::DanglingPrimary {
                         primary: marker.primary,
                     },
-                }
-            } else if dir.join(ACTIVE_PROJECT_FILE).exists() {
-                RootObservation::Disputed {
-                    root: dir.to_path_buf(),
-                    pointer: read_active_project(dir),
-                    marker,
+                    pointer: observe_active_pointer(dir),
                 }
             } else {
-                RootObservation::Workweave { marker }
+                match observe_active_pointer(dir) {
+                    ActivePointer::Present(pointer) => RootObservation::Disputed {
+                        root: dir.to_path_buf(),
+                        pointer,
+                        marker,
+                    },
+                    ActivePointer::Absent => RootObservation::Workweave { marker },
+                }
             }
         }
         MarkerPresence::Absent => {
@@ -1548,7 +1599,7 @@ impl RootObservation {
                  it removes the redundant file where the primary-side workweave \
                  registry names this tree, and reports the conflict where nothing \
                  outside the tree settles which file is the stray.",
-                root.join(WORKWEAVE_MARKER_FILE).display(),
+                WorkweaveMarker::path_in(&root).display(),
                 root.join(ACTIVE_PROJECT_FILE).display()
             ),
             RootObservation::MarkerUnverifiable {
@@ -3603,6 +3654,7 @@ mod tests {
                 marker_path,
                 defect,
                 project_hint,
+                pointer,
             } => {
                 assert_eq!(marker_path, weave_dir.join(WORKWEAVE_MARKER_FILE));
                 match defect {
@@ -3613,6 +3665,7 @@ mod tests {
                     project_hint.as_ref().map(ProjectName::as_str),
                     Some("myproject")
                 );
+                assert!(matches!(pointer, ActivePointer::Absent));
             }
             other => panic!("expected MarkerUnverifiable, got {other:?}"),
         }
@@ -3788,6 +3841,7 @@ mod tests {
                 marker_path: marker_path.clone(),
                 defect,
                 project_hint: None,
+                pointer: ActivePointer::Absent,
             }
             .require_exclusive()
             .map(|_| ())

@@ -345,41 +345,50 @@ const ALLOWLIST: &[Allowed] = &[
             on-disk blob is committed content.",
     },
     Allowed {
-        file: "check.rs",
+        file: "workspace.rs",
         pattern: "remove_file",
-        count: 2,
-        justification: "(1) doctor --fix removing a dangling .rwv-active \
-            pointer (rwv-internal state, target project missing). \
-            (2) fix_weave_root_identity: doctor --fix removing the \
-            .rwv-active pointer from a weave root that also carries a \
-            .rwv-workweave marker (rwv-internal state). The precondition is \
-            established in FRONT of the delete, and by evidence the tree \
-            does not contain: classify_weave_root_identity emits the fixable \
-            RegisteredWorkweave sub-kind only when the marker names THIS \
-            workspace's primary AND that primary's .rwv-workweave-index \
-            records this exact directory as one of its workweaves. Under \
-            that precondition the pointer is provably redundant — the marker \
-            beside it and the registry entry above it each already name the \
-            project, which is the pointer's entire content — so the delete \
-            discards no fact that survives only here. Every other shape \
-            (unreadable marker, foreign primary, unregistered directory) \
-            takes the report-only Unwitnessed arm and --fix touches neither \
-            file: with no external witness, deleting one would be a guess, \
-            and the marker carries primary/parent values that do NOT exist \
-            elsewhere. The marker is never the file deleted.",
+        count: 1,
+        justification: "clear_active_project: the one site that removes the \
+            .rwv-active pointer (rwv-internal state), for all three callers \
+            that used to spell the delete themselves. Unconditional here by \
+            design — the pointer's owner cannot know which caller's \
+            precondition applies, so each establishes its own in FRONT of the \
+            call, and the entry an auditor reads is this one. \
+            (1) deactivate: the verb whose entire content is removing the \
+            pointer and the symlinks beside it. \
+            (2) doctor --fix, dangling pointer: the named project's directory \
+            is gone, so the pointer selects nothing that exists. \
+            (3) doctor --fix, weave-root identity conflict: the precondition \
+            is evidence the tree does not contain. \
+            classify_weave_root_identity emits the fixable RegisteredWorkweave \
+            sub-kind only when the marker names THIS workspace's primary AND \
+            that primary's .rwv-workweave-index records this exact directory \
+            as one of its workweaves. Under that precondition the pointer is \
+            provably redundant — the marker beside it and the registry entry \
+            above it each already name the project, which is the pointer's \
+            entire content — so the delete discards no fact that survives only \
+            here. Every other shape (unreadable marker, foreign primary, \
+            unregistered directory) takes the report-only Unwitnessed arm and \
+            --fix touches neither file: with no external witness, deleting one \
+            would be a guess, and the marker carries primary/parent values \
+            that do NOT exist elsewhere. The marker is never the file deleted. \
+            An absent pointer succeeds rather than erroring, which is what \
+            lets a caller skip its own existence probe; it widens nothing, \
+            since deleting nothing destroys nothing.",
     },
     Allowed {
         file: "activate.rs",
         pattern: "remove_file",
-        count: 3,
+        count: 2,
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
-            (2) deactivate removing .rwv-active (rwv-internal state). \
-            (3) foreign-shared-name cleanup: only top-level symlinks whose \
+            (2) foreign-shared-name cleanup: only top-level symlinks whose \
             target is exactly projects/<other-project>/<same-name> — rwv's \
             own surfacing of a shared name out of a project the weave root \
             does not present — and only while surfacing the one it does. \
-            Recoverable by re-surfacing that other project.",
+            Recoverable by re-surfacing that other project. \
+            deactivate's .rwv-active removal moved to workspace.rs's \
+            clear_active_project, audited above.",
     },
     Allowed {
         file: "op_state.rs",

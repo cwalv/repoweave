@@ -578,12 +578,7 @@ pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let owned = compute_active_owned_set(root)?;
     remove_activation_symlinks(root, &owned)?;
 
-    let active_file = root.join(".rwv-active");
-    if active_file.exists() {
-        std::fs::remove_file(&active_file)?;
-    }
-
-    Ok(())
+    crate::workspace::clear_active_project(root)
 }
 
 /// Compute the owner-scoped surfacing set for `project` at `root`: the union

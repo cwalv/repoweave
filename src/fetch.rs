@@ -629,27 +629,26 @@ fn fetch_project_repos(
         // In-place mode always skips auto-activate (the project is already
         // active — that's how the in-place caller resolved the manifest).
         if auto_activate_on_bootstrap {
-            let active_file = workspace_root.join(".rwv-active");
-            if active_file.exists() {
-                // Route to stderr in JSON mode so stdout stays JSON-only.
-                let msg = format!(
-                    "rwv fetch: skipping auto-activate (project '{}' already active)",
-                    std::fs::read_to_string(&active_file)
-                        .unwrap_or_default()
-                        .trim()
-                );
-                if json {
-                    eprintln!("{msg}");
-                } else {
-                    println!("{msg}");
+            match crate::workspace::read_active_project(workspace_root) {
+                Some(active) => {
+                    // Route to stderr in JSON mode so stdout stays JSON-only.
+                    let msg = format!(
+                        "rwv fetch: skipping auto-activate (project '{active}' already active)"
+                    );
+                    if json {
+                        eprintln!("{msg}");
+                    } else {
+                        println!("{msg}");
+                    }
                 }
-            } else {
-                // Resolve the freshly-bootstrapped workspace to build the
-                // context activate now takes. This is a first-resolution of
-                // the newly-created workspace, not a re-resolution of the
-                // invocation context.
-                let ctx = crate::workspace::WorkspaceContext::resolve(workspace_root, None)?;
-                crate::activate::activate(name, &ctx)?;
+                None => {
+                    // Resolve the freshly-bootstrapped workspace to build the
+                    // context activate now takes. This is a first-resolution of
+                    // the newly-created workspace, not a re-resolution of the
+                    // invocation context.
+                    let ctx = crate::workspace::WorkspaceContext::resolve(workspace_root, None)?;
+                    crate::activate::activate(name, &ctx)?;
+                }
             }
         }
     }
