@@ -11,7 +11,8 @@
 //!
 //! Guarding rwv's own `-go=` call is not sufficient to honour DefaultOnly on
 //! this path: `go work use` raises the go directive to the strongest `go`
-//! requirement across the modules it adds, whatever the file said. So the
+//! requirement across the modules it adds, whatever the file said, and `go work
+//! init` stamps a fresh file with the version of whichever `go` ran it. So the
 //! directive is snapshotted before the `use` loop and restored after it by
 //! [`restore_go_directive`] — otherwise the same `rwv add` would rewrite an
 //! operator's pin on a machine with `go` installed and preserve it on one
@@ -34,6 +35,11 @@
 //! and FALLBACK alike: if a go-line is already present in the file it is
 //! preserved unconditionally — `max_go_version` only takes effect on a fresh
 //! (greenfield) or go-line-absent file.
+//!
+//! When neither config nor `max_go_version` supplies a value — no member go.mod
+//! carries a parseable `go` directive — neither path writes a go-line at all.
+//! The only version available to write would be the one `go work init` stamped
+//! from the toolchain on this machine, and go.work is committed.
 //!
 //! # Deactivate
 //!
@@ -275,8 +281,8 @@ impl Integration for GoWork {
     ///
     /// Silent (returns `None`) when:
     /// - no member declares a `go.mod` — nothing to require;
-    /// - `go.work` has no go-line — `activate()` seeds one, so there is no
-    ///   operator choice to be incompatible with;
+    /// - `go.work` has no go-line — with no pin on disk there is no choice to
+    ///   be incompatible with;
     /// - either side is unparseable — the category states facts or nothing;
     /// - the on-disk version is at or above the requirement.
     ///
@@ -409,12 +415,21 @@ fn activate_via_go_tool(
     }
 
     // Ownership::DefaultOnly for the go-line, part 2. `go work use` raises the
-    // go directive to the strongest requirement across the modules it adds —
-    // it rewrites the value the guard above was careful not to touch. Snapshot
-    // the settled directive here, after the guarded `-go=` write and before the
-    // first `use`, so one restore covers both cases: the operator's
-    // pre-existing value, and a default just written into an absent slot.
-    let settled_go = read_go_directive_from_file(&work_tmp);
+    // go directive to the strongest requirement across the modules it adds, and
+    // `go work init` stamps a fresh file with the version of whichever `go` ran
+    // it — both write the slot the guard above was careful not to touch.
+    // Snapshot what rwv is accountable for here, after the guarded `-go=` write
+    // and before the first `use`, so one restore covers all three cases: the
+    // operator's pre-existing value, a default just written into an absent slot,
+    // and no line at all when rwv had no value for one. That last case is why
+    // the snapshot is not simply whatever the file now says — init's version is
+    // a property of this machine, and go.work is committed.
+    let no_go_line_to_publish = go_line_absent && go_version.is_none();
+    let settled_go = if no_go_line_to_publish {
+        None
+    } else {
+        read_go_directive_from_file(&work_tmp)
+    };
 
     // Read the current `use` entries so we can dropuse stale ones.
     let current_uses = read_current_uses_from_file(&work_tmp);
@@ -451,10 +466,7 @@ fn activate_via_go_tool(
         }
     }
 
-    // Put the settled go directive back if a `go work use` raised it.
-    if let Some(want) = &settled_go {
-        restore_go_directive(&work_tmp, want)?;
-    }
+    restore_go_directive(&work_tmp, settled_go.as_deref())?;
 
     restore_toolchain_directive(&work_tmp, seeded_toolchain.as_deref())?;
 
@@ -501,31 +513,66 @@ fn read_current_uses_from_file(path: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Put `want` back as the go directive of `path`, undoing the raise that
-/// `go work use` performs as a side effect of adding a module.
+/// Put the go directive rwv is accountable for back into `path`, undoing what
+/// `go work init` and `go work use` write into that slot as side effects of
+/// creating the file and adding a module. `None` means the file carried no
+/// go-line before any `go work` ran and rwv had no value to supply, so it
+/// carries none afterwards either — the FALLBACK path's output for those inputs.
 ///
-/// No-op when the on-disk value already matches, which is the common case —
+/// No-op when the on-disk state already matches, which is the common case —
 /// the tool only ever raises, and only when a member declares more than the
 /// file does.
 ///
-/// Written through [`GoWorkDoc`] rather than a third `go work edit -go=<v>`
-/// call for two reasons: the tool would re-render the whole file, and on a pin
-/// above the installed toolchain any `go work` invocation tries to download
-/// that toolchain. This shares the writer the FALLBACK path uses, so a given
-/// go-line lands identically whichever path produced it.
-fn restore_go_directive(path: &Path, want: &str) -> anyhow::Result<()> {
-    if read_go_directive_from_file(path).as_deref() == Some(want) {
-        return Ok(());
-    }
+/// A value is written through [`GoWorkDoc`] rather than a third `go work edit
+/// -go=<v>` call for two reasons: the tool would re-render the whole file, and
+/// on a pin above the installed toolchain any `go work` invocation tries to
+/// download that toolchain. This shares the writer the FALLBACK path uses, so a
+/// given go-line lands identically whichever path produced it. Removal is
+/// line-level instead, because [`GoWorkDoc`] models `go` and `use` and
+/// round-trips the rest as opaque text — it cannot see the blank line the tool
+/// pads the directive with.
+fn restore_go_directive(path: &Path, want: Option<&str>) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading {} to restore its go directive", path.display()))?;
-    let mut doc = GoWorkDoc::parse(&text)
-        .with_context(|| format!("parsing {} to restore its go directive", path.display()))?;
-    doc.set_owned(&keypath(["go"]), &OwnedValue::String(want.to_string()));
-    let out = doc.serialize()?;
+    if go_directive_in(&text).as_deref() == want {
+        return Ok(());
+    }
+
+    let out = match want {
+        Some(v) => {
+            let mut doc = GoWorkDoc::parse(&text).with_context(|| {
+                format!("parsing {} to restore its go directive", path.display())
+            })?;
+            doc.set_owned(&keypath(["go"]), &OwnedValue::String(v.to_string()));
+            doc.serialize()?
+        }
+        None => {
+            let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+            let Some(at) = lines.iter().position(|l| go_directive_in(l).is_some()) else {
+                return Ok(());
+            };
+            remove_directive_line(&mut lines, at);
+            let mut joined = lines.join("\n");
+            if text.ends_with('\n') && !joined.is_empty() {
+                joined.push('\n');
+            }
+            joined
+        }
+    };
+
     std::fs::write(path, out)
         .with_context(|| format!("writing {} to restore its go directive", path.display()))?;
     Ok(())
+}
+
+/// Remove the line at `at`, along with a blank line immediately after it — the
+/// padding `go work` writes between directives, which would otherwise outlive
+/// the directive it was separating.
+fn remove_directive_line(lines: &mut Vec<String>, at: usize) {
+    if lines.get(at + 1).is_some_and(|l| l.trim().is_empty()) {
+        lines.remove(at + 1);
+    }
+    lines.remove(at);
 }
 
 /// Force the `toolchain` directive of `path` back to `want`, where `None` means
@@ -553,13 +600,7 @@ fn restore_toolchain_directive(path: &Path, want: Option<&str>) -> anyhow::Resul
         // Rewrite in place, so a line the operator put somewhere deliberate
         // keeps its position among the other directives.
         (Some(i), Some(v)) => lines[i] = format!("toolchain {v}"),
-        // Take the injected line, and the blank line the tool pads it with.
-        (Some(i), None) => {
-            if lines.get(i + 1).is_some_and(|l| l.trim().is_empty()) {
-                lines.remove(i + 1);
-            }
-            lines.remove(i);
-        }
+        (Some(i), None) => remove_directive_line(&mut lines, i),
         (None, Some(v)) => {
             let after_go = lines
                 .iter()
@@ -1341,23 +1382,108 @@ mod tests {
         }
 
         // Order is load-bearing: `force_fallback()` latches a thread-local for
-        // the rest of the test, so the tool run has to come first.
-        let primary = TempDir::new().unwrap();
-        seed_pin_below_member(primary.path());
-        activate_in(primary.path());
+        // the rest of the test, so every tool run has to come first.
+        let tool_pinned = activate_fresh(seed_pin_below_member);
+        let tool_unseeded = activate_fresh(seed_member_without_go_directive);
 
-        let fallback = TempDir::new().unwrap();
-        seed_pin_below_member(fallback.path());
         force_fallback();
-        activate_in(fallback.path());
 
-        let via_tool = std::fs::read_to_string(primary.path().join("go.work")).unwrap();
-        let via_hand = std::fs::read_to_string(fallback.path().join("go.work")).unwrap();
+        let hand_pinned = activate_fresh(seed_pin_below_member);
+        let hand_unseeded = activate_fresh(seed_member_without_go_directive);
+
         assert_eq!(
-            via_tool, via_hand,
+            tool_pinned, hand_pinned,
             "activate must not depend on whether `go` is installed\n\
-             --- primary (go work) ---\n{via_tool}\n\
-             --- fallback (hand-edit) ---\n{via_hand}"
+             --- primary (go work) ---\n{tool_pinned}\n\
+             --- fallback (hand-edit) ---\n{hand_pinned}"
+        );
+        assert_eq!(
+            tool_unseeded, hand_unseeded,
+            "with no go-version to supply, activate must not depend on whether \
+             `go` is installed\n\
+             --- primary (go work) ---\n{tool_unseeded}\n\
+             --- fallback (hand-edit) ---\n{hand_unseeded}"
+        );
+    }
+
+    /// Seed a fresh temp root, activate in it, and return the resulting go.work.
+    fn activate_fresh(seed: impl Fn(&Path)) -> String {
+        let tmp = TempDir::new().unwrap();
+        seed(tmp.path());
+        activate_in(tmp.path());
+        std::fs::read_to_string(tmp.path().join("go.work")).unwrap()
+    }
+
+    /// Greenfield, and a member whose go.mod carries no `go` directive — legal
+    /// Go, which the toolchain reads as `go 1.16`. `max_go_version` has nothing
+    /// to return, so rwv has no go-version to supply, and `go work init` seeds
+    /// the fresh file with the version of whichever `go` ran it.
+    fn seed_member_without_go_directive(root: &Path) {
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n",
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The absence below is the behaviour, not an oversight. `go work init`
+    // stamps the running toolchain's version into a fresh go.work, which is a
+    // property of the machine rather than of the workspace, and go.work is
+    // committed — publishing it would hand whoever activated first a pin that
+    // DefaultOnly then preserves forever. With no value of its own to write,
+    // rwv leaves the slot empty; a go.work with no go directive is one the go
+    // tool accepts and builds.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn greenfield_without_go_version_writes_no_go_line() {
+        if !require_go() {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_member_without_go_directive(root);
+
+        activate_in(root);
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            go_directive_in(&text).is_none(),
+            "`go work init` seeds the running toolchain's version; rwv must not \
+             publish it as a go-line it has no value for: {text}"
+        );
+        assert!(
+            text.contains("./github/test/repoweave"),
+            "use entry must be present: {text}"
+        );
+        assert!(
+            text.contains("// managed by repoweave"),
+            "marker must be present: {text}"
+        );
+    }
+
+    /// The same absence on the path that has always produced it, so the
+    /// property is pinned on a machine with no `go` to run the test above.
+    #[test]
+    fn greenfield_without_go_version_writes_no_go_line_in_fallback() {
+        force_fallback();
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_member_without_go_directive(root);
+
+        activate_in(root);
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            go_directive_in(&text).is_none(),
+            "rwv must not invent a go-line it has no value for: {text}"
+        );
+        assert!(
+            text.contains("./github/test/repoweave"),
+            "use entry must be present: {text}"
         );
     }
 

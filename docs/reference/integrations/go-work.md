@@ -30,6 +30,14 @@ the file is yours: repoweave neither raises nor lowers it, whether or not `go`
 is on PATH. If your pin sits below what a member's `go.mod` requires, `rwv
 doctor` reports the incompatibility instead of rewriting the pin.
 
+If no member declares a `go` directive and you have set no `go-version`, the
+generated `go.work` carries no `go` line, and the Go toolchain accepts that. The
+absence is deliberate: the only version available to write would be the one the
+locally installed Go stamps into a new `go.work`, which would make a committed
+file a property of whichever machine ran the command first — and repoweave would
+then preserve that accident as though you had chosen it. Set `go-version` if you
+want a pin.
+
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
 
 ## Deactivation
