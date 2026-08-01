@@ -611,7 +611,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 /// (here the primary, since this is a direct child of primary).
 fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
     let content = format!(
-        "primary: \"{primary}\"\nproject: web-app\nparent: \"{parent}\"\n",
+        "{{\"primary\":\"{primary}\",\"project\":\"web-app\",\"parent\":\"{parent}\"}}",
         primary = primary_root.display(),
         parent = primary_root.display(),
     );

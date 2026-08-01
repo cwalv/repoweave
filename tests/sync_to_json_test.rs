@@ -116,12 +116,11 @@ const SERVER_PATH: &str = "github/example/server";
 /// (e.g. "primary" from `primary--sample-weave`), which doesn't match the actual
 /// project "web-app".
 fn write_workweave_marker(ww_dir: &Path, primary: &Path, project: &str, workweave_name: &str) {
-    // The marker format is:
-    //   primary: <absolute path>
-    //   project: <project name>
-    //   parent: <absolute path of the workspace this was forked from>
+    // The marker format is JSON: {"primary": <absolute path>, "project":
+    // <project name>, "parent": <absolute path of the workspace this was
+    // forked from>}
     let marker = format!(
-        "primary: {primary}\nproject: {project}\nparent: {primary}\n",
+        "{{\"primary\":\"{primary}\",\"project\":\"{project}\",\"parent\":\"{primary}\"}}",
         primary = primary.display(),
     );
     let _ = workweave_name; // stored in the dir name; marker itself doesn't need it

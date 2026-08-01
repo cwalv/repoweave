@@ -624,7 +624,7 @@ fn envelope_via_w_flag_sets_workweave_var() {
     std::fs::create_dir_all(&ww_dir).unwrap();
     // Write the .rwv-workweave marker.
     let marker_content = format!(
-        "primary: {}\nproject: myproj\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"myproj\",\"parent\":\"{}\"}}",
         ws_canon.display(),
         ws_canon.display()
     );

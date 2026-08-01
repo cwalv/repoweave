@@ -208,7 +208,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     // as `weave-root-identity-conflict`.
     let primary_canon = root.canonicalize().unwrap();
     let marker = format!(
-        "primary: {}\nproject: ws\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"ws\",\"parent\":\"{}\"}}",
         primary_canon.display(),
         primary_canon.display()
     );

@@ -174,13 +174,15 @@ pub enum CheckViolation {
         sub_kind: WeaveRootIdentityConflictKind,
     },
 
-    /// A `.rwv-workweave` marker file is missing the required `parent:` field
-    /// (written before parent tracking landed). Auto-fixable: append
-    /// `parent: <primary value>` to the file on disk.
+    /// A `.rwv-workweave` marker file this build cannot use as-is: YAML
+    /// (markers are JSON now), possibly also missing the `parent:` field
+    /// required before the format changed. Auto-fixable: rewrite the file as
+    /// JSON, backfilling `parent: <primary value>` where it is absent.
     LegacyWorkweaveMarker {
         /// Absolute path to the offending `.rwv-workweave` file.
         marker_path: PathBuf,
-        /// The `primary:` value from the marker, used as the backfill value.
+        /// The `primary:` value from the marker, used as the backfill value
+        /// when `parent:` is itself absent.
         primary: PathBuf,
     },
 
@@ -771,8 +773,8 @@ pub enum WeaveRootIdentityConflictKind {
         workweave_name: String,
     },
     /// The marker itself cannot witness the identity it claims — unreadable,
-    /// legacy (missing `parent:`), or naming a `primary:` that verifies as no
-    /// workspace at all. `observe_root` classifies a root like this
+    /// legacy (YAML, or missing `parent:`), or naming a `primary:` that
+    /// verifies as no workspace at all. `observe_root` classifies a root like this
     /// `MarkerUnverifiable` rather than `Disputed` even with `.rwv-active`
     /// present alongside: a marker that cannot prove its own claim cannot
     /// prove which of the two files is the stray either, so this is
@@ -2155,21 +2157,24 @@ pub fn fix_legacy_role_primary(manifest_path: &Path) -> anyhow::Result<usize> {
 // Legacy-workweave-marker scanning and fixing
 // ---------------------------------------------------------------------------
 
-/// One workweave directory whose `.rwv-workweave` file is missing `parent:`.
+/// One workweave directory whose `.rwv-workweave` file is a legacy (YAML)
+/// marker rather than the current JSON shape.
 #[derive(Debug, Clone)]
 pub struct LegacyWorkweaveMarkerFile {
     /// Absolute path to the `.rwv-workweave` file.
     pub marker_path: PathBuf,
-    /// The `primary:` value read from the file (used as the backfill value).
+    /// The `primary:` value read from the file (used as the backfill value
+    /// when the file's `parent:` is itself absent).
     pub primary: PathBuf,
 }
 
-/// Walk the workweave parent directory and collect `.rwv-workweave` files that
-/// are missing the required `parent:` field.
+/// Walk the workweave parent directory and collect `.rwv-workweave` files
+/// this build cannot use as-is.
 ///
-/// A marker is "legacy" if the YAML is valid but `parent:` is absent or null.
-/// A directory whose marker fails to parse at all, or whose legacy marker has
-/// no `primary:` of its own to report, is not included — both are
+/// A marker is "legacy" if it parses as YAML but not as the current JSON
+/// shape — with or without `parent:` present. A directory whose marker fails
+/// to parse at all, or whose legacy marker has no `primary:` of its own to
+/// report, is not included — both are
 /// [`crate::workspace::legacy_marker_primary`]'s call, the single parse of
 /// `.rwv-workweave` behind this scan.
 pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveMarkerFile> {
@@ -2226,9 +2231,10 @@ fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
     containers
 }
 
-/// Backfill `parent: <primary>` into a legacy `.rwv-workweave` file.
+/// Rewrite a legacy `.rwv-workweave` file as JSON, backfilling
+/// `parent: <primary>` where `parent:` is absent.
 ///
-/// Idempotent: if `parent:` is already present, the file is not rewritten.
+/// Idempotent: if the file is already a JSON marker, it is not rewritten.
 /// Returns `true` if the file was rewritten, `false` if it was already
 /// up to date.
 pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
@@ -2815,10 +2821,10 @@ pub fn scan_workweave_tree_integrity(
             continue;
         }
 
-        // Try to parse the marker. Legacy markers (missing `parent:`) are
-        // handled by the separate legacy-workweave-marker check; we skip
-        // them here (they'll get a `LegacyWorkweaveMarker` violation
-        // instead, which directs the operator to `--fix`).
+        // Try to parse the marker. Legacy markers are handled by the
+        // separate legacy-workweave-marker check; we skip them here (they'll
+        // get a `LegacyWorkweaveMarker` violation instead, which directs the
+        // operator to `--fix`).
         let marker = match crate::workspace::WorkweaveMarker::read(dir) {
             Ok(Some(m)) => m,
             Ok(None) => {
@@ -2831,7 +2837,7 @@ pub fn scan_workweave_tree_integrity(
                 continue;
             }
             Err(_) => {
-                // Legacy marker (missing `parent:`) — already reported by
+                // Legacy marker — already reported by
                 // scan_for_legacy_workweave_markers; don't double-report.
                 continue;
             }
@@ -6038,7 +6044,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => (
                     crate::integration::Severity::Warning,
                     format!(
-                        "{} is a legacy workweave marker missing `parent:`; \
+                        "{} is a legacy (YAML) workweave marker; \
                          run `rwv doctor --fix` to migrate",
                         marker_path.display()
                     ),
@@ -7289,7 +7295,7 @@ fn apply_prelude_repairs(
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         match fix_legacy_workweave_marker(&finding) {
             Ok(true) => println!(
-                "[fixed] core: appended `parent:` to {}",
+                "[fixed] core: migrated legacy workweave marker {} to JSON",
                 finding.marker_path.display()
             ),
             Ok(false) => {}

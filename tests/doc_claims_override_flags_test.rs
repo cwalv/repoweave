@@ -521,7 +521,7 @@ fn push_force_does_not_waive_workweave_refusal() {
     let workweave_dir = fixture.workspace.parent().unwrap().join("alpha--feat");
     std::fs::create_dir_all(&workweave_dir).unwrap();
     let marker = format!(
-        "primary: {p}\nproject: alpha\nparent: {p}\n",
+        "{{\"primary\":\"{p}\",\"project\":\"alpha\",\"parent\":\"{p}\"}}",
         p = fixture.workspace.display()
     );
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();

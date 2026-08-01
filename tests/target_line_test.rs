@@ -307,7 +307,7 @@ fn target_line_silent_inside_workweave() {
     std::fs::create_dir_all(weave_dir.join("github")).unwrap();
     let canon_ws = ws.canonicalize().unwrap();
     let marker_yaml = format!(
-        "primary: {}\nproject: p1\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"p1\",\"parent\":\"{}\"}}",
         canon_ws.display(),
         canon_ws.display(),
     );

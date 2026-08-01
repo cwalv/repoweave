@@ -217,23 +217,18 @@ fn delete_refuses_when_marker_round_trip_fails() {
         .assert()
         .success();
 
-    // Sabotage the marker: rewrite `primary:` to a foreign path.
+    // Sabotage the marker: rewrite `primary` to a foreign path.
     let ww_dir = weaveroot.join("web-app--feat");
     let marker_path = ww_dir.join(".rwv-workweave");
     let marker = std::fs::read_to_string(&marker_path).unwrap();
     let foreign = "/tmp/does-not-belong-here";
-    let sabotaged = marker
-        .lines()
-        .map(|line| {
-            if line.starts_with("primary:") {
-                format!("primary: {foreign}")
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    std::fs::write(&marker_path, sabotaged).unwrap();
+    let mut sabotaged: serde_json::Value = serde_json::from_str(&marker).unwrap();
+    sabotaged["primary"] = serde_json::Value::String(foreign.to_string());
+    std::fs::write(
+        &marker_path,
+        serde_json::to_string_pretty(&sabotaged).unwrap(),
+    )
+    .unwrap();
 
     // Delete must refuse: the marker no longer round-trips.
     rwv()

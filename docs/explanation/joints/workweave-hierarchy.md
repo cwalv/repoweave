@@ -73,17 +73,19 @@ The `.rwv-workweave` marker file at every workweave root carries a
 `parent` field that records the workspace the workweave was created
 from. The shape:
 
-```yaml
-primary: /home/user/work
-project: web-app
-parent: /home/user/work/.workweaves/web-app--feat   # parent workweave
+```json
+{
+  "primary": "/home/user/work",
+  "project": "web-app",
+  "parent": "/home/user/work/.workweaves/web-app--feat"
+}
 ```
 
 `parent` is `primary` when the workweave was created from the primary
 weave, and the parent-workweave path when the workweave was created from
-inside another workweave. Legacy markers written before the field
-existed parse cleanly — the read path backfills `parent` to `primary`
-so callers always see a value.
+inside another workweave. A legacy marker — YAML, or missing `parent:` —
+is refused at read rather than backfilled silently; `rwv doctor --fix`
+migrates it to the current JSON shape.
 
 Tool-tracked parentage is what makes two operations safe to run without
 an explicit target:

@@ -1002,7 +1002,7 @@ fn setup_workweave_for_add_tests(
     // Marker file pointing at primary (canonical, so resolve matches).
     let primary_canonical = primary.canonicalize().unwrap();
     let marker = format!(
-        "primary: {p}\nproject: test-project\nparent: {p}\n",
+        "{{\"primary\":\"{p}\",\"project\":\"test-project\",\"parent\":\"{p}\"}}",
         p = primary_canonical.display()
     );
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();

@@ -170,12 +170,12 @@ fn create_workweave(main: &MainWorkspace, name: &str, from: Option<&Path>) -> Wo
 /// Read the recorded parent from a workweave's `.rwv-workweave` marker.
 fn recorded_parent(ww_root: &Path) -> String {
     let content = std::fs::read_to_string(ww_root.join(".rwv-workweave")).unwrap();
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("parent:") {
-            return rest.trim().to_string();
-        }
-    }
-    panic!("no parent: in marker at {}", ww_root.display());
+    let marker: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|e| panic!("marker at {} is not JSON: {e}", ww_root.display()));
+    marker["parent"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no parent field in marker at {}", ww_root.display()))
+        .to_string()
 }
 
 fn canon(p: &Path) -> String {

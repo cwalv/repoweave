@@ -102,7 +102,7 @@ fn add_workweave_checkout(canonical_repo: &Path, ww_dir: &Path, rel_repo_path: &
 
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
     let marker = format!(
-        "primary: {}\nproject: {}\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"{}\",\"parent\":\"{}\"}}",
         primary.display(),
         project,
         primary.display(),

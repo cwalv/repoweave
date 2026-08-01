@@ -892,9 +892,9 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
     )
     .unwrap();
 
-    // Write the workweave marker. Format: YAML with `primary`, `project`, `parent`.
+    // Write the workweave marker. Format: JSON with `primary`, `project`, `parent`.
     let marker_yaml = format!(
-        "primary: {}\nproject: my-app\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"my-app\",\"parent\":\"{}\"}}",
         s.workspace.display(),
         s.workspace.display(),
     );

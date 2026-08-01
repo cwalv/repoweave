@@ -204,7 +204,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     // .rwv-workweave marker so `rwv` resolves the workweave correctly.
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = format!(
-        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
         p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
@@ -423,7 +423,7 @@ fn sync_post_refresh_clears_stale_index() {
 
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = format!(
-        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
         p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();

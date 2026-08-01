@@ -53,7 +53,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
         .canonicalize()
         .unwrap_or_else(|_| parent.to_path_buf());
     let content = format!(
-        "primary: {}\nproject: {}\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"{}\",\"parent\":\"{}\"}}",
         primary_str.display(),
         project,
         parent_str.display()
@@ -284,7 +284,7 @@ fn foreign_primary_is_reported() {
     // (simulating an rsync'd workweave from another machine).
     let foreign_primary = PathBuf::from("/some/other/machine/workspace");
     let content = format!(
-        "primary: {}\nproject: my-project\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"my-project\",\"parent\":\"{}\"}}",
         foreign_primary.display(),
         foreign_primary.display()
     );

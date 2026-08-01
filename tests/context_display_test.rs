@@ -26,7 +26,7 @@ fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
 fn write_marker(weave_dir: &Path, primary: &Path, project: &str) {
     let primary_canon = primary.canonicalize().unwrap();
     let marker = format!(
-        "primary: {}\nproject: {}\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"{}\",\"parent\":\"{}\"}}",
         primary_canon.display(),
         project,
         primary_canon.display()

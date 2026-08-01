@@ -362,7 +362,7 @@ fn push_refuses_from_workweave() {
     std::fs::create_dir_all(&workweave_dir).unwrap();
     let primary_path = ws.workspace.display().to_string();
     let marker = format!(
-        "primary: {p}\nproject: {proj}\nparent: {p}\n",
+        "{{\"primary\":\"{p}\",\"project\":\"{proj}\",\"parent\":\"{p}\"}}",
         p = primary_path,
         proj = ws.project_name
     );

@@ -1234,9 +1234,10 @@ pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
 /// inside another workweave. Workweaves form a tree; `parent` lets `rwv sync`
 /// (with no explicit source) sync one hop toward the primary.
 ///
-/// All three fields (`primary`, `project`, `parent`) are required. Markers
-/// written before `parent` was introduced (legacy markers) must be migrated
-/// with `rwv doctor --fix` before the workweave can be used.
+/// All three fields (`primary`, `project`, `parent`) are required. Written
+/// and read as JSON; a YAML marker, or one written before `parent` was
+/// introduced, is a legacy marker and must be migrated with
+/// `rwv doctor --fix` before the workweave can be used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkweaveMarker {
     primary: PathBuf,
@@ -1298,11 +1299,12 @@ impl WorkweaveMarker {
     ///
     /// Returns `Ok(None)` if the marker file is absent.
     ///
-    /// Returns `Err` if the file is present but missing the required `parent:`
-    /// field (legacy marker written before parent tracking landed). The error
-    /// message names the file and directs the operator to run
-    /// `rwv doctor --fix` to migrate. All three fields (`primary`, `project`,
-    /// `parent`) must be present; there is no silent backfill.
+    /// Returns `Err` if the file is present but is not a valid JSON marker —
+    /// a YAML-format marker (written before markers were JSON) or one
+    /// missing the required `parent:` field. The error message names the
+    /// file and directs the operator to run `rwv doctor --fix` to migrate.
+    /// All three fields (`primary`, `project`, `parent`) must be present;
+    /// there is no silent backfill.
     pub fn read(dir: &Path) -> anyhow::Result<Option<Self>> {
         let path = Self::path_in(dir);
         match observe_marker(&path) {
@@ -1314,38 +1316,42 @@ impl WorkweaveMarker {
 
     pub fn write(&self, dir: &Path) -> anyhow::Result<()> {
         let path = Self::path_in(dir);
-        let content = serde_yaml::to_string(self).context("failed to serialize .rwv-workweave")?;
-        std::fs::write(&path, content)
+        let content =
+            serde_json::to_string_pretty(self).context("failed to serialize .rwv-workweave")?;
+        std::fs::write(&path, format!("{content}\n"))
             .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
 
-    /// Migrate a legacy marker in `dir` (missing the `parent:` field checked
-    /// by [`Self::read`]) by backfilling `parent` to `primary` and rewriting
-    /// through [`Self::write`].
+    /// Migrate a legacy marker in `dir` — one [`observe_marker`] classifies
+    /// [`MarkerDefect::Legacy`], i.e. not valid JSON — by backfilling
+    /// `parent` to `primary` where `parent:` is missing, then rewriting
+    /// through [`Self::write`] (which produces JSON).
     ///
-    /// Returns `Ok(false)` if `parent:` is already present and non-null —
-    /// idempotent, so callers can retry across a race without double-writing.
-    /// `Err` on I/O failure or if the file doesn't even have the `primary:`
-    /// field a legacy marker requires.
+    /// Returns `Ok(false)` if `dir` already holds a JSON marker — idempotent,
+    /// so callers can retry across a race without double-writing. `Err` on
+    /// I/O failure or if the file is not readable as a legacy (YAML) marker
+    /// with at least the `primary:` field it requires.
     pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
         let path = Self::path_in(dir);
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("failed to read {} for --fix", path.display()))?;
-        let mut raw: serde_yaml::Value = serde_yaml::from_str(&content)
-            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
-        if !raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
+        if serde_json::from_str::<Self>(&content).is_ok() {
             return Ok(false);
         }
-        let primary = raw.get("primary").cloned().ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} is missing the required `primary:` field",
-                path.display()
-            )
-        })?;
-        raw.as_mapping_mut()
-            .ok_or_else(|| anyhow::anyhow!("{} is not a YAML mapping", path.display()))?
-            .insert(serde_yaml::Value::String("parent".into()), primary);
+        let mut raw: serde_yaml::Value = serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
+        if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
+            let primary = raw.get("primary").cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} is missing the required `primary:` field",
+                    path.display()
+                )
+            })?;
+            raw.as_mapping_mut()
+                .ok_or_else(|| anyhow::anyhow!("{} is not a YAML mapping", path.display()))?
+                .insert(serde_yaml::Value::String("parent".into()), primary);
+        }
         let marker: Self = serde_yaml::from_value(raw)
             .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
         marker.write(dir)?;
@@ -1363,7 +1369,9 @@ fn canonicalize_or(path: &Path) -> PathBuf {
 
 /// Why a `.rwv-workweave` file cannot witness the identity it claims.
 ///
-/// `Legacy` is the marker shape written before `parent:` became required;
+/// `Legacy` covers every marker shape this build no longer writes: YAML
+/// (markers are JSON now) and, within that YAML shape, one missing the
+/// `parent:` field that became required before the format changed.
 /// [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.
 ///
 /// `Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can
@@ -1393,8 +1401,9 @@ impl MarkerDefect {
                 marker_path.display()
             ),
             MarkerDefect::Legacy => format!(
-                "{} is a legacy workweave marker missing the required `parent:` field. \
-                 Run `rwv doctor --fix` to migrate it before using this workweave.",
+                "{} is a legacy workweave marker (YAML format, or missing the required \
+                 `parent:` field). Run `rwv doctor --fix` to migrate it before using \
+                 this workweave.",
                 marker_path.display()
             ),
             MarkerDefect::Unreadable { detail } => format!(
@@ -1418,6 +1427,11 @@ enum MarkerPresence {
 
 /// Parse `.rwv-workweave` once, for both the readers that need a marker and
 /// the readers that must classify a broken one.
+///
+/// Tries JSON first — the format every current write produces — and falls
+/// back to YAML only to recognize a legacy marker precisely enough to refuse
+/// it and let [`WorkweaveMarker::migrate_legacy`] rewrite it; a YAML parse
+/// failure past that point means the file witnesses neither format.
 ///
 /// `project_hint` and `primary_hint` are carried out of the defective arms
 /// because a root whose marker no verb may act on still presents a project
@@ -1446,6 +1460,9 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
             );
         }
     };
+    if let Ok(marker) = serde_json::from_str::<WorkweaveMarker>(&content) {
+        return MarkerPresence::Usable(marker);
+    }
     let raw: serde_yaml::Value = match serde_yaml::from_str(&content) {
         Ok(raw) => raw,
         Err(e) => {
@@ -1459,6 +1476,13 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
             );
         }
     };
+    if raw.as_mapping().is_none() {
+        return unreadable(
+            format!("{} is not a JSON or YAML mapping", marker_path.display()),
+            None,
+            None,
+        );
+    }
     let project_hint = raw
         .get("project")
         .and_then(|v| v.as_str())
@@ -1469,23 +1493,10 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
         .get("primary")
         .and_then(|v| v.as_str())
         .map(PathBuf::from);
-    if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
-        return MarkerPresence::Defective {
-            defect: MarkerDefect::Legacy,
-            project_hint,
-            primary_hint,
-        };
-    }
-    match serde_yaml::from_value(raw) {
-        Ok(marker) => MarkerPresence::Usable(marker),
-        Err(e) => unreadable(
-            format!(
-                "failed to parse .rwv-workweave at {}: {e}",
-                marker_path.display()
-            ),
-            project_hint,
-            primary_hint,
-        ),
+    MarkerPresence::Defective {
+        defect: MarkerDefect::Legacy,
+        project_hint,
+        primary_hint,
     }
 }
 
@@ -1742,9 +1753,9 @@ impl PrimaryIdentity {
 /// index predate ref-ownership receipts?
 ///
 /// Two legacy shapes migrate in the same `rwv doctor --fix` pass and each is
-/// detected where it lives — the marker's missing `parent:` field above, the
-/// index's
-/// missing `receipts` field here. `Some(path)` is the file to migrate, and
+/// detected where it lives — the marker's YAML-or-missing-`parent:` shape
+/// above, the index's missing `receipts` field here. `Some(path)` is the
+/// file to migrate, and
 /// [`crate::workweave_index::RefRegistry::migrate_legacy_index`] is what
 /// migrates it; the pass then records a receipt per ref it adopts or
 /// renames, receipt-first like every other arm.
@@ -2293,9 +2304,11 @@ mod tests {
     }
 
     #[test]
-    fn workweave_marker_explicit_parent_round_trips() {
-        // A marker with an explicit parent (e.g. forked from another
-        // workweave) must round-trip intact.
+    fn workweave_marker_migrate_legacy_preserves_an_explicit_parent() {
+        // migrate_legacy's parent-backfill only fires when parent is
+        // missing/null; one already present in the legacy YAML (e.g. a
+        // marker forked from another workweave) must survive migration
+        // rather than get overwritten with primary.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let yaml = "primary: /home/user/primary\n\
@@ -2303,13 +2316,14 @@ mod tests {
                     parent: /home/user/.workweaves/primary--ww1\n";
         std::fs::write(dir.join(".rwv-workweave"), yaml).unwrap();
 
+        assert!(WorkweaveMarker::migrate_legacy(dir).unwrap());
+
         let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
         assert_eq!(
             marker.parent,
             PathBuf::from("/home/user/.workweaves/primary--ww1"),
-            "explicit parent must survive read"
+            "explicit parent must survive migration"
         );
-        // And primary remains its own value, not overwritten.
         assert_eq!(marker.primary, PathBuf::from("/home/user/primary"));
     }
 
@@ -2344,14 +2358,15 @@ mod tests {
         assert!(WorkweaveMarker::migrate_legacy(dir).unwrap());
         assert!(
             !WorkweaveMarker::migrate_legacy(dir).unwrap(),
-            "parent: is already present on the second call; must not rewrite"
+            "the file is already a JSON marker on the second call; must not rewrite"
         );
     }
 
     /// A plain YAML scalar cannot contain `: ` — the parser reads it as a
     /// nested mapping key. A primary path with that shape (quoted here the
-    /// way the real serializer already quotes `primary:`) forces `parent:`
-    /// through the same quoting when migrate_legacy backfills it.
+    /// way a hand-written legacy marker would need to) exercises the raw
+    /// `Value` surgery migrate_legacy does to backfill `parent:`, distinct
+    /// from splicing the text directly.
     #[test]
     fn workweave_marker_migrate_legacy_quotes_yaml_special_primary() {
         let tmp = tempfile::tempdir().unwrap();

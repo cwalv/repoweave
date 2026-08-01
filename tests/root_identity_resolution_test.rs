@@ -43,7 +43,7 @@ fn make_disputed_workweave(tmp: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(
         ww.join(".rwv-workweave"),
         format!(
-            "primary: {p}\nproject: web-app\nparent: {p}\n",
+            "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
             p = primary.display()
         ),
     )

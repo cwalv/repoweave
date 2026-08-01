@@ -118,7 +118,7 @@ fn write_marker(dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::write(
         dir.join(".rwv-workweave"),
         format!(
-            "primary: {}\nproject: {project}\nparent: {}\n",
+            "{{\"primary\":\"{}\",\"project\":\"{project}\",\"parent\":\"{}\"}}",
             primary.display(),
             parent.display()
         ),
@@ -631,7 +631,7 @@ fn doctor_fix_leaves_a_registry_holding_root_alone() {
     std::fs::write(
         ws.join(".rwv-workweave"),
         format!(
-            "primary: {}\nproject: demo\nparent: {}\n",
+            "{{\"primary\":\"{}\",\"project\":\"demo\",\"parent\":\"{}\"}}",
             ws.display(),
             ws.display()
         ),

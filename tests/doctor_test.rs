@@ -1884,13 +1884,17 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
         .args(["doctor", "--fix"])
         .current_dir(&root)
         .assert()
-        .stdout(predicate::str::contains("[fixed]").and(predicate::str::contains("parent")));
+        .stdout(
+            predicate::str::contains("[fixed]").and(predicate::str::contains("workweave marker")),
+        );
 
-    // After fix, the marker file must contain `parent:`.
+    // After fix, the marker file must be JSON carrying a `parent` field.
     let migrated = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+    let migrated_json: serde_json::Value = serde_json::from_str(&migrated)
+        .unwrap_or_else(|e| panic!("marker must be JSON after --fix ({e}), got:\n{migrated}"));
     assert!(
-        migrated.contains("parent:"),
-        "marker must contain parent: after --fix, got:\n{migrated}"
+        migrated_json["parent"].is_string(),
+        "marker must carry a parent field after --fix, got:\n{migrated}"
     );
 
     // A second `rwv doctor` run should no longer report the violation.

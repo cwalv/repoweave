@@ -1814,7 +1814,7 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     std::fs::create_dir_all(&legacy).unwrap();
     let ws_canon = ws.canonicalize().unwrap().display().to_string();
     let marker = format!(
-        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
         p = ws_canon
     );
     std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
@@ -2739,8 +2739,8 @@ fn workweave_create_records_primary_as_parent() {
     let marker = weaveroot.join("web-app--parented/.rwv-workweave");
     let content = std::fs::read_to_string(&marker).unwrap();
     assert!(
-        content.contains("parent:"),
-        "marker must include `parent:` field, got:\n{content}"
+        content.contains("\"parent\""),
+        "marker must include a `parent` field, got:\n{content}"
     );
     // For a workweave forked from primary, parent should resolve to the
     // canonicalised primary path.

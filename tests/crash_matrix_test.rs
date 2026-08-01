@@ -1678,7 +1678,7 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
     // carrying both, so a fixture that planted one here would be pinning the
     // state this design removed.
     let marker = format!(
-        "primary: \"{primary}\"\nproject: web-app\nparent: \"{primary}\"\n",
+        "{{\"primary\":\"{primary}\",\"project\":\"web-app\",\"parent\":\"{primary}\"}}",
         primary = primary.root.display(),
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();

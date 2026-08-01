@@ -121,10 +121,12 @@ Lives at every workweave directory root, and is a workweave root's *only* identi
 
 Written by `rwv workweave <project> create <name>`, which is also the verb that duplicates an existing workweave (`--from <source>`); removed with the workweave by `rwv workweave <project> delete <name>` or `rwv sync-to --retire`.
 
-```yaml
-primary: /home/user/work
-project: web-app
-parent: /home/user/work/.workweaves/web-app--feat
+```json
+{
+  "primary": "/home/user/work",
+  "project": "web-app",
+  "parent": "/home/user/work/.workweaves/web-app--feat"
+}
 ```
 
 | Field | Description |
@@ -133,7 +135,7 @@ parent: /home/user/work/.workweaves/web-app--feat
 | `project` | Project name this workweave is forked for |
 | `parent` | Absolute path to the workspace the workweave was forked from. `primary` value when forked from primary; the parent-workweave path when forked from inside another workweave |
 
-All three fields are required. Markers written before `parent:` was introduced (legacy markers) must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` to append `parent:` automatically.
+All three fields are required. A YAML-format marker (written before markers were JSON) or one missing `parent:` (written before parent tracking was introduced) is a legacy marker and must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` to migrate it to JSON, backfilling `parent:` where it is absent.
 
 Consumed by:
 

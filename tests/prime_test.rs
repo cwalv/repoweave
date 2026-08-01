@@ -139,7 +139,7 @@ repositories:
     // workweave (marker-less resolution was removed).
     let primary_canon = root.canonicalize().unwrap();
     let marker = format!(
-        "primary: {}\nproject: ws\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"ws\",\"parent\":\"{}\"}}",
         primary_canon.display(),
         primary_canon.display()
     );

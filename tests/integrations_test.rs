@@ -10485,7 +10485,7 @@ mod vscode_workspace_container_kind {
         write_file(
             root,
             ".rwv-workweave",
-            "primary: /elsewhere/weave\nproject: test-project\nparent: /elsewhere/weave\n",
+            "{\"primary\":\"/elsewhere/weave\",\"project\":\"test-project\",\"parent\":\"/elsewhere/weave\"}",
         );
     }
 

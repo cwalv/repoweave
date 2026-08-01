@@ -70,7 +70,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
         .canonicalize()
         .unwrap_or_else(|_| parent.to_path_buf());
     let content = format!(
-        "primary: {}\nproject: {}\nparent: {}\n",
+        "{{\"primary\":\"{}\",\"project\":\"{}\",\"parent\":\"{}\"}}",
         primary_str.display(),
         project,
         parent_str.display()

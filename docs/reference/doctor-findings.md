@@ -263,9 +263,10 @@ primary's registry records this exact directory. The tree is a workweave, so
 #### `marker-unverifiable`
 
 **Report-only.** The marker itself cannot witness what it claims: it is
-unreadable, missing the required `parent:` field (a legacy marker), or names a
-`primary:` that verifies as no workspace at all. A marker that cannot prove
-its own claim cannot prove which of the two files is the stray either.
+unreadable, a legacy marker (YAML, or missing the required `parent:` field),
+or names a `primary:` that verifies as no workspace at all. A marker that
+cannot prove its own claim cannot prove which of the two files is the stray
+either.
 
 **What to do:** repair the marker first — `rwv doctor --fix` migrates a legacy
 one; an unreadable or dangling one needs a hand edit — then re-run `rwv
@@ -287,10 +288,12 @@ exist nowhere else.
 
 ### `legacy-workweave-marker`
 
-**Warning. Auto-fixable.** A `.rwv-workweave` marker written before parent
-tracking landed, missing the required `parent:` field.
+**Warning. Auto-fixable.** A `.rwv-workweave` marker this build cannot use as
+written: YAML (markers are JSON now), possibly also missing the `parent:`
+field required before the format changed.
 
-**What to do:** `rwv doctor --fix` appends `parent: <primary value>`.
+**What to do:** `rwv doctor --fix` rewrites the marker as JSON, backfilling
+`parent: <primary value>` where it is absent.
 
 ### `legacy-workweave-index`
 
