@@ -4,6 +4,7 @@ use crate::integrations::merge::{
     ManagedDoc, OwnedValue, Ownership, YamlDoc,
 };
 use anyhow::Context;
+use saphyr::{LoadableYamlNode, YamlOwned};
 use std::path::Path;
 
 pub struct PnpmWorkspaces;
@@ -55,8 +56,8 @@ fn expand_workspace_entries(workspace_root: &Path, repo_paths: Vec<String>) -> V
 /// has no `packages:` key. Non-string entries in the sequence are skipped.
 fn read_pnpm_packages_globs(path: &Path) -> Option<Vec<String>> {
     let text = std::fs::read_to_string(path).ok()?;
-    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
-    let packages = doc.get("packages")?.as_sequence()?;
+    let docs = YamlOwned::load_from_str(&text).ok()?;
+    let packages = docs.first()?.as_mapping_get("packages")?.as_sequence()?;
     Some(
         packages
             .iter()
@@ -335,6 +336,72 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             hand_written,
             "rwv must not strip a list it never marked"
+        );
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_absent_file_is_none() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(
+            read_pnpm_packages_globs(&tmp.path().join("pnpm-workspace.yaml")),
+            None
+        );
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_unreadable_path_is_none() {
+        let tmp = TempDir::new().unwrap();
+        // A directory is not readable as file text — read_to_string fails.
+        assert_eq!(read_pnpm_packages_globs(tmp.path()), None);
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_invalid_yaml_is_none() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("pnpm-workspace.yaml");
+        // Unterminated flow sequence.
+        std::fs::write(&path, "packages: [foo, bar\n").unwrap();
+        assert_eq!(read_pnpm_packages_globs(&path), None);
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_no_packages_key_is_none() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("pnpm-workspace.yaml");
+        std::fs::write(&path, "catalog:\n  react: ^18\n").unwrap();
+        assert_eq!(read_pnpm_packages_globs(&path), None);
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_block_style() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("pnpm-workspace.yaml");
+        std::fs::write(&path, "packages:\n  - packages/*\n  - apps/web\n").unwrap();
+        assert_eq!(
+            read_pnpm_packages_globs(&path),
+            Some(vec!["packages/*".to_string(), "apps/web".to_string()])
+        );
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_flow_style() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("pnpm-workspace.yaml");
+        std::fs::write(&path, "packages: [\"packages/*\", \"apps/web\"]\n").unwrap();
+        assert_eq!(
+            read_pnpm_packages_globs(&path),
+            Some(vec!["packages/*".to_string(), "apps/web".to_string()])
+        );
+    }
+
+    #[test]
+    fn read_pnpm_packages_globs_skips_non_string_entries() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("pnpm-workspace.yaml");
+        std::fs::write(&path, "packages:\n  - packages/*\n  - 42\n  - true\n").unwrap();
+        assert_eq!(
+            read_pnpm_packages_globs(&path),
+            Some(vec!["packages/*".to_string()])
         );
     }
 }

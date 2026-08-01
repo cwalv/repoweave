@@ -45,6 +45,15 @@ csv = "1"
 # generation. `sha2` is the canonical RustCrypto implementation; pure
 # compute, no I/O or network.
 sha2 = "0.10"
+# Reads pnpm-workspace.yaml's `packages:` key — a foreign, user-authored file
+# whose shape rwv does not control, unlike rwv's own YAML. Chosen over the
+# serde_yaml forks: serde_yaml_ng still sits on unsafe-libyaml, and serde_yml
+# carries a published unsoundness advisory and an archived upstream. Chosen
+# over yaml-rust2 for a fresher release cadence and full YAML-1.2 compliance
+# (yaml-rust2 targets an older subset). Pure Rust, no C bindings.
+# `default-features = false` drops its encoding-detection feature, which is
+# moot once the file is already decoded to a UTF-8 `&str`.
+saphyr = { version = "0.0.11", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

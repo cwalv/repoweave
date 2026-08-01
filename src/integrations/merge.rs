@@ -27,8 +27,8 @@
 //!   owned key (position-independent — survives reordering). No top-level
 //!   header is injected into user files.
 //! - **YAML** ([`YamlDoc`]): a `# managed by repoweave` comment line above the
-//!   managed block. Line-oriented; never round-trips through serde_yaml
-//!   (which eats comments).
+//!   managed block. Line-oriented; never round-trips through a full YAML
+//!   parse-and-emit cycle (which discards comments and formatting).
 //! - **go.work** ([`GoWorkDoc`]): a `// managed by repoweave` comment line
 //!   above the `use (…)` block. Custom line-region editor; preserves
 //!   `replace`/`toolchain`/`godebug` byte-for-byte.
@@ -1021,8 +1021,8 @@ impl ManagedDoc for TomlDoc {
 /// YAML-backed managed document.
 ///
 /// Wraps the raw text and edits it line-by-line. Does **not** round-trip
-/// through serde_yaml — serde_yaml 0.9 drops all comments, which is fatal
-/// for pnpm's `catalog:` rationale notes / `overrides:` justifications.
+/// through a YAML parser and emitter — that drops all comments, which is
+/// fatal for pnpm's `catalog:` rationale notes / `overrides:` justifications.
 ///
 /// **Scope:** the only YAML hybrid integration is pnpm-workspaces, which
 /// owns a single key — `packages: [...]`. The YamlDoc encodes only that
@@ -1116,12 +1116,11 @@ impl YamlDoc {
 
 impl ManagedDoc for YamlDoc {
     fn parse(text: &str) -> Result<Self> {
-        // YAML is not validated — pnpm-workspace.yaml is shallow and a parse
-        // check would require pulling in a YAML parser. We accept any text;
-        // malformed YAML is caught when the consumer (pnpm) reads the file.
-        // **Note:** the contract says bail on malformed. For pnpm we relax —
-        // a strict parse would force serde_yaml which kills comments. Future
-        // hardening: add a lightweight column-aware validator.
+        // Deliberately does not honor the "bail loudly if malformed" contract
+        // above: this editor only reads and rewrites the owned `packages:`
+        // block, so validating the rest of a hand-authored pnpm-workspace.yaml
+        // (catalog:, overrides:, ...) is not its job. Malformed YAML surfaces
+        // when the consumer (pnpm) reads the file.
         Ok(YamlDoc {
             text: text.to_string(),
             pending: None,
