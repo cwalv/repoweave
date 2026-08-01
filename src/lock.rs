@@ -3,7 +3,7 @@
 use crate::manifest::{
     LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile, WorkweaveName,
 };
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment, Vcs};
+use crate::vcs::{project_vcs, vcs_for, HeadAttachment, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,7 +61,9 @@ fn build_commit_message(
 /// is skipped.
 ///
 /// If a tag points at HEAD for a given repo, the tag name is used as the
-/// version instead of the raw SHA.
+/// version instead of the raw SHA — unless the project has asked to forgo
+/// tag names, in which case every entry records the commit id. See
+/// [`crate::manifest::LockConfig`].
 pub fn generate_lock(
     manifest: &Manifest,
     workspace_root: &Path,
@@ -122,6 +124,15 @@ pub fn generate_lock(
         let version = vcs
             .head_revision(repo_dir)
             .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?;
+
+        // Applied here rather than inside `head_revision`: which form to
+        // record is a property of the project keeping the lock, not of the
+        // VCS being asked what HEAD is.
+        let version = if manifest.forgo_tag_names() {
+            ResolvedRevisionId::from_canonical(version.as_str(), None)
+        } else {
+            version
+        };
 
         // Detached HEAD: warn but do not refuse. Lock runs inside automation
         // (sync auto-relock) so a hard gate would break legitimate flows.

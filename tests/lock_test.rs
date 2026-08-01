@@ -694,6 +694,112 @@ fn lock_records_tag_per_repo_independently() {
 }
 
 // ---------------------------------------------------------------------------
+// 9b. Forgoing tag names — the project-level escape hatch
+// ---------------------------------------------------------------------------
+
+/// Append a `[lock]` policy table to an already-written manifest.
+fn append_lock_policy(project_dir: &Path, body: &str) {
+    let path = project_dir.join("rwv.toml");
+    let mut manifest_toml = std::fs::read_to_string(&path).unwrap();
+    manifest_toml.push_str("\n[lock]\n");
+    manifest_toml.push_str(body);
+    std::fs::write(&path, manifest_toml).unwrap();
+}
+
+/// The escape hatch exists so the lock reproduces the tree by itself, and the
+/// only place that promise is kept or broken is the lock file — nothing rwv
+/// prints reports it. `lock_records_tag_name_when_head_is_tagged` pins the
+/// default from the other side, on the same fixture.
+#[test]
+fn lock_forgoing_tag_names_records_the_commit_id() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let sha = init_git_repo(&root.join(repo_path));
+
+    let _ = common::git()
+        .args(["tag", "v1.0.0"])
+        .current_dir(root.join(repo_path))
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    append_lock_policy(&project_dir, "forgo-tag-names = true\n");
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+
+    let lock = repoweave::manifest::LockFile::from_path(&project_dir.join("rwv.lock")).unwrap();
+    let entry = lock
+        .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
+        .expect("lock should contain repo");
+
+    assert_eq!(
+        entry.version.as_str(),
+        &sha,
+        "a project forgoing tag names must record the commit id even at a tag"
+    );
+}
+
+/// A misspelled policy key is refused, and the refusal names the key.
+///
+/// The failure this prevents is invisible: an operator who typed the key
+/// believes their locks record commit ids, and a lock still full of tag names
+/// looks exactly like a lock they asked for. Driven end to end because the
+/// refusal has to survive to stdout — a parse error that only exists inside
+/// the process is the same as no check at all.
+#[test]
+fn a_misspelled_lock_policy_key_is_refused() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    append_lock_policy(&project_dir, "forgo-tag-nmaes = true\n");
+
+    let assertion = rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .failure();
+    let out = assertion.get_output();
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        combined.contains("forgo-tag-nmaes"),
+        "the refusal must quote the key the operator typed, got:\n{combined}"
+    );
+    assert!(
+        combined.contains("forgo-tag-names"),
+        "the refusal must name the spelling that works, got:\n{combined}"
+    );
+    assert!(
+        !project_dir.join("rwv.lock").exists(),
+        "a manifest that did not parse must not produce a lock"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 10. `rwv lock` does NOT run integration hooks
 // ---------------------------------------------------------------------------
 

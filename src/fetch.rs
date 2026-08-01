@@ -1039,6 +1039,7 @@ mod tests {
             repositories: Default::default(),
             integrations: Default::default(),
             workweave: None,
+            lock: None,
         };
         let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
         let reference = RepoPath::new("github/org/reference").expect("known-safe literal");
@@ -1065,6 +1066,7 @@ mod tests {
             repositories: Default::default(),
             integrations: Default::default(),
             workweave: None,
+            lock: None,
         };
         let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
         let reference = RepoPath::new("github/org/reference").expect("known-safe literal");

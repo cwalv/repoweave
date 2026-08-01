@@ -1109,6 +1109,41 @@ pub struct WorkweaveConfig {
 }
 
 // ---------------------------------------------------------------------------
+// LockConfig — what `rwv lock` is allowed to record
+// ---------------------------------------------------------------------------
+
+/// Project-level policy for the revision form `rwv lock` records.
+///
+/// Policy rather than a flag on the verb: `rwv lock` also runs from inside
+/// `rwv sync` and `rwv fetch`, and a lock whose form alternates with whoever
+/// invoked it is worse than either form applied consistently.
+///
+/// `deny_unknown_fields` because a key here is set once and then trusted:
+/// a misspelling accepted as "absent" would leave an operator believing a
+/// guarantee they do not have.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockConfig {
+    /// Record the commit id for every repo, including those a tag names.
+    ///
+    /// The name states what is surrendered. `rwv.lock` stops carrying the
+    /// tag at HEAD, so it no longer reads as `v1.2.3` and no longer says
+    /// which repos sit on a release. What that buys is a lock that
+    /// reproduces the tree by itself: an entry records one revision and no
+    /// SHA beside it, so a tag retargeted upstream moves what the lock
+    /// resolves to, and nothing in the file says it moved.
+    ///
+    /// Whole-project by construction. The point is a lock that stands
+    /// alone, and a lock standing alone for some of its entries does not.
+    #[serde(
+        default,
+        rename = "forgo-tag-names",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub forgo_tag_names: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Manifest — the parsed `rwv.toml`
 // ---------------------------------------------------------------------------
 
@@ -1138,6 +1173,8 @@ pub struct Manifest {
     pub integrations: BTreeMap<String, IntegrationConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workweave: Option<WorkweaveConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock: Option<LockConfig>,
 }
 
 impl Manifest {
@@ -1159,6 +1196,14 @@ impl Manifest {
     /// The manifest text a project starts life with.
     pub const SKELETON: &'static str =
         "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\n[repositories]\n";
+
+    /// Whether `rwv lock` must record a commit id even where a tag names it.
+    ///
+    /// Absent `[lock]` table and absent key both mean no: the readable form
+    /// is the default, and forgoing it is the thing an operator asks for.
+    pub fn forgo_tag_names(&self) -> bool {
+        self.lock.as_ref().is_some_and(|c| c.forgo_tag_names)
+    }
 
     /// Iterate over every [`RepoPath`] in the manifest, in sorted order.
     ///
@@ -2790,6 +2835,50 @@ role = "owned"
         let json = r#"{"repositories": {}}"#;
         let lock: LockFile = serde_json::from_str(json).unwrap();
         assert!(lock.repositories.is_empty());
+    }
+
+    // ========================================================================
+    // LockConfig serde
+    // ========================================================================
+
+    /// Every verb that edits the manifest rewrites the whole file through
+    /// [`Manifest::write`], so a policy that does not survive a rewrite is one
+    /// `rwv add` away from being revoked without anyone touching it.
+    #[test]
+    fn lock_policy_survives_a_manifest_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(Manifest::FILE_NAME);
+        std::fs::write(&path, "[repositories]\n\n[lock]\nforgo-tag-names = true\n").unwrap();
+
+        let manifest = Manifest::from_path(&path).unwrap();
+        assert!(manifest.forgo_tag_names());
+
+        manifest.write(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            Manifest::from_path(&path).unwrap().forgo_tag_names(),
+            "the policy must survive a rewrite, got: {text}"
+        );
+    }
+
+    /// The default writes nothing. A project that never asked for the policy
+    /// must not start carrying a `[lock]` table the first time a verb rewrites
+    /// its manifest — an unasked-for key reads as a decision someone made.
+    #[test]
+    fn a_manifest_without_the_policy_writes_no_lock_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(Manifest::FILE_NAME);
+        std::fs::write(&path, MINIMAL_MANIFEST).unwrap();
+
+        let manifest = Manifest::from_path(&path).unwrap();
+        assert!(!manifest.forgo_tag_names());
+
+        manifest.write(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("[lock]") && !text.contains("forgo-tag-names"),
+            "an unset policy must not be written back, got: {text}"
+        );
     }
 
     // ========================================================================
