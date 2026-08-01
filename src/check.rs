@@ -205,19 +205,23 @@ pub enum CheckViolation {
         index_path: PathBuf,
     },
 
-    /// A project's `rwv.toml` exists but cannot be parsed.
+    /// A project directory exists but does not load: either its `rwv.toml`
+    /// or its `rwv.lock` failed to parse.
     ///
     /// Reported as an `Error`-severity violation so the operator is not
     /// left with zero violations (i.e. an apparent "clean" result) for a
-    /// project whose manifest is broken. `--fix` does NOT auto-repair this
-    /// — the operator must fix the file by hand and re-run `rwv doctor`.
+    /// project rwv cannot see into. `--fix` has no arm for it, and the
+    /// remedy differs between the two files, so `message` carries the one
+    /// the failing loader minted rather than this variant naming either.
     UnparseableProject {
         /// Relative project path (e.g. `my-app`, `org/repo`).
         project: ProjectName,
-        /// Absolute path to the offending `rwv.toml`.
+        /// Absolute path to the project's `rwv.toml`. Locates the project;
+        /// the file that failed is named in `message` and is not always
+        /// this one.
         manifest_path: PathBuf,
-        /// Free-form display string of the parse error (from `anyhow::Error::to_string`).
-        /// No structured parse-error type is available at this boundary.
+        /// Rendered error chain, remedy included. Free-form: no structured
+        /// parse-error type survives to this boundary.
         message: String,
     },
 
@@ -6034,17 +6038,13 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         index_path.display()
                     ),
                 ),
+                // Relayed, not narrated: the loader states which file failed
+                // and what to do about it, and this arm cannot know either.
                 CheckViolation::UnparseableProject {
-                    project,
-                    manifest_path,
-                    message,
+                    project, message, ..
                 } => (
                     crate::integration::Severity::Error,
-                    format!(
-                        "{project}: manifest at {} cannot be parsed: {message}; \
-                         fix the file by hand and re-run `rwv doctor`",
-                        manifest_path.display()
-                    ),
+                    format!("{project}: {message}"),
                 ),
                 CheckViolation::WorkingTreeDrift {
                     workweave,
@@ -8109,11 +8109,12 @@ fn load_doctor_world(
             }
             Err(e) => {
                 if let Ok(project_name) = crate::manifest::ProjectName::new(name) {
-                    // The root cause, not the chain: the sentence naming the
-                    // remedy is minted at the parse boundary, and every context
-                    // above it only restates the path this finding already
-                    // carries as a field.
-                    let cause = e.root_cause().to_string();
+                    // The whole chain, not either end of it. Loading a project
+                    // reads two files with two different remedies, and the
+                    // layer naming which one failed is minted by the loader
+                    // that failed — so an outermost-only or innermost-only
+                    // render drops either the remedy or the file it applies to.
+                    let cause = format!("{e:#}");
                     unparseable_projects.push((project_name, manifest_path, cause));
                 }
             }

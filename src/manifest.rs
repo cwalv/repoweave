@@ -1265,12 +1265,29 @@ impl Manifest {
             .with_context(|| format!("failed to parse {} at {}", Self::FILE_NAME, path.display()))
     }
 
+    /// The remedy for any `rwv.toml` parse failure.
+    ///
+    /// Mirrors [`LockFile::unparseable_hint`] and differs from it in the one
+    /// way that matters to an operator: the lock is generated, so its remedy
+    /// is to regenerate it, and this file is not, so its remedy is an edit.
+    /// Neither has a `--fix` arm, and a reader who is told only that the file
+    /// failed to parse cannot tell which of the two they are looking at.
+    pub fn unparseable_hint() -> String {
+        format!(
+            "{} is yours to edit; rwv will not rewrite a file it could not parse",
+            Self::FILE_NAME
+        )
+    }
+
     /// Parse a manifest from a TOML string.
     ///
     /// A rejected `role` value carries [`Role::legacy_spelling_hint`] through
     /// [`RoleParseError`], located at the offending line by the TOML parser.
+    /// Any failure carries [`Self::unparseable_hint`] as its context, with the
+    /// parser's own error kept as the source — the remedy is the same however
+    /// the file broke, but only the parser can say where.
     pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
-        Ok(toml::from_str(content)?)
+        toml::from_str(content).map_err(|e| anyhow::Error::new(e).context(Self::unparseable_hint()))
     }
 
     /// Serialize to TOML and write to `path`.
@@ -1625,15 +1642,13 @@ impl Project {
 
     /// Load a project from its directory.
     pub fn from_dir(dir: &Path) -> anyhow::Result<Self> {
-        let manifest_path = dir.join(Manifest::FILE_NAME);
-        let manifest = Manifest::from_path(&manifest_path)
-            .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
+        // Neither loader is wrapped here. Each already names its own file and
+        // path, and a caller that reports this error has no other way to tell
+        // which of the two files failed.
+        let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
         let lock_path = dir.join(LockFile::FILE_NAME);
         let lock = if lock_path.exists() {
-            Some(
-                LockFile::from_path(&lock_path)
-                    .with_context(|| format!("failed to load lock at {}", lock_path.display()))?,
-            )
+            Some(LockFile::from_path(&lock_path)?)
         } else {
             None
         };
@@ -1664,9 +1679,7 @@ impl Project {
     /// The returned `Project` always has `lock: None`, regardless of whether
     /// `rwv.lock` exists or what it contains.
     pub fn from_dir_skip_lock(dir: &Path) -> anyhow::Result<Self> {
-        let manifest_path = dir.join(Manifest::FILE_NAME);
-        let manifest = Manifest::from_path(&manifest_path)
-            .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
+        let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
 
         // Derive project name from directory structure.
         // `projects/web-app/` → "web-app"
@@ -2137,6 +2150,10 @@ role = "owned"
     /// naming the spelling that replaced it, located at the line that holds
     /// it. Nothing rewrites the file, so the sentence is the whole remedy and
     /// an operator who cannot find the offending line has not been given one.
+    ///
+    /// Rendered `{err:#}` because that is what surfaces this error to a
+    /// person; `{err}` would read only [`Manifest::unparseable_hint`] and pass
+    /// while the sentence below it never left the process.
     #[test]
     fn legacy_role_spelling_is_refused_with_the_replacement_named() {
         let text = r#"
@@ -2147,7 +2164,7 @@ version = "main"
 role = "primary"
 "#;
         let err = Manifest::from_toml_str(text).unwrap_err();
-        let msg = format!("{err}");
+        let msg = format!("{err:#}");
         assert!(
             msg.contains(&Role::legacy_spelling_hint()),
             "refusal should carry the migration sentence, got: {msg}"
@@ -2241,7 +2258,7 @@ role = "owned"
             result.is_err(),
             "manifest with backslash key must be rejected"
         );
-        let msg = format!("{}", result.unwrap_err());
+        let msg = format!("{:#}", result.unwrap_err());
         assert!(
             msg.contains("backslash not allowed"),
             "error should mention 'backslash not allowed', got: {msg}"
@@ -2535,10 +2552,10 @@ role = "owned"
         let dir = tempfile::tempdir().unwrap();
         let result = Project::from_dir(dir.path());
         assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
+        let msg = format!("{:#}", result.unwrap_err());
         assert!(
-            msg.contains("failed to load manifest"),
-            "error should mention manifest: {msg}"
+            msg.contains(Manifest::FILE_NAME),
+            "error should name the missing file: {msg}"
         );
     }
 
@@ -2559,18 +2576,25 @@ role = "owned"
         assert_eq!(project.dir, project_dir);
     }
 
+    /// The loader reads two files, so its error has to say which one broke —
+    /// naming the one that parsed cleanly sends the operator to edit a healthy
+    /// file.
     #[test]
     fn project_from_dir_bad_lock_errors() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
-        std::fs::write(dir.path().join("rwv.lock"), "{{bad yaml").unwrap();
+        std::fs::write(dir.path().join(LockFile::FILE_NAME), "{{bad").unwrap();
 
         let result = Project::from_dir(dir.path());
         assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
+        let msg = format!("{:#}", result.unwrap_err());
         assert!(
-            msg.contains("failed to load lock"),
-            "error should mention lock: {msg}"
+            msg.contains(LockFile::FILE_NAME),
+            "error should name the lock: {msg}"
+        );
+        assert!(
+            !msg.contains(Manifest::FILE_NAME),
+            "error must not name the manifest, which parsed: {msg}"
         );
     }
 
@@ -2670,10 +2694,10 @@ role = "owned"
 
         let result = Project::from_dir_skip_lock(dir.path());
         assert!(result.is_err());
-        let msg = format!("{}", result.unwrap_err());
+        let msg = format!("{:#}", result.unwrap_err());
         assert!(
-            msg.contains("failed to load manifest"),
-            "error should mention manifest: {msg}"
+            msg.contains(Manifest::FILE_NAME),
+            "error should name the missing file: {msg}"
         );
     }
 
