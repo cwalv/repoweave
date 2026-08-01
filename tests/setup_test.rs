@@ -16,10 +16,10 @@ fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
     root
 }
 
-fn write_manifest(root: &Path, project: &str, yaml: &str) {
+fn write_manifest(root: &Path, project: &str, manifest_toml: &str) {
     let dir = root.join("projects").join(project);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("rwv.yaml"), yaml).unwrap();
+    fs::write(dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
 // ============================================================================
@@ -35,15 +35,14 @@ fn setup_agents_md_creates_file() {
         &root,
         "web-app",
         r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-integrations:
-  cargo:
-    enabled: true
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[integrations.cargo]
+enabled = true
 "#,
     );
 
@@ -74,7 +73,7 @@ integrations:
 fn setup_agents_md_idempotent() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
-    write_manifest(&root, "demo", "repositories: {}\n");
+    write_manifest(&root, "demo", "[repositories]\n");
     fs::write(root.join(".rwv-active"), "demo\n").unwrap();
 
     Command::cargo_bin("rwv")
@@ -105,7 +104,7 @@ fn setup_agents_md_idempotent() {
 fn setup_agents_md_refuses_hand_edited() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
-    write_manifest(&root, "demo", "repositories: {}\n");
+    write_manifest(&root, "demo", "[repositories]\n");
     fs::write(root.join(".rwv-active"), "demo\n").unwrap();
 
     // Write a hand-edited AGENTS.md (no generated header).

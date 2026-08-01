@@ -135,7 +135,7 @@ struct Workweave {
 /// ```text
 /// {tmp}/ws/                      -- workspace root
 /// {tmp}/ws/github/org/lib/       -- manifest repo, initial commit
-/// {tmp}/ws/projects/app/         -- project repo with rwv.yaml, rwv.lock,
+/// {tmp}/ws/projects/app/         -- project repo with rwv.toml, rwv.lock,
 ///                                   and .gitattributes (rwv.lock merge=rwv-ours)
 /// ```
 fn make_primary(tmp: &Path) -> PrimaryWorkspace {
@@ -154,11 +154,11 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     .unwrap();
 
     let manifest = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
@@ -173,7 +173,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
@@ -449,11 +449,11 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     // Intentionally omit `.gitattributes` — this is the bug scenario.
 
     let manifest = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
@@ -465,7 +465,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_dir);
+    git(&["add", "rwv.toml", "rwv.lock"], &project_dir);
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -757,11 +757,11 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
     let manifest = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
@@ -774,7 +774,7 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(

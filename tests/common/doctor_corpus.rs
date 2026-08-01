@@ -83,7 +83,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         }
         CheckViolation::HeadUnreadable { .. } => "head-unreadable".into(),
         CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry".into(),
-        CheckViolation::LegacyRolePrimary { .. } => "legacy-role-primary".into(),
+        CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
         CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
             WeaveRootIdentityConflictKind::RegisteredWorkweave { .. } => {
@@ -269,9 +269,9 @@ pub fn corpus() -> Vec<CheckViolation> {
             project: project(),
             repo: repo(),
         },
-        CheckViolation::LegacyRolePrimary {
+        CheckViolation::LegacyManifestFormat {
             project: project(),
-            manifest_path: path("/ws/projects/proj/rwv.yaml"),
+            legacy_path: path("/ws/projects/proj/rwv.yaml"),
         },
         CheckViolation::DanglingActiveProject {
             project: project(),
@@ -310,7 +310,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         },
         CheckViolation::UnparseableProject {
             project: project(),
-            manifest_path: path("/ws/projects/proj/rwv.yaml"),
+            manifest_path: path("/ws/projects/proj/rwv.toml"),
             message: "bad yaml".into(),
         },
         CheckViolation::WorkweaveTreeIntegrity {

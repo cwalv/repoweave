@@ -124,25 +124,14 @@ func Message() string {
     git_init_with_commit(&server_dir);
 
     // ------------------------------------------------------------------
-    // 3. projects/web-app/rwv.yaml listing both repos
+    // 3. projects/web-app/rwv.toml listing both repos
     // ------------------------------------------------------------------
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "\
-repositories:\n  \
-  github/chatly/protocol:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/protocol.git\n    \
-    version: main\n    \
-    role: owned\n  \
-  github/chatly/server:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/server.git\n    \
-    version: main\n    \
-    role: owned\n";
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
 
-    std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
     // Select web-app. Intent-mode activation regenerates content but never
     // selects, so the weave root only surfaces what `.rwv-active` names.
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();

@@ -50,7 +50,7 @@ fn init_repo_with_commit(path: &Path) {
 /// Layout:
 ///   `tmp/ws/`
 ///   `tmp/ws/github/org/repo/` — git repo
-///   `tmp/ws/projects/{project}/rwv.yaml`
+///   `tmp/ws/projects/{project}/rwv.toml`
 fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     let ws = tmp.join("ws");
     let repo_path = ws.join("github/org/repo");
@@ -60,16 +60,15 @@ fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
 }
 

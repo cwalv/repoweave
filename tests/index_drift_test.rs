@@ -104,15 +104,15 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
     git_out(&["rev-parse", "HEAD"], repo)
 }
 
-/// Write rwv.yaml.
+/// Write rwv.toml.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Write rwv.lock.
@@ -171,7 +171,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_primary);
+    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: initial"], &project_primary);
 
     // --- Workweave ---
@@ -392,7 +392,7 @@ fn sync_post_refresh_clears_stale_index() {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_primary);
+    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: initial"], &project_primary);
 
     // --- Workweave ---
@@ -559,7 +559,7 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
     write_manifest(&project_source, &[(SERVER_PATH, SERVER_URL)]);
     // Lock pins the TAG name, not the SHA.
     write_lock(&project_source, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_source);
+    git(&["add", "rwv.toml", "rwv.lock"], &project_source);
     git(&["commit", "-m", "lock: v1.0.0"], &project_source);
 
     // CWD workspace: also at the same commit (SHA lock entry).

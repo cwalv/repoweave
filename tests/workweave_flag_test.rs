@@ -52,7 +52,7 @@ fn init_repo_with_commit(path: &Path) {
 /// Layout:
 ///   {root}/ws/                      -- workspace root
 ///   {root}/ws/github/org/repo/      -- a real git repo
-///   {root}/ws/projects/{project}/   -- project dir with rwv.yaml
+///   {root}/ws/projects/{project}/   -- project dir with rwv.toml
 ///   {root}/ws/.rwv-active           -- active project
 fn make_workspace(root: &Path, project: &str) -> PathBuf {
     let ws = root.join("ws");
@@ -62,10 +62,10 @@ fn make_workspace(root: &Path, project: &str) -> PathBuf {
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: file://{}\n    version: main\n    role: owned\n",
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
         repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();
     ws
 }
@@ -96,7 +96,7 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     // `rwv resolve` from the workweave can find the project.
     let ww_project_dir = ww_dir.join("projects").join(project);
     std::fs::create_dir_all(&ww_project_dir).unwrap();
-    std::fs::write(ww_project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+    std::fs::write(ww_project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
     // Register the workweave in the index.
     workweave_index::record_workweave(
@@ -407,7 +407,7 @@ fn w_flag_project_override_wins_over_w_prefix() {
     // Also create a second project so `--project proj-b` names a real project.
     let proj_b_dir = ws.join("projects").join("proj-b");
     std::fs::create_dir_all(&proj_b_dir).unwrap();
-    std::fs::write(proj_b_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+    std::fs::write(proj_b_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
     let ww = register_workweave(&ws, "proj-a", "my-ww");
 

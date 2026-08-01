@@ -1,7 +1,7 @@
 //! E2E tests for `rwv init`.
 //!
 //! These tests exercise the CLI binary via `assert_cmd`. The `Init` subcommand
-//! creates a new project directory with `git init` and an empty `rwv.yaml`.
+//! creates a new project directory with `git init` and an empty `rwv.toml`.
 //! Optionally, `--provider github/owner` configures a git remote.
 
 use assert_cmd::Command;
@@ -110,8 +110,8 @@ fn init_creates_empty_rwv_yaml() {
         .assert()
         .success();
 
-    let manifest_path = ws.join("projects/my-app/rwv.yaml");
-    assert!(manifest_path.exists(), "rwv.yaml should exist after init");
+    let manifest_path = ws.join("projects/my-app/rwv.toml");
+    assert!(manifest_path.exists(), "rwv.toml should exist after init");
 
     let content = std::fs::read_to_string(&manifest_path).unwrap();
     // The manifest should parse as valid YAML with an empty repositories map.
@@ -127,7 +127,7 @@ fn init_creates_empty_rwv_yaml() {
     }
 }
 
-/// After `rwv init`, projects/<name>/rwv.yaml must exist, be non-empty,
+/// After `rwv init`, projects/<name>/rwv.toml must exist, be non-empty,
 /// and parse cleanly via the manifest loader.  This is the exact
 /// precondition that `rwv workweave create` depends on — the file must
 /// be present at the time of the initial `git commit` so the commit
@@ -143,24 +143,24 @@ fn init_rwv_yaml_parses_via_manifest_loader() {
         .assert()
         .success();
 
-    let manifest_path = ws.join("projects/fresh-proj/rwv.yaml");
+    let manifest_path = ws.join("projects/fresh-proj/rwv.toml");
 
     // 1. File exists.
     assert!(
         manifest_path.exists(),
-        "projects/fresh-proj/rwv.yaml must exist immediately after `rwv init`"
+        "projects/fresh-proj/rwv.toml must exist immediately after `rwv init`"
     );
 
     // 2. File is non-empty.
     let content = std::fs::read_to_string(&manifest_path).unwrap();
     assert!(
         !content.trim().is_empty(),
-        "rwv.yaml must not be empty after init"
+        "rwv.toml must not be empty after init"
     );
 
     // 3. Parses cleanly through the manifest loader (not just as generic YAML).
     let manifest = Manifest::from_path(&manifest_path)
-        .expect("rwv.yaml written by `rwv init` must parse via Manifest::from_path");
+        .expect("rwv.toml written by `rwv init` must parse via Manifest::from_path");
 
     // 4. Empty repositories map — no repos have been added yet.
     assert!(
@@ -248,9 +248,9 @@ fn init_collision_does_not_modify_existing_project() {
         .assert()
         .success();
 
-    // Write a custom rwv.yaml to verify it isn't overwritten.
-    let manifest_path = ws.join("projects/keep-safe/rwv.yaml");
-    let custom_content = "repositories: {}\n# custom marker\n";
+    // Write a custom rwv.toml to verify it isn't overwritten.
+    let manifest_path = ws.join("projects/keep-safe/rwv.toml");
+    let custom_content = "[repositories]\n";
     std::fs::write(&manifest_path, custom_content).unwrap();
 
     // Attempt duplicate init.
@@ -264,7 +264,7 @@ fn init_collision_does_not_modify_existing_project() {
     let after = std::fs::read_to_string(&manifest_path).unwrap();
     assert!(
         after.contains("# custom marker"),
-        "existing rwv.yaml should not be modified on collision"
+        "existing rwv.toml should not be modified on collision"
     );
 }
 
@@ -510,10 +510,10 @@ fn adopt_writes_rwv_yaml_when_missing() {
         .assert()
         .success();
 
-    let manifest_path = ws.join("projects/no-yaml/rwv.yaml");
+    let manifest_path = ws.join("projects/no-yaml/rwv.toml");
     assert!(
         manifest_path.exists(),
-        "rwv.yaml should be created for adopted repo"
+        "rwv.toml should be created for adopted repo"
     );
 }
 
@@ -522,7 +522,7 @@ fn adopt_preserves_existing_rwv_yaml() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
-    // Create a bare repo that already has an rwv.yaml
+    // Create a bare repo that already has an rwv.toml
     let bare = tmp.path().join("has-yaml.git");
     let work = tmp.path().join("has-yaml-work");
 
@@ -546,12 +546,12 @@ fn adopt_preserves_existing_rwv_yaml() {
         .current_dir(&work)
         .status();
 
-    // Write a custom rwv.yaml
-    let custom = "repositories: {}\n# custom marker\n";
-    std::fs::write(work.join("rwv.yaml"), custom).unwrap();
+    // Write a custom rwv.toml
+    let custom = "[repositories]\n";
+    std::fs::write(work.join("rwv.toml"), custom).unwrap();
     let _ = common::git().args(["add", "."]).current_dir(&work).status();
     let _ = common::git()
-        .args(["commit", "-m", "with rwv.yaml"])
+        .args(["commit", "-m", "with rwv.toml"])
         .current_dir(&work)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
@@ -569,10 +569,10 @@ fn adopt_preserves_existing_rwv_yaml() {
         .assert()
         .success();
 
-    let content = std::fs::read_to_string(ws.join("projects/has-yaml/rwv.yaml")).unwrap();
+    let content = std::fs::read_to_string(ws.join("projects/has-yaml/rwv.toml")).unwrap();
     assert!(
         content.contains("# custom marker"),
-        "existing rwv.yaml should be preserved, got: {content}"
+        "existing rwv.toml should be preserved, got: {content}"
     );
 }
 
@@ -666,11 +666,11 @@ fn init_bootstraps_empty_directory() {
         "projects/my-app/ must exist after init in empty dir"
     );
 
-    // The rwv.yaml is present and valid.
-    let manifest_path = ws.join("projects/my-app/rwv.yaml");
-    assert!(manifest_path.exists(), "rwv.yaml must exist");
+    // The rwv.toml is present and valid.
+    let manifest_path = ws.join("projects/my-app/rwv.toml");
+    assert!(manifest_path.exists(), "rwv.toml must exist");
     let manifest = repoweave::manifest::Manifest::from_path(&manifest_path)
-        .expect("rwv.yaml from bootstrapped init must parse cleanly");
+        .expect("rwv.toml from bootstrapped init must parse cleanly");
     assert!(manifest.is_empty(), "repositories map must be empty");
 }
 

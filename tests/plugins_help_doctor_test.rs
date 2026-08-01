@@ -64,8 +64,8 @@ fn make_minimal_workspace(tmp: &Path, project: &str) -> PathBuf {
     fs::create_dir_all(ws.join("projects").join(project)).unwrap();
     fs::create_dir_all(ws.join("github")).unwrap();
     fs::write(
-        ws.join("projects").join(project).join("rwv.yaml"),
-        "repositories: {}\n",
+        ws.join("projects").join(project).join("rwv.toml"),
+        "[repositories]\n",
     )
     .unwrap();
     fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();

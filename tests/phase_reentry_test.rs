@@ -76,9 +76,9 @@ fn init_repo(path: &Path) -> String {
 
 fn write_manifest(project_dir: &Path) {
     let body = format!(
-        "repositories:\n  {SERVER_PATH}:\n    type: git\n    url: {SERVER_URL}\n    version: main\n    role: owned\n"
+        "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), body).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), body).unwrap();
 }
 
 fn write_lock(project_dir: &Path, sha: &str) {
@@ -110,7 +110,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     write_manifest(&project_dir);
     write_lock(&project_dir, &sha);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);

@@ -789,15 +789,15 @@ fn prepend_path(dir: &Path) -> String {
     format!("{}:{inherited}", dir.display())
 }
 
-/// Build a minimal workspace at `tmp/ws` with a `projects/<project>/rwv.yaml`
+/// Build a minimal workspace at `tmp/ws` with a `projects/<project>/rwv.toml`
 /// and a `.rwv-active` pointer. Returns the workspace root.
 fn make_minimal_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     let ws = tmp.join("ws");
     std::fs::create_dir_all(ws.join("projects").join(project)).unwrap();
     std::fs::create_dir_all(ws.join("github")).unwrap();
     std::fs::write(
-        ws.join("projects").join(project).join("rwv.yaml"),
-        "repositories: {}\n",
+        ws.join("projects").join(project).join("rwv.toml"),
+        "[repositories]\n",
     )
     .unwrap();
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();

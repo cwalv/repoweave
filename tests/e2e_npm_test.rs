@@ -118,24 +118,24 @@ console.log(types.greeting);
     .unwrap();
 
     // -------------------------------------------------------------------------
-    // Project manifest: projects/web-app/rwv.yaml
+    // Project manifest: projects/web-app/rwv.toml
     // -------------------------------------------------------------------------
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        r#"repositories:
-  github/chatly/shared-types:
-    type: git
-    url: https://github.com/chatly/shared-types.git
-    version: main
-    role: owned
-  github/chatly/server:
-    type: git
-    url: https://github.com/chatly/server.git
-    version: main
-    role: owned
+        project_dir.join("rwv.toml"),
+        r#"[repositories."github/chatly/shared-types"]
+type = "git"
+url = "https://github.com/chatly/shared-types.git"
+version = "main"
+role = "owned"
+
+[repositories."github/chatly/server"]
+type = "git"
+url = "https://github.com/chatly/server.git"
+version = "main"
+role = "owned"
 "#,
     )
     .unwrap();
@@ -290,24 +290,24 @@ console.log(types.greeting);
     .unwrap();
 
     // -------------------------------------------------------------------------
-    // Project manifest: projects/web-app/rwv.yaml
+    // Project manifest: projects/web-app/rwv.toml
     // -------------------------------------------------------------------------
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        r#"repositories:
-  github/chatly/shared-types:
-    type: git
-    url: https://github.com/chatly/shared-types.git
-    version: main
-    role: owned
-  github/chatly/server:
-    type: git
-    url: https://github.com/chatly/server.git
-    version: main
-    role: owned
+        project_dir.join("rwv.toml"),
+        r#"[repositories."github/chatly/shared-types"]
+type = "git"
+url = "https://github.com/chatly/shared-types.git"
+version = "main"
+role = "owned"
+
+[repositories."github/chatly/server"]
+type = "git"
+url = "https://github.com/chatly/server.git"
+version = "main"
+role = "owned"
 "#,
     )
     .unwrap();
@@ -424,7 +424,7 @@ console.log(types.greeting);
     // -------------------------------------------------------------------------
     // Step 8: generate_lock records shared-types version as "v1.0.0"
     // -------------------------------------------------------------------------
-    let manifest = repoweave::manifest::Manifest::from_path(&project_dir.join("rwv.yaml"))
+    let manifest = repoweave::manifest::Manifest::from_path(&project_dir.join("rwv.toml"))
         .expect("manifest should parse");
 
     let lock = repoweave::lock::generate_lock(&manifest, ws, None, true)

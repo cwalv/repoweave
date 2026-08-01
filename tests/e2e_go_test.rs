@@ -106,25 +106,14 @@ func Message() string {
     .unwrap();
 
     // ------------------------------------------------------------------
-    // 4. Create projects/web-app/rwv.yaml listing both repos as primary
+    // 4. Create projects/web-app/rwv.toml listing both repos as primary
     // ------------------------------------------------------------------
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "\
-repositories:\n  \
-  github/chatly/protocol:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/protocol.git\n    \
-    version: main\n    \
-    role: owned\n  \
-  github/chatly/server:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/server.git\n    \
-    version: main\n    \
-    role: owned\n";
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
 
-    std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
     // ------------------------------------------------------------------
     // 5. Write .rwv-active so the workspace knows which project is active
@@ -216,14 +205,8 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "\
-repositories:\n  \
-  github/chatly/protocol:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/protocol.git\n    \
-    version: main\n    \
-    role: owned\n";
-    std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
     // Pre-seed go.work with a go-line ABOVE the max across members
     // (1.24 > 1.21), already carrying the ownership marker so activate()
@@ -355,25 +338,14 @@ func Message() string {
     git_run(&["commit", "-m", "initial server"], &server_dir);
 
     // ------------------------------------------------------------------
-    // 4. Create projects/web-app/rwv.yaml listing both repos as primary
+    // 4. Create projects/web-app/rwv.toml listing both repos as primary
     // ------------------------------------------------------------------
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "\
-repositories:\n  \
-  github/chatly/protocol:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/protocol.git\n    \
-    version: main\n    \
-    role: owned\n  \
-  github/chatly/server:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/server.git\n    \
-    version: main\n    \
-    role: owned\n";
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
 
-    std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
     // ------------------------------------------------------------------
     // 5. Write .rwv-active and activate to generate go.work
@@ -458,8 +430,8 @@ repositories:\n  \
     // 11. Generate rwv.lock and verify protocol's version is "v1.0.0"
     //     (HEAD is tagged, so generate_lock should record the tag name)
     // ------------------------------------------------------------------
-    let manifest = repoweave::manifest::Manifest::from_path(&project_dir.join("rwv.yaml"))
-        .expect("failed to parse rwv.yaml");
+    let manifest = repoweave::manifest::Manifest::from_path(&project_dir.join("rwv.toml"))
+        .expect("failed to parse rwv.toml");
 
     let lock = repoweave::lock::generate_lock(&manifest, root, None, true)
         .expect("generate_lock should succeed");

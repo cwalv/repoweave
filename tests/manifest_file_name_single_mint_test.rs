@@ -1,4 +1,4 @@
-//! Pins the on-disk file names `rwv.yaml` and `rwv.lock` to the types that
+//! Pins the on-disk file names `rwv.toml` and `rwv.lock` to the types that
 //! own those formats, `Manifest` and `LockFile` in `src/manifest.rs`.
 //!
 //! The names are a published interface — operators type them, `.gitattributes`

@@ -27,7 +27,7 @@ fn git() -> std::process::Command {
 }
 
 /// Build a minimal workspace at `parent/<name>` with a single project
-/// whose `rwv.yaml` carries `role: primary`. The project repo itself is
+/// whose `rwv.toml` carries `role: primary`. The project repo itself is
 /// a real git repo so workspace context resolves cleanly.
 ///
 /// Returns `(workspace_root, project_dir, manifest_path)`.
@@ -41,7 +41,7 @@ fn make_workspace_with_legacy_manifest(
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
     let project_dir = workspace.join("projects").join("alpha");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let manifest_path = project_dir.join("rwv.yaml");
+    let manifest_path = project_dir.join("rwv.toml");
     std::fs::write(&manifest_path, manifest_yaml).unwrap();
     // Project repo: minimal git init + commit so `rwv` resolves the
     // workspace context to a real weave root.
@@ -58,26 +58,13 @@ fn make_workspace_with_legacy_manifest(
         assert!(out.status.success(), "git {:?} failed", args);
     };
     run_git(&["init", "-b", "main"], &project_dir);
-    run_git(&["add", "rwv.yaml"], &project_dir);
+    run_git(&["add", "rwv.toml"], &project_dir);
     run_git(&["commit", "-m", "init"], &project_dir);
     std::fs::write(workspace.join(".rwv-active"), "alpha\n").unwrap();
     (workspace, project_dir, manifest_path)
 }
 
-const LEGACY_MANIFEST: &str = "\
-# acme.alpha — auto-migrate target
-repositories:
-  github/acme/lib:
-    type: git           # inline comment kept
-    url: https://example.com/acme/lib.git
-    version: main
-    role: primary       # legacy spelling
-  github/acme/app:
-    type: git
-    url: https://example.com/acme/app.git
-    version: main
-    role: dependency
-";
+const LEGACY_MANIFEST: &str = "# acme.alpha — auto-migrate target\n\n[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://example.com/acme/lib.git\"\nversion = \"main\"\nrole = \"primary\"\n\n[repositories.\"github/acme/app\"]\ntype = \"git\"\nurl = \"https://example.com/acme/app.git\"\nversion = \"main\"\nrole = \"dependency\"\n";
 
 /// Capture `rwv doctor` stdout + stderr regardless of exit status; the
 /// migration contract is independent of unrelated dangling-reference

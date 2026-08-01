@@ -75,7 +75,7 @@ fn init_repo_with_commit(path: &Path) {
     git(&["commit", "-m", "initial"], path);
 }
 
-/// Minimal workspace: one git repo, one project dir with `rwv.yaml`.
+/// Minimal workspace: one git repo, one project dir with `rwv.toml`.
 /// Returns workspace root.
 fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     let ws = tmp.join("ws");
@@ -86,10 +86,10 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
 }
 

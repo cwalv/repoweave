@@ -69,17 +69,16 @@ fn make_workspace(tmp: &Path, project: &str) -> (PathBuf, PathBuf) {
     init_repo_with_commit(&project_dir);
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest).unwrap();
-    git(&["add", "rwv.yaml"], &project_dir);
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
+    git(&["add", "rwv.toml"], &project_dir);
     git(&["commit", "-m", "add manifest"], &project_dir);
 
     (ws, repo_path)

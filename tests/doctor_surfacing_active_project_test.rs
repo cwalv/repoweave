@@ -53,19 +53,9 @@ fn make_workspace(parent: &Path) -> PathBuf {
         let project_dir = root.join("projects").join(project);
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(
-            project_dir.join("rwv.yaml"),
+            project_dir.join("rwv.toml"),
             format!(
-                "repositories: {{}}\n\
-                 integrations:\n\
-                 \x20 static-files:\n\
-                 \x20   enabled: true\n\
-                 \x20   files:\n\
-                 \x20     - CLAUDE.md\n\
-                 \x20     - {project}.code-workspace\n\
-                 \x20 vscode-workspace:\n\
-                 \x20   enabled: false\n\
-                 \x20 go-work:\n\
-                 \x20   enabled: false\n"
+                "repositories = \"{{}}\"\n\n[integrations.static-files]\nenabled = true\nfiles = [\"CLAUDE.md\", \"{project}.code-workspace\"]\n\n[integrations.vscode-workspace]\nenabled = false\n\n[integrations.go-work]\nenabled = false\n"
             ),
         )
         .unwrap();

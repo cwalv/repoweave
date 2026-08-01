@@ -78,10 +78,9 @@ fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
+        project_dir.join("rwv.toml"),
         format!(
-            "repositories:\n  github/org/repo:\n    type: git\n    url: file://{}\n    \
-             version: main\n    role: owned\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
             repo_path.display()
         ),
     )
@@ -371,7 +370,7 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
 }
 
 /// `doctor --fix`'s SURFACING repair is a third route to the same question,
-/// and the one with no `rwv.yaml` edit behind it: it re-runs the surfacing
+/// and the one with no `rwv.toml` edit behind it: it re-runs the surfacing
 /// primitive against the weave it scanned, deciding what to expect from what
 /// that root presents. A workweave carries no pointer, so a repair that asked
 /// for one would find the root presents nothing, expect no symlinks, and
@@ -512,10 +511,9 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
     let proj_b = ws_b.join("projects/beta");
     std::fs::create_dir_all(&proj_b).unwrap();
     std::fs::write(
-        proj_b.join("rwv.yaml"),
+        proj_b.join("rwv.toml"),
         format!(
-            "repositories:\n  github/org/repo:\n    type: git\n    url: file://{}\n    \
-             version: main\n    role: owned\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
             repo_b.display()
         ),
     )

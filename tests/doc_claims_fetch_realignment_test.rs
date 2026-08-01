@@ -159,14 +159,14 @@ fn setup(repo_paths: &[&str]) -> Fixture {
     let project_dir = workspace.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let mut manifest = String::from("repositories:\n");
+    let mut manifest = String::from("[repositories]\n");
     for repo in &repos {
         let (path, url) = (&repo.path, url_of(&repo.bare));
         manifest.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
 
     Fixture {

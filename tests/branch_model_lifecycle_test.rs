@@ -99,14 +99,9 @@ fn make_workspace(tmp: &Path) -> PathBuf {
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
+        project_dir.join("rwv.toml"),
         format!(
-            "repositories:\n  \
-             github/org/repo:\n    \
-             type: git\n    \
-             url: file://{repo}\n    \
-             version: main\n    \
-             role: owned\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
             repo = repo_path.display()
         ),
     )
@@ -245,14 +240,10 @@ fn delete_reports_the_branches_it_will_not_touch() {
     // prefix glob would have taken.
     let repo2 = ws.join("github/org/other");
     init_repo_with_commit(&repo2);
-    let manifest = ws.join("projects/web-app/rwv.yaml");
+    let manifest = ws.join("projects/web-app/rwv.toml");
     let mut text = std::fs::read_to_string(&manifest).unwrap();
     text.push_str(&format!(
-        "  github/org/other:\n    \
-         type: git\n    \
-         url: file://{repo}\n    \
-         version: main\n    \
-         role: owned\n",
+        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         repo = repo2.display()
     ));
     std::fs::write(&manifest, text).unwrap();
@@ -320,14 +311,10 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
     // name the workweave itself mints.
     let repo2 = ws.join("github/org/other");
     init_repo_with_commit(&repo2);
-    let manifest = ws.join("projects/web-app/rwv.yaml");
+    let manifest = ws.join("projects/web-app/rwv.toml");
     let mut text = std::fs::read_to_string(&manifest).unwrap();
     text.push_str(&format!(
-        "  github/org/other:\n    \
-         type: git\n    \
-         url: file://{repo}\n    \
-         version: main\n    \
-         role: owned\n",
+        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         repo = repo2.display()
     ));
     std::fs::write(&manifest, text).unwrap();

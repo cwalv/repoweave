@@ -217,10 +217,9 @@ fn make_doctor_workspace(
     git_run_silent(&["commit", "-m", "initial"], &member_dir);
 
     let manifest = format!(
-        "repositories:\n  {repo_path}:\n    type: git\n    \
-         url: https://github.com/org/module-a.git\n    version: main\n    role: owned\n"
+        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // go.work carries the operator's pin plus the rwv marker, so the `use`
     // block is CLEAN and only the go-line is in question.
@@ -431,10 +430,9 @@ fn build_update_fixture(
 
     let bare_url = member_bare.to_str().unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
+        project_dir.join("rwv.toml"),
         format!(
-            "repositories:\n  {repo_path}:\n    type: git\n    url: {bare_url}\n    \
-             version: main\n    role: owned\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

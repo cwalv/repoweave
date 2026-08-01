@@ -115,7 +115,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
 
     let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
     let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     for (repo_path, role) in repos {
         let bare = tmp
             .path()
@@ -140,7 +140,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
 
@@ -158,7 +158,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
@@ -295,7 +295,7 @@ fn update_advances_lock_while_fetch_does_not() {
     // committed lock and pins clones at the lock SHA — the bare's new
     // HEAD does NOT leak into the clone.
     //
-    // We mirror fetch_test.rs's setup: a bare project repo carrying rwv.yaml
+    // We mirror fetch_test.rs's setup: a bare project repo carrying rwv.toml
     // + rwv.lock, fetched into an empty workspace. The fetched clone of
     // the manifest repo must be at the LOCK sha, not the new bare HEAD.
     let tmp_fetch = common::tempdir().unwrap();
@@ -317,7 +317,7 @@ fn update_advances_lock_while_fetch_does_not() {
     );
     let initial_sha = git_run(&dep_clone, &["rev-parse", "HEAD"]);
 
-    // Build the project bare with rwv.yaml + rwv.lock pinning to initial_sha.
+    // Build the project bare with rwv.toml + rwv.lock pinning to initial_sha.
     let project_bare = tmp_fetch.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_work = tmp_fetch.path().join("project_work");
@@ -331,10 +331,10 @@ fn update_advances_lock_while_fetch_does_not() {
     );
     git_run(&project_work, &["config", "user.email", "test@test.com"]);
     git_run(&project_work, &["config", "user.name", "Test"]);
-    let yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {manifest_url}\n    version: main\n    role: owned\n"
+    let manifest_toml = format!(
+        "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{manifest_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_work.join("rwv.yaml"), yaml).unwrap();
+    std::fs::write(project_work.join("rwv.toml"), manifest_toml).unwrap();
     let raw_lock = format!(
         "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {manifest_url:?}, \"version\": {initial_sha:?}}}}}}}"
     );
@@ -564,7 +564,7 @@ fn update_json_emits_ndjson_under_j_gt_1() {
 //
 // Doc claim (trigger model): an intent verb authors the new managed region
 // "as part of that operation, so the file change lands *in the same commit*,
-// alongside the rwv.yaml/rwv.lock change that caused it". `update --commit`
+// alongside the rwv.toml/rwv.lock change that caused it". `update --commit`
 // is the only intent verb that makes the commit itself, so it is the only
 // one that can break the claim by leaving the derived files behind.
 // ===========================================================================

@@ -241,10 +241,9 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
     write(&project_dir, ".gitattributes", "rwv.lock merge=rwv-ours\n");
     write(
         &project_dir,
-        "rwv.yaml",
+        "rwv.toml",
         &format!(
-            "repositories:\n  {MANAGED_REPO}:\n    type: git\n    url: file://{repo}\n    \
-             version: main\n    role: owned\n",
+            "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
             repo = managed_repo.display()
         ),
     );
@@ -252,13 +251,12 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
         &project_dir,
         "rwv.lock",
         &format!(
-            "repositories:\n  {MANAGED_REPO}:\n    type: git\n    url: file://{repo}\n    \
-             version: {managed_sha}\n",
+            "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"{managed_sha}\"\n",
             repo = managed_repo.display()
         ),
     );
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);

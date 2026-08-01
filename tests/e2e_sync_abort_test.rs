@@ -72,19 +72,19 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
     git_out(&["rev-parse", "HEAD"], repo)
 }
 
-/// Write an rwv.yaml manifest into `project_dir`.
+/// Write an rwv.toml manifest into `project_dir`.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)], integrations: Option<&str>) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
     if let Some(int) = integrations {
-        yaml.push_str("\nintegrations:\n");
-        yaml.push_str(int);
+        manifest_toml.push_str("\nintegrations:\n");
+        manifest_toml.push_str(int);
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Write an rwv.lock file into `project_dir`.
@@ -126,7 +126,7 @@ const SERVER_PATH: &str = "github/chatly/server";
 /// Build a workspace:
 ///   root/
 ///     github/chatly/server/   (git repo, initial commit)
-///     projects/web-app/       (git repo, rwv.yaml + rwv.lock committed)
+///     projects/web-app/       (git repo, rwv.toml + rwv.lock committed)
 ///
 /// Both workspaces share no objects — independent repos. Good for precondition
 /// tests where the error fires before any cross-workspace object access.
@@ -151,7 +151,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
@@ -1955,12 +1955,12 @@ fn gita_is_opt_in() {
 /// We simulate post-Phase-1' corruption via a `post-merge` git hook installed
 /// in the shared git hooks directory.  `git merge --ff-only` (the default
 /// Phase 1' path when CWD is behind source) triggers `post-merge`, which
-/// replaces `rwv.yaml` with invalid YAML.  The reload at the fixed code site
+/// replaces `rwv.toml` with invalid YAML.  The reload at the fixed code site
 /// sees garbage and must bail — not warn and proceed.
 ///
 /// The workweave's project repo is a git worktree of primary's project, so
 /// hooks live in primary.project_dir/.git/hooks/ and fire for both repos.
-/// The `post-merge` hook writes its corruption to `rwv.yaml` relative to the
+/// The `post-merge` hook writes its corruption to `rwv.toml` relative to the
 /// git work tree, which at hook time is the workweave's project directory.
 ///
 /// Assertions:
@@ -1991,7 +1991,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
     // Because ww.project_dir is a worktree of primary.project_dir, both
     // share the same hooks directory (primary.project_dir/.git/hooks/).
     // `git merge --ff-only` (the default Phase 1' path) triggers post-merge.
-    // The hook writes invalid YAML to rwv.yaml in the current working tree
+    // The hook writes invalid YAML to rwv.toml in the current working tree
     // (the workweave's project dir at hook-call time).
     let hooks_dir = primary.project_dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
@@ -2000,7 +2000,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
     // and unconditionally corrupt the manifest.
     std::fs::write(
         &hook_path,
-        "#!/bin/sh\nprintf '!!!invalid yaml!!!\\n' > rwv.yaml\n",
+        "#!/bin/sh\nprintf '!!!invalid manifest_toml!!!\\n' > rwv.toml\n",
     )
     .unwrap();
     #[cfg(unix)]
@@ -2011,7 +2011,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
 
     // Run sync with the default FF strategy.  Phase 1' calls
     // `git merge --ff-only <source_project_tip>` in the WW project dir,
-    // which fires the post-merge hook and corrupts rwv.yaml on disk.
+    // which fires the post-merge hook and corrupts rwv.toml on disk.
     // The fixed reload code should bail immediately rather than proceeding
     // with a stale snapshot.
     let out = rwv()

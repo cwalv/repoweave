@@ -25,10 +25,10 @@ fn make_workspace(parent: &Path) -> PathBuf {
     ws
 }
 
-/// Write a minimal `rwv.yaml` manifest (empty repositories section).
+/// Write a minimal `rwv.toml` manifest (empty repositories section).
 fn write_empty_manifest(project_dir: &Path) {
     std::fs::create_dir_all(project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), "repositories:\n").unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 }
 
 /// Set `.rwv-active` to a project name that does NOT exist on disk.

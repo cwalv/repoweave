@@ -81,13 +81,13 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
@@ -153,7 +153,7 @@ fn sync_reads_committed_lock_not_working_tree() {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    git(&["add", "rwv.yaml", ".gitattributes"], &source_proj);
+    git(&["add", "rwv.toml", ".gitattributes"], &source_proj);
     git(&["commit", "-m", "chore: manifest + attrs"], &source_proj);
 
     // Materialise lib under source (clone) at sha_v1.
@@ -257,7 +257,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    git(&["add", "rwv.yaml", ".gitattributes"], &source_proj);
+    git(&["add", "rwv.toml", ".gitattributes"], &source_proj);
     git(&["commit", "-m", "chore: manifest + attrs"], &source_proj);
 
     // Materialise lib in source at sha_t0.

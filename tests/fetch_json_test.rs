@@ -179,7 +179,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     run(&["push", "origin", "main"], &work);
 }
 
-/// Push an `rwv.yaml` manifest into a bare repo.
+/// Push an `rwv.toml` manifest into a bare repo.
 fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("mwork");
@@ -202,14 +202,14 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
-    run(&["add", "rwv.yaml"], &work);
+    std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "add manifest"], &work);
     run(&["push", "origin", "main"], &work);
 }

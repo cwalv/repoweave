@@ -58,15 +58,15 @@ fn init_bare_repo_with_commit(path: &Path) {
     run(&["push", "origin", "main"], &work);
 }
 
-/// Write an `rwv.yaml` manifest pointing repos at the given bare repo URL.
+/// Write an `rwv.toml` manifest pointing repos at the given bare repo URL.
 fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 // ============================================================================
@@ -118,11 +118,11 @@ fn fetch_clones_project_and_repos() {
     init_bare_repo_with_commit(&bare_server);
     init_bare_repo_with_commit(&bare_client);
 
-    // Set up the "project source" — a bare repo containing rwv.yaml.
+    // Set up the "project source" — a bare repo containing rwv.toml.
     let project_bare = tmp.path().join("project.git");
     init_bare_repo(&project_bare);
 
-    // Clone the project bare repo, add an rwv.yaml, push.
+    // Clone the project bare repo, add an rwv.toml, push.
     let project_work = tmp.path().join("project_work");
     let run = |args: &[&str], cwd: &Path| {
         let status = common::git()
@@ -156,7 +156,7 @@ fn fetch_clones_project_and_repos() {
             ("local/org/client", &client_url),
         ],
     );
-    run(&["add", "rwv.yaml"], &project_work);
+    run(&["add", "rwv.toml"], &project_work);
     run(&["commit", "-m", "add manifest"], &project_work);
     run(&["push", "origin", "main"], &project_work);
 
@@ -189,7 +189,7 @@ fn fetch_creates_project_dir_with_manifest() {
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    // Set up a bare repo for the project source with an rwv.yaml.
+    // Set up a bare repo for the project source with an rwv.toml.
     let bare_repo = tmp.path().join("remote.git");
     init_bare_repo(&bare_repo);
 
@@ -216,7 +216,7 @@ fn fetch_creates_project_dir_with_manifest() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
     write_manifest(&work, &[]);
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -227,7 +227,7 @@ fn fetch_creates_project_dir_with_manifest() {
         .assert()
         .success();
 
-    // The project directory should exist under projects/ and contain rwv.yaml.
+    // The project directory should exist under projects/ and contain rwv.toml.
     let projects_dir = workspace.join("projects");
     assert!(projects_dir.exists(), "projects/ directory should exist");
 
@@ -243,8 +243,8 @@ fn fetch_creates_project_dir_with_manifest() {
 
     let project_dir = entries[0].path();
     assert!(
-        project_dir.join("rwv.yaml").exists(),
-        "project directory should contain rwv.yaml"
+        project_dir.join("rwv.toml").exists(),
+        "project directory should contain rwv.toml"
     );
 }
 
@@ -285,7 +285,7 @@ fn fetch_repos_at_canonical_paths() {
 
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -349,7 +349,7 @@ fn fetch_existing_workspace_handles_gracefully() {
 
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -431,13 +431,13 @@ fn fetch_garbage_source_errors_clearly() {
 // ============================================================================
 //
 // FetchMode controls how `rwv fetch` resolves repo versions:
-//   - Default: fetch branch HEAD from `rwv.yaml`, update `rwv.lock` with SHAs
+//   - Default: fetch branch HEAD from `rwv.toml`, update `rwv.lock` with SHAs
 //   - Locked:  check out exact revisions from `rwv.lock`
 //   - Frozen:  like Locked, but error if lock is missing or incomplete
 
 #[test]
 fn fetch_mode_default_updates_lock() {
-    // Default fetch should clone repos at branch HEAD from rwv.yaml and then
+    // Default fetch should clone repos at branch HEAD from rwv.toml and then
     // write/update rwv.lock with the resolved SHAs.
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
@@ -474,7 +474,7 @@ fn fetch_mode_default_updates_lock() {
 
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -542,7 +542,7 @@ fn fetch_default_auto_activates_project() {
 
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -623,7 +623,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
 
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run_quiet(&["add", "rwv.yaml"], &work);
+    run_quiet(&["add", "rwv.toml"], &work);
     run_quiet(&["commit", "-m", "manifest"], &work);
 
     // Get the first commit SHA from the bare repo (before any new commits).
@@ -734,7 +734,7 @@ fn fetch_frozen_errors_on_missing_lock() {
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     // Deliberately do NOT create rwv.lock.
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest without lock"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -952,7 +952,7 @@ fn fetch_second_invocation_is_idempotent() {
 
     let dep_url = format!("file://{}", bare_repo.display());
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -1017,13 +1017,13 @@ fn fetch_frozen_flag_is_recognized() {
 
 /// Write a manifest with mixed primary/reference roles.
 fn write_manifest_with_roles(dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url, role) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: {role}\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
-    std::fs::write(dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 #[test]
@@ -1074,7 +1074,7 @@ fn fetch_no_reference_skips_reference_role_repos() {
             ("local/team/reference", &reference_url, "reference"),
         ],
     );
-    run(&["add", "rwv.yaml"], &work);
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
@@ -1276,7 +1276,7 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
 // ============================================================================
 
 /// Build a project bare and a working clone with `repos` declared in
-/// rwv.yaml at the given roles. Returns the project bare URL ready to feed
+/// rwv.toml at the given roles. Returns the project bare URL ready to feed
 /// `rwv fetch`. Each `(canonical_path, role)` repo gets its own bare remote
 /// behind a `file://` URL so no network is required.
 fn build_filter_fixture(
@@ -1307,7 +1307,7 @@ fn build_filter_fixture(
         entries.push((path.to_string(), url, role.to_string()));
     }
 
-    // Build the project bare with rwv.yaml.
+    // Build the project bare with rwv.toml.
     let project_bare = tmp.path().join("project.git");
     init_bare_repo(&project_bare);
     let project_work = tmp.path().join("project_work");
@@ -1327,7 +1327,7 @@ fn build_filter_fixture(
         .map(|(p, u, r)| (p.as_str(), u.as_str(), r.as_str()))
         .collect();
     write_manifest_with_roles(&project_work, &triples);
-    run(&["add", "rwv.yaml"], &project_work);
+    run(&["add", "rwv.toml"], &project_work);
     run(&["commit", "-m", "add manifest"], &project_work);
     run(&["push", "origin", "main"], &project_work);
 

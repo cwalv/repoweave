@@ -124,9 +124,9 @@ fn make_workspace_with_lock(parent: &Path, project: &str) -> (PathBuf, PathBuf, 
 
     let url = format!("file://{}", repo_path.display());
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     write_lock(&project_dir, "github/org/repo", &url, &sha);
 
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();
@@ -448,9 +448,9 @@ fn make_workspace_with_bare_remote(parent: &Path) -> (PathBuf, PathBuf, PathBuf,
 
     let url = format!("file://{}", bare.display());
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     write_lock(&project_dir, "github/org/repo", &url, &sha);
 
     std::fs::write(ws.join(".rwv-active"), "alpha\n").unwrap();

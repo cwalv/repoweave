@@ -51,16 +51,16 @@ fn init_repo(path: &Path) -> String {
 
 fn write_manifest_only(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     if repos.is_empty() {
-        yaml.push_str("  {}\n");
+        manifest_toml.push_str("  {}\n");
     }
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Build a workspace with two projects; no `.rwv-active` set.
@@ -93,13 +93,13 @@ fn make_two_project_workspace(parent: &Path) -> (PathBuf, PathBuf, PathBuf, Stri
     let proj_a = ws.join("projects/proj-a");
     init_repo(&proj_a);
     write_manifest_only(&proj_a, &[("github/acme/server", &url)]);
-    git(&["add", "rwv.yaml"], &proj_a);
+    git(&["add", "rwv.toml"], &proj_a);
     git(&["commit", "-m", "init"], &proj_a);
 
     let proj_b = ws.join("projects/proj-b");
     init_repo(&proj_b);
     write_manifest_only(&proj_b, &[("github/acme/server", &url)]);
-    git(&["add", "rwv.yaml"], &proj_b);
+    git(&["add", "rwv.toml"], &proj_b);
     git(&["commit", "-m", "init"], &proj_b);
 
     (ws, proj_a, proj_b, sha)
@@ -247,7 +247,7 @@ fn add_with_project_override_regenerates_without_selecting() {
         .success();
 
     assert!(
-        std::fs::read_to_string(ws.join("projects/proj-b/rwv.yaml"))
+        std::fs::read_to_string(ws.join("projects/proj-b/rwv.toml"))
             .unwrap()
             .contains("github/acme/client"),
         "add should have landed in the --project target's manifest"
@@ -268,13 +268,13 @@ fn remove_with_project_override_regenerates_without_selecting() {
         .success();
 
     assert!(
-        !std::fs::read_to_string(ws.join("projects/proj-b/rwv.yaml"))
+        !std::fs::read_to_string(ws.join("projects/proj-b/rwv.toml"))
             .unwrap()
             .contains("github/acme/server"),
         "remove should have landed in the --project target's manifest"
     );
     assert!(
-        std::fs::read_to_string(ws.join("projects/proj-a/rwv.yaml"))
+        std::fs::read_to_string(ws.join("projects/proj-a/rwv.toml"))
             .unwrap()
             .contains("github/acme/server"),
         "remove must not touch the active project's manifest"

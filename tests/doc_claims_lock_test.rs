@@ -68,8 +68,8 @@ fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathB
     let project_dir = root.join("projects/my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/acme/server.git\n    version: main\n    role: owned\n",
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
@@ -151,7 +151,7 @@ fn lock_overwrites_previous_lock_with_current_head() {
     std::fs::write(
         project_dir.join("rwv.lock"),
         format!(
-            "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/acme/server.git\n    version: {fake_sha}\n"
+            "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"{fake_sha}\"\n"
         ),
     )
     .unwrap();
@@ -242,9 +242,9 @@ fn lock_records_local_head_not_remote_tip() {
     std::fs::create_dir_all(&project_dir).unwrap();
     let bare_url = format!("file://{}", bare.display());
     std::fs::write(
-        project_dir.join("rwv.yaml"),
+        project_dir.join("rwv.toml"),
         format!(
-            "repositories:\n  github/acme/server:\n    type: git\n    url: {bare_url}\n    version: main\n    role: owned\n"
+            "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

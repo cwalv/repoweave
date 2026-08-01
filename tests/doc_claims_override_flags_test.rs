@@ -72,16 +72,15 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     ws
 }
@@ -111,7 +110,7 @@ fn init_bare_repo(path: &Path) {
     assert!(status.success(), "git init --bare failed");
 }
 
-/// Push an empty `rwv.yaml` manifest into a bare repo, via a temporary
+/// Push an empty `rwv.toml` manifest into a bare repo, via a temporary
 /// working clone.
 fn push_empty_manifest_to_bare(bare: &Path) {
     let tmp = common::tempdir().expect("tempdir for manifest work clone");
@@ -122,8 +121,8 @@ fn push_empty_manifest_to_bare(bare: &Path) {
     );
     git(&["config", "user.email", "test@test.com"], &work);
     git(&["config", "user.name", "Test"], &work);
-    std::fs::write(work.join("rwv.yaml"), "repositories: {}\n").unwrap();
-    git(&["add", "rwv.yaml"], &work);
+    std::fs::write(work.join("rwv.toml"), "[repositories]\n").unwrap();
+    git(&["add", "rwv.toml"], &work);
     git(&["commit", "-m", "add manifest"], &work);
     git(&["push", "origin", "main"], &work);
 }
@@ -419,9 +418,9 @@ fn build_push_fixture() -> PushFixture {
     let bare_url = manifest_bare.to_string_lossy().into_owned();
     let manifest_head = head_sha(&manifest_local);
     std::fs::write(
-        project_dir.join("rwv.yaml"),
+        project_dir.join("rwv.toml"),
         format!(
-            "repositories:\n  local/org/repo:\n    type: git\n    url: {bare_url}\n    version: main\n    role: owned\n"
+            "[repositories.\"local/org/repo\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

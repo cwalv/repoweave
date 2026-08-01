@@ -10,41 +10,43 @@ mod common;
 // ---------------------------------------------------------------------------
 
 const FULL_MANIFEST_YAML: &str = r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-  github/acme/client:
-    type: git
-    url: https://github.com/acme/client.git
-    version: develop
-    role: fork
-  github/lib/openssl:
-    type: git
-    url: https://github.com/lib/openssl.git
-    version: v3.1.0
-    role: dependency
-  github/docs/rfc:
-    type: git
-    url: https://github.com/docs/rfc.git
-    version: main
-    role: reference
-integrations:
-  cargo:
-    enabled: true
-  npm:
-    enabled: false
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[repositories."github/acme/client"]
+type = "git"
+url = "https://github.com/acme/client.git"
+version = "develop"
+role = "fork"
+
+[repositories."github/lib/openssl"]
+type = "git"
+url = "https://github.com/lib/openssl.git"
+version = "v3.1.0"
+role = "dependency"
+
+[repositories."github/docs/rfc"]
+type = "git"
+url = "https://github.com/docs/rfc.git"
+version = "main"
+role = "reference"
+
+[integrations.cargo]
+enabled = true
+
+[integrations.npm]
+enabled = false
 "#;
 
 const MINIMAL_MANIFEST_YAML: &str = r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
 "#;
 
 const LOCK_JSON: &str = r#"{
@@ -162,12 +164,12 @@ fn manifest_without_integrations() {
 #[test]
 fn integration_config_enabled_none() {
     // An empty integration block should default enabled to None.
-    let yaml = r#"
-repositories: {}
-integrations:
-  cargo: {}
+    let manifest_toml = r#"
+[repositories]
+
+[integrations.cargo]
 "#;
-    let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+    let m: Manifest = serde_yaml::from_str(manifest_toml).unwrap();
     assert!(m.integrations["cargo"].enabled().is_none());
 }
 
@@ -258,7 +260,7 @@ fn project_from_dir_manifest_only() {
     // subdirectory instead.
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST_YAML).unwrap();
 
     let project = Project::from_dir(&project_dir).unwrap();
     assert_eq!(project.manifest.len(), 1);
@@ -271,7 +273,7 @@ fn project_from_dir_manifest_and_lock() {
     let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), FULL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), FULL_MANIFEST_YAML).unwrap();
     std::fs::write(project_dir.join("rwv.lock"), LOCK_JSON).unwrap();
 
     let project = Project::from_dir(&project_dir).unwrap();
@@ -283,7 +285,7 @@ fn project_from_dir_manifest_and_lock() {
 #[test]
 fn project_from_dir_missing_manifest_errors() {
     let dir = common::tempdir().unwrap();
-    // No rwv.yaml written — from_dir should fail.
+    // No rwv.toml written — from_dir should fail.
     let result = Project::from_dir(dir.path());
     assert!(result.is_err());
 }
@@ -293,7 +295,7 @@ fn project_name_derived_from_dir() {
     let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST_YAML).unwrap();
 
     let project = Project::from_dir(&project_dir).unwrap();
     // Name is derived from the path; since the project dir isn't under
@@ -306,7 +308,7 @@ fn project_name_strips_projects_prefix() {
     let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("projects").join("web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST_YAML).unwrap();
 
     // Use a relative path starting with "projects/" so strip_prefix works.
     let nested_project_dir = dir.path().join("projects").join("web-app");
@@ -321,22 +323,22 @@ fn project_name_strips_projects_prefix() {
 // CargoWorkspaceConfig deserialization
 // ---------------------------------------------------------------------------
 
-/// Parse a `CargoWorkspaceConfig` directly from an `IntegrationConfig` YAML
+/// Parse a `CargoWorkspaceConfig` directly from an `IntegrationConfig`
 /// snippet, the same path used by the integration at runtime.
-fn parse_cargo_config(yaml: &str) -> CargoWorkspaceConfig {
+fn parse_cargo_config(manifest_toml: &str) -> CargoWorkspaceConfig {
     use repoweave::manifest::IntegrationConfig;
-    let config = IntegrationConfig::from_yaml(yaml);
+    let config = IntegrationConfig::from_toml(manifest_toml);
     config
         .settings::<CargoWorkspaceConfig>()
         .expect("CargoWorkspaceConfig parse failed")
 }
 
 /// All new fields default correctly when the integration block is empty.
-/// This is the backward-compatibility guarantee: existing rwv.yaml files
-/// that only set `enabled:` or `exclude:` must not break.
+/// This is the backward-compatibility guarantee: existing rwv.toml files
+/// that only set `enabled` or `exclude` must not break.
 #[test]
 fn cargo_workspace_config_defaults_when_omitted() {
-    let cfg = parse_cargo_config("{}");
+    let cfg = parse_cargo_config("");
     assert!(
         cfg.members.is_empty(),
         "members must default to empty BTreeMap"
@@ -353,18 +355,17 @@ fn cargo_workspace_config_defaults_when_omitted() {
     assert!(cfg.exclude.is_empty(), "exclude must default to empty vec");
 }
 
-/// A `members:` block with a repo key and `include` list deserializes into
+/// A `members` block with a repo key and `include` list deserializes into
 /// the correct `BTreeMap<String, MemberSpec>` shape.
 /// This is the rvtty scenario from plan §5a / `cargo-workspace-vs-repo.md`
 /// §179–212.
 #[test]
 fn cargo_workspace_config_members_spec_roundtrips() {
-    let yaml = r#"
-members:
-  github/cwalv/rvtty:
-    include: [daemon, client, common]
+    let manifest_toml = r#"
+[members."github/cwalv/rvtty"]
+include = ["daemon", "client", "common"]
 "#;
-    let cfg = parse_cargo_config(yaml);
+    let cfg = parse_cargo_config(manifest_toml);
 
     assert_eq!(cfg.members.len(), 1, "expected exactly one repo in members");
 
@@ -392,13 +393,12 @@ members:
 /// `include` and `exclude` both parse correctly together.
 #[test]
 fn cargo_workspace_config_members_include_and_exclude() {
-    let yaml = r#"
-members:
-  github/cwalv/rvtty:
-    include: [daemon, client, common, workspace]
-    exclude: [workspace]
+    let manifest_toml = r#"
+[members."github/cwalv/rvtty"]
+include = ["daemon", "client", "common", "workspace"]
+exclude = ["workspace"]
 "#;
-    let cfg = parse_cargo_config(yaml);
+    let cfg = parse_cargo_config(manifest_toml);
     let spec = cfg.members.get("github/cwalv/rvtty").unwrap();
     assert_eq!(
         spec.include,
@@ -407,13 +407,13 @@ members:
     assert_eq!(spec.exclude, vec!["workspace"]);
 }
 
-/// `patch: true` (back-compat wire alias for `committed-paths`) and
-/// `workspace-package: true` (kebab-case serde rename) both deserialize
+/// `patch = true` (back-compat wire alias for `committed-paths`) and
+/// `workspace-package = true` (kebab-case serde rename) both deserialize
 /// to the expected fields.
 #[test]
 fn cargo_workspace_config_bool_flags_parse() {
-    let yaml = "patch: true\nworkspace-package: true\n";
-    let cfg = parse_cargo_config(yaml);
+    let manifest_toml = "patch = true\nworkspace-package = true\n";
+    let cfg = parse_cargo_config(manifest_toml);
     assert_eq!(
         cfg.patch,
         PatchMode::CommittedPaths,
@@ -427,7 +427,7 @@ fn cargo_workspace_config_bool_flags_parse() {
 /// parsing unchanged (no migration machinery needed).
 #[test]
 fn cargo_workspace_config_patch_false_maps_to_off() {
-    let cfg = parse_cargo_config("patch: false\n");
+    let cfg = parse_cargo_config("patch = false\n");
     assert_eq!(cfg.patch, PatchMode::Off);
 }
 
@@ -435,7 +435,7 @@ fn cargo_workspace_config_patch_false_maps_to_off() {
 /// behavior) parses to the same variant as `patch: true`.
 #[test]
 fn cargo_workspace_config_patch_committed_paths_string() {
-    let cfg = parse_cargo_config("patch: committed-paths\n");
+    let cfg = parse_cargo_config("patch = \"committed-paths\"\n");
     assert_eq!(cfg.patch, PatchMode::CommittedPaths);
 }
 
@@ -443,15 +443,15 @@ fn cargo_workspace_config_patch_committed_paths_string() {
 /// package-name index) parses to `PatchMode::Derived`.
 #[test]
 fn cargo_workspace_config_patch_derived_string() {
-    let cfg = parse_cargo_config("patch: derived\n");
+    let cfg = parse_cargo_config("patch = \"derived\"\n");
     assert_eq!(cfg.patch, PatchMode::Derived);
 }
 
-/// `patch: off` is the explicit spelling of the default. Parses to
+/// `patch = "off"` is the explicit spelling of the default. Parses to
 /// `PatchMode::Off`.
 #[test]
 fn cargo_workspace_config_patch_off_string() {
-    let cfg = parse_cargo_config("patch: off\n");
+    let cfg = parse_cargo_config("patch = \"off\"\n");
     assert_eq!(cfg.patch, PatchMode::Off);
 }
 
@@ -460,7 +460,7 @@ fn cargo_workspace_config_patch_off_string() {
 #[test]
 fn cargo_workspace_config_patch_unknown_string_is_error() {
     use repoweave::manifest::IntegrationConfig;
-    let config = IntegrationConfig::from_yaml("patch: mirroir\n");
+    let config = IntegrationConfig::from_toml("patch = \"mirroir\"\n");
     let result = config.settings::<CargoWorkspaceConfig>();
     assert!(
         result.is_err(),
@@ -469,53 +469,61 @@ fn cargo_workspace_config_patch_unknown_string_is_error() {
     );
 }
 
-/// `patch: "yes"` is not a valid YAML boolean — serde must return a parse
-/// error rather than silently coercing or silently ignoring the value.
-/// This guards against typos in rwv.yaml where a user writes `patch: yes`
-/// thinking it is boolean (in strict YAML 1.2 "yes" is a string, not bool).
+/// An operator reaching for a boolean and writing a near-miss word gets an
+/// error either way, but from two different layers, and both are worth
+/// holding.
+///
+/// Quoted, `patch = "yes"` is a well-formed string the `PatchMode` visitor
+/// rejects by value. Bare, `patch = yes` never reaches the visitor at all:
+/// TOML has no unquoted string, so it fails as syntax. The bare spelling is
+/// the one that used to be dangerous — YAML 1.1 read it as `true` — and the
+/// point of pinning it here is that the format now refuses it outright
+/// rather than deciding what it meant.
 #[test]
-fn cargo_workspace_config_patch_string_is_type_error() {
+fn cargo_workspace_config_patch_near_miss_boolean_is_refused() {
     use repoweave::manifest::IntegrationConfig;
-    let config = IntegrationConfig::from_yaml("patch: \"yes\"");
-    let result = config.settings::<CargoWorkspaceConfig>();
+    let quoted = IntegrationConfig::from_toml("patch = \"yes\"");
+    let result = quoted.settings::<CargoWorkspaceConfig>();
     assert!(
         result.is_err(),
-        "patch: \"yes\" must be a type error, got Ok({:?})",
+        "patch = \"yes\" must be a value error, got Ok({:?})",
         result.ok()
+    );
+    assert!(
+        toml::from_str::<toml::Table>("patch = yes").is_err(),
+        "a bare `yes` must not parse as TOML at all"
     );
 }
 
 /// An empty `MemberSpec` (both `include` and `exclude` omitted) deserializes
 /// without error and carries empty vectors.  This lets operators write:
-///   members:
-///     github/cwalv/some-repo: {}
+///   [members."github/cwalv/some-repo"]
 /// to explicitly declare "no members from this repo" without a parse failure.
 #[test]
 fn member_spec_empty_is_valid() {
-    let yaml = "members:\n  github/cwalv/some-repo: {}\n";
-    let cfg = parse_cargo_config(yaml);
+    let manifest_toml = "[members.\"github/cwalv/some-repo\"]\n";
+    let cfg = parse_cargo_config(manifest_toml);
     let spec = cfg.members.get("github/cwalv/some-repo").unwrap();
     assert!(spec.include.is_empty());
     assert!(spec.exclude.is_empty());
 }
 
-/// `CargoWorkspaceConfig` with all fields set serializes back to YAML and
+/// `CargoWorkspaceConfig` with all fields set serializes back and
 /// round-trips correctly through `IntegrationConfig::settings`.
 #[test]
 fn cargo_workspace_config_full_serde_round_trip() {
     use repoweave::manifest::IntegrationConfig;
 
-    let yaml = r#"
-exclude:
-  - github/cwalv/mcp_agent_mail_rust
-members:
-  github/cwalv/rvtty:
-    include: [daemon, client, common]
-    exclude: [fuzz]
-patch: true
-workspace-package: true
+    let manifest_toml = r#"
+exclude = ["github/cwalv/mcp_agent_mail_rust"]
+patch = true
+workspace-package = true
+
+[members."github/cwalv/rvtty"]
+include = ["daemon", "client", "common"]
+exclude = ["fuzz"]
 "#;
-    let config = IntegrationConfig::from_yaml(yaml);
+    let config = IntegrationConfig::from_toml(manifest_toml);
     let cfg: CargoWorkspaceConfig = config.settings().unwrap();
 
     assert_eq!(cfg.exclude, vec!["github/cwalv/mcp_agent_mail_rust"]);
@@ -523,7 +531,7 @@ workspace-package: true
     let spec = cfg.members.get("github/cwalv/rvtty").unwrap();
     assert_eq!(spec.include, vec!["daemon", "client", "common"]);
     assert_eq!(spec.exclude, vec!["fuzz"]);
-    // `patch: true` in the YAML is the wire alias for `committed-paths`.
+    // `patch = true` is the wire alias for `committed-paths`.
     assert_eq!(cfg.patch, PatchMode::CommittedPaths);
     assert!(cfg.workspace_package);
 

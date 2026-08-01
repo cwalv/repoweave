@@ -158,9 +158,9 @@ fn fixture() -> Fixture {
     .unwrap();
     let url = format!("file://{}", primary_repo.display());
     let manifest = format!(
-        "repositories:\n  {REPO_PATH}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        "[repositories.\"{REPO_PATH}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(primary_project.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(primary_project.join("rwv.toml"), manifest).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
@@ -170,7 +170,7 @@ fn fixture() -> Fixture {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &primary_project.join("rwv.lock")).unwrap();
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &primary_project,
     );
     git(&["commit", "-m", "lock: initial"], &primary_project);
@@ -369,8 +369,8 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
 
     let ww_project_head_before = head(&f.ww.project_dir);
 
-    // Dirty a tracked NON-lock file in the destination project repo (rwv.yaml).
-    let yaml_path = f.ww.project_dir.join("rwv.yaml");
+    // Dirty a tracked NON-lock file in the destination project repo (rwv.toml).
+    let yaml_path = f.ww.project_dir.join("rwv.toml");
     let mut y = std::fs::read_to_string(&yaml_path).unwrap();
     y.push_str("# scratch\n");
     std::fs::write(&yaml_path, y).unwrap();
@@ -382,7 +382,7 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
     );
     assert!(
         !porcelain.is_empty(),
-        "test setup: rwv.yaml must be tracked-dirty; porcelain:\n{porcelain}"
+        "test setup: rwv.toml must be tracked-dirty; porcelain:\n{porcelain}"
     );
 
     let assert = rwv()
@@ -398,7 +398,7 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
         "refusal must name the sync precondition and kind of dirt; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("(project)") && stderr.contains("rwv.yaml"),
+        stderr.contains("(project)") && stderr.contains("rwv.toml"),
         "refusal must name the project repo and the dirty file; got:\n{stderr}"
     );
 
@@ -426,7 +426,7 @@ fn sync_multiple_dirty_repos_all_named_in_one_refusal() {
 
     // Dirty both the manifest repo and the project repo.
     std::fs::write(f.ww.repo_dir.join("README.md"), "dirty1\n").unwrap();
-    let yaml_path = f.ww.project_dir.join("rwv.yaml");
+    let yaml_path = f.ww.project_dir.join("rwv.toml");
     let mut y = std::fs::read_to_string(&yaml_path).unwrap();
     y.push_str("# scratch\n");
     std::fs::write(&yaml_path, y).unwrap();
@@ -721,7 +721,7 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     );
 
     // Genuine user dirt in the project repo (never-committed content).
-    let yaml_path = f.ww.project_dir.join("rwv.yaml");
+    let yaml_path = f.ww.project_dir.join("rwv.toml");
     let mut y = std::fs::read_to_string(&yaml_path).unwrap();
     y.push_str("# scratch\n");
     std::fs::write(&yaml_path, y).unwrap();
@@ -734,7 +734,7 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("(project)") && stderr.contains("rwv.yaml"),
+        stderr.contains("(project)") && stderr.contains("rwv.toml"),
         "refusal must name the genuine user dirt; got:\n{stderr}"
     );
     assert!(

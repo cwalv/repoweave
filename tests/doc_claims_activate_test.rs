@@ -55,7 +55,7 @@ fn init_repo_with_commit(path: &Path) {
 
 /// Create a minimal workspace:
 ///   {parent}/ws/github/               — registry marker (workspace root detection)
-///   {parent}/ws/projects/{project}/   — project dir with rwv.yaml
+///   {parent}/ws/projects/{project}/   — project dir with rwv.toml
 ///   {parent}/ws/github/org/repo/      — a real git repo
 ///
 /// Returns (workspace_root, bare_repo_path) so callers can use file:// URLs.
@@ -68,16 +68,16 @@ fn make_workspace_with_git_repo(parent: &Path, project: &str) -> (PathBuf, PathB
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     (ws, repo_path)
 }
 
 /// Create a minimal workspace with no real git repo — just the directory
-/// structure and an rwv.yaml.  Useful for tests that exercise parsing/check
+/// structure and an rwv.toml.  Useful for tests that exercise parsing/check
 /// without needing live VCS operations.
 fn make_workspace_no_repo(parent: &Path, project: &str) -> PathBuf {
     let ws = parent.join("ws");
@@ -167,15 +167,13 @@ fn check_missing_role_field() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace_no_repo(tmp.path(), "my-project");
 
-    // Write an rwv.yaml with a repo entry that is missing the `role` field.
-    let bad_manifest = r#"repositories:
-  github/org/repo:
-    type: git
-    url: https://github.com/org/repo.git
-    version: main
-    # role field intentionally omitted
+    // Write an rwv.toml with a repo entry that is missing the `role` field.
+    let bad_manifest = r#"[repositories."github/org/repo"]
+type = "git"
+url = "https://github.com/org/repo.git"
+version = "main"
 "#;
-    std::fs::write(ws.join("projects/my-project/rwv.yaml"), bad_manifest).unwrap();
+    std::fs::write(ws.join("projects/my-project/rwv.toml"), bad_manifest).unwrap();
 
     let output = rwv().arg("doctor").current_dir(&ws).output().unwrap();
 
@@ -216,7 +214,7 @@ fn check_missing_role_field() {
 // 3. check_workweave_drift — extra worktree (project-reporoot-85h9)
 //
 // A git repo directory lives inside the workspace that is not referenced by
-// any project's rwv.yaml.  `rwv doctor` should report drift (orphan).
+// any project's rwv.toml.  `rwv doctor` should report drift (orphan).
 // ===========================================================================
 
 #[test]
@@ -224,7 +222,7 @@ fn check_workweave_drift_extra_repo() {
     let tmp = common::tempdir().unwrap();
     let (ws, _) = make_workspace_with_git_repo(tmp.path(), "my-project");
 
-    // Add a second git repo on disk that is NOT in any rwv.yaml.
+    // Add a second git repo on disk that is NOT in any rwv.toml.
     let extra_repo = ws.join("github/org/extra-repo");
     init_repo_with_commit(&extra_repo);
 
@@ -289,8 +287,8 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // Write a Cargo.lock next to the Cargo.toml (simulates a real project).
     std::fs::write(repo_dir.join("Cargo.lock"), "# generated\n").unwrap();
 
-    let manifest = "repositories:\n  github/org/mylib:\n    type: git\n    url: https://github.com/org/mylib.git\n    version: main\n    role: owned\n";
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    let manifest = "[repositories.\"github/org/mylib\"]\ntype = \"git\"\nurl = \"https://github.com/org/mylib.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Under the trigger-model split, `rwv activate` is a context
     // verb — it surfaces existing content but does not author. Drive the
@@ -374,13 +372,13 @@ fn static_files_missing_file_warning() {
     std::fs::write(project_dir.join("exists.txt"), "present").unwrap();
     // missing.txt is intentionally NOT created.
 
-    let manifest = r#"repositories: {}
-integrations:
-  static-files:
-    enabled: true
-    files: [exists.txt, missing.txt]
+    let manifest = r#"[repositories]
+
+[integrations.static-files]
+enabled = true
+files = ["exists.txt", "missing.txt"]
 "#;
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let output = rwv()
         .args(["activate", "my-project", "--no-install"])
@@ -431,13 +429,13 @@ fn static_files_symlink_creation() {
     // Create the file that will be symlinked.
     std::fs::write(project_dir.join("turbo.json"), r#"{"$schema": "..."}"#).unwrap();
 
-    let manifest = r#"repositories: {}
-integrations:
-  static-files:
-    enabled: true
-    files: [turbo.json]
+    let manifest = r#"[repositories]
+
+[integrations.static-files]
+enabled = true
+files = ["turbo.json"]
 "#;
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     rwv()
         .args(["activate", "my-project", "--no-install"])
@@ -502,15 +500,16 @@ fn static_files_collides_with_workweave_link_errors_loud() {
     // doesn't muddle the assertion.
     std::fs::write(project_dir.join(".beads"), "primary").unwrap();
 
-    let manifest = r#"repositories: {}
-integrations:
-  static-files:
-    enabled: true
-    files: [.beads]
-workweave:
-  link: [.beads]
+    let manifest = r#"[repositories]
+
+[integrations.static-files]
+enabled = true
+files = [".beads"]
+
+[workweave]
+link = [".beads"]
 "#;
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Intent-mode entry — `rwv activate --intent` would gate through
     // run_activations which calls integration.activate() and bails on
@@ -574,8 +573,8 @@ fn activate_npm_no_install_run_during_activate() {
     )
     .unwrap();
 
-    let manifest = "repositories:\n  github/org/webapp:\n    type: git\n    url: https://github.com/org/webapp.git\n    version: main\n    role: owned\n";
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    let manifest = "[repositories.\"github/org/webapp\"]\ntype = \"git\"\nurl = \"https://github.com/org/webapp.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Trigger-model split: pre-author via intent path so the
     // context-mode `rwv activate` below has content to surface. Use the
@@ -643,8 +642,8 @@ fn activate_graceful_when_npm_unavailable() {
     )
     .unwrap();
 
-    let manifest = "repositories:\n  github/org/frontend:\n    type: git\n    url: https://github.com/org/frontend.git\n    version: main\n    role: owned\n";
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    let manifest = "[repositories.\"github/org/frontend\"]\ntype = \"git\"\nurl = \"https://github.com/org/frontend.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Activate must not fail regardless of available tools.
     rwv()

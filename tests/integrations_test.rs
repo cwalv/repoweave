@@ -50,11 +50,11 @@ use tempfile::TempDir;
 
 /// Build a Manifest with the given repo entries and no integration config overrides.
 fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
-    let mut yaml = String::from("repositories:\n");
+    let mut yaml = String::from("[repositories]\n");
     for (path, role) in &repos {
         let last = path.split('/').next_back().unwrap();
         yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: https://github.com/test/{last}.git\n    version: main\n    role: {}\n",
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\n\n[repositories.\"{path}\".role]\n",
             role.as_str()
         ));
     }
@@ -2787,7 +2787,7 @@ mod cargo_workspace {
         // legacy whole-overwrite path is gone. The merge model owns *keys*,
         // not free-floating comments — TomlDoc has no comment-emission API
         // and the helper's contract is "never author outside the owned-key
-        // set". Operators see exclusions in rwv.yaml directly; surfacing
+        // set". Operators see exclusions in rwv.toml directly; surfacing
         // them in the file was decorative.
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
@@ -6066,7 +6066,7 @@ mod gita {
         // Use a repo path whose basename contains a comma. The manifest helper
         // only sets the `url` from the last path segment, so we synthesise the
         // manifest YAML directly to include an unusual path key.
-        let yaml = "repositories:\n  \"github/owner/with,comma\":\n    type: git\n    url: https://github.com/owner/withcomma.git\n    version: main\n    role: owned\n";
+        let yaml = "[repositories.\"github/owner/with,comma\"]\ntype = \"git\"\nurl = \"https://github.com/owner/withcomma.git\"\nversion = \"main\"\nrole = \"owned\"\n";
         let manifest = repoweave::manifest::Manifest::from_yaml_str(yaml).unwrap();
         let project = repoweave::manifest::ProjectName::new("test-project").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
@@ -7749,7 +7749,7 @@ mod activate_hooks {
             "cargo generate-lockfile failed (exit {}); \
              if the error names duplicate crate names across workspace members, \
              resolve by one of: (a) opt a repo out via \
-             `integrations.cargo-workspace.exclude` in rwv.yaml, or (b) use \
+             `integrations.cargo-workspace.exclude` in rwv.toml, or (b) use \
              `integrations.cargo-workspace.members.<repo>` with an `include:` \
              list to contribute sub-paths instead of the repo root",
             "exit code: 1"
@@ -8321,7 +8321,7 @@ mod static_files {
     }
 
     /// `ctx.workweave == None` -> no collision Issues (projects without a
-    /// `workweave:` section in rwv.yaml).
+    /// `workweave:` section in rwv.toml).
     #[test]
     fn check_no_collision_when_workweave_absent() {
         let tmp = common::tempdir().unwrap();

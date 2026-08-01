@@ -111,7 +111,7 @@ fn clone_member(bare: &Path, ws: &Path, repo_path: &str) {
     );
 }
 
-/// A bare "project" repo whose HEAD carries `rwv.yaml` (only) declaring
+/// A bare "project" repo whose HEAD carries `rwv.toml` (only) declaring
 /// `repos`. Used as an `rwv fetch` / `rwv init --adopt` source.
 fn make_project_bare(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> PathBuf {
     let bare = tmp.join(format!("{name}.git"));
@@ -137,7 +137,7 @@ fn make_workspace(tmp: &Path) -> PathBuf {
 }
 
 /// A workspace with one project whose directory is itself a git repo with
-/// `rwv.yaml` committed, and `.rwv-active` pointing at it. This is the shape
+/// `rwv.toml` committed, and `.rwv-active` pointing at it. This is the shape
 /// `find_project_dir` requires for action verbs (`add`/`remove`).
 fn setup_git_project(tmp: &Path, project: &str, repos: &[(&str, &str)]) -> (PathBuf, PathBuf) {
     let ws = make_workspace(tmp);
@@ -154,16 +154,16 @@ fn setup_git_project(tmp: &Path, project: &str, repos: &[(&str, &str)]) -> (Path
 }
 
 fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     if repos.is_empty() {
-        yaml.push_str("  {}\n");
+        manifest_toml.push_str("  {}\n");
     }
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(dir.join("rwv.yaml"), yaml).unwrap();
+    std::fs::write(dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
 /// The `vscode-workspace` integration's file: default-enabled and declared
@@ -250,7 +250,7 @@ fn remove_authors_managed_content() {
 // Intent verbs author only over a whole member set
 // ===========================================================================
 
-/// A repo declared in `rwv.yaml` but not cloned is not *pending* for the
+/// A repo declared in `rwv.toml` but not cloned is not *pending* for the
 /// integrations, it is invisible — so `rwv add` over a partially-fetched
 /// workspace must record the membership change without authoring.
 #[test]
@@ -275,7 +275,7 @@ fn add_does_not_author_from_a_partial_member_set() {
         .assert()
         .success();
 
-    let manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     assert!(
         manifest.contains("org/newdep"),
         "`rwv add` must still record the membership change, got:\n{manifest}"
@@ -341,7 +341,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
         .assert()
         .success();
 
-    let manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     assert!(
         !manifest.contains("local/org/drop"),
         "`rwv remove` must still record the membership change, got:\n{manifest}"
@@ -374,7 +374,7 @@ fn fetch_does_not_author_managed_content() {
 
     let project_dir = ws.join("projects/myapp");
     assert!(
-        project_dir.join("rwv.yaml").exists(),
+        project_dir.join("rwv.toml").exists(),
         "fetch should clone the project"
     );
     assert!(
@@ -442,7 +442,7 @@ fn init_does_not_author_managed_content() {
         .success();
 
     let project_dir = ws.join("projects/myapp");
-    assert!(project_dir.join("rwv.yaml").exists());
+    assert!(project_dir.join("rwv.toml").exists());
     assert!(
         !code_workspace(&project_dir, "myapp").exists(),
         "`rwv init` is a context verb; it must not author managed content"
@@ -464,7 +464,7 @@ fn init_adopt_does_not_author_managed_content() {
         .success();
 
     let project_dir = ws.join("projects/adoptee");
-    assert!(project_dir.join("rwv.yaml").exists());
+    assert!(project_dir.join("rwv.toml").exists());
     assert!(
         !code_workspace(&project_dir, "adoptee").exists(),
         "`rwv init --adopt` is a context verb; it must not author managed content"
@@ -517,7 +517,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
     std::fs::write(work.join("myapp.code-workspace"), committed_code_workspace).unwrap();
     git_run(&["add", "."], &work);
     git_run(
-        &["commit", "-m", "rwv.yaml + committed code-workspace"],
+        &["commit", "-m", "rwv.toml + committed code-workspace"],
         &work,
     );
     git_run(&["push", "origin", "main"], &work);
@@ -556,7 +556,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 //
 // The gate's second arm is the way in: a repo named by
 // `integrations.cargo-workspace.members.<repo>` counts as active cargo work
-// from `rwv.yaml` alone, no clone required. That is the rvtty shape (a repo
+// from `rwv.toml` alone, no clone required. That is the rvtty shape (a repo
 // with no root `Cargo.toml` whose sub-packages are the members), and it is
 // what makes the integration live during an adopt.
 //
@@ -596,30 +596,16 @@ macro_rules! require_cargo {
 
 /// The sub-packages the fixture's `org/lib` repo contributes. `legacy` exists
 /// on disk and is listed by the committed manifest, but is deliberately absent
-/// from the `include:` list in `rwv.yaml` — it is the member an authoring pass
+/// from the `include:` list in `rwv.toml` — it is the member an authoring pass
 /// would drop.
 const LIB_SUBCRATES: &[&str] = &["core", "cli", "legacy"];
 
-/// `rwv.yaml` for a project whose single repo contributes sub-path members.
+/// `rwv.toml` for a project whose single repo contributes sub-path members.
 ///
 /// `org/lib` is declared but has no root `Cargo.toml`, so it is invisible to
 /// `detect_repos_with_manifest` — the `members:` block is the only reason
 /// cargo-workspace considers this project to have active cargo work.
-const CARGO_MEMBERS_MANIFEST: &str = "\
-repositories:
-  org/lib:
-    type: git
-    url: https://example.com/lib.git
-    version: main
-    role: owned
-integrations:
-  cargo-workspace:
-    members:
-      org/lib:
-        include:
-          - crates/core
-          - crates/cli
-";
+const CARGO_MEMBERS_MANIFEST: &str = "[repositories.\"org/lib\"]\ntype = \"git\"\nurl = \"https://example.com/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace.members.\"org/lib\"]\ninclude = [\"crates/core\", \"crates/cli\"]\n";
 
 /// A bare project repo carrying [`CARGO_MEMBERS_MANIFEST`] and a committed
 /// root `Cargo.toml`, ready to be adopted.
@@ -642,7 +628,7 @@ fn make_cargo_adoptee_bare(
         &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
         tmp,
     );
-    std::fs::write(work.join("rwv.yaml"), CARGO_MEMBERS_MANIFEST).unwrap();
+    std::fs::write(work.join("rwv.toml"), CARGO_MEMBERS_MANIFEST).unwrap();
     std::fs::write(work.join("Cargo.toml"), cargo_toml).unwrap();
     if let Some(lock) = cargo_lock {
         std::fs::write(work.join("Cargo.lock"), lock).unwrap();
@@ -676,7 +662,7 @@ fn init_adopt_does_not_truncate_committed_cargo_members() {
     require_cargo!();
     let tmp = common::tempdir().unwrap();
 
-    // Marked, committed manifest listing three members. `rwv.yaml`'s
+    // Marked, committed manifest listing three members. `rwv.toml`'s
     // `include:` names only two, so authoring computes a strictly smaller
     // set — the truncation. `[profile.release]` is user policy that must
     // survive either way, so it cannot mask the members difference.

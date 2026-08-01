@@ -3,7 +3,7 @@
 //! Each test sets up a workspace with:
 //!   - one or more bare "manifest" remotes
 //!   - local manifest-repo clones at canonical paths
-//!   - a bare "project" remote with rwv.yaml + rwv.lock committed
+//!   - a bare "project" remote with rwv.toml + rwv.lock committed
 //!   - a local project-repo clone under `projects/<name>/`
 //!   - `.rwv-active` pointing at the project
 //!
@@ -80,7 +80,7 @@ struct PushWorkspace {
 /// Build a workspace with `repos.len()` manifest repos plus a project repo.
 ///
 /// Each manifest repo gets a bare remote, a canonical-path local clone, and
-/// is referenced by `rwv.yaml`. The project repo gets a bare remote and a
+/// is referenced by `rwv.toml`. The project repo gets a bare remote and a
 /// clone under `projects/<project_name>/`. `rwv.lock` is generated to match
 /// the manifest repos' local HEAD SHAs. Returns the workspace handle.
 fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
@@ -93,7 +93,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     // Build manifest bare remotes and local clones.
     let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
     let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     for (repo_path, role) in repos {
         let bare = tmp
             .path()
@@ -119,12 +119,12 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
 
     // Build a project bare and a `projects/<name>/` clone, then commit
-    // rwv.yaml + rwv.lock and push back to the bare.
+    // rwv.toml + rwv.lock and push back to the bare.
     let project_bare = tmp.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_dir = workspace.join("projects").join(project_name);
@@ -139,7 +139,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
 
     // Write a lock that exactly matches manifest HEAD SHAs. Round-trips
     // through the real parser + `lock::write_lock`: a hand-formatted string
@@ -211,7 +211,7 @@ fn push_happy_path_pushes_manifest_then_project() {
         ("local/org/b", "fork"),
         ("local/org/c", "dependency"),
     ];
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
     for (rp, role) in &repos {
@@ -223,7 +223,7 @@ fn push_happy_path_pushes_manifest_then_project() {
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
@@ -231,7 +231,7 @@ fn push_happy_path_pushes_manifest_then_project() {
         expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock` (see
     // `build_workspace` above for why).
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
@@ -842,7 +842,7 @@ fn build_workspace_with_advances(
     let ws = build_workspace(project_name, repos);
 
     // Advance each manifest repo with a distinct commit so SHAs differ.
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
     for ((rp, bare), (_, role)) in ws.manifest_bares.iter().zip(repos.iter()) {
@@ -853,7 +853,7 @@ fn build_workspace_with_advances(
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
@@ -861,7 +861,7 @@ fn build_workspace_with_advances(
         expected_shas.push((rp.clone(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();

@@ -90,16 +90,16 @@ fn add_empty_commit(path: &Path, msg: &str) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
-/// Write a minimal `rwv.yaml` listing a single repo.
+/// Write a minimal `rwv.toml` listing a single repo.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (repo_path, url) in repos {
-        yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Add a `refs/rwv/pre-op/<op_id>` savepoint pointing at the given SHA.

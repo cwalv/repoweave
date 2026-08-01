@@ -387,7 +387,7 @@ fn corpus() -> Vec<CheckViolation> {
         },
         CheckViolation::UnparseableProject {
             project: project(),
-            manifest_path: PathBuf::from("/ws/projects/proj/rwv.yaml"),
+            manifest_path: PathBuf::from("/ws/projects/proj/rwv.toml"),
             message: "bad yaml".into(),
         },
     ]

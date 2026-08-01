@@ -100,7 +100,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     run(&["push", "origin", "main"], &work);
 }
 
-/// Push an `rwv.yaml` manifest into a bare repo (via a temporary working clone).
+/// Push an `rwv.toml` manifest into a bare repo (via a temporary working clone).
 ///
 /// `repos` is a slice of `(canonical_path, url)` pairs.
 fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
@@ -125,19 +125,19 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
-    run(&["add", "rwv.yaml"], &work);
+    std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "add manifest"], &work);
     run(&["push", "origin", "main"], &work);
 }
 
-/// Set up a workspace with a single project that has an `rwv.yaml` and is
+/// Set up a workspace with a single project that has an `rwv.toml` and is
 /// itself a git repo (required by workspace resolution).
 ///
 /// Also writes `.rwv-active` to the new project so action verbs resolve
@@ -159,14 +159,14 @@ fn setup_workspace_with_project(
     git(&["config", "user.email", "test@test.com"], &project_dir);
     git(&["config", "user.name", "Test"], &project_dir);
 
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
-    git(&["add", "rwv.yaml"], &project_dir);
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
+    git(&["add", "rwv.toml"], &project_dir);
     git(&["commit", "-m", "init"], &project_dir);
 
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
@@ -195,8 +195,8 @@ fn fetch_name_collision_behavior() {
     // Pre-create projects/web-app/ so the name collides on the second fetch.
     let pre_existing = workspace.join("projects").join("web-app");
     std::fs::create_dir_all(&pre_existing).unwrap();
-    // Write a minimal rwv.yaml so the project is readable after being "found".
-    std::fs::write(pre_existing.join("rwv.yaml"), "repositories: {}\n").unwrap();
+    // Write a minimal rwv.toml so the project is readable after being "found".
+    std::fs::write(pre_existing.join("rwv.toml"), "[repositories]\n").unwrap();
 
     // Fetching into a workspace where projects/web-app already exists.
     let project_url = format!("file://{}", project_bare.display());
@@ -261,9 +261,9 @@ fn remove_delete_does_not_check_other_projects() {
     let project_b_dir = workspace.join("projects").join("project-b");
     std::fs::create_dir_all(&project_b_dir).unwrap();
     let yaml_b = format!(
-        "repositories:\n  {repo_path}:\n    type: git\n    url: {shared_url}\n    version: main\n    role: owned\n"
+        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{shared_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_b_dir.join("rwv.yaml"), &yaml_b).unwrap();
+    std::fs::write(project_b_dir.join("rwv.toml"), &yaml_b).unwrap();
 
     // Clone the shared repo to disk so --delete has something to remove.
     let repo_dir = workspace.join(repo_path);
@@ -361,9 +361,9 @@ fn add_from_local_path_infers_url() {
         .success();
 
     // Verify the manifest contains the correct origin URL and repo path.
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add");
 
     assert!(
         manifest_content.contains("github/org/repo"),

@@ -103,7 +103,7 @@ struct Workweave {
     manifest_repo: PathBuf,
 }
 
-/// Build the primary workspace with `rwv.yaml` + `rwv.lock` committed and the
+/// Build the primary workspace with `rwv.toml` + `rwv.lock` committed and the
 /// manifest repo pinned at its initial SHA.
 fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let ws = tmp.join("ws");
@@ -119,11 +119,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     .unwrap();
 
     let manifest = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trip through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
@@ -136,7 +136,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
@@ -589,8 +589,8 @@ fn dirty_source_rwv_lock_only_is_carved_out() {
 #[test]
 fn dirty_source_non_lock_project_change_refuses() {
     let f = fixture();
-    // Modify a tracked NON-lock file in the project repo (rwv.yaml exists).
-    let yaml_path = f.ww.project_dir.join("rwv.yaml");
+    // Modify a tracked NON-lock file in the project repo (rwv.toml exists).
+    let yaml_path = f.ww.project_dir.join("rwv.toml");
     let mut y = std::fs::read_to_string(&yaml_path).unwrap();
     y.push_str("# scratch\n");
     std::fs::write(&yaml_path, y).unwrap();
@@ -604,7 +604,7 @@ fn dirty_source_non_lock_project_change_refuses() {
     assert!(
         stderr.contains("uncommitted tracked changes")
             && stderr.contains("(project)")
-            && stderr.contains("rwv.yaml"),
+            && stderr.contains("rwv.toml"),
         "a tracked non-lock project change must refuse and name the file; got:\n{stderr}"
     );
 }

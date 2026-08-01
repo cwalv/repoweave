@@ -65,7 +65,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     run_git(&["push", "origin", "main"], &work);
 }
 
-/// Set up a project bare repo whose `rwv.yaml` references the given
+/// Set up a project bare repo whose `rwv.toml` references the given
 /// `(repo_path, url)` pairs. Returns the source URL.
 fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String {
     let project_bare = tmp.join(format!("{name}.git"));
@@ -81,14 +81,14 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
     );
     run_git(&["config", "user.email", "t@t.com"], &work);
     run_git(&["config", "user.name", "T"], &work);
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
-    run_git(&["add", "rwv.yaml"], &work);
+    std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    run_git(&["add", "rwv.toml"], &work);
     run_git(&["commit", "-m", "manifest"], &work);
     run_git(&["push", "origin", "main"], &work);
     format!("file://{}", project_bare.display())

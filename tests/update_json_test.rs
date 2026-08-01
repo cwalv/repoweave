@@ -113,7 +113,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
 
     let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
     let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     for (repo_path, role) in repos {
         let bare = tmp
             .path()
@@ -138,7 +138,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
 
@@ -156,7 +156,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.

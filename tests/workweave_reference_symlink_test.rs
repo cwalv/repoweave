@@ -75,7 +75,7 @@ const REF_REPO: &str = "github/org/reference";
 ///   {tmp}/ws/github/                    -- registry marker
 ///   {tmp}/ws/github/org/owned/          -- owned repo (canonical clone)
 ///   {tmp}/ws/github/org/reference/      -- reference repo (canonical clone)
-///   {tmp}/ws/projects/{project}/rwv.yaml
+///   {tmp}/ws/projects/{project}/rwv.toml
 ///
 /// Returns the workspace root.
 fn make_workspace_with_reference(tmp: &Path, project: &str) -> PathBuf {
@@ -92,24 +92,24 @@ fn make_workspace_with_reference(tmp: &Path, project: &str) -> PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  {owned_path}:
-    type: git
-    url: file://{owned}
-    version: main
-    role: owned
-  {ref_path}:
-    type: git
-    url: file://{reference}
-    version: main
-    role: reference
+        r#"[repositories."{owned_path}"]
+type = "git"
+url = "file://{owned}"
+version = "main"
+role = "owned"
+
+[repositories."{ref_path}"]
+type = "git"
+url = "file://{reference}"
+version = "main"
+role = "reference"
 "#,
         owned_path = OWNED_REPO,
         ref_path = REF_REPO,
         owned = owned.display(),
         reference = reference.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     ws
 }
@@ -523,28 +523,27 @@ fn workweave_created_after_add_reference_symlinks_the_new_repo() {
     let project_dir = ws.join("projects").join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest_owned_only = format!(
-        r#"repositories:
-  {owned_path}:
-    type: git
-    url: file://{owned}
-    version: main
-    role: owned
+        r#"[repositories."{owned_path}"]
+type = "git"
+url = "file://{owned}"
+version = "main"
+role = "owned"
 "#,
         owned_path = OWNED_REPO,
         owned = owned.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_owned_only).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_owned_only).unwrap();
 
     // Simulate `rwv add <url> --role reference`: clone to the weave root and
     // append a reference entry to the manifest. No workweave exists yet.
     let reference = ws.join(REF_REPO);
     init_repo_with_commit(&reference, "REF", "reference-init");
     let manifest_with_ref = format!(
-        "{manifest_owned_only}  {ref_path}:\n    type: git\n    url: file://{reference}\n    version: main\n    role: reference\n",
+        "\n[\"{manifest_owned_only}  {ref_path}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
         ref_path = REF_REPO,
         reference = reference.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_with_ref).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_with_ref).unwrap();
 
     // NOW create a workweave — the reference added before create must be
     // materialized as a symlink.

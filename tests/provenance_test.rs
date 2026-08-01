@@ -70,20 +70,20 @@ fn init_repo(path: &Path) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
-/// Write a minimal `rwv.yaml` manifest for project `name` at
-/// `ws/projects/<name>/rwv.yaml`. `entries` is a list of
+/// Write a minimal `rwv.toml` manifest for project `name` at
+/// `ws/projects/<name>/rwv.toml`. `entries` is a list of
 /// `(repo_path, url, role)` tuples.
 fn write_manifest(ws: &Path, name: &str, entries: &[(&str, &str, &str)]) {
     let project_dir = ws.join("projects").join(name);
     std::fs::create_dir_all(&project_dir).unwrap();
     let mut content = String::new();
-    content.push_str("repositories:\n");
+    content.push_str("[repositories]\n");
     for (repo_path, url, role) in entries {
         content.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), content).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), content).unwrap();
 }
 
 /// Write a minimal `rwv.lock` at `ws/projects/<name>/rwv.lock` with one

@@ -100,35 +100,7 @@ fn make_members(ws: &Path) {
 /// ecosystem. `pnpm-workspaces` and `static-files` are default-disabled, so
 /// they are switched on explicitly. `{rust_crate}` is the one thing the two
 /// projects disagree about.
-const MANIFEST_TEMPLATE: &str = "\
-repositories:
-  github/acme/{rust_crate}:
-    type: git
-    url: https://github.com/acme/{rust_crate}.git
-    version: main
-    role: owned
-  github/acme/go-svc:
-    type: git
-    url: https://github.com/acme/go-svc.git
-    version: main
-    role: owned
-  github/acme/node-pkg:
-    type: git
-    url: https://github.com/acme/node-pkg.git
-    version: main
-    role: owned
-  github/acme/py-pkg:
-    type: git
-    url: https://github.com/acme/py-pkg.git
-    version: main
-    role: owned
-integrations:
-  pnpm-workspaces:
-    enabled: true
-  static-files:
-    enabled: true
-    files: [shared-tooling.json]
-";
+const MANIFEST_TEMPLATE: &str = "[repositories.\"github/acme/{rust_crate}\"]\ntype = \"git\"\nurl = \"https://github.com/acme/{rust_crate}.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/go-svc\"]\ntype = \"git\"\nurl = \"https://github.com/acme/go-svc.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/node-pkg\"]\ntype = \"git\"\nurl = \"https://github.com/acme/node-pkg.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/py-pkg\"]\ntype = \"git\"\nurl = \"https://github.com/acme/py-pkg.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.pnpm-workspaces]\nenabled = true\n\n[integrations.static-files]\nenabled = true\nfiles = [\"shared-tooling.json\"]\n";
 
 fn manifest_for(rust_crate: &str) -> String {
     MANIFEST_TEMPLATE.replace("{rust_crate}", rust_crate)
@@ -172,7 +144,7 @@ fn two_project_fixture() -> Fixture {
     for (project, rust_crate) in [("alpha", "rust-lib"), ("beta", "rust-lib-2")] {
         let dir = ws.join("projects").join(project);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("rwv.yaml"), manifest_for(rust_crate)).unwrap();
+        std::fs::write(dir.join("rwv.toml"), manifest_for(rust_crate)).unwrap();
         git_init_with_commit(&dir);
     }
     // Only alpha gets the declared static file, so beta's copy is missing
@@ -341,7 +313,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
 
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), manifest_for("rust-lib")).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest_for("rust-lib")).unwrap();
     std::fs::write(project_dir.join("shared-tooling.json"), "{}\n").unwrap();
     // Generated content is regenerable, so it is not committed — which is why
     // a fresh workweave does not inherit it.
@@ -376,7 +348,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     let create = rwv_in(&["workweave", "web-app", "create", "agent-1"], &ws);
     let ww = weaveroot.join("web-app--agent-1");
     assert!(
-        ww.join("projects/web-app/rwv.yaml").exists(),
+        ww.join("projects/web-app/rwv.toml").exists(),
         "fixture: workweave create failed:\n{create}"
     );
 

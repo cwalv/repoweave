@@ -44,7 +44,7 @@ fn git(args: &[&str], dir: &Path) {
 /// workweaves that each materialize every repo as a worktree.
 ///
 /// Workspace layout:
-///   <root>/projects/app/rwv.yaml
+///   <root>/projects/app/rwv.toml
 ///   <root>/github/acme/repoN          (N = 0..n_repos)
 ///   <root>/.workweaves/app--wkK/      (K = 0..n_ww)
 ///       └─ github/acme/repoN          (worktree on branch wkK/main)
@@ -56,7 +56,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
     std::fs::create_dir_all(parent.join(".workweaves")).unwrap();
 
     // --- Real source repos under the primary registry ---
-    let mut manifest = String::from("repositories:\n");
+    let mut manifest = String::from("[repositories]\n");
     for r in 0..n_repos {
         let repo_path = format!("github/acme/repo{r}");
         let abs = root.join(&repo_path);
@@ -67,11 +67,11 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
         git(&["commit", "-m", "initial"], &abs);
 
         manifest.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: file://{}\n    version: main\n    role: owned\n",
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
             abs.display()
         ));
     }
-    std::fs::write(root.join("projects/app/rwv.yaml"), manifest).unwrap();
+    std::fs::write(root.join("projects/app/rwv.toml"), manifest).unwrap();
 
     // --- Workweaves, each materialising every repo via `git worktree add` ---
     let primary_canon = root.canonicalize().unwrap();

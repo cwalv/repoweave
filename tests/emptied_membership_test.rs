@@ -1,7 +1,7 @@
 //! The managed region of a hybrid ecosystem file is a function of the current
 //! manifest, not of the membership history that produced it.
 //!
-//! When the last Rust or Go member leaves `rwv.yaml`, the integration has
+//! When the last Rust or Go member leaves `rwv.toml`, the integration has
 //! nothing to contribute — and the region it authored while it did must go with
 //! it. Before these tests the integrations fell silent in that state instead,
 //! and the departed member's path sat in `Cargo.toml` / `go.work` indefinitely.
@@ -72,14 +72,13 @@ fn setup_weave(root: &Path) {
 }
 
 fn write_manifest(root: &Path, members: &[&str]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     if members.is_empty() {
-        yaml = String::from("repositories: {}\n");
+        manifest_toml = String::from("[repositories]\n");
     }
     for member in members {
-        yaml.push_str(&format!(
-            "  {member}:\n    type: git\n    url: https://example.com/{member}.git\n    \
-             version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{member}\"]\ntype = \"git\"\nurl = \"https://example.com/{member}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
     // vscode-workspace detects every repo rather than a manifest file, so it
@@ -87,8 +86,8 @@ fn write_manifest(root: &Path, members: &[&str]) {
     // fixable finding. `doctor --fix` gates the repair on the finding set being
     // non-empty, not on which integration spoke, so leaving it enabled lets an
     // unrelated finding drive the repair these tests attribute to the strip.
-    yaml.push_str("integrations:\n  vscode-workspace:\n    enabled: false\n");
-    std::fs::write(root.join("projects/demo/rwv.yaml"), yaml).unwrap();
+    manifest_toml.push_str("integrations:\n  vscode-workspace:\n    enabled: false\n");
+    std::fs::write(root.join("projects/demo/rwv.toml"), manifest_toml).unwrap();
 }
 
 /// The repair-driving findings `rwv doctor` reports, as `integration/kind`

@@ -92,15 +92,15 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
     git_out(&["rev-parse", "HEAD"], repo)
 }
 
-/// Write rwv.yaml.
+/// Write rwv.toml.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Write rwv.lock.
@@ -150,7 +150,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_primary);
+    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: initial"], &project_primary);
 
     let ww_root = parent.join(".workweaves").join("ws--ww");
@@ -359,7 +359,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_primary);
+    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: initial"], &project_primary);
 
     let ww_root = tmp.path().join(".workweaves").join("primary--ww");
@@ -733,7 +733,7 @@ fn doctor_canonical_intact_classification_unchanged() {
 
 /// When the primary clone is removed the doctor should also emit a
 /// DanglingReference for the primary-weave entry (since the repo is listed
-/// in rwv.yaml but no longer on disk). Both findings must appear together.
+/// in rwv.toml but no longer on disk). Both findings must appear together.
 #[test]
 fn doctor_dangling_reference_fires_alongside_missing_canonical() {
     let tmp = common::tempdir().unwrap();

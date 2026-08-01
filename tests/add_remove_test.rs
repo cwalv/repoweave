@@ -58,7 +58,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     run(&["push", "origin", "main"], &work);
 }
 
-/// Set up a workspace with a project directory containing an rwv.yaml manifest.
+/// Set up a workspace with a project directory containing an rwv.toml manifest.
 /// Returns (workspace_dir, project_dir).
 ///
 /// Also writes `.rwv-active` pointing at the project so action verbs
@@ -92,7 +92,7 @@ fn setup_workspace_with_project(
     run(&["config", "user.name", "Test"], &project_dir);
 
     write_manifest(&project_dir, repos);
-    run(&["add", "rwv.yaml"], &project_dir);
+    run(&["add", "rwv.toml"], &project_dir);
     run(&["commit", "-m", "init"], &project_dir);
 
     // Make the project active so action-verb tests don't need to pass
@@ -102,18 +102,18 @@ fn setup_workspace_with_project(
     (workspace, project_dir)
 }
 
-/// Write an `rwv.yaml` manifest pointing repos at the given URLs.
+/// Write an `rwv.toml` manifest pointing repos at the given URLs.
 fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     if repos.is_empty() {
-        yaml.push_str("  {}\n");
+        manifest_toml.push_str("  {}\n");
     }
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 // ============================================================================
@@ -191,9 +191,9 @@ fn add_clones_repo_to_canonical_path() {
     // The repo should be cloned to a canonical path under the workspace.
     // For a file:// URL the exact path depends on registry resolution,
     // but the manifest should have a new entry.
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add");
     assert!(
         manifest_content.contains(&remote_url) || manifest_content.contains("file://"),
         "manifest should contain the added repo URL, got:\n{manifest_content}"
@@ -222,9 +222,9 @@ fn add_unrecognized_registry_url_writes_three_segment_manifest_path() {
         .assert()
         .success();
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.yaml written by `rwv add` must parse");
+        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
 
     assert!(
         manifest
@@ -261,9 +261,9 @@ fn add_with_role_flag_sets_annotation() {
         .assert()
         .success();
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add");
     assert!(
         manifest_content.contains("role: fork"),
         "manifest should have role set to fork, got:\n{manifest_content}"
@@ -389,9 +389,9 @@ fn add_url_resolves_a_non_main_remote_default_branch() {
         .assert()
         .success();
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.yaml written by `rwv add` must parse");
+        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
     let entry = manifest
         .get_entry(&RepoPath::new("local/acme/masterrepo").unwrap())
         .expect("expected local/acme/masterrepo in the manifest");
@@ -449,7 +449,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         "refusal must name the resolving command, got: {stderr}"
     );
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();
     assert!(
         !manifest_content.contains(repo_path),
@@ -472,9 +472,9 @@ fn add_new_records_the_branch_git_init_actually_created() {
         .assert()
         .success();
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest = Manifest::from_path(&manifest_path)
-        .expect("rwv.yaml written by `rwv add --new` must parse");
+        .expect("rwv.toml written by `rwv add --new` must parse");
     let entry = manifest
         .get_entry(&RepoPath::new("github/myorg/newrepo").unwrap())
         .expect("expected github/myorg/newrepo in the manifest");
@@ -535,9 +535,9 @@ fn remove_path_removes_manifest_entry() {
         .success();
 
     // The manifest should no longer contain the removed path.
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should still exist");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should still exist");
     assert!(
         !manifest_content.contains(repo_path),
         "manifest should not contain the removed repo path, got:\n{manifest_content}"
@@ -584,9 +584,9 @@ fn remove_with_delete_flag_removes_clone() {
         .success();
 
     // The manifest should no longer contain the removed path.
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should still exist");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should still exist");
     assert!(
         !manifest_content.contains(repo_path),
         "manifest should not contain the removed repo path, got:\n{manifest_content}"
@@ -658,9 +658,9 @@ fn add_new_updates_manifest_with_inferred_url() {
         .success();
 
     // The manifest should contain the new entry with an inferred URL.
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add --new");
     assert!(
         manifest_content.contains("github/myorg/newrepo"),
         "manifest should contain the repo path, got:\n{manifest_content}"
@@ -682,9 +682,9 @@ fn add_new_sets_role_to_primary() {
         .assert()
         .success();
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add --new");
 
     // Find the entry for our repo and verify it has role: owned.
     // The YAML should contain "role: owned" in the newrepo entry.
@@ -705,9 +705,9 @@ fn add_new_infers_url_for_github_path() {
         .assert()
         .success();
 
-    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content =
-        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add --new");
     assert!(
         manifest_content.contains("https://github.com/cwalv/repoweave.git"),
         "should infer GitHub HTTPS URL from path convention, got:\n{manifest_content}"
@@ -933,11 +933,11 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
 }
 
 // ============================================================================
-// `rwv add` must target CWD's workspace's rwv.yaml
+// `rwv add` must target CWD's workspace's rwv.toml
 //
 // The bug: `rwv add` always wrote to primary's manifest, even when
 // invoked from inside a workweave. Per-workspace ownership extends from
-// rwv.lock to rwv.yaml — both are tracked files in the project repo and
+// rwv.lock to rwv.toml — both are tracked files in the project repo and
 // follow the same `active_path()` resolution rule `rwv lock` already
 // uses. Conceptual reference:
 // `docs/explanation/joints/lock-as-derived.md`.
@@ -948,16 +948,16 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
 /// Layout produced (mirroring what `rwv workweave create` would build):
 ///   {tmp}/ws/                                  -- primary workspace root
 ///   {tmp}/ws/github/                           -- registry marker
-///   {tmp}/ws/projects/test-project/rwv.yaml    -- primary's manifest (initially empty)
+///   {tmp}/ws/projects/test-project/rwv.toml    -- primary's manifest (initially empty)
 ///   {tmp}/ws/.rwv-active                       -- "test-project"
 ///   {tmp}/.workweaves/test-project--feat/
 ///     .rwv-workweave                           -- marker pointing at primary
 ///     .rwv-active                              -- "test-project"
-///     projects/test-project/rwv.yaml           -- workweave's manifest (initially empty)
+///     projects/test-project/rwv.toml           -- workweave's manifest (initially empty)
 ///     github/                                  -- registry marker (so workweave resolves)
 ///
 /// The project dir in primary is a git repo so workspace resolution succeeds
-/// and the activation step can find rwv.yaml committed.
+/// and the activation step can find rwv.toml committed.
 ///
 /// Returns (primary_root, workweave_dir).
 fn setup_workweave_for_add_tests(
@@ -988,7 +988,7 @@ fn setup_workweave_for_add_tests(
     );
     git_run(&["config", "user.name", "Test"], &primary_project_dir);
     write_manifest(&primary_project_dir, &[]);
-    git_run(&["add", "rwv.yaml"], &primary_project_dir);
+    git_run(&["add", "rwv.toml"], &primary_project_dir);
     git_run(&["commit", "-m", "init"], &primary_project_dir);
 
     std::fs::write(primary.join(".rwv-active"), "test-project\n").unwrap();
@@ -1011,7 +1011,7 @@ fn setup_workweave_for_add_tests(
     // the worktree contract — a worktree of primary's project repo. A plain
     // copy with `git init` here is enough: the workweave's project repo
     // just needs to be writable independently of primary's, and the test
-    // observes the rwv.yaml file directly).
+    // observes the rwv.toml file directly).
     let workweave_project_dir = workweave_dir.join("projects").join("test-project");
     std::fs::create_dir_all(&workweave_project_dir).unwrap();
     git_run(&["init", "--initial-branch=main"], &workweave_project_dir);
@@ -1021,7 +1021,7 @@ fn setup_workweave_for_add_tests(
     );
     git_run(&["config", "user.name", "Test"], &workweave_project_dir);
     write_manifest(&workweave_project_dir, &[]);
-    git_run(&["add", "rwv.yaml"], &workweave_project_dir);
+    git_run(&["add", "rwv.toml"], &workweave_project_dir);
     git_run(&["commit", "-m", "init"], &workweave_project_dir);
 
     (primary, workweave_dir)
@@ -1045,19 +1045,19 @@ fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
         .assert()
         .success();
 
-    // Primary's rwv.yaml must contain the new entry.
+    // Primary's rwv.toml must contain the new entry.
     let primary_manifest =
-        std::fs::read_to_string(primary.join("projects/test-project/rwv.yaml")).unwrap();
+        std::fs::read_to_string(primary.join("projects/test-project/rwv.toml")).unwrap();
     assert!(
         primary_manifest.contains("file://") || primary_manifest.contains(&remote_url),
-        "primary's rwv.yaml should contain the added repo url, got:\n{primary_manifest}"
+        "primary's rwv.toml should contain the added repo url, got:\n{primary_manifest}"
     );
 }
 
 #[test]
 fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
     // `rwv add` from a workweave's CWD must mutate the workweave's own
-    // rwv.yaml, leaving primary's unchanged. This mirrors `rwv lock`'s
+    // rwv.toml, leaving primary's unchanged. This mirrors `rwv lock`'s
     // existing per-workspace resolution; manifest and lock are siblings
     // in the project repo and follow the same `active_path()` rule.
     // See `docs/explanation/joints/lock-as-derived.md`.
@@ -1070,7 +1070,7 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
     // Snapshot primary's manifest before — it must not be mutated below.
-    let primary_manifest_path = primary.join("projects/test-project/rwv.yaml");
+    let primary_manifest_path = primary.join("projects/test-project/rwv.toml");
     let primary_before = std::fs::read_to_string(&primary_manifest_path).unwrap();
 
     rwv()
@@ -1079,24 +1079,24 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
         .assert()
         .success();
 
-    // Workweave's rwv.yaml must contain the new entry.
-    let workweave_manifest_path = workweave_dir.join("projects/test-project/rwv.yaml");
+    // Workweave's rwv.toml must contain the new entry.
+    let workweave_manifest_path = workweave_dir.join("projects/test-project/rwv.toml");
     let workweave_manifest = std::fs::read_to_string(&workweave_manifest_path).unwrap();
     assert!(
         workweave_manifest.contains("file://") || workweave_manifest.contains(&remote_url),
-        "workweave's rwv.yaml should contain the added repo url after add-from-workweave, got:\n{workweave_manifest}"
+        "workweave's rwv.toml should contain the added repo url after add-from-workweave, got:\n{workweave_manifest}"
     );
 
-    // Primary's rwv.yaml must NOT have been touched.
+    // Primary's rwv.toml must NOT have been touched.
     let primary_after = std::fs::read_to_string(&primary_manifest_path).unwrap();
     assert_eq!(
         primary_before, primary_after,
-        "primary's rwv.yaml must be untouched by `rwv add` from a workweave; \
+        "primary's rwv.toml must be untouched by `rwv add` from a workweave; \
          before:\n{primary_before}\nafter:\n{primary_after}"
     );
     assert!(
         !primary_after.contains(&remote_url) && !primary_after.contains("file://"),
-        "primary's rwv.yaml must not contain the added repo url, got:\n{primary_after}"
+        "primary's rwv.toml must not contain the added repo url, got:\n{primary_after}"
     );
 }
 
@@ -1494,8 +1494,8 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 /// Returns `(workspace_root, project_a_dir, project_b_dir)`.
 ///
 /// Layout:
-///   ws/projects/project-a/rwv.yaml  — pre-populated
-///   ws/projects/project-b/rwv.yaml  — empty (caller will `rwv add` into it)
+///   ws/projects/project-a/rwv.toml  — pre-populated
+///   ws/projects/project-b/rwv.toml  — empty (caller will `rwv add` into it)
 ///   ws/.rwv-active                  — "project-b" (so default CWD sees it)
 fn setup_two_project_workspace(
     tmp: &tempfile::TempDir,
@@ -1522,17 +1522,17 @@ fn setup_two_project_workspace(
     git_run(&["init", "--initial-branch=main"], &project_a_dir);
     git_run(&["config", "user.email", "test@test.com"], &project_a_dir);
     git_run(&["config", "user.name", "Test"], &project_a_dir);
-    let mut yaml_a = String::from("repositories:\n");
+    let mut yaml_a = String::from("[repositories]\n");
     if project_a_repos.is_empty() {
         yaml_a.push_str("  {}\n");
     }
     for (path, url, role) in project_a_repos {
         yaml_a.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
-    std::fs::write(project_a_dir.join("rwv.yaml"), &yaml_a).unwrap();
-    git_run(&["add", "rwv.yaml"], &project_a_dir);
+    std::fs::write(project_a_dir.join("rwv.toml"), &yaml_a).unwrap();
+    git_run(&["add", "rwv.toml"], &project_a_dir);
     git_run(&["commit", "-m", "init-a"], &project_a_dir);
 
     // project-b — empty, active project so `rwv add` targets it.
@@ -1541,8 +1541,8 @@ fn setup_two_project_workspace(
     git_run(&["init", "--initial-branch=main"], &project_b_dir);
     git_run(&["config", "user.email", "test@test.com"], &project_b_dir);
     git_run(&["config", "user.name", "Test"], &project_b_dir);
-    std::fs::write(project_b_dir.join("rwv.yaml"), "repositories:\n  {}\n").unwrap();
-    git_run(&["add", "rwv.yaml"], &project_b_dir);
+    std::fs::write(project_b_dir.join("rwv.toml"), "repositories:\n  {}\n").unwrap();
+    git_run(&["add", "rwv.toml"], &project_b_dir);
     git_run(&["commit", "-m", "init-b"], &project_b_dir);
 
     // Active project is project-b so the add below targets it.
@@ -1624,8 +1624,8 @@ fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
     );
 
     // Add must still succeed — project-b's manifest should contain the repo.
-    let manifest_b = std::fs::read_to_string(workspace.join("projects/project-b/rwv.yaml"))
-        .expect("project-b rwv.yaml should exist");
+    let manifest_b = std::fs::read_to_string(workspace.join("projects/project-b/rwv.toml"))
+        .expect("project-b rwv.toml should exist");
     assert!(
         manifest_b.contains(&remote_url) || manifest_b.contains("file://"),
         "project-b manifest should contain the added repo URL, got:\n{manifest_b}"
@@ -1717,8 +1717,8 @@ fn add_new_warns_shared_clone_names_other_project_and_role() {
     );
 
     // Add still succeeds — project-b's manifest should have the entry.
-    let manifest_b = std::fs::read_to_string(workspace.join("projects/project-b/rwv.yaml"))
-        .expect("project-b rwv.yaml should exist");
+    let manifest_b = std::fs::read_to_string(workspace.join("projects/project-b/rwv.toml"))
+        .expect("project-b rwv.toml should exist");
     assert!(
         manifest_b.contains("github/testorg/newshared"),
         "project-b manifest should contain the added repo, got:\n{manifest_b}"

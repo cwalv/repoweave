@@ -97,7 +97,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
     let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
     let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     for (repo_path, role) in repos {
         let bare = tmp
             .path()
@@ -123,7 +123,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
 
@@ -141,7 +141,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
@@ -188,7 +188,7 @@ fn bare_main_sha(bare: &Path) -> Option<String> {
 /// Advance every manifest repo with one new commit and rewrite the lock
 /// to match. Returns the (repo_path, new SHA) pairs.
 fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(String, String)> {
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
     for (rp, role) in repos {
@@ -200,7 +200,7 @@ fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(St
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
@@ -208,7 +208,7 @@ fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(St
         expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock` (see
     // `build_workspace` above for why).
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));

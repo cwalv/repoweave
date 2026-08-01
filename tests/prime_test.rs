@@ -16,10 +16,10 @@ fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
     root
 }
 
-fn write_manifest(root: &Path, project: &str, yaml: &str) {
+fn write_manifest(root: &Path, project: &str, manifest_toml: &str) {
     let dir = root.join("projects").join(project);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("rwv.yaml"), yaml).unwrap();
+    fs::write(dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
 // ============================================================================
@@ -52,20 +52,20 @@ fn prime_primary_with_project() {
         &root,
         "web-app",
         r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-  github/acme/client:
-    type: git
-    url: https://github.com/acme/client.git
-    version: develop
-    role: fork
-integrations:
-  cargo:
-    enabled: true
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[repositories."github/acme/client"]
+type = "git"
+url = "https://github.com/acme/client.git"
+version = "develop"
+role = "fork"
+
+[integrations.cargo]
+enabled = true
 "#,
     );
 
@@ -123,12 +123,11 @@ fn prime_in_workweave() {
         &root,
         "ws",
         r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
 "#,
     );
 
@@ -167,7 +166,7 @@ fn prime_directory_layout_active_marker() {
     fs::create_dir_all(root.join("projects").join("web-app")).unwrap();
     fs::create_dir_all(root.join("projects").join("mobile")).unwrap();
 
-    write_manifest(&root, "web-app", "repositories: {}\n");
+    write_manifest(&root, "web-app", "[repositories]\n");
     fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     Command::cargo_bin("rwv")

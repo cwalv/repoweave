@@ -55,7 +55,7 @@ fn init_git_repo(path: &Path) -> String {
     run(&["rev-parse", "HEAD"], path)
 }
 
-/// Write an `rwv.yaml` manifest into a **primary** root's project directory.
+/// Write an `rwv.toml` manifest into a **primary** root's project directory.
 ///
 /// Also writes `.rwv-active` at that root pointing at the project, so
 /// lock-test scenarios that run `rwv lock` (an action verb) resolve the
@@ -80,13 +80,13 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 /// workweave root.
 fn write_workweave_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (repo_path, url) in repos {
-        yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Build a `Command` for the `rwv` binary.
@@ -180,7 +180,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     let repo_path = "github/acme/server";
     let primary_sha = init_git_repo(&root.join(repo_path));
 
-    // Primary's project dir with rwv.yaml.
+    // Primary's project dir with rwv.toml.
     let primary_project_dir = root.join("projects").join("ws");
     write_manifest(
         &primary_project_dir,

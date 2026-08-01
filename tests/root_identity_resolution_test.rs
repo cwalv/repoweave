@@ -32,14 +32,14 @@ fn make_disputed_workweave(tmp: &Path) -> (PathBuf, PathBuf) {
     std::fs::create_dir_all(primary.join("github")).unwrap();
     let project = primary.join("projects").join("web-app");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::write(project.join("rwv.yaml"), "repositories:\n").unwrap();
+    std::fs::write(project.join("rwv.toml"), "[repositories]\n").unwrap();
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = tmp.join(".workweaves").join("web-app--feat");
     std::fs::create_dir_all(ww.join("github")).unwrap();
     let ww_project = ww.join("projects").join("web-app");
     std::fs::create_dir_all(&ww_project).unwrap();
-    std::fs::write(ww_project.join("rwv.yaml"), "repositories:\n").unwrap();
+    std::fs::write(ww_project.join("rwv.toml"), "[repositories]\n").unwrap();
     std::fs::write(
         ww.join(".rwv-workweave"),
         format!(

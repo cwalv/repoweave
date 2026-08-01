@@ -78,7 +78,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
 
     let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
     let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("repositories:\n");
+    let mut manifest_yaml = String::from("[repositories]\n");
     for (repo_path, role) in repos {
         let bare = tmp
             .path()
@@ -103,7 +103,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = bare.to_str().unwrap();
         manifest_yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
 
@@ -122,7 +122,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
@@ -411,11 +411,11 @@ fn update_missing_clone_names_rwv_fetch_repair_verb() {
     // (Constructing the missing state directly — no deletions needed.)
     let project_dir = ws.workspace.join("projects").join("proj-missing");
     let bare_url = ws.manifest_bares[0].1.to_str().unwrap().to_string();
-    let mut manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    let mut manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     manifest.push_str(&format!(
-        "  local/acme/absent:\n    type: git\n    url: {bare_url}\n    version: main\n    role: owned\n"
+        "[repositories.\"local/acme/absent\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     ));
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let output = rwv()
         .args(["update", "--dirty"])
@@ -503,7 +503,7 @@ fn rename_branch_on_bare(bare: &Path, old_name: &str, new_name: &str) {
 /// - the repo path,
 /// - the branch name that is gone,
 /// - the state ("does not resolve on the remote — renamed or deleted upstream"),
-/// - the one exit (update rwv.yaml's `version:` to the current branch name);
+/// - the one exit (update rwv.toml's `version:` to the current branch name);
 ///   the message must not recommend pinning `version:` to a SHA or tag,
 ///   since `version:` is branch-only and that pin can never resolve.
 #[test]
@@ -553,7 +553,7 @@ fn update_prune_detects_deleted_branch_with_actionable_message() {
     // Must name the one supported exit.
     assert!(
         combined.contains("version:") || combined.contains("current branch name"),
-        "error must name the rwv.yaml version update exit; got:\n{combined}"
+        "error must name the rwv.toml version update exit; got:\n{combined}"
     );
     // Must not steer the operator toward pinning `version:` to a SHA/tag —
     // that pin is unsupported and can never resolve.

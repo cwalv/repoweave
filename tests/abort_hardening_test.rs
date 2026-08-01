@@ -100,30 +100,30 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url, sha) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: {sha}\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"{sha}\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.lock"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.lock"), &manifest_toml).unwrap();
 }
 
 const SERVER_URL: &str = "https://github.com/chatly/server.git";
 const SERVER_PATH: &str = "github/chatly/server";
 
 /// A workspace usable for in-place abort fixtures: one manifest repo
-/// (`github/chatly/server`) plus a project repo with `rwv.yaml`/`rwv.lock`
+/// (`github/chatly/server`) plus a project repo with `rwv.toml`/`rwv.lock`
 /// committed. Mirrors `make_locked_workspace` in `e2e_sync_abort_test.rs`
 /// but kept local so this file's contract is self-contained.
 struct Fixture {
@@ -150,7 +150,7 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &server_sha)]);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
@@ -654,14 +654,14 @@ fn abort_foreign_tip_options_block_printed_once() {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    let yaml = "repositories:\n  github/chatly/server:\n    type: git\n    url: https://github.com/chatly/server.git\n    version: main\n    role: owned\n  github/chatly2/server:\n    type: git\n    url: https://github.com/chatly2/server.git\n    version: main\n    role: owned\n".to_string();
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    let manifest_toml = "[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly2/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly2/server.git\"\nversion = \"main\"\nrole = \"owned\"\n".to_string();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
     let lock_yaml = format!(
-        "repositories:\n  github/chatly/server:\n    type: git\n    url: https://github.com/chatly/server.git\n    version: {server1_sha}\n  github/chatly2/server:\n    type: git\n    url: https://github.com/chatly2/server.git\n    version: {server2_sha}\n"
+        "[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"{server1_sha}\"\n\n[repositories.\"github/chatly2/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly2/server.git\"\nversion = \"{server2_sha}\"\n"
     );
     std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);

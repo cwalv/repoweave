@@ -73,22 +73,22 @@ fn setup_two_repo_workspace() -> (tempfile::TempDir, std::path::PathBuf, std::pa
     let project_dir = ws.join("projects/my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
-        r#"repositories:
-  github/org/primary:
-    type: git
-    url: file://{r1}
-    version: main
-    role: owned
-  github/org/fork:
-    type: git
-    url: file://{r2}
-    version: main
-    role: fork
+        r#"[repositories."github/org/primary"]
+type = "git"
+url = "file://{r1}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/fork"]
+type = "git"
+url = "file://{r2}"
+version = "main"
+role = "fork"
 "#,
         r1 = repo_primary.display(),
         r2 = repo_fork.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Active project marker — required so `rwv status` resolves to my-app
     // without relying on CWD-inside-projects/ inference.
     std::fs::write(ws.join(".rwv-active"), "my-app\n").unwrap();

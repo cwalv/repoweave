@@ -796,13 +796,8 @@ fn a_surfacing_finding_reaches_both_the_report_and_the_wire_format() {
     std::fs::create_dir_all(root.join("github")).unwrap();
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "repositories: {}\n\
-         integrations:\n\
-         \x20 static-files:\n\
-         \x20   enabled: true\n\
-         \x20   files:\n\
-         \x20     - CLAUDE.md\n",
+        project_dir.join("rwv.toml"),
+        "[repositories]\n\n[integrations.static-files]\nenabled = true\nfiles = [\"CLAUDE.md\"]\n",
     )
     .unwrap();
     std::fs::write(project_dir.join("CLAUDE.md"), "alpha's instructions\n").unwrap();

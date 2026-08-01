@@ -66,17 +66,10 @@ fn init_repo_with_commit(path: &Path) {
     git(&["commit", "-m", "initial"], path);
 }
 
-/// Write an `rwv.yaml` with a single owned repo `github/acme/widget`.
+/// Write an `rwv.toml` with a single owned repo `github/acme/widget`.
 fn write_manifest(ws: &Path) {
-    let yaml = "\
-repositories:
-  github/acme/widget:
-    type: git
-    url: https://example.test/acme/widget.git
-    version: main
-    role: owned
-";
-    std::fs::write(ws.join("projects/app/rwv.yaml"), yaml).unwrap();
+    let manifest_toml = "[repositories.\"github/acme/widget\"]\ntype = \"git\"\nurl = \"https://example.test/acme/widget.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(ws.join("projects/app/rwv.toml"), manifest_toml).unwrap();
 }
 
 /// Write a healthy `.rwv-workweave` marker.

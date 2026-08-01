@@ -65,11 +65,9 @@ impl Weave {
         let project = root.join("projects").join(PROJECT);
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
-            project.join("rwv.yaml"),
+            project.join("rwv.toml"),
             format!(
-                "repositories:\n  {MEMBER}:\n    type: git\n    \
-                 url: https://github.com/acme/server.git\n    \
-                 version: main\n    role: owned\n"
+                "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n"
             ),
         )
         .unwrap();

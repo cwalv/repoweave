@@ -106,7 +106,7 @@ struct MainWorkspace {
 /// ```text
 /// {tmp}/ws/                          -- workspace root
 /// {tmp}/ws/github/org/lib/           -- manifest repo, initial commit
-/// {tmp}/ws/projects/app/             -- project repo with rwv.yaml + rwv.lock committed
+/// {tmp}/ws/projects/app/             -- project repo with rwv.toml + rwv.lock committed
 /// ```
 fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let ws = tmp.join("ws");
@@ -125,11 +125,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     .unwrap();
 
     let manifest = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
@@ -144,7 +144,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
@@ -494,7 +494,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         .success();
 
     // Commit the manifest change and lock.
-    git(&["add", "rwv.yaml"], &main.project_dir);
+    git(&["add", "rwv.toml"], &main.project_dir);
     git(&["commit", "-m", "add: extras"], &main.project_dir);
     rwv_lock_commit(&main.root);
 
@@ -607,7 +607,7 @@ fn sync_phase3_materialize_failure_is_fatal() {
         .current_dir(&main.root)
         .assert()
         .success();
-    git(&["add", "rwv.yaml"], &main.project_dir);
+    git(&["add", "rwv.toml"], &main.project_dir);
     git(&["commit", "-m", "add: extras"], &main.project_dir);
     rwv_lock_commit(&main.root);
 

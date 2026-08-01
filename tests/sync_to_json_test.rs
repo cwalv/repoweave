@@ -85,13 +85,13 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
@@ -161,7 +161,7 @@ fn make_workweave_ahead_fixture(
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &primary_project,
     );
     git(&["commit", "-m", "lock: initial"], &primary_project);
@@ -374,7 +374,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     write_manifest(&source_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &source_project,
     );
     git(&["commit", "-m", "lock: initial"], &source_project);
@@ -510,7 +510,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &primary_project,
     );
     git(&["commit", "-m", "lock: initial"], &primary_project);

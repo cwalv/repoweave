@@ -149,20 +149,8 @@ fn fixture() -> Fixture {
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "\
-repositories:
-  github/chatly/protocol:
-    type: git
-    url: https://github.com/chatly/protocol.git
-    version: main
-    role: owned
-  github/chatly/server:
-    type: git
-    url: https://github.com/chatly/server.git
-    version: main
-    role: owned
-",
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     // The generated lock is regenerable, so it is not committed.

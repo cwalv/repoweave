@@ -94,7 +94,7 @@ fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
 }
 
 /// Project source: bare repo whose default-branch tip carries an
-/// `rwv.yaml` pointing at the given `(repo_path, url)` manifest
+/// `rwv.toml` pointing at the given `(repo_path, url)` manifest
 /// entries. Returns the project-source URL `file:///...`.
 ///
 /// **Trigger-model note:** under the new spec, `rwv fetch` is
@@ -122,13 +122,13 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
     );
     run_git(&["config", "user.email", "t@t.com"], &work);
     run_git(&["config", "user.name", "T"], &work);
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
 
     // Stage a side workspace that mirrors what the project's first-time
     // author would have on their machine: clone the manifest repos, run
@@ -138,7 +138,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         let staging = tmp.join(format!("{name}_staging"));
         let staging_proj_dir = staging.join("projects").join(name);
         std::fs::create_dir_all(&staging_proj_dir).unwrap();
-        std::fs::write(staging_proj_dir.join("rwv.yaml"), &yaml).unwrap();
+        std::fs::write(staging_proj_dir.join("rwv.toml"), &manifest_toml).unwrap();
         // Clone each manifest repo into the staging workspace so the
         // ecosystem integrations' detection cache picks them up.
         for (path, url) in repos {
@@ -164,11 +164,11 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         .expect("staging intent-mode activation should author integration outputs");
         // Copy generated outputs from staging back into the project source
         // repo. The set we care about today is whatever's in
-        // `projects/<name>/`, minus rwv.yaml (already committed).
+        // `projects/<name>/`, minus rwv.toml (already committed).
         let staging_outputs = staging.join("projects").join(name);
         for entry in std::fs::read_dir(&staging_outputs).unwrap().flatten() {
             let fname = entry.file_name();
-            if fname == "rwv.yaml" {
+            if fname == "rwv.toml" {
                 continue;
             }
             let src = entry.path();
@@ -302,9 +302,9 @@ fn tutorial_step1_fetch_clones_project_and_repos() {
     );
     assert!(
         fx.workspace
-            .join("projects/tutorial-project/rwv.yaml")
+            .join("projects/tutorial-project/rwv.toml")
             .is_file(),
-        "fetched project must contain rwv.yaml"
+        "fetched project must contain rwv.toml"
     );
     assert!(
         fx.workspace.join(fx.repo_a_path).is_dir(),

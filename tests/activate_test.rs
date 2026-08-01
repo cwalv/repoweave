@@ -29,7 +29,7 @@ fn make_workspace(tmp: &Path) -> std::path::PathBuf {
     ws
 }
 
-/// Create a project directory with an `rwv.yaml` manifest listing the given repos.
+/// Create a project directory with an `rwv.toml` manifest listing the given repos.
 /// Each repo entry is `(path, role)`. Also creates the repo directories with
 /// the specified manifest files (e.g., `package.json`, `Cargo.toml`).
 ///
@@ -52,10 +52,10 @@ fn make_project(
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, role, manifest_files) in repos {
-        yaml.push_str(&format!(
-            "  {}:\n    type: git\n    url: https://github.com/test/{}.git\n    version: main\n    role: {}\n",
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{}.git\"\nversion = \"main\"\n\n[repositories.\"{}\".role]\n",
             path,
             path.split('/').next_back().unwrap(),
             role,
@@ -82,7 +82,7 @@ fn make_project(
         }
     }
 
-    std::fs::write(project_dir.join("rwv.yaml"), yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 
     // Pre-author integration content via the intent path (see trigger-model
     // note above). We ignore the result: if no integration runs (e.g., the
@@ -624,7 +624,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // a user's `docs/package.json` symlink). That predicate is replaced; the
     // new behavior preserves user-owned paths. We assert the new contract.
     //
-    // We use the `gita` integration (enabled in this project's rwv.yaml
+    // We use the `gita` integration (enabled in this project's rwv.toml
     // via `integrations:`) to get a *real* nested owned path
     // (`gita/repos.csv`), so the descent-into-subdirectory leg is exercised
     // with an actually-owned name.
@@ -637,9 +637,8 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // Manifest enables gita so its `gita/repos.csv` + `gita/groups.csv` are
     // in the owned set; we don't care about their actual content here.
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/test/server.git\n    version: main\n    role: owned\n\
-integrations:\n  gita:\n    enabled: true\n",
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/test/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.gita]\nenabled = true\n",
     )
     .unwrap();
     std::fs::create_dir_all(ws.join("github/acme/server")).unwrap();
@@ -828,18 +827,18 @@ fn activate_different_project_from_workweave_is_rejected() {
 fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    let gita_manifest = "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/test/server.git\n    version: main\n    role: owned\nintegrations:\n  gita:\n    enabled: true\n";
+    let gita_manifest = "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/test/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.gita]\nenabled = true\n";
 
     let primary_project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&primary_project_dir).unwrap();
-    std::fs::write(primary_project_dir.join("rwv.yaml"), gita_manifest).unwrap();
+    std::fs::write(primary_project_dir.join("rwv.toml"), gita_manifest).unwrap();
     std::fs::create_dir_all(ws.join("github/acme/server")).unwrap();
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
     let workweave_dir = tmp.path().join("ws--intent");
     let workweave_project_dir = workweave_dir.join("projects/web-app");
     std::fs::create_dir_all(&workweave_project_dir).unwrap();
-    std::fs::write(workweave_project_dir.join("rwv.yaml"), gita_manifest).unwrap();
+    std::fs::write(workweave_project_dir.join("rwv.toml"), gita_manifest).unwrap();
     std::fs::create_dir_all(workweave_dir.join("github/acme/server")).unwrap();
     let primary_canon = ws.canonicalize().unwrap();
     WorkweaveMarker::new(

@@ -29,7 +29,7 @@ mod common;
 
 /// Build a workspace: `projects/` dir, `github/` registry dir, plus one or
 /// more project directories under `projects/<name>/` with an empty
-/// `rwv.yaml` each. Returns the workspace root.
+/// `rwv.toml` each. Returns the workspace root.
 fn make_workspace_with_projects(parent: &Path, project_names: &[&str]) -> PathBuf {
     let ws = parent.join("ws");
     std::fs::create_dir_all(ws.join("github")).unwrap();
@@ -37,7 +37,7 @@ fn make_workspace_with_projects(parent: &Path, project_names: &[&str]) -> PathBu
     for name in project_names {
         let dir = ws.join("projects").join(name);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("rwv.yaml"), "repositories:\n").unwrap();
+        std::fs::write(dir.join("rwv.toml"), "[repositories]\n").unwrap();
     }
     ws
 }

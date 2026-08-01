@@ -69,9 +69,9 @@ fn make_workspace(parent: &Path, project: &str) -> (PathBuf, PathBuf, String) {
 
     let url = format!("file://{}", repo_path.display());
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();
 

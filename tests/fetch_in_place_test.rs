@@ -135,14 +135,14 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     let project_dir = workspace.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let mut manifest = String::from("repositories:\n");
+    let mut manifest = String::from("[repositories]\n");
     for (rp, bare, _, _) in &repos {
         let url = format!("file://{}", bare.display());
         manifest.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
 
     // Write a lock that pins each repo to its FIRST commit. Round-trips
     // through the real parser + `lock::write_lock`: a hand-formatted string
@@ -655,11 +655,9 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     let url_a = format!("file://{}", bare_a.display());
     let url_b = format!("file://{}", bare_b.display());
     let manifest = format!(
-        "repositories:\n  \
-         github/acme/a:\n    type: git\n    url: {url_a}\n    version: main\n    role: owned\n  \
-         github/acme/b:\n    type: git\n    url: {url_b}\n    version: main\n    role: owned\n"
+        "[repositories.\"github/acme/a\"]\ntype = \"git\"\nurl = \"{url_a}\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url_b}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Lock only covers repo_a (pinned to first_a).
     let raw_lock = format!(
@@ -880,15 +878,15 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
     // Set up a workweave marker pointing at primary.
     let workweave_dir = s.workspace.join(".workweaves/my-app--dev");
     std::fs::create_dir_all(&workweave_dir).unwrap();
-    // A projects/<name>/rwv.yaml + rwv.lock is per-workspace state; the
+    // A projects/<name>/rwv.toml + rwv.lock is per-workspace state; the
     // workweave gets its own copy (mirrors how rwv workweave create/rwv
     // activate populate this). Copy the primary's project files into the
     // workweave so `require_active_project_on_disk` finds them.
     std::fs::create_dir_all(workweave_dir.join("projects/my-app")).unwrap();
     let primary_project = s.workspace.join("projects/my-app");
     std::fs::copy(
-        primary_project.join("rwv.yaml"),
-        workweave_dir.join("projects/my-app/rwv.yaml"),
+        primary_project.join("rwv.toml"),
+        workweave_dir.join("projects/my-app/rwv.toml"),
     )
     .unwrap();
     std::fs::copy(

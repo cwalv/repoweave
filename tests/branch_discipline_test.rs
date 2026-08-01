@@ -737,7 +737,7 @@ fn detached_project_repo_is_reported() {
     // The project repo is a real repo, and it is the thing being detached.
     let project_repo = ws.join("projects").join("myproj");
     init_repo_with_commit(&project_repo);
-    git_in(&project_repo, &["add", "rwv.yaml"]);
+    git_in(&project_repo, &["add", "rwv.toml"]);
     git_in(&project_repo, &["commit", "-q", "-m", "manifest"]);
     git_in(&project_repo, &["checkout", "--detach", "HEAD", "-q"]);
 
@@ -768,7 +768,7 @@ fn attached_project_repo_is_clean() {
 
     let project_repo = ws.join("projects").join("myproj");
     init_repo_with_commit(&project_repo);
-    git_in(&project_repo, &["add", "rwv.yaml"]);
+    git_in(&project_repo, &["add", "rwv.toml"]);
     git_in(&project_repo, &["commit", "-q", "-m", "manifest"]);
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
@@ -1217,15 +1217,15 @@ fn ephemeral_branch_with_existing_workweave_is_clean() {
 // stale ephemeral branches belonging to OTHER projects.
 // ===========================================================================
 
-/// Write a minimal `rwv.yaml` for `project_name` that declares a single repo
+/// Write a minimal `rwv.toml` for `project_name` that declares a single repo
 /// at `repo_path` (manifest-relative forward-slash string).
 fn write_project_manifest(ws: &Path, project_name: &str, repo_path: &str) {
     let project_dir = ws.join("projects").join(project_name);
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
-        "repositories:\n  {repo_path}:\n    type: git\n    url: https://example.com/{repo_path}.git\n    version: main\n    role: owned\n"
+        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://example.com/{repo_path}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 }
 
 /// Set the active project by writing `.rwv-active` into the workspace root.
@@ -2611,7 +2611,7 @@ fn workweave_create_with_a_slash_in_the_name_is_refused() {
     let ws = make_primary(tmp.path());
     let project_dir = ws.join("projects").join("myproj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
     let weaveroot = workweaves_dir(&ws);
     std::fs::create_dir_all(&weaveroot).unwrap();
 

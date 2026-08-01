@@ -88,11 +88,11 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     git_run(&["config", "user.name", "Test"], &work);
 
     let dep_url = format!("file://{}", dep_bare.display());
-    let yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: main\n    role: owned\n"
+    let manifest_toml = format!(
+        "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
-    git_run(&["add", "rwv.yaml"], &work);
+    std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
+    git_run(&["add", "rwv.toml"], &work);
     git_run(&["commit", "-m", "manifest"], &work);
     git_run(&["push", "origin", "main"], &work);
 
@@ -252,8 +252,8 @@ fn lock_does_not_write_ecosystem_files() {
     let project_dir = workspace.join("projects/app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/acme/server.git\n    version: main\n    role: owned\n",
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     std::fs::write(workspace.join(".rwv-active"), "app\n").unwrap();

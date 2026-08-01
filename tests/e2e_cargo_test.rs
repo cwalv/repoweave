@@ -59,7 +59,7 @@ fn git_commit_all(repo: &Path, message: &str) {
 ///         server/     <- chatly-server crate (git repo, depends on protocol)
 ///     projects/
 ///       web-app/
-///         rwv.yaml
+///         rwv.toml
 fn setup_weave(tmp: &Path) {
     // ---- directories ----
     std::fs::create_dir_all(tmp.join("github/chatly/protocol/src")).unwrap();
@@ -109,21 +109,9 @@ fn setup_weave(tmp: &Path) {
         assert!(status.success(), "git init failed in {repo_rel}");
     }
 
-    // ---- rwv.yaml manifest ----
-    let manifest = "\
-repositories:
-  github/chatly/protocol:
-    type: git
-    url: https://github.com/chatly/protocol.git
-    version: main
-    role: owned
-  github/chatly/server:
-    type: git
-    url: https://github.com/chatly/server.git
-    version: main
-    role: owned
-";
-    std::fs::write(tmp.join("projects/web-app/rwv.yaml"), manifest).unwrap();
+    // ---- rwv.toml manifest ----
+    let manifest = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(tmp.join("projects/web-app/rwv.toml"), manifest).unwrap();
 
     // ---- .rwv-active ----
     std::fs::write(tmp.join(".rwv-active"), "web-app\n").unwrap();
@@ -274,7 +262,7 @@ fn cargo_release_version_pin_workflow() {
 
     // ---- Step 6: generate_lock captures the tag for protocol ----
     // Load the manifest directly from the project dir.
-    let manifest_path = root.join("projects/web-app/rwv.yaml");
+    let manifest_path = root.join("projects/web-app/rwv.toml");
     let manifest =
         repoweave::manifest::Manifest::from_path(&manifest_path).expect("manifest should load");
 
@@ -521,31 +509,8 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
     assert!(status.success());
 
     // ---- Extend manifest with grok-build + config-surface opt-in ----
-    let manifest = "\
-repositories:
-  github/chatly/protocol:
-    type: git
-    url: https://github.com/chatly/protocol.git
-    version: main
-    role: owned
-  github/chatly/server:
-    type: git
-    url: https://github.com/chatly/server.git
-    version: main
-    role: owned
-  github/xai-org/grok-build:
-    type: git
-    url: https://github.com/xai-org/grok-build.git
-    version: main
-    role: owned
-integrations:
-  cargo-workspace:
-    patch: derived
-    patch-surface: cargo-config
-    exclude:
-      - github/xai-org/grok-build
-";
-    std::fs::write(root.join("projects/web-app/rwv.yaml"), manifest).unwrap();
+    let manifest = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/xai-org/grok-build\"]\ntype = \"git\"\nurl = \"https://github.com/xai-org/grok-build.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace]\npatch = \"derived\"\npatch-surface = \"cargo-config\"\nexclude = [\"github/xai-org/grok-build\"]\n";
+    std::fs::write(root.join("projects/web-app/rwv.toml"), manifest).unwrap();
 
     // The base setup_weave writes chatly-server with a committed `path=`
     // dep on protocol; for this test we need it to be a REGISTRY dep so

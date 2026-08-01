@@ -90,16 +90,16 @@ fn make_project_repo_clean(project_dir: &Path) {
     run(&["config", "merge.rwv-ours.driver", "true"]);
 }
 
-/// Write an `rwv.yaml` manifest into a project directory.
+/// Write an `rwv.toml` manifest into a project directory.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (repo_path, url) in repos {
-        yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 /// Write an `rwv.lock` file into a project directory with given repo SHAs.
@@ -157,7 +157,7 @@ fn check_clean_workspace_exits_zero() {
 }
 
 // ===========================================================================
-// 2. Orphaned clone — directory under `github/` not in any project's rwv.yaml
+// 2. Orphaned clone — directory under `github/` not in any project's rwv.toml
 // ===========================================================================
 
 #[test]
@@ -188,7 +188,7 @@ fn check_orphaned_clone_reported() {
 }
 
 // ===========================================================================
-// 3. Dangling reference — rwv.yaml entry pointing to a path not on disk
+// 3. Dangling reference — rwv.toml entry pointing to a path not on disk
 // ===========================================================================
 
 #[test]
@@ -362,19 +362,18 @@ fn check_integration_hooks_report_warnings() {
     // Create a project with the repo and an integration config
     let project_dir = root.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let yaml = format!(
-        r#"repositories:
-  {repo_path}:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-integrations:
-  cargo:
-    enabled: true
+    let manifest_toml = format!(
+        r#"[repositories."{repo_path}"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[integrations.cargo]
+enabled = true
 "#
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 
     // Even with integration hooks, a clean workspace should not error.
     // Any integration warnings should be printed but not cause failure
@@ -830,7 +829,7 @@ fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
     // Commit a legacy .gitattributes so both the working-tree detector
     // and the committed-tree readers see the old spelling.
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-    git_capture(&project_dir, &["add", ".gitattributes", "rwv.yaml"]);
+    git_capture(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
     git_capture(
         &project_dir,
         &["commit", "-m", "seed manifest + legacy attrs"],
@@ -900,7 +899,7 @@ fn check_fix_skips_migration_commit_when_repo_has_other_staged_changes() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-    git_capture(&project_dir, &["add", ".gitattributes", "rwv.yaml"]);
+    git_capture(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
     git_capture(
         &project_dir,
         &["commit", "-m", "seed manifest + legacy attrs"],
@@ -1518,8 +1517,8 @@ mod doctor_json {
             (
                 CheckViolation::UnparseableProject {
                     project: pn(),
-                    manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
-                    message: "bad yaml".to_owned(),
+                    manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.toml"),
+                    message: "bad manifest_toml".to_owned(),
                 },
                 "unparseable-project",
             ),
@@ -1718,8 +1717,8 @@ mod doctor_json {
             },
             CheckViolation::UnparseableProject {
                 project: ProjectName::new("p").unwrap(),
-                manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
-                message: "bad yaml".to_owned(),
+                manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.toml"),
+                message: "bad manifest_toml".to_owned(),
             },
             CheckViolation::MissingCanonicalClone {
                 workweave: WorkweaveName::new("ww1").unwrap(),
@@ -1774,7 +1773,7 @@ mod doctor_json {
         let no_ww = empty_workweave_dirs();
         let violation = CheckViolation::UnparseableProject {
             project: ProjectName::new("broken-app").unwrap(),
-            manifest_path: std::path::PathBuf::from("/ws/projects/broken-app/rwv.yaml"),
+            manifest_path: std::path::PathBuf::from("/ws/projects/broken-app/rwv.toml"),
             message: "did not find expected key".to_owned(),
         };
         let json =
@@ -1932,7 +1931,7 @@ fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
     std::fs::create_dir_all(&ww_dir).unwrap();
 
     // Not valid YAML at all.
-    std::fs::write(ww_dir.join(".rwv-workweave"), "not: [valid: yaml").unwrap();
+    std::fs::write(ww_dir.join(".rwv-workweave"), "not: [valid: manifest_toml").unwrap();
 
     // `.success()` first: a negative string assertion alone would also pass
     // if doctor crashed on this input instead of quietly skipping it, which
@@ -2019,7 +2018,7 @@ fn check_silent_when_project_has_replay_exclusion() {
 // Unparseable-project violation
 // ===========================================================================
 
-/// A project with a syntactically broken `rwv.yaml` must surface an
+/// A project with a syntactically broken `rwv.toml` must surface an
 /// `unparseable-project` violation — not silently report a clean workspace.
 ///
 /// Regression test for the silent-skip pattern: previously `run_check` hit
@@ -2030,12 +2029,12 @@ fn check_unparseable_project_reported_as_violation() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
-    // Write a syntactically broken rwv.yaml — invalid YAML.
+    // Write a syntactically broken rwv.toml — invalid YAML.
     let project_dir = root.join("projects").join("broken-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "repositories: {\n  this is not: valid yaml: [ unclosed\n",
+        project_dir.join("rwv.toml"),
+        "repositories = \"{\"\n\"this is not\" = \"valid manifest_toml: [ unclosed\"\n",
     )
     .unwrap();
 
@@ -2065,8 +2064,8 @@ fn check_unparseable_project_in_json_output() {
     let project_dir = root.join("projects").join("broken-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
-        "repositories: {\n  this is not: valid yaml: [ unclosed\n",
+        project_dir.join("rwv.toml"),
+        "repositories = \"{\"\n\"this is not\" = \"valid manifest_toml: [ unclosed\"\n",
     )
     .unwrap();
 
@@ -2115,10 +2114,10 @@ fn check_unparseable_project_not_fixed_by_fix_flag() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
-    let bad_yaml = "repositories: {\n  this is not: valid yaml: [ unclosed\n";
+    let bad_yaml = "repositories = \"{\"\n\"this is not\" = \"valid manifest_toml: [ unclosed\"\n";
     let project_dir = root.join("projects").join("broken-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.yaml"), bad_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), bad_yaml).unwrap();
 
     // --fix should not crash and should still exit non-zero (violation remains).
     rwv_cmd()
@@ -2128,7 +2127,7 @@ fn check_unparseable_project_not_fixed_by_fix_flag() {
         .failure();
 
     // The manifest must be unchanged — --fix must not touch broken YAML.
-    let content_after = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    let content_after = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     assert_eq!(
         content_after, bad_yaml,
         "--fix must not modify an unparseable manifest"

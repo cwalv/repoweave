@@ -49,7 +49,7 @@ fn init_repo_with_commit(path: &Path) {
 /// Layout:
 ///   {tmp}/ws/                  -- workspace root
 ///   {tmp}/ws/github/           -- registry marker (makes it a workspace root)
-///   {tmp}/ws/projects/{project}/rwv.yaml
+///   {tmp}/ws/projects/{project}/rwv.toml
 ///   {tmp}/ws/github/org/repo/  -- a real git repo with a commit
 ///
 /// Returns the workspace root path.
@@ -62,16 +62,15 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     ws
 }
@@ -81,7 +80,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
 /// Layout:
 ///   {tmp}/ws/                          -- workspace root
 ///   {tmp}/ws/github/                   -- registry marker
-///   {tmp}/ws/projects/{project}/       -- git repo with commit + rwv.yaml
+///   {tmp}/ws/projects/{project}/       -- git repo with commit + rwv.toml
 ///   {tmp}/ws/github/org/repo/          -- manifest repo
 fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::PathBuf {
     let ws = tmp.join("ws");
@@ -92,17 +91,16 @@ fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::Pat
     init_repo_with_commit(&project_dir);
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
-    git(&["add", "rwv.yaml"], &project_dir);
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    git(&["add", "rwv.toml"], &project_dir);
     git(&["commit", "-m", "add manifest"], &project_dir);
 
     ws
@@ -353,19 +351,18 @@ fn create_workweave_processes_copy_entries() {
     // Update the manifest to include workweave.copy.
     let project_dir = ws.join("projects/web-app");
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
-workweave:
-  copy:
-    - .env
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
+
+[workweave]
+copy = [".env"]
 "#,
         repo = ws.join("github/org/repo").display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -410,19 +407,18 @@ fn create_workweave_processes_link_entries() {
     // Update manifest with workweave.link.
     let project_dir = ws.join("projects/web-app");
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
-workweave:
-  link:
-    - shared-state
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
+
+[workweave]
+link = ["shared-state"]
 "#,
         repo = ws.join("github/org/repo").display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -696,22 +692,22 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
     let project_dir = ws.join("projects/full-stack");
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
-        r#"repositories:
-  github/org/server:
-    type: git
-    url: file://{server}
-    version: main
-    role: owned
-  github/org/client:
-    type: git
-    url: file://{client}
-    version: main
-    role: fork
+        r#"[repositories."github/org/server"]
+type = "git"
+url = "file://{server}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/client"]
+type = "git"
+url = "file://{client}"
+version = "main"
+role = "fork"
 "#,
         server = repo1.display(),
         client = repo2.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -964,21 +960,20 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/cargo-crate:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/cargo-crate"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Trigger-model split: pre-author the integration content
     // in the primary workspace so workweave-create (a context verb)
     // surfaces it via symlinks. Real-world equivalent: an intent verb
-    // (rwv add) ran earlier and committed both rwv.yaml and Cargo.toml.
+    // (rwv add) ran earlier and committed both rwv.toml and Cargo.toml.
     let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         project,
@@ -1751,16 +1746,15 @@ fn list_workweaves_is_scoped_by_project() {
     std::fs::create_dir_all(&project_b_dir).unwrap();
     let repo_path = ws.join("github/org/repo");
     let manifest_b = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_b_dir.join("rwv.yaml"), manifest_b).unwrap();
+    std::fs::write(project_b_dir.join("rwv.toml"), manifest_b).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -1920,14 +1914,13 @@ fn create_workweave_cleans_up_on_bail() {
     // Point the manifest at a non-existent repo path so per-repo worktree
     // creation fails for every repo, causing the loop to bail.
     let project_dir = ws.join("projects/web-app");
-    let bad_manifest = r#"repositories:
-  github/org/missing:
-    type: git
-    url: file:///nonexistent/repo
-    version: main
-    role: owned
+    let bad_manifest = r#"[repositories."github/org/missing"]
+type = "git"
+url = "file:///nonexistent/repo"
+version = "main"
+role = "owned"
 "#;
-    std::fs::write(project_dir.join("rwv.yaml"), bad_manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), bad_manifest).unwrap();
 
     rwv()
         .args(["workweave", "web-app", "create", "retryme"])
@@ -2005,21 +1998,21 @@ fn make_workspace_two_repos(tmp: &std::path::Path, project: &str) -> std::path::
 
     // Manifest: repo1 (real) + repo2 (missing) — forces a partial create.
     let manifest = format!(
-        r#"repositories:
-  github/org/repo1:
-    type: git
-    url: file://{repo1}
-    version: main
-    role: owned
-  github/org/repo2:
-    type: git
-    url: file://{repo2_path}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo1"]
+type = "git"
+url = "file://{repo1}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/repo2"]
+type = "git"
+url = "file://{repo2_path}"
+version = "main"
+role = "owned"
 "#,
         repo1 = repo1.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
 }
 
@@ -2096,27 +2089,28 @@ fn make_workspace_three_repos(tmp: &std::path::Path, project: &str) -> std::path
     //   repo3 → success (registered)
     // Then bail fires, rollback must prune BOTH repo1 and repo3.
     let manifest = format!(
-        r#"repositories:
-  github/org/repo1:
-    type: git
-    url: file://{repo1}
-    version: main
-    role: owned
-  github/org/repo2:
-    type: git
-    url: file:///nonexistent/repo2
-    version: main
-    role: owned
-  github/org/repo3:
-    type: git
-    url: file://{repo3}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo1"]
+type = "git"
+url = "file://{repo1}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/repo2"]
+type = "git"
+url = "file:///nonexistent/repo2"
+version = "main"
+role = "owned"
+
+[repositories."github/org/repo3"]
+type = "git"
+url = "file://{repo3}"
+version = "main"
+role = "owned"
 "#,
         repo1 = repo1.display(),
         repo3 = repo3.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
 }
 
@@ -2177,21 +2171,21 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
 
     // First create: manifest with a bad repo — fails.
     let bad_manifest = format!(
-        r#"repositories:
-  github/org/repo1:
-    type: git
-    url: file://{repo1}
-    version: main
-    role: owned
-  github/org/missing:
-    type: git
-    url: file:///nonexistent/missing
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo1"]
+type = "git"
+url = "file://{repo1}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/missing"]
+type = "git"
+url = "file:///nonexistent/missing"
+version = "main"
+role = "owned"
 "#,
         repo1 = repo1.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &bad_manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &bad_manifest).unwrap();
 
     rwv()
         .args(["workweave", "web-app", "create", "retry-me"])
@@ -2201,16 +2195,15 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
 
     // Fix the manifest — only real repos remain.
     let good_manifest = format!(
-        r#"repositories:
-  github/org/repo1:
-    type: git
-    url: file://{repo1}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo1"]
+type = "git"
+url = "file://{repo1}"
+version = "main"
+role = "owned"
 "#,
         repo1 = repo1.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &good_manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &good_manifest).unwrap();
 
     // Second create (same name, no --replace-existing): must succeed because rollback
     // cleaned up all state from the first attempt.
@@ -2502,21 +2495,21 @@ fn workweave_delete_clean_succeeds_without_waivers() {
 }
 
 // ============================================================================
-// Workweave create reads working-tree rwv.yaml (uncommitted edits)
+// Workweave create reads working-tree rwv.toml (uncommitted edits)
 // ============================================================================
 
 #[test]
 fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     // make_workspace_with_project_repo commits the manifest. We then edit
-    // the working-tree rwv.yaml WITHOUT committing and verify that:
+    // the working-tree rwv.toml WITHOUT committing and verify that:
     //   (a) plain `create` refuses and names the dirty file
     //   (b) `create --capture-dirty` succeeds and the workweave sees the edit
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "uncommit-test");
 
-    // Append a comment to rwv.yaml in the primary's working tree, without
+    // Append a comment to rwv.toml in the primary's working tree, without
     // committing. The committed version still says no comment.
-    let primary_manifest = ws.join("projects/uncommit-test/rwv.yaml");
+    let primary_manifest = ws.join("projects/uncommit-test/rwv.toml");
     let original = std::fs::read_to_string(&primary_manifest).unwrap();
     let edited = format!("{original}# UNCOMMITTED-MARKER\n");
     std::fs::write(&primary_manifest, &edited).unwrap();
@@ -2536,8 +2529,8 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
         "expected 'uncommitted changes' in refusal message, got:\n{refuse_stderr}"
     );
     assert!(
-        refuse_stderr.contains("rwv.yaml"),
-        "refusal message should name the dirty file (rwv.yaml), got:\n{refuse_stderr}"
+        refuse_stderr.contains("rwv.toml"),
+        "refusal message should name the dirty file (rwv.toml), got:\n{refuse_stderr}"
     );
     assert!(
         refuse_stderr.contains("--capture-dirty"),
@@ -2574,11 +2567,11 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     );
 
     // The workweave's project worktree must have the UNCOMMITTED marker.
-    let ww_manifest = weaveroot.join("uncommit-test--ww-uncommit/projects/uncommit-test/rwv.yaml");
+    let ww_manifest = weaveroot.join("uncommit-test--ww-uncommit/projects/uncommit-test/rwv.toml");
     let ww_content = std::fs::read_to_string(&ww_manifest).unwrap();
     assert!(
         ww_content.contains("UNCOMMITTED-MARKER"),
-        "workweave's rwv.yaml should reflect the primary's uncommitted edit with --capture-dirty, got:\n{ww_content}"
+        "workweave's rwv.toml should reflect the primary's uncommitted edit with --capture-dirty, got:\n{ww_content}"
     );
 }
 
@@ -2840,17 +2833,16 @@ fn make_workspace_with_uncommitted_project(tmp: &Path, project: &str) -> std::pa
         .ok();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
-    // NOTE: rwv.yaml is NOT committed — no commit exists yet.
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    // NOTE: rwv.toml is NOT committed — no commit exists yet.
 
     ws
 }
@@ -2889,22 +2881,22 @@ fn make_workspace_with_uncommitted_manifest_repo(tmp: &Path, project: &str) -> s
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/good:
-    type: git
-    url: file://{good}
-    version: main
-    role: owned
-  github/org/empty:
-    type: git
-    url: file://{bad}
-    version: main
-    role: owned
+        r#"[repositories."github/org/good"]
+type = "git"
+url = "file://{good}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/empty"]
+type = "git"
+url = "file://{bad}"
+version = "main"
+role = "owned"
 "#,
         good = good_repo.display(),
         bad = bad_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     ws
 }
@@ -3157,22 +3149,22 @@ fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
     let project_dir = ws.join("projects/multi-hook");
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
-        r#"repositories:
-  github/org/repo1:
-    type: git
-    url: file://{r1}
-    version: main
-    role: owned
-  github/org/repo2:
-    type: git
-    url: file://{r2}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo1"]
+type = "git"
+url = "file://{r1}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/repo2"]
+type = "git"
+url = "file://{r2}"
+version = "main"
+role = "owned"
 "#,
         r1 = repo1.display(),
         r2 = repo2.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -3243,21 +3235,21 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
     let project_dir = ws.join("projects/locked-branch");
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest_content = format!(
-        r#"repositories:
-  github/org/repo1:
-    type: git
-    url: file://{r1}
-    version: main
-    role: owned
-  github/org/repo2:
-    type: git
-    url: file:///nonexistent/repo2
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo1"]
+type = "git"
+url = "file://{r1}"
+version = "main"
+role = "owned"
+
+[repositories."github/org/repo2"]
+type = "git"
+url = "file:///nonexistent/repo2"
+version = "main"
+role = "owned"
 "#,
         r1 = repo1.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), &manifest_content).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_content).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

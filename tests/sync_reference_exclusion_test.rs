@@ -175,15 +175,13 @@ fn make_primary(parent: &Path) -> Primary {
     .unwrap();
 
     let manifest = format!(
-        "repositories:\n\
-         \x20 {owned_path}:\n    type: git\n    url: file://{owned}\n    version: main\n    role: owned\n\
-         \x20 {ref_path}:\n    type: git\n    url: file://{reference}\n    version: main\n    role: reference\n",
+        "[repositories.\"{owned_path}\"]\ntype = \"git\"\nurl = \"file://{owned}\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"{ref_path}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
         owned_path = OWNED_PATH,
         owned = owned.display(),
         ref_path = REF_PATH,
         reference = reference.display(),
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
@@ -199,7 +197,7 @@ fn make_primary(parent: &Path) -> Primary {
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);

@@ -43,7 +43,7 @@ fn rwv() -> Command {
 }
 
 /// Create a minimal workspace at `parent/<name>` with `github/` + `projects/`
-/// markers and a project directory with an `rwv.yaml` manifest.
+/// markers and a project directory with an `rwv.toml` manifest.
 ///
 /// The workspace root is git-initialised so that git operations invoked by
 /// `rwv` subprocesses (e.g. `git init`, `git worktree`) are anchored to the
@@ -64,7 +64,7 @@ fn make_workspace_with_project(
     std::fs::create_dir_all(&project_dir).unwrap();
 
     // Minimal manifest (empty repos map).
-    std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
     // Bulletproofing: git-init the workspace root itself so that any git
     // command run by the rwv subprocess is anchored at `ws`, not at whatever
@@ -82,7 +82,7 @@ fn make_workspace_with_project(
     git_run_silent(&["init", "--initial-branch=main"], &project_dir);
     git_run_silent(&["config", "user.email", "test@test.com"], &project_dir);
     git_run_silent(&["config", "user.name", "Test"], &project_dir);
-    git_run_silent(&["add", "rwv.yaml"], &project_dir);
+    git_run_silent(&["add", "rwv.toml"], &project_dir);
     git_run_silent(&["commit", "-m", "init"], &project_dir);
 
     std::fs::write(ws.join(".rwv-active"), format!("{project_name}\n")).unwrap();
@@ -717,8 +717,8 @@ mod cargo {
         add_cargo_trigger(&ws, repo_path, "crate-b");
 
         // Write the manifest referencing two repos.
-        let manifest = "repositories:\n  github/acme/crate-a:\n    type: git\n    url: https://github.com/acme/crate-a.git\n    version: main\n    role: owned\n  github/acme/crate-b:\n    type: git\n    url: https://github.com/acme/crate-b.git\n    version: main\n    role: owned\n";
-        std::fs::write(proj_dir.join("rwv.yaml"), manifest).unwrap();
+        let manifest = "[repositories.\"github/acme/crate-a\"]\ntype = \"git\"\nurl = \"https://github.com/acme/crate-a.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/crate-b\"]\ntype = \"git\"\nurl = \"https://github.com/acme/crate-b.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+        std::fs::write(proj_dir.join("rwv.toml"), manifest).unwrap();
 
         // Also put crate-a on disk with a Cargo.toml so the integration detects it.
         add_cargo_trigger(&ws, "github/acme/crate-a", "crate-a");
@@ -953,8 +953,8 @@ mod go_work {
         std::fs::write(&int_file, hand_authored).unwrap();
 
         // Update manifest to include module-a before add.
-        let manifest = "repositories:\n  github/org/module-a:\n    type: git\n    url: https://github.com/org/module-a.git\n    version: main\n    role: owned\n";
-        std::fs::write(proj_dir.join("rwv.yaml"), manifest).unwrap();
+        let manifest = "[repositories.\"github/org/module-a\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+        std::fs::write(proj_dir.join("rwv.toml"), manifest).unwrap();
 
         // Add second repo: triggers re-activation.
         rwv()

@@ -331,19 +331,8 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
     // workweave_test.rs).
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let rwv_yaml = "\
-repositories:\n  \
-  github/chatly/protocol:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/protocol.git\n    \
-    version: main\n    \
-    role: owned\n  \
-  github/chatly/server:\n    \
-    type: git\n    \
-    url: https://github.com/chatly/server.git\n    \
-    version: main\n    \
-    role: owned\n";
-    std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
     git_init_with_commit(&project_dir);
 
     // ------------------------------------------------------------------

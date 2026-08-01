@@ -2,7 +2,7 @@
 //! `docs/adjacent-tools.md` ("CI multi-repo checkout" and "Devcontainers /
 //! Codespaces") actually run.
 //!
-//! Both recipes land the *project* repo (the one carrying `rwv.yaml`) under
+//! Both recipes land the *project* repo (the one carrying `rwv.toml`) under
 //! `projects/<name>/` — via `actions/checkout@v4`'s `path:` in CI, via
 //! `workspaceMount`/`workspaceFolder` in a devcontainer — then, from the
 //! parent directory:
@@ -87,7 +87,7 @@ fn init_bare_repo_with_commit(path: &Path, files: &[(&str, &str)]) -> String {
 }
 
 /// Build the fixtures shared by both recipe tests: a bare "dependency" repo
-/// and a bare "project" repo (`web-app`) carrying `rwv.yaml` (referencing
+/// and a bare "project" repo (`web-app`) carrying `rwv.toml` (referencing
 /// the dependency) and `rwv.lock` (pinning it to the dependency's HEAD SHA).
 ///
 /// `<tmp>/ws/projects/web-app` is a real git checkout of the project repo —
@@ -103,8 +103,8 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
     let dep_url = format!("file://{}", dep_bare.display());
 
     let project_bare = tmp.join("web-app.git");
-    let yaml = format!(
-        "repositories:\n  local/org/dep:\n    type: git\n    url: {dep_url}\n    version: main\n    role: owned\n"
+    let manifest_toml = format!(
+        "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
     // Round-trips through the real parser + serializer so this fixture is
     // byte-identical to what `rwv lock` itself would write for the same
@@ -117,7 +117,7 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
     )
     .unwrap();
     lock.push('\n');
-    init_bare_repo_with_commit(&project_bare, &[("rwv.yaml", &yaml), ("rwv.lock", &lock)]);
+    init_bare_repo_with_commit(&project_bare, &[("rwv.toml", &manifest_toml), ("rwv.lock", &lock)]);
 
     let workspace = tmp.join("ws");
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
@@ -222,10 +222,10 @@ fn shipped_recipe_without_nesting_fails() {
     let dep_url = format!("file://{}", dep_bare.display());
 
     let project_bare = tmp.path().join("web-app.git");
-    let yaml = format!(
-        "repositories:\n  local/org/dep:\n    type: git\n    url: {dep_url}\n    version: main\n    role: owned\n"
+    let manifest_toml = format!(
+        "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    init_bare_repo_with_commit(&project_bare, &[("rwv.yaml", &yaml)]);
+    init_bare_repo_with_commit(&project_bare, &[("rwv.toml", &manifest_toml)]);
 
     // actions/checkout@v4 with no `path:` — the checkout IS the runner
     // directory, not a workspace, and not empty (it has a `.git`).

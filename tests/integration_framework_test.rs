@@ -1323,7 +1323,7 @@ mod fo_cnpjy_3 {
         let project_dir = ws.join("projects/p");
         std::fs::create_dir_all(&project_dir).unwrap();
         // Minimal manifest — no repos needed for this test.
-        std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+        std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
         // Hand-edit a managed file (project-dir source — what activate
         // would write under intent mode if our fake authored content).
@@ -1370,7 +1370,7 @@ mod fo_cnpjy_3 {
         std::fs::create_dir_all(ws.join("github")).unwrap();
         let project_dir = ws.join("projects/p");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+        std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
         // Bootstrap: ensure .rwv-active is set so subsequent activate has
         // a coherent previously-active project's owned set to combine in
@@ -1514,7 +1514,7 @@ mod fo_cnpjy_3 {
         std::fs::create_dir_all(ws.join("github")).unwrap();
         let project_dir = ws.join("projects/p");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+        std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
         // We can't easily plug a fake integration into the builtin set
         // without restructuring `activate_at` to accept a custom set

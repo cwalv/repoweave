@@ -136,10 +136,9 @@ fn build_workspace() -> Fixture {
     std::fs::create_dir_all(&project_dir).unwrap();
     let bare_url = bare.to_str().unwrap();
     std::fs::write(
-        project_dir.join("rwv.yaml"),
+        project_dir.join("rwv.toml"),
         format!(
-            "repositories:\n  {repo_path}:\n    type: git\n    url: {bare_url}\n    \
-             version: main\n    role: owned\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();
@@ -377,7 +376,7 @@ fn update_counts_sha_deltas_not_repos_visited() {
 fn add_workweave_without_slot(fx: &Fixture, name: &str) -> PathBuf {
     let dir = fx.workspace.join(".workweaves").join(name);
     std::fs::create_dir_all(dir.join("projects/my-app")).unwrap();
-    for f in ["rwv.yaml", "rwv.lock"] {
+    for f in ["rwv.toml", "rwv.lock"] {
         std::fs::copy(
             fx.workspace.join("projects/my-app").join(f),
             dir.join("projects/my-app").join(f),

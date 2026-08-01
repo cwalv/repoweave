@@ -58,16 +58,15 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     ws
 }
@@ -304,16 +303,15 @@ fn workweave_same_name_different_projects_coexist() {
     std::fs::create_dir_all(&project_b_dir).unwrap();
     let repo_path = ws.join("github/org/repo");
     let manifest_b = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo}
-    version: main
-    role: owned
+        r#"[repositories."github/org/repo"]
+type = "git"
+url = "file://{repo}"
+version = "main"
+role = "owned"
 "#,
         repo = repo_path.display()
     );
-    std::fs::write(project_b_dir.join("rwv.yaml"), manifest_b).unwrap();
+    std::fs::write(project_b_dir.join("rwv.toml"), manifest_b).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

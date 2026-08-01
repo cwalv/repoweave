@@ -58,19 +58,8 @@ fn make_workspace(parent: &Path) -> PathBuf {
     // static-files declares `.claude`; disable the default integrations that
     // surface files unconditionally so the surfacing union is exactly
     // `.claude` and the doctor output is deterministic.
-    let manifest = "\
-repositories: {}
-integrations:
-  static-files:
-    enabled: true
-    files:
-      - .claude
-  vscode-workspace:
-    enabled: false
-  go-work:
-    enabled: false
-";
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    let manifest = "[repositories]\n\n[integrations.static-files]\nenabled = true\nfiles = [\".claude\"]\n\n[integrations.vscode-workspace]\nenabled = false\n\n[integrations.go-work]\nenabled = false\n";
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Author the declared static file in the project dir.
     std::fs::write(project_dir.join(".claude"), "claude config\n").unwrap();
 

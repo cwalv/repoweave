@@ -109,11 +109,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     .unwrap();
 
     let manifest = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display()
     );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
@@ -128,7 +128,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);

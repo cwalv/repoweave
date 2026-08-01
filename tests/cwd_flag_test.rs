@@ -29,14 +29,14 @@ fn rwv() -> assert_cmd::Command {
 /// Layout:
 ///   {tmp}/ws/            -- workspace root (has `projects/` and `github/`)
 ///   {tmp}/ws/.rwv-active -- active project name
-///   {tmp}/ws/projects/{project}/rwv.yaml
+///   {tmp}/ws/projects/{project}/rwv.toml
 fn make_minimal_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     let ws = tmp.join("ws");
     std::fs::create_dir_all(ws.join("projects").join(project)).unwrap();
     std::fs::create_dir_all(ws.join("github")).unwrap();
     std::fs::write(
-        ws.join("projects").join(project).join("rwv.yaml"),
-        "repositories: {}\n",
+        ws.join("projects").join(project).join("rwv.toml"),
+        "[repositories]\n",
     )
     .unwrap();
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();
@@ -165,9 +165,9 @@ fn init_c_flag_bootstraps_in_addressed_directory() {
         target
             .join("projects")
             .join("my-project")
-            .join("rwv.yaml")
+            .join("rwv.toml")
             .is_file(),
-        "rwv.yaml must exist in the addressed project dir"
+        "rwv.toml must exist in the addressed project dir"
     );
     assert!(
         !std::env::temp_dir().join("projects").exists(),

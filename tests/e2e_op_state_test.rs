@@ -84,13 +84,13 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
+    let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        manifest_toml.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
     }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
@@ -128,7 +128,7 @@ struct Workspace {
 /// Build a workspace:
 ///   root/
 ///     github/chatly/server/   (git repo, initial commit)
-///     projects/web-app/       (git repo, rwv.yaml + rwv.lock committed)
+///     projects/web-app/       (git repo, rwv.toml + rwv.lock committed)
 fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     let root = parent.join(name);
     std::fs::create_dir_all(root.join("github/chatly")).unwrap();
@@ -147,7 +147,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     git(
-        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
