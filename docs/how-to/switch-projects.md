@@ -12,7 +12,7 @@ This:
 
 1. Updates `.rwv-active` to `mobile-app`.
 2. Removes ecosystem-file symlinks at the weave directory.
-3. Regenerates ecosystem files in `projects/mobile-app/` from its `rwv.yaml`.
+3. Regenerates ecosystem files in `projects/mobile-app/` from its `rwv.toml`.
 4. Symlinks them to the weave directory.
 
 `.rwv-active` is the single source of truth for which project is active within a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read `.rwv-active` and operate on the active project regardless of CWD.

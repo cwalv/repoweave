@@ -474,39 +474,39 @@ fn revision_id_serialize_prefers_display() {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         Some("v1.0.0".to_string()),
     );
-    let yaml = serde_yaml::to_string(&r).unwrap();
+    let json = serde_json::to_string(&r).unwrap();
     // Single transparent string; serializing yields the display form.
-    assert_eq!(yaml.trim(), "v1.0.0");
+    assert_eq!(json, "\"v1.0.0\"");
 }
 
 #[test]
 fn revision_id_serialize_canonical_when_no_display() {
     let r = ResolvedRevisionId::from_canonical("abc123", None);
-    let yaml = serde_yaml::to_string(&r).unwrap();
-    assert_eq!(yaml.trim(), "abc123");
+    let json = serde_json::to_string(&r).unwrap();
+    assert_eq!(json, "\"abc123\"");
 }
 
 #[test]
-fn raw_revision_id_deserializes_yaml_scalar_verbatim() {
-    // Post-split: lock-file YAML scalars deserialize into `RawRevisionId`,
+fn raw_revision_id_deserializes_scalar_verbatim() {
+    // Post-split: lock-file scalars deserialize into `RawRevisionId`,
     // not `ResolvedRevisionId`. `ResolvedRevisionId` has no `Deserialize`
     // impl on purpose — resolution to a canonical SHA is path-rooted and
     // cannot happen at the deserializer layer.
-    let r: repoweave::vcs::RawRevisionId = serde_yaml::from_str("v1.0.0").unwrap();
+    let r: repoweave::vcs::RawRevisionId = serde_json::from_str("\"v1.0.0\"").unwrap();
     assert_eq!(r.as_str(), "v1.0.0");
 }
 
 #[test]
-fn revision_id_round_trip_yaml_string() {
+fn revision_id_round_trip_scalar() {
     let original = ResolvedRevisionId::from_canonical(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         Some("v1.0.0".to_string()),
     );
-    let yaml = serde_yaml::to_string(&original).unwrap();
+    let json = serde_json::to_string(&original).unwrap();
     // Round-trip through the parse boundary: a resolved value serializes
     // as a single scalar, and re-parsing it lands in `RawRevisionId`
     // (deserialize only ever yields raw — re-resolution requires a repo).
-    let restored: repoweave::vcs::RawRevisionId = serde_yaml::from_str(&yaml).unwrap();
+    let restored: repoweave::vcs::RawRevisionId = serde_json::from_str(&json).unwrap();
     assert_eq!(restored.as_str(), "v1.0.0");
 }
 
@@ -601,13 +601,13 @@ fn raw_revision_id_equality_is_string_identity() {
 }
 
 #[test]
-fn raw_revision_id_roundtrips_through_yaml() {
-    // The parse boundary: a raw value serializes to a single YAML scalar
-    // and deserializes back into a RawRevisionId with the original string.
+fn raw_revision_id_roundtrips_through_the_lock_codec() {
+    // The parse boundary: a raw value serializes to a single scalar and
+    // deserializes back into a RawRevisionId with the original string.
     use repoweave::vcs::RawRevisionId;
     let original = RawRevisionId::new("v0.3.4");
-    let yaml = serde_yaml::to_string(&original).unwrap();
-    let restored: RawRevisionId = serde_yaml::from_str(&yaml).unwrap();
+    let json = serde_json::to_string(&original).unwrap();
+    let restored: RawRevisionId = serde_json::from_str(&json).unwrap();
     assert_eq!(restored, original);
     assert_eq!(restored.as_str(), "v0.3.4");
 }

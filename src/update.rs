@@ -545,7 +545,7 @@ fn advance_one(
                 "{repo}: branch '{branch}' does not resolve on the remote \
                  — renamed or deleted upstream, or `version:` was never a \
                  branch (it tracks a branch only; it cannot pin a tag or \
-                 SHA). To fix: update rwv.yaml's `version:` field to the \
+                 SHA). To fix: update rwv.toml's `version:` field to the \
                  current branch name.",
                 repo = repo_path.as_str(),
             ));

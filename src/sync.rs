@@ -6922,7 +6922,7 @@ mod tests {
         // We replicate the format string here so the test breaks if the wording
         // is changed to drop the recovery hint.
         let fake_dir = Path::new("/ws/projects/web-app");
-        let fake_err = "YAML parse error: invalid mapping";
+        let fake_err = "TOML parse error: expected `.`, `=`";
         let msg = format!(
             "failed to reload project manifest after Phase 1' ({fake_err}).\n\
              \n\

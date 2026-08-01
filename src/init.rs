@@ -1,12 +1,12 @@
 //! Project initialization: `rwv init`.
 //!
 //! Creates a new project directory under `projects/`, runs `git init`,
-//! writes an empty `rwv.yaml`, and auto-activates the project. Optionally
+//! writes an empty `rwv.toml`, and auto-activates the project. Optionally
 //! configures a git remote when `--provider` is given.
 //!
 //! `rwv init --adopt SOURCE` clones an existing repo as a project. The source
 //! can be a URL or a shorthand (`owner/repo` or `registry/owner/repo`). The
-//! cloned repo is placed under `projects/{name}/`, an `rwv.yaml` is written if
+//! cloned repo is placed under `projects/{name}/`, an `rwv.toml` is written if
 //! missing, and the project is activated.
 //!
 //! ## Empty-directory bootstrap
@@ -79,7 +79,7 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 /// - Resolves the workspace root from `cwd`.
 /// - Creates `projects/{name}/`.
 /// - Runs `git init` in the new directory.
-/// - Writes an empty `rwv.yaml` (`repositories: {}`).
+/// - Writes an empty `rwv.toml` (`repositories: {}`).
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
 /// - Activates the project (writes `.rwv-active` and generates ecosystem files).
 pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Result<()> {
@@ -205,7 +205,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 /// 2. Resolves the workspace root from `cwd`.
 /// 3. Determines the clone URL and project name from `source`.
 /// 4. Clones the repo to `projects/{name}/` (skips if already exists).
-/// 5. Writes an empty `rwv.yaml` if the clone does not already contain one.
+/// 5. Writes an empty `rwv.toml` if the clone does not already contain one.
 /// 6. Activates the project.
 pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
     // Same bootstrap-then-first-resolve pattern as `init` above.

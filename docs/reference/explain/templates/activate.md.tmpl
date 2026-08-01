@@ -70,7 +70,7 @@ rwv activate <project> [--no-install]
 ```
 
 - `<project>` — project name to activate. Must have a corresponding directory
-  at `projects/<project>/` with a valid `rwv.yaml`.
+  at `projects/<project>/` with a valid `rwv.toml`.
 - `--no-install` — skip integration install hooks (`npm install`, `uv sync`,
   etc.) for a fast context-switch. Useful when you are only switching to a
   different project's editors and tools, and the install state is already
@@ -126,9 +126,9 @@ cat .rwv-active
   primitive scoped to the workweave directory without re-selecting the
   project.
 - *project directory not found* — `projects/<project>/` does not exist or
-  has no valid `rwv.yaml`. Verify the project name.
+  has no valid `rwv.toml`. Verify the project name.
 - *integration activate-hook error* — an install command (`npm install`,
   `uv sync`, etc.) returned non-zero. Fix the integration issue, then rerun.
   `.rwv-active` is not written when any hook fails at error severity.
-- *manifest parse failure* — `rwv.yaml` could not be loaded; verify the file
+- *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
   is valid YAML.

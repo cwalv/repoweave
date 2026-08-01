@@ -12,7 +12,7 @@ A weave holds two kinds of subdirectories, and the path tells you which is which
 
 | Kind | Path | Purpose |
 |---|---|---|
-| **Project** | `projects/{name}/` | Coordination. `rwv.yaml`, `rwv.lock`, docs. No importable code. |
+| **Project** | `projects/{name}/` | Coordination. `rwv.toml`, `rwv.lock`, docs. No importable code. |
 | **Manifest repo** | `{registry}/{owner}/{repo}/` | Code. Build tools look here. Other repos import from here. |
 
 The project repo *governs* the workspace: it carries the manifest (which repos, with what roles), the lock (pinned revisions), and any cross-cutting docs that don't belong to any single repo (architecture, decision records, onboarding notes). It is a normal git repo with normal git history — but it doesn't contain importable code, which keeps its history pure: the project's coordination story isn't entangled with any one library's revision log.
@@ -41,7 +41,7 @@ Every repo in a project has a **role**. The role describes the repo's relationsh
 | `dependency` | Medium | You build against it. Changes need upstream acceptance. |
 | `reference` | High | Cloned for reading/study. No local changes. |
 
-Roles are *per-project*. The same repo can be `owned` in one project and `dependency` in another. The active project's `rwv.yaml` determines which role applies.
+Roles are *per-project*. The same repo can be `owned` in one project and `dependency` in another. The active project's `rwv.toml` determines which role applies.
 
 The role is doing three jobs at once:
 
@@ -79,14 +79,18 @@ See [switch projects](../../how-to/switch-projects.md) for the operational recip
 
 The lock file pins each repo to an exact revision. When a tag exists at HEAD, the lock records the tag name (human-readable, auditable); otherwise the revision ID:
 
-```yaml
-# projects/web-app/rwv.lock
-repositories:
-  github/chatly/protocol:
-    version: v1.5.0              # tagged — released
-  github/chatly/server:
-    version: e1f2a3b4c5d6...     # untagged — unreleased
+`projects/web-app/rwv.lock`, with the entry fields not under discussion elided:
+
+```json
+{
+  "repositories": {
+    "github/chatly/protocol": { "version": "v1.5.0" },
+    "github/chatly/server": { "version": "e1f2a3b4c5d6..." }
+  }
+}
 ```
+
+The first is tagged, so it is released; the second carries a revision ID and is not.
 
 The format encodes release state per repo: tag = released, revision ID = unreleased. Reading `rwv.lock` tells you what's published and what isn't.
 
@@ -116,7 +120,7 @@ Integrations (`npm-workspaces`, `go-work`, `cargo-workspace`, `uv-workspace`, `p
 
 ## The shape, in one paragraph
 
-A project repo lives at `projects/{name}/` and carries `rwv.yaml` (which repos, with what roles), `rwv.lock` (pinned revisions), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. One project is *active* in a workspace at a time (`.rwv-active`); activating merges managed keys into ecosystem workspace files and symlinks them to the workspace root, preserving any user-authored content. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
+A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned revisions), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. One project is *active* in a workspace at a time (`.rwv-active`); activating merges managed keys into ecosystem workspace files and symlinks them to the workspace root, preserving any user-authored content. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
 
 ## Related
 

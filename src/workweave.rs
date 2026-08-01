@@ -1377,7 +1377,7 @@ pub fn create_workweave(
     // Only the project directory is checked here — manifest-repo worktrees are
     // forked at HEAD (committed state) by `git worktree add`, so dirty state
     // in those repos is not captured. The project dir is special because we
-    // explicitly overlay its working-tree `rwv.yaml`/`rwv.lock` below.
+    // explicitly overlay its working-tree `rwv.toml`/`rwv.lock` below.
     if !capture_dirty {
         let project_dir = project_dir(source_root, project.as_str());
         if project_vcs.is_repo(&project_dir) {
@@ -1647,7 +1647,7 @@ pub fn create_workweave(
 
     // Create worktree for the project repo (if it is a git repo).
     // If the project directory exists but is not a git repo, copy it into the
-    // workweave so that activate_workweave can find rwv.yaml there.
+    // workweave so that activate_workweave can find rwv.toml there.
     let project_wt_dest = project_dir(&workweave_dir, project.as_str());
     let project_dir = project_dir(source_root, project.as_str());
     if project_vcs.is_repo(&project_dir) {
@@ -1716,18 +1716,18 @@ pub fn create_workweave(
             }
         }
     } else if project_dir.exists() {
-        // Project dir is not a git repo — copy it so activate has access to rwv.yaml.
+        // Project dir is not a git repo — copy it so activate has access to rwv.toml.
         copy_dir_recursive(&project_dir, &project_wt_dest)?;
     }
 
-    // The project worktree above was checked out from a ref, so its `rwv.yaml`
+    // The project worktree above was checked out from a ref, so its `rwv.toml`
     // is the last committed version — any uncommitted edits in source_root's
     // working tree were dropped. Overlay the source's
-    // working-tree `rwv.yaml` (and `rwv.lock` for completeness) so the
+    // working-tree `rwv.toml` (and `rwv.lock` for completeness) so the
     // workweave captures the operator's in-flight state. Warn loudly when
     // we're doing this so dirty creates don't surprise.
     //
-    // Limited to `rwv.yaml` / `rwv.lock` deliberately: these are the files
+    // Limited to `rwv.toml` / `rwv.lock` deliberately: these are the files
     // that change workweave behavior (manifest = what worktrees to create,
     // workweave config; lock = lockfile shared with downstream). Other
     // uncommitted project files remain at their committed state, matching

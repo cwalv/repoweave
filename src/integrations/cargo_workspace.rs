@@ -135,7 +135,7 @@
 //! Opted-out repos are dropped from `members`. (The pre-port behavior of
 //! emitting `# excluded: <path> (opted out)` comments above the `[workspace]`
 //! block is gone — the TomlDoc helper authors keys, not free-floating
-//! comments. Operators see exclusions in `rwv.yaml`; surfacing them via
+//! comments. Operators see exclusions in `rwv.toml`; surfacing them via
 //! `check()` is a separate concern.)
 //!
 //! Opt-out keys that don't match any active Rust repo are silently ignored
@@ -316,7 +316,7 @@ impl CargoWorkspace {
     /// under `workspace_root`.
     ///
     /// The complement of [`has_active_cargo_work`](Self::has_active_cargo_work)'s
-    /// second arm: that arm counts a repo as active cargo work from `rwv.yaml`
+    /// second arm: that arm counts a repo as active cargo work from `rwv.toml`
     /// alone, no clone required, which is what makes this integration live
     /// during an `init --adopt` (the adopt clones only the project repo). The
     /// gate therefore admits workspaces whose members are not on disk, while
@@ -463,7 +463,7 @@ impl CargoWorkspace {
     /// a repo with 85 crates under one nested workspace surfaces version
     /// skew without any per-repo config). Opt-outs are respected.
     ///
-    /// **Explicit config override**: `members.<repo>` in `rwv.yaml` always
+    /// **Explicit config override**: `members.<repo>` in `rwv.toml` always
     /// wins over auto-enumeration. This preserves the rvtty-style use case
     /// (hand-listed sub-paths, no root `[workspace]`) and lets operators
     /// narrow or override the auto-detected set without touching each crate.
@@ -559,7 +559,7 @@ impl CargoWorkspace {
         ));
 
         if cfg.workspace_package {
-            // The intended behaviour is to surface `rwv.yaml`
+            // The intended behaviour is to surface `rwv.toml`
             // `project.{license, authors, description, repository, ...}` into
             // `[workspace.package]`. The Manifest type does not yet carry a
             // `project` section, so until that lands the opt-in writes an
@@ -804,7 +804,7 @@ impl Integration for CargoWorkspace {
                 "cargo generate-lockfile failed (exit {status}); \
                  if the error names duplicate crate names across workspace members, \
                  resolve by one of: (a) opt a repo out via \
-                 `integrations.cargo-workspace.exclude` in rwv.yaml, or (b) use \
+                 `integrations.cargo-workspace.exclude` in rwv.toml, or (b) use \
                  `integrations.cargo-workspace.members.<repo>` with an `include:` \
                  list to contribute sub-paths instead of the repo root"
             );
@@ -870,7 +870,7 @@ impl Integration for CargoWorkspace {
     }
 
     /// Verify that the on-disk managed and generated files reflect the current
-    /// intent (`rwv.yaml` membership configuration). Called by `rwv doctor` and
+    /// intent (`rwv.toml` membership configuration). Called by `rwv doctor` and
     /// context verbs; **read-only** — never authors content.
     ///
     /// Two axes:
@@ -916,7 +916,7 @@ impl Integration for CargoWorkspace {
                 self.name(),
                 &ctx.output_dir.join("Cargo.toml"),
                 &Self::deactivate_owned_keys(),
-                "rwv.yaml declares no cargo members, so [workspace] no longer \
+                "rwv.toml declares no cargo members, so [workspace] no longer \
                  belongs to rwv.",
             ));
         }
@@ -1075,7 +1075,7 @@ impl CargoWorkspace {
             &members,
             "Cut over manually by removing [workspace] from the file \
              or by exercising the intent-mode merge",
-            "on-disk [workspace] content differs from rwv.yaml config.",
+            "on-disk [workspace] content differs from rwv.toml config.",
         ))
     }
 
@@ -1235,7 +1235,7 @@ impl CargoWorkspace {
              marker to the intended `[patch.<registry>].<crate>` keys \
              or by exercising the intent-mode merge",
             "on-disk `[patch.*]` entries in .cargo/config.toml differ \
-             from the set derived from rwv.yaml.",
+             from the set derived from rwv.toml.",
         ))
     }
 
@@ -2419,10 +2419,10 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
     }
     msg.push_str("\nresolve by one of:\n");
     msg.push_str("  - remove the nested [workspace] from the repo's Cargo.toml\n");
-    msg.push_str("  - disable the cargo-workspace integration entirely in rwv.yaml\n");
+    msg.push_str("  - disable the cargo-workspace integration entirely in rwv.toml\n");
     msg.push_str(
         "  - opt this repo out (per-repo) by adding its path to\n    \
-         integrations.cargo-workspace.exclude in rwv.yaml\n",
+         integrations.cargo-workspace.exclude in rwv.toml\n",
     );
     msg.push_str(
         "  - for repos with sub-package layouts (no root [workspace] but\n    \

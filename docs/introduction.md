@@ -2,7 +2,7 @@
 
 **repoweave** coordinates work across multiple repos that share a project. It gives you:
 
-- **A committable manifest and lock.** `rwv.yaml` says which repos belong; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD`.
+- **A committable manifest and lock.** `rwv.toml` says which repos belong; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD`.
 - **One command reproduces the workspace.** `rwv fetch <url>` clones the project and every repo it lists, generates ecosystem workspace files where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](./adjacent-tools.md).
 - **A natural home for cross-cutting artifacts that don't quite fit anywhere else.** Operational scripts, k8s manifests, ADRs, demos, release notes, devcontainer configs, `.mise.toml` toolchain pins, Nix flakes — they live in the project repo without contaminating any single library's history, and they come along on every `rwv fetch`.
 - **Isolated parallel work via workweaves.** Worktree-derived sandboxed copies of the whole workspace. Use them for feature branches, PR review, or agent sandboxes; the primary weave stays undisturbed.
@@ -11,7 +11,7 @@
 
 The repos themselves stay independent — separately ownable, with normal git history. repoweave is a coordination layer, not a monorepo migration. You still commit and push per repo; the project lock and ecosystem wiring make that feel less expensive than it usually does.
 
-The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.yaml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, reproducible workspace.
+The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.toml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, reproducible workspace.
 
 ## Core vocabulary
 
@@ -19,8 +19,8 @@ Five terms recur throughout the docs:
 
 - **weave** — a repoweave workspace; a directory containing repos and projects.
 - **workweave** — a worktree-derived sandbox of a weave (isolated parallel cross-repo work).
-- **project** — the small coordination repo under `projects/<name>/`, carrying `rwv.yaml` and `rwv.lock`.
-- **manifest repo** — a repo listed in a project's `rwv.yaml`. The work surfaces; regular clones at `<registry>/<owner>/<repo>/`.
+- **project** — the small coordination repo under `projects/<name>/`, carrying `rwv.toml` and `rwv.lock`.
+- **manifest repo** — a repo listed in a project's `rwv.toml`. The work surfaces; regular clones at `<registry>/<owner>/<repo>/`.
 - **lock** (`rwv.lock`) — pins each manifest repo to a specific revision. Derived from manifest-repo tips; never edited by hand.
 
 For the full vocabulary, see [reference/glossary](./reference/glossary.md).

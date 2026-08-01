@@ -75,7 +75,7 @@ rwv status --json | jq -r '.repos[] | select(.role == "fork") | .absolute_path'
 
 - *workspace could not be resolved* — `cwd` is not inside a weave or
   workweave. Run from inside the workspace tree.
-- *manifest parse failure* — a project's `rwv.yaml` is malformed; fix the
+- *manifest parse failure* — a project's `rwv.toml` is malformed; fix the
   YAML and retry.
 - mid-op state populated (`merge`, `rebase`, `cherry-pick`, etc.) — the repo
   is in the middle of a git operation. Resolve it before retrying mutating

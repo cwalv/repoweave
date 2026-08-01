@@ -220,7 +220,7 @@ impl Integration for GoWork {
                 self.name(),
                 &ctx.output_dir.join("go.work"),
                 &Self::owned_keys(),
-                "rwv.yaml declares no go members, so the use block no longer \
+                "rwv.toml declares no go members, so the use block no longer \
                  belongs to rwv.",
             ));
         }
@@ -265,7 +265,7 @@ impl Integration for GoWork {
             Some(&on_disk),
             &expected,
             "Cut over manually or add the '// managed by repoweave' marker",
-            "on-disk use entries differ from rwv.yaml config.",
+            "on-disk use entries differ from rwv.toml config.",
         ))
     }
 

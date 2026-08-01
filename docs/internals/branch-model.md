@@ -175,7 +175,7 @@ now produces a finding, pinned by
 
 ### 1.3 L2 — the canonical member store (`<weave>/<repo_path>`): a branch is a tracking declaration
 
-A member repo's `version:` field in `rwv.yaml` is typed `RefName`
+A member repo's `version:` field in `rwv.toml` is typed `RefName`
 (`manifest.rs:573`) `[V]` and is **branch-only by design**. This is a settled
 decision, restated here so it need not be looked up:
 
@@ -1955,7 +1955,7 @@ not wait for this design:
 
 - **Fixed since the previous citation base.** `default_branch` fabricated
   `"main"` on any failure *and* on a malformed symref, and its return value
-  was written into `rwv.yaml` verbatim as `version:` by three `rwv add` call
+  was written into `rwv.toml` verbatim as `version:` by three `rwv add` call
   sites, where `update` then resolved `origin/main` and failed forever. The
   method has been **deleted from `GitVcs` and from the `Vcs` trait**, so the
   fabricating shape cannot be reintroduced by a future implementor `[V]`. The

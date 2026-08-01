@@ -16,7 +16,7 @@ rwv fetch chatly/web-app
 What happens:
 
 1. Clones `projects/web-app/` from `https://github.com/chatly/web-app.git`.
-2. Reads `projects/web-app/rwv.yaml` to get the repo list.
+2. Reads `projects/web-app/rwv.toml` to get the repo list.
 3. Clones each repo to its canonical path: `github/chatly/server/`, `github/chatly/web/`, `github/chatly/protocol/`.
 4. Activates `web-app` — generates ecosystem workspace files in `projects/web-app/` and symlinks them to `~/work/`.
 5. Writes `~/work/.rwv-active` containing `web-app`.
@@ -29,7 +29,7 @@ The result:
 ├── github/chatly/web/                # regular clone
 ├── github/chatly/protocol/           # regular clone
 ├── projects/web-app/                 # project repo (clone)
-│   ├── rwv.yaml
+│   ├── rwv.toml
 │   ├── rwv.lock
 │   └── Cargo.toml                    # generated workspace file
 ├── Cargo.toml -> projects/web-app/Cargo.toml   # symlink

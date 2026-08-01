@@ -116,7 +116,7 @@ pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
 
 /// Regenerate `project`'s integration content in **intent mode**: it is
 /// (re)authored into `projects/<project>/`, for the operator to commit
-/// alongside the `rwv.yaml` / `rwv.lock` change that motivated the verb.
+/// alongside the `rwv.toml` / `rwv.lock` change that motivated the verb.
 ///
 /// This does **not** select `project`: `.rwv-active` is left untouched, and
 /// the root's surfacing is refreshed only when `project` is already the
@@ -268,7 +268,7 @@ fn activate_at(
             //   - run_checks: environment/config preconditions (cargo not on
             //     PATH, declared static file missing, etc.). Same call as
             //     `rwv doctor`. Surfaces as warnings; does not bail.
-            //   - run_verifications: drift between intent (rwv.yaml/.lock)
+            //   - run_verifications: drift between intent (rwv.toml/.lock)
             //     and on-disk managed/generated content. Empty by default;
             //     ports override `verify()` to opt in.
             // Context verbs **never author content**, so even Severity::Error

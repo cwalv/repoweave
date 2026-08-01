@@ -43,7 +43,7 @@ For repos that are `ahead` (local commits exist beyond the lock), the correct re
 
 ## Repair — re-materialize missing or deleted clones
 
-When `rwv status` shows `[missing]` and `rwv doctor` reports a `dangling reference`, the clone directory is gone. `rwv fetch` with no source re-clones every absent manifest member from the URL in `rwv.yaml` and checks out the revision pinned by the lock:
+When `rwv status` shows `[missing]` and `rwv doctor` reports a `dangling reference`, the clone directory is gone. `rwv fetch` with no source re-clones every absent manifest member from the URL in `rwv.toml` and checks out the revision pinned by the lock:
 
 ```bash
 rwv fetch

@@ -1,6 +1,6 @@
-//! Manifest types: `rwv.yaml` and `rwv.lock` parsing and representation.
+//! Manifest types: `rwv.toml` and `rwv.lock` parsing and representation.
 //!
-//! These types model the on-disk YAML format and the resolved in-memory
+//! These types model the on-disk format and the resolved in-memory
 //! representation. Parsing produces a `Manifest`; locking produces a `LockFile`.
 
 use crate::registry::RegistryName;
@@ -21,13 +21,13 @@ use std::str::FromStr;
 /// ## Separator contract
 ///
 /// `RepoPath` values are always forward-slash (`/`) separated, matching the
-/// portable YAML convention described in the repoweave manifest spec.
+/// portable convention described in the repoweave manifest spec.
 /// Backslashes are rejected at every construction site — both at serde
 /// deserialization and via [`RepoPath::new`] — so a manifest authored on
 /// Windows (which might produce `github\acme\server`) is caught immediately
 /// rather than silently mismatching the forward-slash paths written by
-/// sync/fetch. This mirrors the approach Cargo uses for `Cargo.toml` — YAML
-/// stays portable; conversion to native OS paths happens at
+/// sync/fetch. This mirrors the approach Cargo uses for `Cargo.toml` — the
+/// recorded path stays portable; conversion to native OS paths happens at
 /// filesystem-boundary calls via [`RepoPath::as_path`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
@@ -650,7 +650,7 @@ pub enum VcsType {
     // Future: Jj, Sl, Hg
 }
 
-/// A single repo entry in an `rwv.yaml` manifest.
+/// A single repo entry in an `rwv.toml` manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoEntry {
     #[serde(rename = "type")]
@@ -661,7 +661,7 @@ pub struct RepoEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Integration config — per-integration overrides in `rwv.yaml`
+// Integration config — per-integration overrides in `rwv.toml`
 // ---------------------------------------------------------------------------
 
 /// Per-integration configuration from the `[integrations]` table.
@@ -746,7 +746,7 @@ pub struct MemberSpec {
 
 /// Per-integration configuration for the cargo-workspace integration.
 ///
-/// Deserialized from the `integrations.cargo-workspace:` block in `rwv.yaml`
+/// Deserialized from the `integrations.cargo-workspace:` block in `rwv.toml`
 /// via `IntegrationConfig::settings::<CargoWorkspaceConfig>()`.
 ///
 /// ## Design decisions locked in this type
@@ -803,7 +803,7 @@ pub struct CargoWorkspaceConfig {
     /// `MemberSpec::include` minus `MemberSpec::exclude`.  Repos absent from
     /// this map keep the current root-as-member auto-behavior.
     ///
-    /// Key format: repo path string as it appears in `rwv.yaml`
+    /// Key format: repo path string as it appears in `rwv.toml`
     /// (e.g. `"github/cwalv/rvtty"`).
     ///
     /// Example:
@@ -897,7 +897,7 @@ pub struct CargoWorkspaceConfig {
     pub patch_surface: PatchSurface,
 
     /// When `true`, rwv writes `[workspace.package]` from the project-level
-    /// metadata declared in `rwv.yaml` (`project.license`, `project.authors`,
+    /// metadata declared in `rwv.toml` (`project.license`, `project.authors`,
     /// etc.).  When `false` (default), `[workspace.package]` is left entirely
     /// to the user.
     ///
@@ -1062,7 +1062,7 @@ impl PatchSurface {
 
 /// Per-integration configuration for the go-work integration.
 ///
-/// Deserialized from the `integrations.go-work:` block in `rwv.yaml`
+/// Deserialized from the `integrations.go-work:` block in `rwv.toml`
 /// via `IntegrationConfig::settings::<GoWorkConfig>()`.
 ///
 /// All fields are optional with sensible defaults so the integration works
@@ -1081,7 +1081,7 @@ pub struct GoWorkConfig {
     /// unconditionally downgrade a user's `go 1.26` to the computed maximum
     /// across member go.mod files.
     ///
-    /// YAML key: `go-version` (hyphen, matching rwv.yaml naming conventions).
+    /// Written `go-version`, hyphenated to match the manifest's key style.
     #[serde(
         default,
         rename = "go-version",
@@ -1109,10 +1109,10 @@ pub struct WorkweaveConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Manifest — the parsed `rwv.yaml`
+// Manifest — the parsed `rwv.toml`
 // ---------------------------------------------------------------------------
 
-/// A parsed `rwv.yaml` file — the source of truth for a project's repos.
+/// A parsed `rwv.toml` file — the source of truth for a project's repos.
 ///
 /// ## Accessor contract
 ///
@@ -1261,13 +1261,8 @@ impl Manifest {
                     .with_context(|| format!("failed to read {}", path.display()));
             }
         };
-        Self::from_toml_str(&content).with_context(|| {
-            format!(
-                "failed to parse {} at {}",
-                Self::FILE_NAME,
-                path.display()
-            )
-        })
+        Self::from_toml_str(&content)
+            .with_context(|| format!("failed to parse {} at {}", Self::FILE_NAME, path.display()))
     }
 
     /// Parse a manifest from a TOML string.
@@ -1661,7 +1656,7 @@ impl Project {
     ///
     /// This is the recovery-path loader used by `rwv abort`. When a sync
     /// leaves the project repo in a mid-rebase state, `rwv.lock` may contain
-    /// git conflict markers and fail strict YAML parsing. Abort only needs
+    /// git conflict markers and fail to parse. Abort only needs
     /// the project identity and manifest (to find repo paths); it never reads
     /// the lock. Using this variant makes that contract explicit so reviewers
     /// can see "this caller intentionally skips the lock".
@@ -2315,7 +2310,7 @@ role = "owned"
 
     /// The error message from `RepoPath::new` and the serde Deserialize impl
     /// share the same wording — callers get a consistent diagnostic regardless
-    /// of whether the value came from YAML or internal code.
+    /// of whether the value came from the manifest or internal code.
     #[test]
     fn repo_path_new_and_serde_produce_same_error_wording() {
         let new_msg = format!("{}", RepoPath::new("foo\\bar").unwrap_err());
@@ -2640,7 +2635,7 @@ role = "owned"
     }
 
     /// rwv.lock exists but is empty (zero bytes).
-    /// from_dir fails (empty YAML parses as null, which is not a valid LockFile struct);
+    /// from_dir fails (an empty file has no `repositories`, so it is not a LockFile);
     /// from_dir_skip_lock succeeds.
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_empty_lock() {
@@ -2667,11 +2662,11 @@ role = "owned"
         assert_eq!(project.manifest.repositories.len(), 1);
     }
 
-    /// No rwv.yaml either — from_dir_skip_lock must still fail (manifest is required).
+    /// No rwv.toml either — from_dir_skip_lock must still fail (manifest is required).
     #[test]
     fn project_from_dir_skip_lock_fails_without_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        // Neither rwv.yaml nor rwv.lock is present.
+        // Neither rwv.toml nor rwv.lock is present.
 
         let result = Project::from_dir_skip_lock(dir.path());
         assert!(result.is_err());

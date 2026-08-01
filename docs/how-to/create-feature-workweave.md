@@ -20,7 +20,7 @@ This forks from CWD's active workspace (primary when invoked from primary, the s
 
 ```
 Error: rwv workweave create: refusing to create workweave — projects/web-app has uncommitted changes:
-  rwv.yaml
+  rwv.toml
 
 To proceed, do one of:
   1. commit the changes: git -C projects/web-app commit
@@ -28,7 +28,7 @@ To proceed, do one of:
   3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
 ```
 
-If the dirty state is intentional — for example, you are editing `rwv.yaml` specifically to configure the new workweave — pass `--capture-dirty` to opt in:
+If the dirty state is intentional — for example, you are editing `rwv.toml` specifically to configure the new workweave — pass `--capture-dirty` to opt in:
 
 ```bash
 rwv workweave web-app create payments --capture-dirty

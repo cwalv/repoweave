@@ -30,5 +30,5 @@ Task-shaped recipes. Each page leads with the command; the conceptual material i
 ## Release and integration
 
 - [Release a package](./release-a-package.md) — per-ecosystem release recipes
-- [Add an integration](./add-an-integration.md) — enable/disable integrations in `rwv.yaml`
+- [Add an integration](./add-an-integration.md) — enable/disable integrations in `rwv.toml`
 - [Write a plugin](./write-a-plugin.md) — build a `rwv-<verb>` executable that inherits rwv's addressing surface

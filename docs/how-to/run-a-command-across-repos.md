@@ -95,7 +95,7 @@ plugin from scratch.
 
 The [gita integration](../reference/integrations/gita.md) is an `rwv`-managed
 integration that maintains a gita group CSV file (`.gita/groups`) in the project
-repo, keeping it in sync with the `rwv.yaml` manifest. This lets you use `gita
+repo, keeping it in sync with the `rwv.toml` manifest. This lets you use `gita
 super primary <cmd>` for cross-repo command dispatch with gita's summary output.
 
 The gita integration is **opt-in**; see the integration docs for how to enable it.

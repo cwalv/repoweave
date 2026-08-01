@@ -220,7 +220,7 @@ impl Integration for NpmWorkspaces {
                 self.name(),
                 &ctx.output_dir.join("package.json"),
                 &deactivate_owned_keys(),
-                "rwv.yaml declares no npm members, so workspaces no longer \
+                "rwv.toml declares no npm members, so workspaces no longer \
                  belongs to rwv.",
             ));
         }
@@ -258,7 +258,7 @@ impl Integration for NpmWorkspaces {
             on_disk.as_deref(),
             &expected,
             "Cut over manually or add the x-repoweave marker",
-            "on-disk workspaces content differs from rwv.yaml config.",
+            "on-disk workspaces content differs from rwv.toml config.",
         ))
     }
 

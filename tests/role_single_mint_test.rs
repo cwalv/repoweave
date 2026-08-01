@@ -60,10 +60,12 @@ fn the_three_mints_agree_and_round_trip() {
     for role in roles {
         let via_as_str = role.as_str();
 
-        let via_serde = serde_yaml::to_string(&role).expect("Role serialises");
+        let via_serde = match toml::Value::try_from(role).expect("Role serialises") {
+            toml::Value::String(s) => s,
+            other => panic!("Role must serialise as a string scalar, got {other:?}"),
+        };
         assert_eq!(
-            via_serde.trim(),
-            via_as_str,
+            via_serde, via_as_str,
             "serde's wire spelling and Role::as_str are one vocabulary"
         );
 
@@ -91,15 +93,19 @@ fn the_three_mints_agree_and_round_trip() {
 
 /// The legacy spelling must reach the migration hint, not a silent accept and
 /// not a bare "unrecognised" message.
+///
+/// Nothing rewrites a manifest carrying it, so the sentence is the whole
+/// remedy: it has to name both the spelling being refused and the one to
+/// write instead.
 #[test]
 fn the_legacy_spelling_is_rejected_with_the_migration_hint() {
     let err = <Role as FromStr>::from_str(Role::LEGACY_SPELLING)
         .expect_err("the legacy spelling must not parse as a role")
         .to_string();
     assert!(
-        err.contains(Role::LEGACY_SPELLING) && err.contains("rwv doctor --fix"),
-        "the legacy-spelling rejection must name the spelling and the fix \
-         command, got: {err}"
+        err.contains(Role::LEGACY_SPELLING) && err.contains(Role::Owned.as_str()),
+        "the legacy-spelling rejection must name both the refused spelling \
+         and its replacement, got: {err}"
     );
     assert_eq!(
         err,

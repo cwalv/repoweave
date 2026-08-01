@@ -77,13 +77,10 @@ member. For repos whose packages live below the root (e.g. a repo with
 `daemon/`, `client/`, `common/` sub-packages and no root `Cargo.toml`), use
 the `members:` config block:
 
-```yaml
-integrations:
-  cargo-workspace:
-    members:
-      github/cwalv/rvtty:
-        include: [daemon, client, common]
-        exclude: [fuzz]
+```toml
+[integrations.cargo-workspace.members."github/cwalv/rvtty"]
+include = ["daemon", "client", "common"]
+exclude = ["fuzz"]
 ```
 
 This produces members `github/cwalv/rvtty/daemon`, `github/cwalv/rvtty/client`,
@@ -103,17 +100,16 @@ The members sub-path logic is implemented in C7/C8 (cargo merge port).
 For single-product weaves where multiple publishable crates share project
 identity (license, authors, description, repository), set
 `workspace-package: true` to have rwv populate `[workspace.package]` from
-the project-level metadata in `rwv.yaml`:
+the project-level metadata in `rwv.toml`:
 
-```yaml
-project:
-  license: MIT
-  authors: ["acme <acme@example.com>"]
-  repository: "https://github.com/acme/weave"
+```toml
+[project]
+license = "MIT"
+authors = ["acme <acme@example.com>"]
+repository = "https://github.com/acme/weave"
 
-integrations:
-  cargo-workspace:
-    workspace-package: true
+[integrations.cargo-workspace]
+workspace-package = true
 ```
 
 <!-- pending C7 -->
@@ -134,10 +130,9 @@ against in-weave sources. Three modes:
 | Committed-paths | `committed-paths`, `true` | rwv mirrors each member's committed cross-member `path=` deps into `[patch.crates-io]` at the weave-root. Sensible when the weave's canonical shape is a bunch of `path=`-consuming publishable crates. |
 | Derived | `derived` | rwv matches each member's **registry** deps by crate name against the in-weave package-name index and emits patch entries — members declare `beads-core = "0.3"` and get the in-weave fork automatically. |
 
-```yaml
-integrations:
-  cargo-workspace:
-    patch: derived
+```toml
+[integrations.cargo-workspace]
+patch = "derived"
 ```
 
 The wire aliases `patch: true` (→ `committed-paths`) and `patch: false`
@@ -199,11 +194,10 @@ Orthogonal to `patch:` (which decides *what* patches to compute).
 | Manifest (default) | `manifest` | `[patch.*]` in the managed weave-root `Cargo.toml` | Every consumer of the workspace manifest. **Cannot** reach nested-workspace opt-outs. |
 | Cargo config | `cargo-config` | `[patch.*]` in a generated `.cargo/config.toml` alongside the managed `Cargo.toml` | Every consumer above, PLUS builds run from *inside* a nested-workspace opt-out's directory (via cargo's upward config discovery). |
 
-```yaml
-integrations:
-  cargo-workspace:
-    patch: derived
-    patch-surface: cargo-config
+```toml
+[integrations.cargo-workspace]
+patch = "derived"
+patch-surface = "cargo-config"
 ```
 
 ### Why the config surface exists — the nesting-immune lens
@@ -268,22 +262,19 @@ Cargo refuses to nest workspaces. If a member repo declares its own `[workspace]
 `rwv` detects this at activation time, **before** invoking cargo, and refuses with an actionable error naming the conflicting repo. There are three ways to resolve the conflict:
 
 1. **Remove the nested `[workspace]`** from the repo's root `Cargo.toml` (usually only sensible for repos you own).
-2. **Disable the cargo-workspace integration entirely** in `rwv.yaml`:
+2. **Disable the cargo-workspace integration entirely** in `rwv.toml`:
 
-    ```yaml
-    integrations:
-      cargo-workspace:
-        enabled: false
-    ```
+    ```toml
+[integrations.cargo-workspace]
+enabled = false
+```
 
 3. **Opt the offending repo out** (per-repo escape hatch) by listing its path under `integrations.cargo-workspace.exclude`:
 
-    ```yaml
-    integrations:
-      cargo-workspace:
-        exclude:
-          - github/cwalv/mcp_agent_mail_rust
-    ```
+    ```toml
+[integrations.cargo-workspace]
+exclude = ["github/cwalv/mcp_agent_mail_rust"]
+```
 
 4. **Use `members:` sub-path config** if the repo has no root `Cargo.toml`
    but its sub-packages have one each — list the sub-paths and the root

@@ -6,10 +6,10 @@ use repoweave::vcs::{RawRevisionId, RefName};
 mod common;
 
 // ---------------------------------------------------------------------------
-// Helper YAML literals
+// Helper manifest literals
 // ---------------------------------------------------------------------------
 
-const FULL_MANIFEST_YAML: &str = r#"
+const FULL_MANIFEST: &str = r#"
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
@@ -41,7 +41,7 @@ enabled = true
 enabled = false
 "#;
 
-const MINIMAL_MANIFEST_YAML: &str = r#"
+const MINIMAL_MANIFEST: &str = r#"
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
@@ -82,14 +82,14 @@ const MINIMAL_LOCK_JSON: &str = r#"{
 
 #[test]
 fn parse_full_manifest() {
-    let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
+    let m: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
     assert_eq!(m.len(), 4);
     assert_eq!(m.integrations.len(), 2);
 }
 
 #[test]
 fn manifest_repo_paths_are_btreemap_keys() {
-    let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
+    let m: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
 
     // BTreeMap iterates in sorted order — verify keys come out sorted.
     let keys: Vec<&RepoPath> = m.iter_repo_paths().collect();
@@ -101,7 +101,7 @@ fn manifest_repo_paths_are_btreemap_keys() {
 
 #[test]
 fn manifest_repo_entry_fields() {
-    let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
+    let m: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
     let server = m
         .get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"))
         .unwrap();
@@ -117,7 +117,7 @@ fn manifest_repo_entry_fields() {
 
 #[test]
 fn role_deserialization_all_variants() {
-    let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
+    let m: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
     let role_of = |key: &str| {
         m.get_entry(&RepoPath::new(key).expect("test helper: forward-slash paths only"))
             .unwrap()
@@ -144,7 +144,7 @@ fn role_is_active() {
 
 #[test]
 fn vcs_type_git() {
-    let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
+    let m: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
     for (_, entry) in m.iter_entries() {
         assert_eq!(entry.vcs_type, VcsType::Git);
     }
@@ -156,7 +156,7 @@ fn vcs_type_git() {
 
 #[test]
 fn manifest_without_integrations() {
-    let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST_YAML).unwrap();
+    let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
     assert!(m.integrations.is_empty());
     assert_eq!(m.len(), 1);
 }
@@ -169,7 +169,7 @@ fn integration_config_enabled_none() {
 
 [integrations.cargo]
 "#;
-    let m: Manifest = serde_yaml::from_str(manifest_toml).unwrap();
+    let m: Manifest = toml::from_str(manifest_toml).unwrap();
     assert!(m.integrations["cargo"].enabled().is_none());
 }
 
@@ -207,9 +207,9 @@ fn lock_repo_paths_sorted() {
 
 #[test]
 fn manifest_round_trip() {
-    let original: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    let serialized = serde_yaml::to_string(&original).unwrap();
-    let deserialized: Manifest = serde_yaml::from_str(&serialized).unwrap();
+    let original: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
+    let serialized = toml::to_string(&original).unwrap();
+    let deserialized: Manifest = toml::from_str(&serialized).unwrap();
 
     assert_eq!(original.len(), deserialized.len());
     for (key, orig_entry) in original.iter_entries() {
@@ -260,7 +260,7 @@ fn project_from_dir_manifest_only() {
     // subdirectory instead.
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST).unwrap();
 
     let project = Project::from_dir(&project_dir).unwrap();
     assert_eq!(project.manifest.len(), 1);
@@ -273,7 +273,7 @@ fn project_from_dir_manifest_and_lock() {
     let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), FULL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), FULL_MANIFEST).unwrap();
     std::fs::write(project_dir.join("rwv.lock"), LOCK_JSON).unwrap();
 
     let project = Project::from_dir(&project_dir).unwrap();
@@ -295,7 +295,7 @@ fn project_name_derived_from_dir() {
     let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST).unwrap();
 
     let project = Project::from_dir(&project_dir).unwrap();
     // Name is derived from the path; since the project dir isn't under
@@ -308,7 +308,7 @@ fn project_name_strips_projects_prefix() {
     let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("projects").join("web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST).unwrap();
 
     // Use a relative path starting with "projects/" so strip_prefix works.
     let nested_project_dir = dir.path().join("projects").join("web-app");
@@ -535,12 +535,12 @@ exclude = ["fuzz"]
     assert_eq!(cfg.patch, PatchMode::CommittedPaths);
     assert!(cfg.workspace_package);
 
-    // Serialize back to serde_yaml::Value and re-parse — verify it round-trips.
-    // Note: the serialized form emits the modern string spelling
-    // (`committed-paths`), not the legacy `true`; the deserializer accepts
-    // both, so the round-trip lands on the same variant.
-    let serialized = serde_yaml::to_string(&cfg).unwrap();
-    let restored: CargoWorkspaceConfig = serde_yaml::from_str(&serialized).unwrap();
+    // Serialize back and re-parse — verify it round-trips. Note: the
+    // serialized form emits the modern string spelling (`committed-paths`),
+    // not the legacy `true`; the deserializer accepts both, so the round-trip
+    // lands on the same variant.
+    let serialized = toml::to_string(&cfg).unwrap();
+    let restored: CargoWorkspaceConfig = toml::from_str(&serialized).unwrap();
     assert_eq!(restored.exclude, cfg.exclude);
     assert_eq!(restored.patch, cfg.patch);
     assert_eq!(restored.workspace_package, cfg.workspace_package);

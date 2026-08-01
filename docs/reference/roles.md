@@ -1,6 +1,6 @@
 # Roles
 
-Roles classify a repo's relationship to a project — its *change resistance*. They are per-project (the same repo can have different roles in different projects) and a first-class field on every `rwv.yaml` entry.
+Roles classify a repo's relationship to a project — its *change resistance*. They are per-project (the same repo can have different roles in different projects) and a first-class field on every `rwv.toml` entry.
 
 ## Roles
 
@@ -81,23 +81,23 @@ materialization changes. This flag records nothing — the on-disk
 
 The same repo can have different roles in different projects. `engine.io` might be a `fork` in `web-app` (patched for reconnection logic) and a `dependency` in another project (used unmodified).
 
-```yaml
-# projects/web-app/rwv.yaml
-repositories:
-  github/socketio/engine.io:
-    url: https://github.com/chatly/engine.io.git
-    role: fork
+```toml
+# projects/web-app/rwv.toml
+
+[repositories."github/socketio/engine.io"]
+url = "https://github.com/chatly/engine.io.git"
+role = "fork"
 ```
 
-```yaml
-# projects/another-app/rwv.yaml
-repositories:
-  github/socketio/engine.io:
-    url: https://github.com/chatly/engine.io.git
-    role: dependency
+```toml
+# projects/another-app/rwv.toml
+
+[repositories."github/socketio/engine.io"]
+url = "https://github.com/chatly/engine.io.git"
+role = "dependency"
 ```
 
-The active project's `rwv.yaml` determines the current role.
+The active project's `rwv.toml` determines the current role.
 
 ## Default for new entries
 
@@ -111,7 +111,7 @@ rwv add https://github.com/other/code.git --role reference
 
 ## Heuristic, not rule
 
-A common pattern: `github/{your-org}/*` is likely `owned`; `github/{other-org}/*` is likely `dependency` or `reference`. This is a default expectation, not enforced. The active project's `rwv.yaml` always wins.
+A common pattern: `github/{your-org}/*` is likely `owned`; `github/{other-org}/*` is likely `dependency` or `reference`. This is a default expectation, not enforced. The active project's `rwv.toml` always wins.
 
 ## Roles in `rwv push`
 
@@ -155,4 +155,4 @@ The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) rejects the le
 
 - [workspace lens — Roles](../explanation/lenses/workspace.md#roles-change-resistance-made-explicit) — the conceptual frame
 - [reference/cli — Selector grammar](./cli.md#selector-grammar) — `--role` filtering on action verbs
-- [reference/formats](./formats.md) — `rwv.yaml` shape
+- [reference/formats](./formats.md) — `rwv.toml` shape

@@ -273,7 +273,7 @@ pub fn run_fetch_in_place(
 ) -> anyhow::Result<()> {
     let name = ctx.require_active_project_on_disk()?.clone();
 
-    // Per-workspace state (rwv.yaml, rwv.lock) lives under active_path — the
+    // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
     // workweave when in one, primary otherwise. Mirrors add_remove.rs's
     // find_project_dir.
     let project_dir = project_dir(ctx.active_path(), name.as_str());

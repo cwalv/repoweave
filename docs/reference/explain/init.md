@@ -4,7 +4,7 @@
 
 Create a new project in the workspace, or adopt an existing repo as a project.
 `init` is the day-0 verb: it bootstraps the workspace (if needed), creates
-`projects/<name>/`, writes a skeletal `rwv.yaml`, and auto-activates the project.
+`projects/<name>/`, writes a skeletal `rwv.toml`, and auto-activates the project.
 
 `init` writes the manifest and the project directory, but **never authors
 integration content**. A new project has an empty manifest with nothing to
@@ -37,7 +37,7 @@ project directory inside the existing workspace.
 2. Resolves the workspace root from CWD.
 3. Creates `projects/<name>/`.
 4. Runs `git init` in the new directory.
-5. Writes a skeletal `rwv.yaml` (`repositories: {}`).
+5. Writes a skeletal `rwv.toml` (a bare `[repositories]` table).
 6. Configures replay-exclusion for `rwv.lock` (`.gitattributes`) and
    plants the durable `merge.rwv-ours.*` git config so `rwv sync` rebases
    correctly from the first commit.
@@ -52,7 +52,7 @@ is a full clone URL (`https://`, `git@`) or a shorthand
 (`owner/repo` or `registry/owner/repo`). The cloned repo is placed at
 `projects/<name>/` where `<name>` is the repo name derived from the source.
 
-If the cloned repo does not already contain `rwv.yaml`, a skeletal one is
+If the cloned repo does not already contain `rwv.toml`, a skeletal one is
 written. Replay-exclusion and merge driver config are applied (idempotent if
 already present). The project is auto-activated after cloning.
 
@@ -64,7 +64,7 @@ rwv init <source> --adopt
 ```
 
 - `<name>` — project name. Creates `projects/<name>/` with `git init` and a
-  skeletal `rwv.yaml`. Mutually exclusive with `--adopt`.
+  skeletal `rwv.toml`. Mutually exclusive with `--adopt`.
 - `--provider <registry/owner>` — configure a git remote for the new project
   repo. Format: `<registry>/<owner>` (e.g., `github/myorg`). The remote URL
   is derived from the named registry. Known registries: `github`, `gitlab`,

@@ -127,7 +127,7 @@ impl serde::Serialize for ResolvedRevisionId {
 
 /// A raw, unresolved revision identifier as it appears in a lock file.
 ///
-/// `RawRevisionId` wraps the YAML scalar verbatim — it may be a tag name,
+/// `RawRevisionId` wraps the recorded scalar verbatim — it may be a tag name,
 /// a branch name, or a 40-hex SHA, and at the type level we do not know
 /// which. This is the only revision type that participates in lock-file
 /// *parsing* (the [`serde::Deserialize`] entry point). It is intentionally

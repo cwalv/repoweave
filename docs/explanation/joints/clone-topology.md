@@ -46,7 +46,7 @@ maps each to its git realization.
 
 ### I1 — Single canonical store per manifest repo
 
-Each manifest repo named in any project's `rwv.yaml` has exactly one
+Each manifest repo named in any project's `rwv.toml` has exactly one
 **canonical store** in the weave: a fully-materialized clone at
 `<weave>/<repo_path>`. That clone holds the object DAG and the refs for
 the repo. Nothing under `<weave>/.workweaves/` is a standalone clone of

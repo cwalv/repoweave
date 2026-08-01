@@ -7,10 +7,10 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Weave** | A repoweave workspace — a directory containing repos, project directories, and ecosystem wiring generated from the active project. |
 | **Primary weave** | The "main" weave at the workspace root (as opposed to a workweave under `.workweaves/`). Target of `rwv sync primary`. |
 | **Workweave** | A worktree-based derivative of a weave, created on demand for isolation (agents, features, PR review). Lives at `<parent>/.workweaves/<project>--<name>/`. Created, duplicated, and destroyed with `rwv workweave <project> create` (`--from <source>` forks from an existing workweave) and `rwv workweave <project> delete` — not by copying or removing the directory. |
-| **Project** | A directory under `projects/` containing `rwv.yaml`, `rwv.lock`, and project-scoped docs. Itself a git repo with normal history. |
+| **Project** | A directory under `projects/` containing `rwv.toml`, `rwv.lock`, and project-scoped docs. Itself a git repo with normal history. |
 | **Project repo** | The git repo at `projects/<name>/`. Carries the manifest, lock, and cross-cutting docs. Does not contain importable code. |
-| **Manifest repo** | A repo listed in a project's `rwv.yaml`. Lives at `<registry>/<owner>/<repo>/` as a regular clone. The work surfaces. |
-| **Manifest** (`rwv.yaml`) | Declares which repos belong to a project, their roles, and integration config. See [formats](./formats.md). |
+| **Manifest repo** | A repo listed in a project's `rwv.toml`. Lives at `<registry>/<owner>/<repo>/` as a regular clone. The work surfaces. |
+| **Manifest** (`rwv.toml`) | Declares which repos belong to a project, their roles, and integration config. See [formats](./formats.md). |
 | **Lock file** (`rwv.lock`) | Pins repos to exact revisions for reproducibility. Derived state — output of `rwv lock`. See [lock-as-derived](../explanation/joints/lock-as-derived.md). |
 | **Stale lock** | Freshness condition: the lock covers every manifest repo but pins a revision behind current HEAD. Doctor finding kind `stale-lock`; bypassed with `--allow-stale-lock`. Fixed by `rwv lock`. Contrast **Incomplete lock**. |
 | **Incomplete lock** | Coverage condition: the lock has no entry for some manifest repo. Doctor finding kind `incomplete-lock`; also what `rwv fetch --frozen` refuses on. Fixed by `rwv lock` (adds the missing entry). Contrast **Stale lock**. |

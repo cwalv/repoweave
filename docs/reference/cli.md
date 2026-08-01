@@ -82,7 +82,7 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 Two modes, keyed on whether `<source>` is given:
 
 - **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed manifest repo to its canonical slot.
-- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.yaml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here). Run from the workspace root.
+- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.toml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here). Run from the workspace root.
 
 An already-present clone is **realigned, not skipped**: when the lock covers the repo, `fetch` resolves the locked revision in that clone's own object store and moves the checkout onto it *without changing what HEAD is attached to* — fast-forwarding the local counterpart of the branch `version:` declares, and leaving the checkout on it. No network fetch happens for a present clone, so a locked revision missing from the local object store is an error, not a re-fetch. When the lock has no entry for the repo, or there is no lock at all, the clone is left as it is and the lock records its current HEAD. A clone that is materialized by this run is *born* attached at the lock revision, not at the remote tip.
 
@@ -157,15 +157,15 @@ Anchored by `tests/doc_claims_activate_test.rs`.
 
 ### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 
-Create a new project repo at `projects/<name>/` with an empty `rwv.yaml`. With `--provider`, configures the project repo's remote URL.
+Create a new project repo at `projects/<name>/` with an empty `rwv.toml`. With `--provider`, configures the project repo's remote URL.
 
-When invoked in an **empty directory**, `init` bootstraps that directory as a workspace root (no pre-existing `rwv.yaml` required) and creates the project inside it. Running in a non-empty directory without an existing workspace refuses.
+When invoked in an **empty directory**, `init` bootstraps that directory as a workspace root (no pre-existing `rwv.toml` required) and creates the project inside it. Running in a non-empty directory without an existing workspace refuses.
 
 With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo).
 
 ### `rwv add <url> [...]`
 
-Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml`, run integration hooks.
+Clone a repo (if not present), register it in the *active workspace*'s `rwv.toml`, run integration hooks.
 
 | Flag | Effect |
 |---|---|
@@ -173,7 +173,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 | `--new` | Init a new local repo at canonical path; infer URL from path convention |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-`rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.yaml`), not always primary's.
+`rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.
 
 **Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognise, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
 
@@ -181,7 +181,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 
 ### `rwv remove <path> [...]`
 
-Remove from `rwv.yaml`, re-run activation (regenerates ecosystem workspace files).
+Remove from `rwv.toml`, re-run activation (regenerates ecosystem workspace files).
 
 | Flag | Effect |
 |---|---|
@@ -304,15 +304,15 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 
 | Check | Description |
 |---|---|
-| Orphaned clones | Directories under registry paths not listed in any project's `rwv.yaml` |
-| Dangling references | Entries in an `rwv.yaml` pointing to paths not on disk |
-| Missing role | `rwv.yaml` entries without a `role` field |
+| Orphaned clones | Directories under registry paths not listed in any project's `rwv.toml` |
+| Dangling references | Entries in an `rwv.toml` pointing to paths not on disk |
+| Missing role | `rwv.toml` entries without a `role` field |
 | Stale lock | Project's `rwv.lock` doesn't match current HEAD revisions |
 | Workweave drift | Worktrees missing from a workweave or extra worktrees not in manifest |
 | Index drift | A repo's index doesn't match HEAD tree (shared-refs side effect) |
 | Working-tree drift | A repo's on-disk files don't match HEAD tree (shared-refs side effect) |
 | Missing replay-exclusion | A project repo's `.gitattributes` lacks `rwv.lock merge=rwv-ours` or still carries the legacy `merge=ours` spelling (`--fix` adds/migrates the line and, on migration, commits it) |
-| Legacy `role: primary` | A project `rwv.yaml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
+| Legacy `role: primary` | A project `rwv.toml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
 | Dead op-lease | A `.rwv-op-lease` file whose recorded owner has no matching `.rwv-op` for the same op id — structurally impossible to belong to any in-flight operation. `--fix` removes the lease. |
 | Cargo version skew | The same crate is required at different version-req strings across workspace members (post `workspace = true` indirection); warning-severity observatory, report-only |
 | Cargo patch shadowing | A member's `.cargo/config.toml` declares a `[patch.<registry>].<crate>` key that shadows a weave-level entry for the same key (cargo's closest-config-wins per-key). Warning-severity; report-only |
@@ -547,7 +547,7 @@ Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, `
 ## Related
 
 - [reference/plugin-protocol](./plugin-protocol.md) — the external-command wire contract in full
-- [reference/formats](./formats.md) — `rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`
+- [reference/formats](./formats.md) — `rwv.toml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`
 - [reference/roles](./roles.md) — role definitions and change-resistance semantics
 - [reference/glossary](./glossary.md) — terminology lookup
 - [reference/integrations](./integrations/index.md) — per-integration generated files and config

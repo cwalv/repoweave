@@ -14,7 +14,7 @@
 
 - Do not confuse a *weave* (the primary workspace root) with a *workweave* (a worktree-based isolated copy). They share an object store, but branches, locks, and tool state diverge.
 - Do not `cd` into arbitrary paths before repo-scoped commands; `rwv` infers project and workspace from CWD. Use `rwv resolve` if you need the effective workspace root for scripting.
-- Do not edit ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`) at the weave directory by hand — they are symlinks to generated files in `projects/{name}/` and get clobbered by the next `rwv activate`. Edit `rwv.yaml` instead.
+- Do not edit ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`) at the weave directory by hand — they are symlinks to generated files in `projects/{name}/` and get clobbered by the next `rwv activate`. Edit `rwv.toml` instead.
 - Do not run `rwv lock` with uncommitted changes — it errors by design (the lock would record HEAD, not your working tree). Commit first, or pass `--dirty` if you accept the divergence.
 - Do not assume `rwv sync` has a one-true direction. The verb is direction-neutral; `<source>` is whichever workspace's committed lock you want to align against.
 - `rwv prime` without `--no-suppress` is intentionally silent outside a weave; absence of output is not an error.
@@ -45,7 +45,7 @@ Run `rwv --help` for the full command reference. Workspace and project are infer
 | `rwv resolve` | Print effective workspace root path (handy for scripting: `cd $(rwv resolve)`) |
 | `rwv fetch SOURCE [--frozen]` | Clone a project and every repo it lists; align to its `rwv.lock`; activate |
 | `rwv activate PROJECT` | Set active project; (re)generate ecosystem workspace files and symlinks |
-| `rwv init PROJECT [--provider REG/OWNER]` | Create a new project directory with empty `rwv.yaml` |
+| `rwv init PROJECT [--provider REG/OWNER]` | Create a new project directory with empty `rwv.toml` |
 | `rwv add URL [--role ROLE\|--new]` | Clone and register a repo; `--new` initializes a brand-new repo at the canonical path |
 | `rwv remove PATH [--delete]` | Unregister a repo; `--delete` also removes the clone |
 | `rwv lock [--dirty]` | Snapshot repo revisions to the project's `rwv.lock`. Pure git SHA snapshot — no integration hooks fire; run `rwv activate` afterward if membership changed |

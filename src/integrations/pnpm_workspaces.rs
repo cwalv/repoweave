@@ -150,7 +150,7 @@ impl Integration for PnpmWorkspaces {
                 self.name(),
                 &ctx.output_dir.join("pnpm-workspace.yaml"),
                 &[packages_key()],
-                "rwv.yaml declares no npm members, so packages: no longer \
+                "rwv.toml declares no npm members, so packages: no longer \
                  belongs to rwv.",
             ));
         }
@@ -187,7 +187,7 @@ impl Integration for PnpmWorkspaces {
             Some(&on_disk),
             &expected,
             "Cut over manually or add the '# managed by repoweave' marker",
-            "on-disk packages: content differs from rwv.yaml config.",
+            "on-disk packages: content differs from rwv.toml config.",
         ))
     }
 

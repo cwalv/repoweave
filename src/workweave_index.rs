@@ -962,7 +962,7 @@ fn append_ignore_line(target: &Path, filename: &str) -> anyhow::Result<()> {
 /// A helper for callers that need to iterate every project's registry
 /// (e.g. adopting children across the workspace when a workweave is
 /// retired). Returns projects sorted by name; directories missing an
-/// `rwv.yaml` are still included (a project can register workweaves before
+/// `rwv.toml` are still included (a project can register workweaves before
 /// its manifest is populated).
 pub fn projects_on_disk(primary_root: &Path) -> Vec<ProjectName> {
     discover_project_paths(primary_root)

@@ -15,7 +15,7 @@ the answer is "it belongs outside core."
 ## The in-scope test for core
 
 A verb belongs in `rwv` core when it needs **write access to composition state** —
-`rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, ecosystem workspace files,
+`rwv.toml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, ecosystem workspace files,
 or the `refs/rwv/*` savepoint-ref namespace. The concrete list a plugin must not
 write is in the [plugin-protocol](../../reference/plugin-protocol.md#write-prohibition)
 reference; the [file-ownership](./file-ownership.md) joint covers the surfacing and

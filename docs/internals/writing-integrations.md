@@ -39,7 +39,7 @@ pub trait Integration {
 ### Required methods
 
 - **`name`** — unique identifier (e.g., `"npm-workspaces"`). Used as the config
-  key in `rwv.yaml`'s `integrations:` block.
+  key in `rwv.toml`'s `integrations:` block.
 - **`default_enabled`** — whether the integration runs without explicit opt-in.
 - **`activate`** — author the managed content. Called from the *intent* verbs
   only; see [the trigger model](../explanation/joints/file-ownership.md#the-trigger-model)
@@ -78,8 +78,8 @@ Each hook receives an `IntegrationContext` (`src/integration.rs`) with:
 | `output_dir` | Where generated files are written — the primary root, or the workweave directory |
 | `workspace_root` | Where repos live on disk. In a workweave this still points at the primary root, so detection works when clones are not duplicated |
 | `project` | The active project name |
-| `repos` | Repo entries from the project's `rwv.yaml`, as an ordered `(path, entry)` list |
-| `config` | Per-integration config from the `integrations:` key in `rwv.yaml` |
+| `repos` | Repo entries from the project's `rwv.toml`, as an ordered `(path, entry)` list |
+| `config` | Per-integration config from the `integrations:` key in `rwv.toml` |
 | `all_repos_on_disk` | All repos found on disk under registry directories. Computed once, shared across integrations |
 | `all_project_paths` | All project paths. Computed once, shared across integrations |
 | `detection_cache` | Manifest filename → repo paths containing it. Populated once per activation/check cycle, before any integration runs |
@@ -93,7 +93,7 @@ Each hook receives an `IntegrationContext` (`src/integration.rs`) with:
   given manifest file (e.g. `"package.json"`), served from `detection_cache`
   when warm and falling back to a live scan under `workspace_root`.
 
-Both are on-disk gated. A repo declared in `rwv.yaml` but not cloned is not
+Both are on-disk gated. A repo declared in `rwv.toml` but not cloned is not
 "pending" — it is simply absent from every list, which is why an intent verb
 withholds authoring when the member set is incomplete rather than writing a
 smaller-but-wrong file.

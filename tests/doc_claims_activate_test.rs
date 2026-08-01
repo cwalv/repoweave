@@ -172,6 +172,7 @@ fn check_missing_role_field() {
 type = "git"
 url = "https://github.com/org/repo.git"
 version = "main"
+# role field intentionally omitted
 "#;
     std::fs::write(ws.join("projects/my-project/rwv.toml"), bad_manifest).unwrap();
 

@@ -65,7 +65,7 @@ For an agent, the role on each repo is the difference between a successful refac
 - `dependency` — agent should read but not edit.
 - `reference` — agent should treat as read-only.
 
-The role is machine-readable in `rwv.yaml` and surfaces in `rwv status --json` so the harness can use it directly as an allow-list. See [workspace lens — Roles](./workspace.md#roles-change-resistance-made-explicit) and [reference/roles](../../reference/roles.md).
+The role is machine-readable in `rwv.toml` and surfaces in `rwv status --json` so the harness can use it directly as an allow-list. See [workspace lens — Roles](./workspace.md#roles-change-resistance-made-explicit) and [reference/roles](../../reference/roles.md).
 
 ## The recommended pattern: agent workweave as gravity well
 

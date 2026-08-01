@@ -248,7 +248,7 @@ fn init_collision_does_not_modify_existing_project() {
 
     // Write a custom rwv.toml to verify it isn't overwritten.
     let manifest_path = ws.join("projects/keep-safe/rwv.toml");
-    let custom_content = "[repositories]\n";
+    let custom_content = "[repositories]\n# custom marker\n";
     std::fs::write(&manifest_path, custom_content).unwrap();
 
     // Attempt duplicate init.
@@ -545,7 +545,7 @@ fn adopt_preserves_existing_rwv_yaml() {
         .status();
 
     // Write a custom rwv.toml
-    let custom = "[repositories]\n";
+    let custom = "[repositories]\n# custom marker\n";
     std::fs::write(work.join("rwv.toml"), custom).unwrap();
     let _ = common::git().args(["add", "."]).current_dir(&work).status();
     let _ = common::git()

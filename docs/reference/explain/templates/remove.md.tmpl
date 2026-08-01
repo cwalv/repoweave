@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Remove a repo from the active project's `rwv.yaml` and re-run integration
+Remove a repo from the active project's `rwv.toml` and re-run integration
 activation so ecosystem files (Cargo workspace, npm workspace, etc.) are
 updated to no longer include the removed member.
 
 `remove` is an **intent verb**: it mutates the manifest and regenerates
 integration-managed content so the resulting files can be committed alongside
-the `rwv.yaml` change.
+the `rwv.toml` change.
 
 Removing from the manifest does **not** delete the clone from disk by default.
 The clone remains at its canonical path under the primary weave root (shared
@@ -18,7 +18,7 @@ remove the on-disk directory.
 ### `--delete` refusal rules
 
 `--delete` removes the clone directory after unregistering it from the
-manifest. It will refuse (with an error) if another project's `rwv.yaml`
+manifest. It will refuse (with an error) if another project's `rwv.toml`
 references the same path — deleting shared infrastructure would break that
 project's fetch/sync operations.
 
@@ -40,7 +40,7 @@ rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>]
 ```
 
 - `<path>` — manifest-relative path of the repo to remove (as listed in
-  `rwv.yaml`, e.g. `github/myorg/myrepo`).
+  `rwv.toml`, e.g. `github/myorg/myrepo`).
 - `--delete` — also remove the clone directory from disk. Errors if another
   project references the same path; waive with `--delete-shared-clone`.
 - `--delete-shared-clone` — delete the clone even when another project still
@@ -87,10 +87,10 @@ rwv remove github/myorg/old-repo --delete --delete-shared-clone
 
 ## Common errors
 
-- *path not in manifest* — the given path does not appear in `rwv.yaml`. Check
+- *path not in manifest* — the given path does not appear in `rwv.toml`. Check
   the exact manifest path with `rwv status`.
 - *another project references this path; refusing --delete without
   --delete-shared-clone* — the clone is shared. Verify the other project and
   use `--delete-shared-clone` only when safe.
-- *manifest parse failure* — `rwv.yaml` could not be loaded; verify the file
+- *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
   is valid YAML.

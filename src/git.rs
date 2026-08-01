@@ -2345,7 +2345,7 @@ impl GitVcs {
             .lines()
             .filter_map(|line| {
                 // Strip leading spaces introduced by run()'s global trim on
-                // single-entry output (e.g. " M rwv.yaml" → "M rwv.yaml").
+                // single-entry output (e.g. " M rwv.toml" → "M rwv.toml").
                 let trimmed = line.trim_start();
                 // Porcelain v1: XY + space + path. After trim_start the XY
                 // code is at most 2 chars; skip them, then strip the space.

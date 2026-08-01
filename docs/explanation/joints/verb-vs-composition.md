@@ -35,7 +35,7 @@ Three categories qualify:
    between manifest repos and the project repo is the canonical
    example.
 3. **rwv-owned state mutation.** The operation must read or write
-   files rwv owns: `rwv.yaml`, `rwv.lock`, `.rwv-active`,
+   files rwv owns: `rwv.toml`, `rwv.lock`, `.rwv-active`,
    `.rwv-workweave`, ecosystem workspace files, etc. The VCS doesn't
    know about these files, so composition can't get them right.
 

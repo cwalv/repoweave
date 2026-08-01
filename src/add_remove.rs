@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 /// Resolve the project directory for an action verb.
 ///
-/// The manifest (`rwv.yaml`) is per-workspace state, so it lives under
+/// The manifest (`rwv.toml`) is per-workspace state, so it lives under
 /// [`WorkspaceContext::active_path`] — the workweave directory when CWD
 /// is inside one, the primary weave when CWD is in the weave itself.
 /// This mirrors the resolution `rwv lock` uses for `rwv.lock` (see
@@ -132,7 +132,7 @@ fn create_worktree_in_workweave(
 
 /// Run the appropriate activation pass for the current checkout kind.
 ///
-/// `rwv add`/`rwv remove` are **intent verbs**: they mutate `rwv.yaml`, then
+/// `rwv add`/`rwv remove` are **intent verbs**: they mutate `rwv.toml`, then
 /// regenerate the integrations' managed/generated files so the new content can
 /// be committed alongside the manifest change.
 /// In a workweave we still regenerate (the workweave is a view onto the
@@ -730,7 +730,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     Ok(())
 }
 
-/// Scan `projects/*/rwv.yaml` (excluding `active_project_dir`) and return the
+/// Scan `projects/*/rwv.toml` (excluding `active_project_dir`) and return the
 /// names of any projects that reference `repo_path`.
 fn find_other_projects_referencing(
     workspace_root: &Path,

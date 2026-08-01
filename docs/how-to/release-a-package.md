@@ -119,12 +119,13 @@ When debugging across repos you can immediately tell which commit each binary wa
 
 `rwv.lock` encodes release state per repo: entries with tag names are released, entries with revision IDs are unreleased.
 
-```yaml
-repositories:
-  github/chatly/protocol:
-    version: v1.5.0              # released
-  github/chatly/server:
-    version: e1f2a3b4c5d6...     # unreleased — needs a tag
+```json
+{
+  "repositories": {
+    "github/chatly/protocol": { "version": "v1.5.0" },
+    "github/chatly/server": { "version": "e1f2a3b4c5d6..." }
+  }
+}
 ```
 
 Read the lock to see what needs attention. `rwv doctor` flags unreleased entries the same way.

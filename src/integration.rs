@@ -48,13 +48,13 @@ pub struct IntegrationContext<'a> {
     /// The active project name.
     pub project: &'a ProjectName,
 
-    /// Repo entries from the project's `rwv.yaml`, as an ordered list of
+    /// Repo entries from the project's `rwv.toml`, as an ordered list of
     /// `(path, entry)` pairs. Sorted by `RepoPath` (matches the BTreeMap
     /// iteration order in the manifest). Integrations only iterate this
     /// field; no random-access lookups are needed.
     pub repos: Vec<(RepoPath, RepoEntry)>,
 
-    /// Per-integration config from the `integrations:` key in `rwv.yaml`.
+    /// Per-integration config from the `integrations:` key in `rwv.toml`.
     pub config: &'a IntegrationConfig,
 
     /// All git repos found on disk under registry directories (relative paths).
@@ -70,7 +70,7 @@ pub struct IntegrationContext<'a> {
     /// activation/check cycle before any integrations run.
     pub detection_cache: &'a HashMap<String, Vec<String>>,
 
-    /// The project's `workweave:` config from `rwv.yaml`, if any.
+    /// The project's `workweave:` config from `rwv.toml`, if any.
     ///
     /// Made visible so integrations can detect cross-section collisions
     /// (e.g. a name claimed by both `static-files.files` and
@@ -162,7 +162,7 @@ pub enum IssueKind {
     /// The weave-root symlink onto an owned file is absent, occupied by real
     /// content, or resolves somewhere other than the declaring project.
     Surfacing,
-    /// `rwv.yaml` asks for something the workspace cannot satisfy: a name two
+    /// `rwv.toml` asks for something the workspace cannot satisfy: a name two
     /// sections claim, a declared file that is not there, a member topology
     /// the ecosystem tool rejects.
     ConfigRejected,
@@ -337,7 +337,7 @@ pub trait Integration {
     }
 
     /// Verify that the on-disk managed/generated artifacts agree with what
-    /// `activate()` would produce for the current `rwv.yaml` + `rwv.lock`.
+    /// `activate()` would produce for the current `rwv.toml` + `rwv.lock`.
     ///
     /// Called by context verbs (`rwv activate`, `rwv fetch`, workweave-create)
     /// and by `rwv doctor`. **Must not author content** — only inspect.
@@ -348,7 +348,7 @@ pub trait Integration {
     /// drift detection by overriding this method — typically a byte-level
     /// or structural comparison between the on-disk managed/generated
     /// artifact and what `activate()` would produce for the current
-    /// `rwv.yaml` + `rwv.lock`.
+    /// `rwv.toml` + `rwv.lock`.
     ///
     /// `verify` is intentionally separate from `check`: `check` reports
     /// environment/config preconditions (CLI absent from PATH, manifest

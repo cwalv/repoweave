@@ -83,7 +83,7 @@ the implementation and is not part of this published book.
 ### `orphaned-clone`
 
 **Error. Report-only.** A directory under a registry path that no project's
-`rwv.yaml` lists. rwv will not remove a directory it was never told about.
+`rwv.toml` lists. rwv will not remove a directory it was never told about.
 
 **What to do:** `rwv add <url>` to register it, or remove the directory
 yourself. Note that without `--all`, orphan detection is skipped entirely — a
@@ -92,14 +92,14 @@ it would be a false positive.
 
 ### `dangling-reference`
 
-**Error. Report-only.** An `rwv.yaml` entry whose path is not on disk.
+**Error. Report-only.** An `rwv.toml` entry whose path is not on disk.
 
 **What to do:** `rwv fetch` re-materializes it in place, or drop the entry
 from the manifest if the repo is genuinely gone.
 
 ### `missing-role`
 
-**Warning. Report-only.** An `rwv.yaml` entry with no `role` field. Role is
+**Warning. Report-only.** An `rwv.toml` entry with no `role` field. Role is
 how rwv knows a repo's change resistance and whether it belongs in generated
 ecosystem workspace files.
 
@@ -846,7 +846,7 @@ a file region you hold the pen on, which `--fix` reports and never overwrites.
 | `managed-file-drift` | Owned content on disk differs from what `rwv activate` would write, or the owning tool can no longer read it. |
 | `managed-file-user-held` | The owned key or region is present without rwv's ownership marker. You hold the pen; `--fix` will not touch it. |
 | `surfacing` | A weave-root symlink onto an owned file is absent, occupied by real content, or resolves into a different project. |
-| `config-rejected` | `rwv.yaml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
+| `config-rejected` | `rwv.toml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
 | `member-incompatibility` | A value you hold is incompatible with what the members require. Carries the observation as fields, below. |
 | `integration-failed` | An integration's hook returned an error; the runner captured it so the remaining integrations could still run. |
 | `core-finding` | Raised by doctor itself while driving the integrations. On the wire this appears only under `--fix`, which `--json` has no form of — see the disjointness rule above. |

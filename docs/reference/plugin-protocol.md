@@ -61,14 +61,14 @@ rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json
 
 A plugin must not write:
 
-- `rwv.yaml`, `rwv.lock`
+- `rwv.toml`, `rwv.lock`
 - `.rwv-active`, `.rwv-workweave`, `.rwv-workweave-index`
 - Ecosystem workspace files managed by an integration (`Cargo.toml`, `go.work`, `package.json`, …)
 - The `refs/rwv/*` git-ref namespace `rwv` uses for its own bookkeeping — for example `refs/rwv/pre-op/<op-id>`, the sync-abort savepoint created by `rwv sync` / `rwv sync-to` before replay. This is a ref namespace, not a working-tree file: "must not write" means no ref-update against it, not just filesystem I/O.
 
 This is a documented rule, not a dispatch-time guard — nothing stops a plugin from writing these, and `rwv` does not sandbox its children. `rwv doctor` is the audit surface: it can notice an rwv-owned file changed outside a core-verb write and report it, after the fact, not before.
 
-For what each file records, see [reference/formats](./formats.md) (`rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, `.rwv-op`). A plugin may keep its own state anywhere else — its own dotfiles, a side-database, per-repo metadata it owns — under one rule: claim a namespace that does not overlap `rwv`'s.
+For what each file records, see [reference/formats](./formats.md) (`rwv.toml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, `.rwv-op`). A plugin may keep its own state anywhere else — its own dotfiles, a side-database, per-repo metadata it owns — under one rule: claim a namespace that does not overlap `rwv`'s.
 
 ## Additive-schema guarantee
 
@@ -93,6 +93,6 @@ Reach for `$RWV_VERSION` only to gate a behavioral change that has no structural
 
 - [plugin-boundary](../explanation/joints/plugin-boundary.md) — design rationale: what earns a core verb, the security posture, why doctor doesn't give plugins a check-registration hook.
 - [write-a-plugin](../how-to/write-a-plugin.md) — a worked walkthrough building a plugin end to end.
-- [reference/formats](./formats.md) — `rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, `.rwv-op`: what each owned file records.
+- [reference/formats](./formats.md) — `rwv.toml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, `.rwv-op`: what each owned file records.
 - [reference/cli](./cli.md) — the `-C`, `-w`, and `--project` global flags in full; the `--json` envelope convention.
 - [`rwv doctor`](./explain/doctor.md) — the `plugins` inventory array (`shadowed` / `shadowed_by`).

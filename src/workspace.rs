@@ -67,7 +67,7 @@ pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
 /// - [`active_path`] — the directory the checkout points to: the primary
 ///   path when in a primary, the workweave directory when in a workweave.
 ///   Use for per-workspace state (project worktrees and their `rwv.lock` /
-///   `rwv.yaml`, repo worktrees the operator is working in).
+///   `rwv.toml`, repo worktrees the operator is working in).
 ///
 /// [`primary_path`]: WorkspaceContext::primary_path
 /// [`active_path`]: WorkspaceContext::active_path
@@ -537,7 +537,7 @@ impl WorkspaceSession {
     /// separate axis, answered by [`crate::activate::verify_surfacing`].
     ///
     /// The `workweave` argument is the project's `workweave:` section from
-    /// `rwv.yaml` (typically `manifest.workweave.as_ref()`). It is threaded
+    /// `rwv.toml` (typically `manifest.workweave.as_ref()`). It is threaded
     /// through to integrations so they can detect cross-section collisions
     /// such as a name claimed by both `static-files.files` and
     /// `workweave.link`.
@@ -1054,7 +1054,7 @@ impl WorkspaceContext {
     /// the workweave directory when in a workweave.
     ///
     /// Use this for per-workspace state — project worktrees and their
-    /// `rwv.lock` / `rwv.yaml`, the repo worktrees the operator is working
+    /// `rwv.lock` / `rwv.toml`, the repo worktrees the operator is working
     /// in, integration outputs that follow CWD's workspace. A workweave is
     /// itself a workspace; reading or writing through the primary from
     /// inside a workweave clobbers the workweave's view of the world.

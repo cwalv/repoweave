@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Clone a repo and register it in the active project's `rwv.yaml`, then
+Clone a repo and register it in the active project's `rwv.toml`, then
 re-run integration activation so ecosystem files (Cargo workspace, npm
 workspace, etc.) are updated to include the new member.
 
 `add` is an **intent verb**: it mutates the manifest and regenerates
 integration-managed content so the resulting files can be committed alongside
-the `rwv.yaml` change.
+the `rwv.toml` change.
 
 ### Clone placement
 
@@ -109,5 +109,5 @@ rwv add github/myorg/new-project --new
   and has no derivable local path. Check the URL format or configure a matching
   registry entry.
 - *clone failed* — network error or authentication problem; inspect git output.
-- *manifest parse failure* — `rwv.yaml` could not be loaded; verify the file
+- *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
   is valid YAML.

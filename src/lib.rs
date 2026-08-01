@@ -2,7 +2,7 @@
 //! versioned repositories.
 //!
 //! A *weave* is a directory holding many repository clones plus one or more
-//! *projects*. A project is a manifest (`rwv.yaml`) and a lock (`rwv.lock`),
+//! *projects*. A project is a manifest (`rwv.toml`) and a lock (`rwv.lock`),
 //! both committed to a project repo, declaring which repositories it uses and
 //! at which revisions. The verbs converge disk to that committed pair, move it
 //! forward, or fan work out into parallel checkouts (*workweaves*).

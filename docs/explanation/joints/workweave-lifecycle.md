@@ -42,7 +42,7 @@ against the primary weave root. The source must be a workspace whose
    symlink targets PRIMARY's canonical (never the source workspace), so a
    nested workweave never chains symlink→symlink. `--worktree-references`
    restores the worktree behavior for reference repos.
-2. `workweave:` artifacts from `rwv.yaml` (`copy:` entries deep-copied;
+2. `workweave:` artifacts from `rwv.toml` (`copy:` entries deep-copied;
    `link:` entries are absolute symlinks into the source root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
    `parent` is the workspace forked from — it becomes the auto-target for
@@ -69,7 +69,7 @@ error:
 ```
 Error: rwv workweave create: refusing to create workweave —
        projects/web-app has uncommitted changes:
-  rwv.yaml
+  rwv.toml
 
 To proceed, do one of:
   1. commit the changes: git -C projects/web-app commit

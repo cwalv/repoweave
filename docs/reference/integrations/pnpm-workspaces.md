@@ -9,14 +9,14 @@ Generates a `pnpm-workspace.yaml` listing every project repo (excluding `referen
 | Generates | `pnpm-workspace.yaml` |
 | Install hook | `pnpm install` (if `pnpm` is on PATH) |
 
-Disabled by default. Enable explicitly in `rwv.yaml` for projects using pnpm:
+Disabled by default. Enable explicitly in `rwv.toml` for projects using pnpm:
 
-```yaml
-integrations:
-  npm-workspaces:
-    enabled: false
-  pnpm-workspaces:
-    enabled: true
+```toml
+[integrations.npm-workspaces]
+enabled = false
+
+[integrations.pnpm-workspaces]
+enabled = true
 ```
 
 ## Generated file

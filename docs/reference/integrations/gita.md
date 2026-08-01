@@ -13,10 +13,9 @@
 
 To enable:
 
-```yaml
-integrations:
-  gita:
-    enabled: true
+```toml
+[integrations.gita]
+enabled = true
 ```
 
 The activation hook generates gita's config files into a `gita/` directory inside the weave (or workweave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:

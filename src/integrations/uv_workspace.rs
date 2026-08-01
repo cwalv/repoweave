@@ -512,7 +512,7 @@ impl Integration for UvWorkspace {
                 self.name(),
                 &ctx.output_dir.join("pyproject.toml"),
                 &Self::deactivate_owned_keys(),
-                "rwv.yaml declares no uv members, so [tool.uv.workspace] no \
+                "rwv.toml declares no uv members, so [tool.uv.workspace] no \
                  longer belongs to rwv.",
             ));
         }
@@ -552,7 +552,7 @@ impl Integration for UvWorkspace {
             on_disk.as_deref(),
             &expected,
             "Cut over manually or add the '# managed by rwv' marker",
-            "on-disk [tool.uv.workspace].members differs from rwv.yaml config.",
+            "on-disk [tool.uv.workspace].members differs from rwv.toml config.",
         ))
     }
 

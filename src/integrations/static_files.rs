@@ -2,7 +2,7 @@
 //!
 //! Symlinks declared files from the project directory to the workspace root on
 //! activate, and removes them on deactivate. Configured in the `integrations:`
-//! section of `rwv.yaml` with a list of filenames. Default disabled.
+//! section of `rwv.toml` with a list of filenames. Default disabled.
 //!
 //! Example config:
 //!
@@ -70,7 +70,7 @@ fn collision_names(cfg: &StaticFilesConfig, ctx: &IntegrationContext) -> Vec<Str
 }
 
 /// Human-readable message for a single colliding name. Names both integrations
-/// so the operator can fix the rwv.yaml without re-reading the doc string.
+/// so the operator can fix the rwv.toml without re-reading the doc string.
 fn collision_message(name: &str) -> String {
     format!(
         "name '{name}' is declared in both static-files.files and workweave.link; \
@@ -101,7 +101,7 @@ impl Integration for StaticFiles {
         // Defense in depth: even though `run_checks` runs in Context-mode
         // activation (and `run_activations` itself drives `check`-then-bail in
         // Intent mode via report_and_check_activation_issues), a hand-edited
-        // rwv.yaml mid-session or a future call site that skips checks would
+        // rwv.toml mid-session or a future call site that skips checks would
         // silently fall through to the framework predicate. A loud bail here
         // keeps the contract explicit: static-files refuses to author symlinks
         // for a name owned by workweave.link.

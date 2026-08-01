@@ -859,7 +859,7 @@
                   "type": "boolean"
                 },
                 "manifest_url": {
-                  "description": "The URL recorded in the manifest (`rwv.yaml`).",
+                  "description": "The URL recorded in the manifest (`rwv.toml`).",
                   "type": "string"
                 }
               }
@@ -1457,7 +1457,7 @@
               "type": "string"
             },
             "message": {
-              "description": "Free-form display string of the YAML parse error. Named `message` (not `error`) to signal this is display text, not a typed discriminant.",
+              "description": "Free-form display string of the parse error. Named `message` (not `error`) to signal this is display text, not a typed discriminant.",
               "type": "string"
             },
             "project": {

@@ -2,7 +2,7 @@
 
 Integrations translate between repoweave's multi-repo model (repos, projects, roles) and one ecosystem's workspace format (`package.json`, `go.work`, `Cargo.toml`, etc.).
 
-For the conceptual frame, see the [workspace lens](../../explanation/lenses/workspace.md). For enabling/disabling integrations in `rwv.yaml`, see [add an integration](../../how-to/add-an-integration.md). Integrations ship with `rwv`; to request a new one, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).
+For the conceptual frame, see the [workspace lens](../../explanation/lenses/workspace.md). For enabling/disabling integrations in `rwv.toml`, see [add an integration](../../how-to/add-an-integration.md). Integrations ship with `rwv`; to request a new one, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).
 
 ## Built-in integrations
 
@@ -46,21 +46,23 @@ Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`
 
 Tool state directories (`node_modules/`, `.venv/`, `target/`) are gitignored and managed by the ecosystem tool, not by `rwv`.
 
-## Configuration in `rwv.yaml`
+## Configuration in `rwv.toml`
 
 Integration config lives under an `integrations` key. Only overrides need to be listed — integrations not mentioned use their own defaults:
 
-```yaml
-integrations:
-  npm-workspaces:
-    enabled: false                 # this project uses pnpm instead
-  pnpm-workspaces:
-    enabled: true
-  go-work:
-    enabled: false                 # this project doesn't use Go
-  static-files:
-    enabled: true
-    files: [turbo.json, .eslintrc.json]
+```toml
+[integrations.npm-workspaces]
+enabled = false
+
+[integrations.pnpm-workspaces]
+enabled = true
+
+[integrations.go-work]
+enabled = false
+
+[integrations.static-files]
+enabled = true
+files = ["turbo.json", ".eslintrc.json"]
 ```
 
 ## `IntegrationContext` — what hooks receive
@@ -72,8 +74,8 @@ Each integration receives an `IntegrationContext` with:
 | `output_dir` | Where generated files are written (project directory for activate; workweave project directory for workweaves) |
 | `workspace_root` | Where repos live on disk (used for manifest detection like finding `package.json`) |
 | `project` | Active project name (may be multi-segment, e.g., `chatly/web-app`) |
-| `repos` | Repo entries from the project's `rwv.yaml` |
-| `config` | Per-integration config from the `integrations` key in `rwv.yaml` |
+| `repos` | Repo entries from the project's `rwv.toml` |
+| `config` | Per-integration config from the `integrations` key in `rwv.toml` |
 | `all_repos_on_disk` | All git repos found under registry directories. Computed once, shared across integrations |
 | `all_project_paths` | All project paths (e.g., `['web-app', 'mobile-app']`). Computed once, shared |
 

@@ -11,13 +11,12 @@ Symlinks declared files from the project directory to the weave directory on act
 
 ## Configuration
 
-Disabled by default. Enable explicitly in `rwv.yaml`:
+Disabled by default. Enable explicitly in `rwv.toml`:
 
-```yaml
-integrations:
-  static-files:
-    enabled: true
-    files: [turbo.json, nx.json, .eslintrc.json, .prettierrc]
+```toml
+[integrations.static-files]
+enabled = true
+files = ["turbo.json", "nx.json", ".eslintrc.json", ".prettierrc"]
 ```
 
 Each file listed in `files` must exist in the project directory (e.g., `projects/web-app/turbo.json`). On activation, the integration symlinks each file to the weave directory so tools find them where they expect.
@@ -51,20 +50,21 @@ reported but never auto-clobbered.
 
 A project using Turborepo for build caching alongside npm workspaces:
 
-```yaml
-# projects/web-app/rwv.yaml
-repositories:
-  github/chatly/protocol:
-    url: git@github.com:chatly/protocol.git
-  github/chatly/server:
-    url: git@github.com:chatly/server.git
-  github/chatly/web:
-    url: git@github.com:chatly/web.git
+```toml
+# projects/web-app/rwv.toml
 
-integrations:
-  static-files:
-    enabled: true
-    files: [turbo.json]
+[repositories."github/chatly/protocol"]
+url = "git@github.com:chatly/protocol.git"
+
+[repositories."github/chatly/server"]
+url = "git@github.com:chatly/server.git"
+
+[repositories."github/chatly/web"]
+url = "git@github.com:chatly/web.git"
+
+[integrations.static-files]
+enabled = true
+files = ["turbo.json"]
 ```
 
 ```json
@@ -87,11 +87,10 @@ After activation, the weave directory contains `package.json` (from `npm-workspa
 
 ESLint and Prettier expect their config at the weave directory to apply across all packages:
 
-```yaml
-integrations:
-  static-files:
-    enabled: true
-    files: [.eslintrc.json, .prettierrc]
+```toml
+[integrations.static-files]
+enabled = true
+files = [".eslintrc.json", ".prettierrc"]
 ```
 
 ```json
@@ -107,15 +106,16 @@ The `"root": true` is important — it tells ESLint to stop walking up the direc
 
 ### Nx build orchestrator
 
-```yaml
-integrations:
-  pnpm-workspaces:
-    enabled: true
-  npm-workspaces:
-    enabled: false
-  static-files:
-    enabled: true
-    files: [nx.json]
+```toml
+[integrations.pnpm-workspaces]
+enabled = true
+
+[integrations.npm-workspaces]
+enabled = false
+
+[integrations.static-files]
+enabled = true
+files = ["nx.json"]
 ```
 
 ```json
@@ -136,11 +136,10 @@ Nx discovers packages from `pnpm-workspace.yaml` and reads task configuration fr
 
 [mise](https://mise.jdx.dev/) reads `.mise.toml` from the directory you `cd` into:
 
-```yaml
-integrations:
-  static-files:
-    enabled: true
-    files: [.mise.toml]
+```toml
+[integrations.static-files]
+enabled = true
+files = [".mise.toml"]
 ```
 
 ```toml
@@ -158,11 +157,10 @@ After activation, `mise install` at the weave directory installs the declared ve
 
 [direnv](https://direnv.net/) reads `.envrc` on `cd`:
 
-```yaml
-integrations:
-  static-files:
-    enabled: true
-    files: [.envrc]
+```toml
+[integrations.static-files]
+enabled = true
+files = [".envrc"]
 ```
 
 ```bash
@@ -181,11 +179,10 @@ Run `direnv allow` once after creating or modifying `.envrc`.
 
 A `Makefile` or [`justfile`](https://github.com/casey/just) at the weave directory provides a consistent command interface across the multi-repo workspace:
 
-```yaml
-integrations:
-  static-files:
-    enabled: true
-    files: [justfile]
+```toml
+[integrations.static-files]
+enabled = true
+files = ["justfile"]
 ```
 
 ```makefile

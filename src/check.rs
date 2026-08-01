@@ -24,16 +24,16 @@ use std::path::{Path, PathBuf};
 /// makes results testable without touching the filesystem.
 #[derive(Debug)]
 pub enum CheckViolation {
-    /// A directory under a registry path not listed in any project's `rwv.yaml`.
+    /// A directory under a registry path not listed in any project's `rwv.toml`.
     OrphanedClone { path: RepoPath },
 
-    /// An `rwv.yaml` entry pointing to a path not present on disk.
+    /// An `rwv.toml` entry pointing to a path not present on disk.
     DanglingReference {
         project: ProjectName,
         repo: RepoPath,
     },
 
-    /// An `rwv.yaml` entry missing the `role` field.
+    /// An `rwv.toml` entry missing the `role` field.
     MissingRole {
         project: ProjectName,
         repo: RepoPath,
@@ -47,7 +47,7 @@ pub enum CheckViolation {
         actual: ResolvedRevisionId,
     },
 
-    /// An `rwv.yaml` entry with no corresponding `rwv.lock` entry. This is a
+    /// An `rwv.toml` entry with no corresponding `rwv.lock` entry. This is a
     /// coverage gap, not a freshness one — the lock is missing the repo
     /// entirely rather than pinning it to a stale revision. Only checked
     /// when the project has a lock file at all; a project with no lock yet
@@ -205,16 +205,16 @@ pub enum CheckViolation {
         index_path: PathBuf,
     },
 
-    /// A project's `rwv.yaml` exists but cannot be parsed.
+    /// A project's `rwv.toml` exists but cannot be parsed.
     ///
     /// Reported as an `Error`-severity violation so the operator is not
     /// left with zero violations (i.e. an apparent "clean" result) for a
     /// project whose manifest is broken. `--fix` does NOT auto-repair this
-    /// — the operator must fix the YAML by hand and re-run `rwv doctor`.
+    /// — the operator must fix the file by hand and re-run `rwv doctor`.
     UnparseableProject {
         /// Relative project path (e.g. `my-app`, `org/repo`).
         project: ProjectName,
-        /// Absolute path to the offending `rwv.yaml`.
+        /// Absolute path to the offending `rwv.toml`.
         manifest_path: PathBuf,
         /// Free-form display string of the parse error (from `anyhow::Error::to_string`).
         /// No structured parse-error type is available at this boundary.
@@ -913,7 +913,7 @@ pub enum ProvenanceKind {
     /// manifest records `role: reference` so the human-facing message can
     /// call out this nuance.
     OriginUrlMismatch {
-        /// The URL recorded in the manifest (`rwv.yaml`).
+        /// The URL recorded in the manifest (`rwv.toml`).
         manifest_url: String,
         /// The actual fetch URL of the `origin` remote on disk.
         actual_url: String,
@@ -1412,7 +1412,7 @@ pub enum ViolationOutput {
     UnparseableProject {
         project: String,
         manifest_path: String,
-        /// Free-form display string of the YAML parse error. Named `message`
+        /// Free-form display string of the parse error. Named `message`
         /// (not `error`) to signal this is display text, not a typed discriminant.
         message: String,
     },
@@ -4711,7 +4711,7 @@ pub fn scan_state_hygiene(
         // Absent or unparseable file → nothing to do here. An unparseable
         // file is surfaced by `op_state::read_owner`'s caller in sync paths;
         // the doctor's job for the `.rwv-op` line is just to report
-        // presence, not to debug the YAML.
+        // presence, not to debug its content.
         if let Ok(Some(state)) = crate::op_state::read_owner(&target.workspace_dir) {
             violations.push(CheckViolation::StaleOpState {
                 workspace_dir: target.workspace_dir.clone(),
@@ -5710,7 +5710,7 @@ pub struct DoctorJsonOutput {
 
 /// Inputs for running workspace-wide checks.
 pub struct CheckInput {
-    /// All repos referenced by any project's `rwv.yaml`.
+    /// All repos referenced by any project's `rwv.toml`.
     pub known_repos: BTreeSet<RepoPath>,
     /// All git repos found on disk under registry directories.
     pub repos_on_disk: Vec<RepoPath>,
@@ -5864,7 +5864,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 CheckViolation::OrphanedClone { path } => (
                     crate::integration::Severity::Error,
                     format!(
-                        "orphaned clone: {path} — not listed in any project's rwv.yaml; \
+                        "orphaned clone: {path} — not listed in any project's rwv.toml; \
                          run `rwv add <url>` to register it, or remove the directory manually"
                     ),
                 ),
@@ -5877,7 +5877,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     crate::integration::Severity::Error,
                     format!(
                         "dangling reference in {project}: {repo} — \
-                         listed in rwv.yaml but not cloned on disk; \
+                         listed in rwv.toml but not cloned on disk; \
                          run `rwv fetch` from the workspace to re-materialize \
                          missing manifest members, then re-run `rwv doctor` to verify"
                     ),
@@ -5887,7 +5887,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     format!(
                         "missing role in {project}: {repo} — \
                          add a `role: owned|dependency|reference` field to the \
-                         rwv.yaml entry for this repo"
+                         rwv.toml entry for this repo"
                     ),
                 ),
                 CheckViolation::StaleLock {
@@ -5918,7 +5918,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         DriftKind::Missing => (
                             "missing worktree",
                             "; run `rwv workweave <project> create --replace-existing` to \
-                             recreate, or remove the repo from rwv.yaml",
+                             recreate, or remove the repo from rwv.toml",
                         ),
                         DriftKind::Extra => (
                             "extra worktree",
@@ -6042,7 +6042,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     crate::integration::Severity::Error,
                     format!(
                         "{project}: manifest at {} cannot be parsed: {message}; \
-                         fix the YAML by hand and re-run `rwv doctor`",
+                         fix the file by hand and re-run `rwv doctor`",
                         manifest_path.display()
                     ),
                 ),

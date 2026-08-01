@@ -539,7 +539,7 @@ role = "owned"
     let reference = ws.join(REF_REPO);
     init_repo_with_commit(&reference, "REF", "reference-init");
     let manifest_with_ref = format!(
-        "\n[\"{manifest_owned_only}  {ref_path}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
+        "{manifest_owned_only}\n[repositories.\"{ref_path}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
         ref_path = REF_REPO,
         reference = reference.display(),
     );

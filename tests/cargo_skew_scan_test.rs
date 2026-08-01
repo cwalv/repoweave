@@ -1114,7 +1114,9 @@ fn scan_members_explicit_config_overrides_auto_enumeration() {
     // Operator explicitly configures only crate-a (not crate-b).
     // IntegrationConfig::from_toml takes the settings block for the
     // integration (the content under `integrations.cargo-workspace:`).
-    let config = repoweave::manifest::IntegrationConfig::from_toml("[members.\"github/xai/big-repo\"]\ninclude = [\"crate-a\"]\n");
+    let config = repoweave::manifest::IntegrationConfig::from_toml(
+        "[members.\"github/xai/big-repo\"]\ninclude = [\"crate-a\"]\n",
+    );
     let cache: HashMap<String, Vec<String>> = HashMap::new();
     let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 

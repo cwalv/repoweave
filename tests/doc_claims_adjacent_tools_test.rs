@@ -117,7 +117,10 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
     )
     .unwrap();
     lock.push('\n');
-    init_bare_repo_with_commit(&project_bare, &[("rwv.toml", &manifest_toml), ("rwv.lock", &lock)]);
+    init_bare_repo_with_commit(
+        &project_bare,
+        &[("rwv.toml", &manifest_toml), ("rwv.lock", &lock)],
+    );
 
     let workspace = tmp.join("ws");
     std::fs::create_dir_all(workspace.join("projects")).unwrap();

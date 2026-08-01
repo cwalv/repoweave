@@ -208,16 +208,16 @@ fn glob_with_unicode_passes_through() {
     assert!(!filter.matches(&rp("github/cafe/repo"), Role::Owned));
 }
 
-/// The legacy `--role primary` error must direct the user at
-/// `rwv doctor --fix` — the migration path the docs (`reference/roles.md`)
-/// promise. Mirrors the inline test in `src/selector.rs` so external
-/// callers see it via the public API too.
+/// The legacy `--role primary` error must name the spelling that replaced it
+/// — the migration the docs (`reference/roles.md`) describe. Mirrors the
+/// inline test in `src/selector.rs` so external callers see it via the public
+/// API too.
 #[test]
-fn legacy_role_primary_directs_at_doctor_fix() {
-    let err = RepoFilter::parse(&["primary".into()], &[]).unwrap_err();
+fn legacy_role_primary_names_the_replacement_spelling() {
+    let err = RepoFilter::parse(&[Role::LEGACY_SPELLING.into()], &[]).unwrap_err();
     let msg = format!("{err}");
     assert!(
-        msg.contains("rwv doctor --fix"),
-        "legacy --role primary must surface migration hint, got: {msg}"
+        msg.contains(&Role::legacy_spelling_hint()),
+        "legacy --role primary must surface the migration sentence, got: {msg}"
     );
 }

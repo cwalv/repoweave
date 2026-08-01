@@ -2879,8 +2879,9 @@ mod cargo_workspace {
             ("github/cwalv/docs-only", Role::Owned),
         ]);
         let project = ProjectName::new("test-project").unwrap();
-        let config =
-            IntegrationConfig::from_toml("exclude = [\"github/cwalv/docs-only\", \"github/missing/repo\"]");
+        let config = IntegrationConfig::from_toml(
+            "exclude = [\"github/cwalv/docs-only\", \"github/missing/repo\"]",
+        );
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -3193,7 +3194,9 @@ foo = { path = "vendor/foo" }
         let project = ProjectName::new("test-project").unwrap();
         // The members-subpath config shape (C6/C8): per-repo sub-path include
         // list. Exact YAML key path locked in by C6; this is the plan §5a shape.
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n",
+        );
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -4067,7 +4070,8 @@ acme-lib = { path = "github/acme/lib" }
             ("github/acme/lib", Role::Owned),
         ]);
         let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
+        let config =
+            IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -4298,7 +4302,8 @@ vendor-foo = { git = "https://user.example.com/vendor-foo.git" }
             ("github/acme/app", Role::Owned),
         ]);
         let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
+        let config =
+            IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -4568,7 +4573,8 @@ resolver = "2"
             ("github/acme/app", Role::Owned),
         ]);
         let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
+        let config =
+            IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -4670,7 +4676,8 @@ acme-lib = { path = "../github/acme/lib" }
             ("github/acme/lib", Role::Owned),
         ]);
         let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
+        let config =
+            IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -4734,7 +4741,9 @@ mod s7_cargo_doctor {
         let root = tmp.path();
 
         // Repo "github/cwalv/rvtty" with sub-packages; no root Cargo.toml.
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -4772,7 +4781,9 @@ mod s7_cargo_doctor {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -4901,7 +4912,9 @@ mod s7_cargo_doctor {
             "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n# managed by rwv\nresolver = \"2\"\n",
         );
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"common\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"common\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -4947,7 +4960,9 @@ mod s7_cargo_doctor {
             "[workspace]\nmembers = [\"github/cwalv/rvtty/daemon\"]\nresolver = \"2\"\n",
         );
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -4985,7 +5000,9 @@ mod s7_cargo_doctor {
             "[workspace]\nmembers = [\"github/cwalv/rvtty/daemon\"]\nresolver = \"2\"\n";
         write_file(root, "Cargo.toml", original_content);
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"common\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"common\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -5028,7 +5045,9 @@ mod s7_cargo_doctor {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -5093,7 +5112,9 @@ mod s7_cargo_doctor {
         );
         touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -5128,7 +5149,9 @@ mod s7_cargo_doctor {
         );
         touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -5169,7 +5192,9 @@ mod s7_cargo_doctor {
              # managed by rwv\nresolver = \"1\"\n",
         );
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -5201,7 +5226,9 @@ mod s7_cargo_doctor {
              # managed by rwv\nresolver = \"2\"\n",
         );
 
-        let config = IntegrationConfig::from_toml("[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\"]\n");
+        let config = IntegrationConfig::from_toml(
+            "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\"]\n",
+        );
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
@@ -7972,7 +7999,9 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\", \".prettierrc\"]");
+        let config = IntegrationConfig::from_toml(
+            "enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\", \".prettierrc\"]",
+        );
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -8008,8 +8037,9 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
-        let config =
-            IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\"]");
+        let config = IntegrationConfig::from_toml(
+            "enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\"]",
+        );
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -8048,8 +8078,9 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
-        let config =
-            IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\"]");
+        let config = IntegrationConfig::from_toml(
+            "enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\"]",
+        );
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -8071,8 +8102,9 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
-        let config =
-            IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\", \".prettierrc\"]");
+        let config = IntegrationConfig::from_toml(
+            "enabled = true\nfiles = [\"turbo.json\", \".prettierrc\"]",
+        );
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -8214,8 +8246,9 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
-        let config =
-            IntegrationConfig::from_toml("enabled = true\nfiles = [\".beads\", \".secrets\", \"turbo.json\"]");
+        let config = IntegrationConfig::from_toml(
+            "enabled = true\nfiles = [\".beads\", \".secrets\", \"turbo.json\"]",
+        );
         let cache = HashMap::new();
         // Two collisions (.beads, .secrets) and one non-collision (turbo.json).
         let workweave = WorkweaveConfig {

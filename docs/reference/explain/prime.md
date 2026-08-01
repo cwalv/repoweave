@@ -45,7 +45,7 @@ Run `rwv --help prime` for the full clap surface.
 
 - Workspace location (weave or workweave path) and active project.
 - Repository table (path, role, branch, URL) from the active project's
-  `rwv.yaml`.
+  `rwv.toml`.
 - Enabled integrations.
 - Key commands reference table.
 - Directory layout tree (registry dirs, projects with active marker).
@@ -94,6 +94,6 @@ rwv setup agents-md
 
 - *project not active* — no `.rwv-active` is set; prime emits weave-level
   context but omits the repository table and per-project sections.
-- *manifest parse failure* — if the active project's `rwv.yaml` cannot be
+- *manifest parse failure* — if the active project's `rwv.toml` cannot be
   parsed, the repository table section is silently omitted (the rest of the
   output still emits).

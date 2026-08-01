@@ -95,7 +95,7 @@ is the standard "ensure workweave exists" path.
    different dependency set than the workspace it forked from, with both
    reading clean. Copying is what makes a build in the workweave and a build
    at the source measure the same tree.
-3. `workweave:` artifacts from `rwv.yaml` — `copy:` entries are deep-copied;
+3. `workweave:` artifacts from `rwv.toml` — `copy:` entries are deep-copied;
    `link:` entries are absolute symlinks pointing at the source root.
 4. `.rwv-workweave` marker recording `{primary, project, parent}`. `parent`
    is the workspace forked from (= `source_root`), which becomes the default

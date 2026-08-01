@@ -1,13 +1,13 @@
 # Regenerate ecosystem workspace files
 
-When the project's repo membership changes — repos added, removed, or synced in from another workweave — the ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, etc.) need to be brought into line with the new `rwv.yaml`.
+When the project's repo membership changes — repos added, removed, or synced in from another workweave — the ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, etc.) need to be brought into line with the new `rwv.toml`.
 
 The normal paths (`rwv add`, `rwv remove`) run activation hooks automatically, so regeneration is implicit. This page covers the cases where you need to trigger it by hand.
 
 ## When to run this
 
 - You ran `rwv sync` and a new repo appeared in the project's manifest from the source workspace.
-- You edited `rwv.yaml` directly (e.g., to adjust an integration config) and want the generated files to reflect the change.
+- You edited `rwv.toml` directly (e.g., to adjust an integration config) and want the generated files to reflect the change.
 - A workweave was created or switched and the ecosystem files at the weave root are symlinked to the wrong project.
 - `rwv lock` noted: "to refresh ecosystem files after membership changes, run `rwv activate`."
 
@@ -20,7 +20,7 @@ rwv activate <project>
 `rwv activate` does three things:
 
 1. Updates `.rwv-active` to name `<project>`.
-2. Regenerates ecosystem workspace files in `projects/<project>/` from its current `rwv.yaml`.
+2. Regenerates ecosystem workspace files in `projects/<project>/` from its current `rwv.toml`.
 3. Symlinks those files to the weave directory so build tools see them where they expect.
 
 The ecosystem install step runs automatically as part of activation (e.g., `npm install`, `uv sync`, `cargo generate-lockfile`). Pass `--no-install` to generate the workspace config files without running installs:
@@ -70,7 +70,7 @@ If you need to regenerate a file that is fully rwv-owned (like a `gita/` CSV), `
 ## Related
 
 - [Switch projects](./switch-projects.md) — the normal path for `rwv activate`; also covers `--project` for one-shot overrides
-- [Add an integration](./add-an-integration.md) — enable or disable integrations in `rwv.yaml`
+- [Add an integration](./add-an-integration.md) — enable or disable integrations in `rwv.toml`
 - [workspace lens](../explanation/lenses/workspace.md) — what activation does and why it runs an install step
 - [reference/integrations](../reference/integrations/index.md) — per-integration generated-file format
 - [CLI reference: `rwv activate`](../reference/cli.md#rwv-activate-project)

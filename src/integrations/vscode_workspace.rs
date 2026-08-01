@@ -38,7 +38,7 @@ const MARKER_EXCLUDES_KEY: &str = "files.exclude";
 /// owner or registry, a sibling `projects/<name>`); this one is a glob that
 /// names no path at all. The distinction matters to the monotone arm in
 /// [`expected_generated_set`]: preservation is for entries a container has no
-/// evidence about, and every container reads the same `rwv.yaml`, so this key
+/// evidence about, and every container reads the same `rwv.toml`, so this key
 /// is never one of them.
 const DOTFILES_SENTINEL: &str = ".*";
 
@@ -61,7 +61,7 @@ fn seeded_settings() -> [(&'static str, serde_json::Value); 2] {
 
 /// Per-integration settings for the vscode-workspace integration.
 ///
-/// Deserialized from the `integrations.vscode-workspace:` block in `rwv.yaml`.
+/// Deserialized from the `integrations.vscode-workspace:` block in `rwv.toml`.
 #[derive(serde::Deserialize, Default)]
 struct VscodeConfig {
     /// Whether to hide dotfiles (paths starting with `.`) in the VS Code

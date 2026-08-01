@@ -14,7 +14,7 @@ against the tree at the time of writing; symbol names are the durable anchor.
 rwv is a single-shot CLI that manages a **weave**: a directory tree holding many
 independently-versioned repositories, plus one or more *projects* that declare
 which of those repositories they use and at which revisions. A project is a
-manifest (`rwv.yaml`) plus a lock (`rwv.lock`), both committed to a *project
+manifest (`rwv.toml`) plus a lock (`rwv.lock`), both committed to a *project
 repo*; the members are ordinary clones on disk. The verbs converge disk to that
 committed pair, move it forward, or fan work out into parallel checkouts
 (*workweaves*).
@@ -145,7 +145,7 @@ All durable rwv state is files. There is no database and no cache directory.
 
 | File | Constant | Location | Owns |
 |---|---|---|---|
-| `rwv.yaml` | — | `projects/<name>/` | Committed intent: membership, roles, per-integration config. |
+| `rwv.toml` | — | `projects/<name>/` | Committed intent: membership, roles, per-integration config. |
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
 | `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs:247` | weave root | Which project the primary root currently presents. Ambient default. |
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs:250` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
