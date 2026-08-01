@@ -1479,14 +1479,28 @@ impl LockFile {
             .with_context(|| format!("failed to parse rwv.lock at {}", path.display()))
     }
 
+    /// The remedy for any `rwv.lock` parse failure.
+    ///
+    /// The lock is fully derived state — see [`crate::lock::generate_lock`] —
+    /// so an old YAML-era lock, truncation, and hand damage all have the same
+    /// fix: regenerate it, rather than diagnose the specific cause.
+    pub fn unparseable_hint() -> String {
+        "rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it"
+            .to_string()
+    }
+
     /// Parse a lock file from a JSON string.
     ///
     /// Used by snapshot reads, where content is obtained via
     /// [`crate::vcs::Vcs::read_file_at_revision`] rather than from the
-    /// working tree.
+    /// working tree. A parse failure carries [`Self::unparseable_hint`] as its
+    /// context, with the serde error kept as the source: the remedy is the
+    /// same for every cause, but a lock rwv itself just wrote failing to parse
+    /// means regenerating it will not help, and then the cause is the only
+    /// thing that tells you so.
     pub fn from_json_str(content: &str) -> anyhow::Result<Self> {
-        let lock: Self = serde_json::from_str(content)?;
-        Ok(lock)
+        serde_json::from_str(content)
+            .map_err(|e| anyhow::Error::new(e).context(Self::unparseable_hint()))
     }
 
     /// Consume the raw lock file and resolve each entry's `version`
@@ -2016,6 +2030,32 @@ repositories:
 
         let result = LockFile::from_path(&path);
         assert!(result.is_err());
+    }
+
+    /// The lock is fully derived state, so every parse failure — a
+    /// pre-migration YAML lock, truncation, hand damage — has the same
+    /// fix. The error must name it rather than surface a raw serde error.
+    #[test]
+    fn lock_from_path_parse_failure_names_regeneration_remedy() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rwv.lock");
+        std::fs::write(
+            &path,
+            "repositories:\n  github/acme/server:\n    version: abc123\n",
+        )
+        .unwrap();
+
+        let err = LockFile::from_path(&path).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("rwv lock"),
+            "expected the regeneration remedy in the error chain, got: {err:#}"
+        );
+        assert!(
+            err.chain().count() > 2,
+            "the parse cause must survive under the remedy: a lock rwv itself \
+             just wrote failing to parse means regenerating will not help, and \
+             the cause is the only thing that says so. chain: {err:#}"
+        );
     }
 
     #[test]
