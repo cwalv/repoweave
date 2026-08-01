@@ -2304,6 +2304,40 @@ mod tests {
     }
 
     #[test]
+    fn workweave_marker_read_refuses_a_complete_yaml_marker() {
+        // Markers are JSON now. A YAML marker carrying every field —
+        // `primary`, `project`, and `parent` — is not silently accepted as
+        // usable just because it has the right shape; it is a legacy marker
+        // like any other, refused at read and convertible by migrate_legacy.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let yaml = "primary: /home/user/primary\n\
+                    project: p\n\
+                    parent: /home/user/primary\n";
+        std::fs::write(dir.join(".rwv-workweave"), yaml).unwrap();
+
+        let result = WorkweaveMarker::read(dir);
+        assert!(
+            result.is_err(),
+            "a complete YAML marker must still be refused, not silently parsed"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("legacy workweave marker"),
+            "error should name it a legacy marker: {msg}"
+        );
+
+        assert!(
+            WorkweaveMarker::migrate_legacy(dir).unwrap(),
+            "migrate_legacy must convert the YAML marker to JSON"
+        );
+        let migrated = WorkweaveMarker::read(dir)
+            .expect("migrated marker must parse")
+            .expect("migrated marker must be present");
+        assert_eq!(migrated.parent, PathBuf::from("/home/user/primary"));
+    }
+
+    #[test]
     fn workweave_marker_migrate_legacy_preserves_an_explicit_parent() {
         // migrate_legacy's parent-backfill only fires when parent is
         // missing/null; one already present in the legacy YAML (e.g. a
