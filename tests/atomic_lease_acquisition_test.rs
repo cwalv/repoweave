@@ -384,11 +384,12 @@ fn doctor_reports_dead_op_lease_with_missing_owner_record() {
     let ghost_owner = tmp.path().join("ghost-owner");
     std::fs::create_dir_all(&ghost_owner).unwrap();
 
-    let lease_yaml = format!(
-        "id: \"dead-op-9999\"\nowner: \"{owner}\"\n",
+    let lease_json = format!(
+        "{{\"id\": \"dead-op-9999\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-05-27T10:00:00Z\"}}",
         owner = ghost_owner.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op-lease"), &lease_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op-lease"), &lease_json).unwrap();
 
     let assertion = rwv().arg("doctor").current_dir(&ww.root).assert();
     let output = assertion.get_output();
@@ -414,12 +415,13 @@ fn doctor_fix_removes_dead_op_lease() {
 
     let ghost_owner = tmp.path().join("ghost-owner-2");
     std::fs::create_dir_all(&ghost_owner).unwrap();
-    let lease_yaml = format!(
-        "id: \"dead-op-fix\"\nowner: \"{owner}\"\n",
+    let lease_json = format!(
+        "{{\"id\": \"dead-op-fix\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-05-27T10:00:00Z\"}}",
         owner = ghost_owner.display(),
     );
     let lease_path = ww.root.join(".rwv-op-lease");
-    std::fs::write(&lease_path, &lease_yaml).unwrap();
+    std::fs::write(&lease_path, &lease_json).unwrap();
 
     let _ = rwv()
         .args(["doctor", "--fix"])
@@ -448,22 +450,24 @@ fn doctor_leaves_live_lease_alone() {
     let op_id = "live-op-1234";
     let owner_ws = tmp.path().join("live-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
-    let owner_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync-to\nstrategy: rebase\nsource: \"{src}\"\n\
-         target: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\n\
-         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let owner_json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = owner_ws.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(owner_ws.join(".rwv-op"), &owner_yaml).unwrap();
+    std::fs::write(owner_ws.join(".rwv-op"), &owner_json).unwrap();
 
     // Lease at ww with the SAME id → live pairing → dead-lease check must
     // return None.
-    let lease_yaml = format!(
-        "id: \"{op_id}\"\nowner: \"{owner}\"\n",
+    let lease_json = format!(
+        "{{\"id\": \"{op_id}\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-05-27T10:00:00Z\"}}",
         owner = owner_ws.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op-lease"), &lease_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op-lease"), &lease_json).unwrap();
 
     let assertion = rwv().arg("doctor").current_dir(&ww.root).assert();
     let output = assertion.get_output();
@@ -495,23 +499,25 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     // hygiene target.
     let owner_ws = tmp.path().join("other-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
-    let fresh_yaml = format!(
-        "id: \"fresh-op\"\nverb: sync-to\nstrategy: rebase\nsource: \"{src}\"\n\
-         target: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\n\
-         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let fresh_json = format!(
+        "{{\"id\": \"fresh-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = owner_ws.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(owner_ws.join(".rwv-op"), &fresh_yaml).unwrap();
+    std::fs::write(owner_ws.join(".rwv-op"), &fresh_json).unwrap();
 
     // Lease at ww references an OLDER, unrelated op id. Follow the pointer
     // → the owner file exists but has id "fresh-op" → dead by structural
     // mismatch.
-    let stale_lease_yaml = format!(
-        "id: \"old-op-stranded\"\nowner: \"{owner}\"\n",
+    let stale_lease_json = format!(
+        "{{\"id\": \"old-op-stranded\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-05-27T10:00:00Z\"}}",
         owner = owner_ws.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op-lease"), &stale_lease_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op-lease"), &stale_lease_json).unwrap();
 
     let assertion = rwv().arg("doctor").current_dir(&ww.root).assert();
     let output = assertion.get_output();

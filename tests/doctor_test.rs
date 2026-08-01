@@ -2605,11 +2605,11 @@ fn dead_op_lease_names_fix_verb_and_age() {
     std::fs::create_dir_all(&ghost_owner).unwrap();
 
     // Lease with `created_at` so doctor can surface age.
-    let lease_yaml = format!(
-        "id: \"audit-dead-op-1\"\nowner: \"{}\"\ncreated_at: \"2026-01-01T00:00:00Z\"\n",
+    let lease_json = format!(
+        "{{\"id\": \"audit-dead-op-1\", \"owner\": \"{}\", \"created_at\": \"2026-01-01T00:00:00Z\"}}",
         ghost_owner.display(),
     );
-    std::fs::write(root.join(".rwv-op-lease"), &lease_yaml).unwrap();
+    std::fs::write(root.join(".rwv-op-lease"), &lease_json).unwrap();
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(&project_dir, &[]);

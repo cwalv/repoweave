@@ -234,14 +234,15 @@ fn delete_refuses_while_workweave_is_mid_op() {
     let ww = create_workweave(&main, "busy", None);
 
     // Plant a v2 owner record in the workweave root (simulate an in-flight op).
-    let op_yaml = format!(
-        "id: \"planted-delete-op\"\nverb: sync-to\nstrategy: rebase\nsource: \"{src}\"\n\
-         target: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\n\
-         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_json = format!(
+        "{{\"id\": \"planted-delete-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = ww.root.display(),
         tgt = main.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &ww.name])
@@ -276,14 +277,15 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "busyforce", None);
 
-    let op_yaml = format!(
-        "id: \"planted-delete-op-2\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\n\
-         target: \"{tgt}\"\nretire: false\nphase: relock\nconverged_tips: {{}}\n\
-         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_json = format!(
+        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = main.root.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
     let out = rwv()
         .args([

@@ -56,9 +56,9 @@ fn consent_flag_names(subcommand: &str) -> Vec<String> {
 }
 
 fn wire_spelling(o: &Override) -> String {
-    serde_yaml::to_string(o)
+    serde_json::to_string(o)
         .expect("Override serialises")
-        .trim()
+        .trim_matches('"')
         .to_owned()
 }
 
@@ -95,14 +95,16 @@ fn an_owner_record_naming_every_consent_flag_parses() {
     let dir = common::tempdir().expect("tempdir");
     let list: String = consent_flag_names("sync-to")
         .iter()
-        .map(|f| format!("  - {f}\n"))
-        .collect();
-    let yaml = format!(
-        "id: \"1779769917405921588\"\nverb: sync-to\nstrategy: rebase\n\
-         source: /src\ntarget: /tgt\nretire: false\nphase: replay\n\
-         converged_tips: {{}}\noverrides:\n{list}started_at: \"2026-05-27T10:00:00Z\"\n"
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let json = format!(
+        "{{\"id\": \"1779769917405921588\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"/src\", \"target\": \"/tgt\", \"retire\": false, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [{list}], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}"
     );
-    std::fs::write(dir.path().join(".rwv-op"), &yaml).expect("write record");
+    std::fs::write(dir.path().join(".rwv-op"), &json).expect("write record");
 
     let record = op_state::read_owner(dir.path())
         .expect("a record naming the consent flags must parse")
@@ -114,6 +116,6 @@ fn an_owner_record_naming_every_consent_flag_parses() {
         got,
         sorted_wire_spellings(),
         "an on-disk record naming every consent flag must read back as every \
-         Override; the YAML under test was:\n{yaml}"
+         Override; the JSON under test was:\n{json}"
     );
 }

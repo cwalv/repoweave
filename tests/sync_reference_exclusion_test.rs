@@ -262,17 +262,18 @@ fn rwv_lock_commit(workspace_root: &Path) {
 }
 
 /// Plant an owner record (`.rwv-op`) at `workspace` so `rwv abort` enters its
-/// per-repo restore loop. Mirrors the YAML shape `abort_hardening_test.rs`
+/// per-repo restore loop. Mirrors the JSON shape `abort_hardening_test.rs`
 /// plants by hand. `source`/`target` both point at `workspace` (plain-sync
 /// shape), so abort restores only this workspace's repos.
 fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str) {
-    let yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: rebase\nsource: \"{root}\"\ntarget: \"{root}\"\n\
-         retire: false\nphase: {phase}\nconverged_tips: {{}}\noverrides: []\n\
-         started_at: \"2026-05-27T10:00:00Z\"\n",
+    let json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         root = workspace.display(),
     );
-    std::fs::write(workspace.join(".rwv-op"), &yaml).unwrap();
+    std::fs::write(workspace.join(".rwv-op"), &json).unwrap();
 }
 
 /// Create a `refs/rwv/pre-op/<op-id>` savepoint pointing at `sha` in `repo`.

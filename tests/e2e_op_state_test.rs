@@ -235,14 +235,15 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     // to simulate a sync that was interrupted mid-way.
     //
     // Write a v2 owner record into ww's workspace (simulating an in-progress op).
-    // [v1→v2: phase "running" → "replay"; added converged_tips/overrides.]
     let op_id = "test-concurrent-op-1234";
-    let op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_state_json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"source\": \"{src}\", \
+         \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
+         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
     // Also create a savepoint ref so abort can clean up later.
     let ww_server_sha = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -291,13 +292,15 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Write a v2 owner record at a specific phase.
-    // [v1→v2: phase "step1-rebase" → "relock" (mid-op relock phase).]
-    let op_state_yaml = format!(
-        "id: \"test-phase-detect\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: relock\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_state_json = format!(
+        "{{\"id\": \"test-phase-detect\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
     let assertion = rwv()
         .args(["sync", &primary.root.to_string_lossy()])
@@ -434,13 +437,15 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Write a v2 owner record at advance-target phase into ww's workspace.
-    // [v1→v2: phase "step3-ff" → "advance-target" in v2 schema.]
-    let op_state_yaml = format!(
-        "id: \"test-step3-ff-1234\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: advance-target\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_state_json = format!(
+        "{{\"id\": \"test-step3-ff-1234\", \"verb\": \"sync\", \"strategy\": \"ff\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
+         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
     // Create a savepoint ref so the op-id is consistent.
     let op_id = "test-step3-ff-1234";
@@ -494,13 +499,15 @@ fn continue_with_strategy_flag_is_rejected() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Plant a v2 owner record so --continue would proceed if it were alone.
-    // [v1→v2: phase "running" → "replay"; added converged_tips/overrides.]
-    let op_state_yaml = format!(
-        "id: \"test-exclusive-1234\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_state_json = format!(
+        "{{\"id\": \"test-exclusive-1234\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
     // Passing --strategy alongside --continue must be rejected.
     let assertion = rwv()
@@ -715,22 +722,21 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
 
     // v2: ww is the owner (CWD/source of sync-to) → owner record at ww.root/.rwv-op.
     // primary is the target workspace → thin lease at primary.root/.rwv-op-lease.
-    //
-    // [v1→v2: replaced dual full-record writes with owner record
-    // + thin lease. Phase "step1-rebase" → "replay". Primary gets lease, not owner record.]
-    let ww_op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync-to\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let ww_op_state_json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"ff\", \"source\": \"{src}\", \
+         \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
+         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = ww.root.display(),
         tgt = primary.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &ww_op_state_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &ww_op_state_json).unwrap();
 
-    // Thin lease in primary (target workspace): just {id, owner}.
-    let primary_lease_yaml = format!(
-        "id: \"{op_id}\"\nowner: \"{owner}\"\n",
+    // Thin lease in primary (target workspace): just {id, owner, created_at}.
+    let primary_lease_json = format!(
+        "{{\"id\": \"{op_id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-05-27T10:00:00Z\"}}",
         owner = ww.root.display(),
     );
-    std::fs::write(primary.root.join(".rwv-op-lease"), &primary_lease_yaml).unwrap();
+    std::fs::write(primary.root.join(".rwv-op-lease"), &primary_lease_json).unwrap();
 
     // Run `rwv abort` from ww.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
@@ -773,13 +779,14 @@ fn abort_restores_repos_and_removes_op_state() {
         &primary.server_dir,
     );
 
-    // v2 owner record: phase "running" → "replay"; added converged_tips/overrides.
-    let op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let op_state_json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"source\": \"{src}\", \
+         \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
+         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
+    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
     // Run abort.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
@@ -812,14 +819,15 @@ fn abort_restores_repos_and_removes_op_state() {
 
 /// Plant a v2 owner record for an in-flight op at `ws_root`.
 fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: &Path) {
-    let yaml = format!(
-        "id: \"planted-op-1234\"\nverb: {verb}\nstrategy: rebase\nsource: \"{src}\"\n\
-         target: \"{tgt}\"\nretire: false\nphase: {phase}\nconverged_tips: {{}}\n\
-         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let json = format!(
+        "{{\"id\": \"planted-op-1234\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = src.display(),
         tgt = tgt.display(),
     );
-    std::fs::write(ws_root.join(".rwv-op"), &yaml).unwrap();
+    std::fs::write(ws_root.join(".rwv-op"), &json).unwrap();
 }
 
 /// Assert an in-flight-op refusal: names the verb, phase, age, and both exits.
@@ -929,11 +937,12 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
         &ww.root,
         &primary.root,
     );
-    let lease_yaml = format!(
-        "id: \"planted-op-1234\"\nowner: \"{owner}\"\n",
+    let lease_json = format!(
+        "{{\"id\": \"planted-op-1234\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-05-27T10:00:00Z\"}}",
         owner = ww.root.display(),
     );
-    std::fs::write(primary.root.join(".rwv-op-lease"), &lease_yaml).unwrap();
+    std::fs::write(primary.root.join(".rwv-op-lease"), &lease_json).unwrap();
 
     // From the LEASED workspace (primary), `rwv update` must refuse, following
     // the lease pointer to the owner record for the rich message.

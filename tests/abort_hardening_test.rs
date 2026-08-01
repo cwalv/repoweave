@@ -165,23 +165,22 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
 }
 
 /// Plant a v2 owner record at the workspace root with the given op-id,
-/// phase, and per-repo converged_tips map (key → SHA). Mirrors the YAML
+/// phase, and per-repo converged_tips map (key → SHA). Mirrors the JSON
 /// `rwv abort` reads.
 fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips: &[(&str, &str)]) {
-    let tips_yaml = if converged_tips.is_empty() {
-        "{}\n".to_string()
-    } else {
-        let mut s = String::from("\n");
-        for (key, sha) in converged_tips {
-            s.push_str(&format!("  \"{key}\": \"{sha}\"\n"));
-        }
-        s
-    };
-    let yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: rebase\nsource: \"{root}\"\ntarget: \"{root}\"\nretire: false\nphase: {phase}\nconverged_tips: {tips_yaml}overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+    let tips_json = converged_tips
+        .iter()
+        .map(|(key, sha)| format!("\"{key}\": \"{sha}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
+         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         root = workspace.display(),
     );
-    std::fs::write(workspace.join(".rwv-op"), &yaml).unwrap();
+    std::fs::write(workspace.join(".rwv-op"), &json).unwrap();
 }
 
 /// Create a `refs/rwv/pre-op/<op-id>` savepoint pointing at `sha` in `repo`.

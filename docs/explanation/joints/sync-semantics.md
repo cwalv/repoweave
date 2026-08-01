@@ -300,18 +300,23 @@ Written at the initiating workspace (the owner). Holds all op
 parameters plus the current phase. It is the sole copy of mutable op
 state.
 
-```yaml
-id: "1779769917405921588"       # op id, shared with savepoint refs
-verb: sync                       # "sync" | "sync-to"
-strategy: rebase                 # "ff" | "rebase"
-source: /abs/path/src
-target: /abs/path/tgt
-retire: false
-phase: replay                    # replay | relock | advance-target | retire
-advanced_tips: {}                # replay-phase intent: repo → planned/actual tip; empty before replay entry; cleared at relock (same write as converged_tips)
-converged_tips: {}               # written at relock completion; empty before
-overrides: []                    # named overrides supplied at invocation
-started_at: 2026-06-10T21:14:03Z
+JSON, every field mandatory — a record missing a key fails to parse rather
+than defaulting.
+
+```json
+{
+  "id": "1779769917405921588",
+  "verb": "sync",
+  "strategy": "rebase",
+  "source": "/abs/path/src",
+  "target": "/abs/path/tgt",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {},
+  "converged_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-10T21:14:03Z"
+}
 ```
 
 `source` is the workspace content flows FROM; `target` is where it
@@ -322,18 +327,19 @@ All path fields are absolute. `started_at` is RFC3339 UTC.
 replay phase — written at replay entry (ff-movers) or right after the
 advance succeeds (rebased repos), and cleared atomically with
 `converged_tips` at relock completion. `converged_tips` is populated at
-relock completion; empty before. Old records without `advanced_tips`
-parse to an empty map (`#[serde(default)]`), so abort degrades gracefully
-to pre-journal behavior with no migration code.
+relock completion; empty before.
 
 ### Thin lease (`.rwv-op-lease`)
 
 Written at every other workspace the op mutates (never at the owner).
 Immutable once written; a mutex plus a redirect, nothing else.
 
-```yaml
-id: "1779769917405921588"
-owner: /abs/path/to/owner/workspace
+```json
+{
+  "id": "1779769917405921588",
+  "owner": "/abs/path/to/owner/workspace",
+  "created_at": "2026-06-10T21:14:03Z"
+}
 ```
 
 `--continue` and `abort` invoked from a leased workspace follow the

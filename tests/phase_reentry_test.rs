@@ -175,16 +175,10 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &str) {
     let body = format!(
-        "id: \"reentry-test-{phase}\"\n\
-         verb: sync\n\
-         strategy: rebase\n\
-         source: \"{src}\"\n\
-         target: \"{tgt}\"\n\
-         retire: false\n\
-         phase: {phase}\n\
-         converged_tips: {{}}\n\
-         overrides: []\n\
-         started_at: \"2026-06-10T00:00:00Z\"\n",
+        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         src = source.display(),
         tgt = target.display(),
     );
@@ -289,16 +283,10 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
 
 fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
     let body = format!(
-        "id: \"reentry-test-advance\"\n\
-         verb: sync-to\n\
-         strategy: rebase\n\
-         source: \"{src}\"\n\
-         target: \"{tgt}\"\n\
-         retire: false\n\
-         phase: advance-target\n\
-         converged_tips: {{}}\n\
-         overrides: []\n\
-         started_at: \"2026-06-10T00:00:00Z\"\n",
+        "{{\"id\": \"reentry-test-advance\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
+         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         src = workspace.display(),
         tgt = target.display(),
     );
@@ -307,7 +295,8 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
 
 fn write_lease(workspace: &Path, owner: &Path) {
     let body = format!(
-        "id: \"reentry-test-advance\"\nowner: \"{owner}\"\n",
+        "{{\"id\": \"reentry-test-advance\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-06-10T00:00:00Z\"}}",
         owner = owner.display(),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
@@ -445,16 +434,10 @@ fn write_sync_to_owner_record_at_phase(
     id: &str,
 ) {
     let body = format!(
-        "id: \"{id}\"\n\
-         verb: sync-to\n\
-         strategy: rebase\n\
-         source: \"{src}\"\n\
-         target: \"{tgt}\"\n\
-         retire: false\n\
-         phase: {phase}\n\
-         converged_tips: {{}}\n\
-         overrides: []\n\
-         started_at: \"2026-06-10T00:00:00Z\"\n",
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         src = source.display(),
         tgt = target.display(),
     );
@@ -463,7 +446,7 @@ fn write_sync_to_owner_record_at_phase(
 
 fn write_lease_with_id(workspace: &Path, owner: &Path, id: &str) {
     let body = format!(
-        "id: \"{id}\"\nowner: \"{owner}\"\n",
+        "{{\"id\": \"{id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
         owner = owner.display(),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
@@ -708,26 +691,16 @@ fn write_sync_to_retire_record(
     id: &str,
     converged_tips: &[(&str, &str)],
 ) {
-    let tips_yaml = if converged_tips.is_empty() {
-        "converged_tips: {}\n".to_owned()
-    } else {
-        let mut s = String::from("converged_tips:\n");
-        for (repo, sha) in converged_tips {
-            s.push_str(&format!("  \"{repo}\": \"{sha}\"\n"));
-        }
-        s
-    };
+    let tips_json = converged_tips
+        .iter()
+        .map(|(repo, sha)| format!("\"{repo}\": \"{sha}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     let body = format!(
-        "id: \"{id}\"\n\
-         verb: sync-to\n\
-         strategy: rebase\n\
-         source: \"{src}\"\n\
-         target: \"{tgt}\"\n\
-         retire: true\n\
-         phase: retire\n\
-         {tips_yaml}\
-         overrides: []\n\
-         started_at: \"2026-06-10T00:00:00Z\"\n",
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
+         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         src = source.display(),
         tgt = target.display(),
     );
@@ -789,10 +762,10 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
         ww.root.join(".rwv-op").exists(),
         "owner record must survive a merged-check failure"
     );
-    let record_yaml = std::fs::read_to_string(ww.root.join(".rwv-op")).expect("read owner record");
+    let record_json = std::fs::read_to_string(ww.root.join(".rwv-op")).expect("read owner record");
     assert!(
-        record_yaml.contains("phase: retire"),
-        "owner record must remain at phase=retire after merged-check failure; got:\n{record_yaml}"
+        record_json.contains("\"phase\": \"retire\""),
+        "owner record must remain at phase=retire after merged-check failure; got:\n{record_json}"
     );
 
     // Target lease must survive at primary.

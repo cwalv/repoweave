@@ -160,27 +160,19 @@ fn rwv_cmd() -> Command {
 
 /// Write a `.rwv-op` v2 owner record by hand (sync.rs writes the same shape,
 /// but we don't want to drive a real sync to produce one).
-///
-/// [v1→v2: phase "running" → "replay"; added converged_tips/overrides.]
 fn write_op_state(workspace_dir: &Path, op_id: &str) {
     write_op_state_for_verb(workspace_dir, op_id, "sync");
 }
 
 /// As [`write_op_state`], for an op started by `verb`.
 fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
-    let yaml = format!(
-        "id: {op_id}\n\
-         verb: {verb}\n\
-         strategy: rebase\n\
-         source: /tmp/src\n\
-         target: /tmp/tgt\n\
-         retire: false\n\
-         phase: replay\n\
-         converged_tips: {{}}\n\
-         overrides: []\n\
-         started_at: 2026-01-01T00:00:00Z\n",
+    let json = format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \
+         \"source\": \"/tmp/src\", \"target\": \"/tmp/tgt\", \"retire\": false, \
+         \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\"}}",
     );
-    std::fs::write(workspace_dir.join(".rwv-op"), yaml).unwrap();
+    std::fs::write(workspace_dir.join(".rwv-op"), json).unwrap();
 }
 
 // ===========================================================================

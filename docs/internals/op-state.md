@@ -26,19 +26,23 @@ refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
 
 Schema v2 (no back-compat with v1; in-flight v1 ops must be resolved with
-`rwv abort` before upgrading).
+`rwv abort` before upgrading). JSON, every field mandatory — a record missing
+a key fails to parse rather than defaulting.
 
-```yaml
-id: "1779769917405921588"       # op id, shared with savepoint refs
-verb: sync                       # "sync" | "sync-to"
-strategy: rebase                 # "ff" | "rebase"
-source: /abs/path/src
-target: /abs/path/tgt
-retire: false
-phase: replay                    # replay | relock | advance-target | retire
-converged_tips: {}               # written at relock completion; empty before
-overrides: []                    # named overrides supplied at invocation
-started_at: 2026-06-10T21:14:03Z
+```json
+{
+  "id": "1779769917405921588",
+  "verb": "sync",
+  "strategy": "rebase",
+  "source": "/abs/path/src",
+  "target": "/abs/path/tgt",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {},
+  "converged_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-10T21:14:03Z"
+}
 ```
 
 | Field | Description |
@@ -50,7 +54,8 @@ started_at: 2026-06-10T21:14:03Z
 | `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
 | `retire` | Whether `--retire` was passed |
 | `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only). Persisted before entering each phase so a crash re-enters the same phase on resume |
-| `converged_tips` | Per-repo converged tips written at relock completion. Key: repo path relative to workspace root. Value: SHA string. Consumed by advance-target and abort's HEAD check |
+| `advanced_tips` | Replay-phase intent per repo. Key: repo path relative to workspace root. Value: SHA string. Empty before replay entry; cleared at relock in the same write that populates `converged_tips` |
+| `converged_tips` | Per-repo converged tips written at relock completion. Empty before. Consumed by advance-target and abort's HEAD check |
 | `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
 | `started_at` | RFC3339 UTC timestamp when the op started |
 
@@ -65,15 +70,19 @@ concurrent ops on the same workspace) and a pointer back to the owner record
 for `--continue` and `rwv abort`. Cleared after the owning op completes or is
 aborted.
 
-```yaml
-id: "1779769917405921588"
-owner: /abs/path/to/owner/workspace
+```json
+{
+  "id": "1779769917405921588",
+  "owner": "/abs/path/to/owner/workspace",
+  "created_at": "2026-06-10T21:14:03Z"
+}
 ```
 
 | Field | Description |
 |---|---|
 | `id` | Unique operation identifier. Same as the owner record's `id` |
 | `owner` | Absolute path to the owner workspace. Follow this pointer to load the full op state |
+| `created_at` | RFC3339 UTC timestamp at which the lease was written. Surfaced by `rwv doctor` as observability-only context, never a decision input |
 
 Lives at the workspace root of the non-owner mutated workspace. Source:
 `src/op_state.rs`.

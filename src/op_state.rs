@@ -10,28 +10,40 @@
 //! Written at the **initiating workspace** (the owner). Holds all op parameters
 //! plus the current phase. It is the sole copy of mutable op state.
 //!
-//! ```yaml
-//! id: "1779769917405921588"       # op id, shared with savepoint refs
-//! verb: sync                       # "sync" | "sync-to"
-//! strategy: rebase                 # "ff" | "rebase"
-//! source: /abs/path/src
-//! target: /abs/path/tgt
-//! retire: false
-//! phase: replay                    # replay | relock | advance-target | retire
-//! advanced_tips: {}                # replay-phase intent: repo → planned/actual tip; empty before replay entry; cleared at relock (same write as converged_tips)
-//! converged_tips: {}               # written at relock completion; empty before
-//! overrides: []                    # named overrides supplied at invocation
-//! started_at: 2026-06-10T21:14:03Z
+//! ```json
+//! {
+//!   "id": "1779769917405921588",
+//!   "verb": "sync",
+//!   "strategy": "rebase",
+//!   "source": "/abs/path/src",
+//!   "target": "/abs/path/tgt",
+//!   "retire": false,
+//!   "phase": "replay",
+//!   "advanced_tips": {},
+//!   "converged_tips": {},
+//!   "overrides": [],
+//!   "started_at": "2026-06-10T21:14:03Z"
+//! }
 //! ```
+//!
+//! `id` is the op id, shared with savepoint refs. `verb` is `sync` or
+//! `sync-to`; `strategy` is `ff` or `rebase`; `phase` is `replay`, `relock`,
+//! `advance-target`, or `retire`. `advanced_tips` is replay-phase intent (repo
+//! → planned/actual tip): empty before replay entry, cleared at relock in the
+//! same write that populates `converged_tips`, which is written at relock
+//! completion and empty before.
 //!
 //! ## Thin lease (`.rwv-op-lease`)
 //!
 //! Written at every **other workspace the op mutates** (never at the owner).
 //! Immutable once written; a mutex plus a redirect, nothing else.
 //!
-//! ```yaml
-//! id: "1779769917405921588"
-//! owner: /abs/path/to/owner/workspace
+//! ```json
+//! {
+//!   "id": "1779769917405921588",
+//!   "owner": "/abs/path/to/owner/workspace",
+//!   "created_at": "2026-06-10T21:14:03Z"
+//! }
 //! ```
 //!
 //! ## Read-only workspaces
@@ -267,9 +279,9 @@ impl std::fmt::Display for OpPhase {
 /// holds exactly one table at a time, and the only transition from the replay
 /// table to the converged table is the atomic [`PhaseTips::converge`] swap.
 ///
-/// Wire format: this ADT is *in-memory only*. The persisted `.rwv-op` YAML
+/// Wire format: this ADT is *in-memory only*. The persisted `.rwv-op` JSON
 /// keeps the historical flat shape (two independent top-level keys
-/// `advanced_tips:` / `converged_tips:`) via the [`OwnerRecord`] serde shim,
+/// `advanced_tips` / `converged_tips`) via the [`OwnerRecord`] serde shim,
 /// so persisted op-state round-trips byte-for-byte across this change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PhaseTips {
@@ -364,8 +376,8 @@ pub enum Override {
 /// The replay-intent (`advanced_tips`) and converged (`converged_tips`) tip
 /// tables are carried by the [`PhaseTips`] ADT in `tips`, which makes the
 /// illegal *both-populated* state unrepresentable (see [`PhaseTips`]). The
-/// persisted `.rwv-op` YAML keeps the historical flat shape — two independent
-/// top-level keys `advanced_tips:` / `converged_tips:` — via a serde shim
+/// persisted `.rwv-op` JSON keeps the historical flat shape — two independent
+/// top-level keys `advanced_tips` / `converged_tips` — via a serde shim
 /// ([`WireOwnerRecord`]), so on-disk op-state round-trips unchanged.
 /// `overrides` records named overrides supplied at invocation for audit
 /// fidelity on `--continue`.
@@ -402,7 +414,7 @@ pub struct OwnerRecord {
 // WireOwnerRecord — flat persisted shape for OwnerRecord (serde shim)
 // ---------------------------------------------------------------------------
 
-/// On-disk representation of [`OwnerRecord`]: the historical flat YAML with
+/// On-disk representation of [`OwnerRecord`]: the historical flat JSON with
 /// two independent tip maps. Exists solely to keep the persisted `.rwv-op`
 /// shape stable while the in-memory model uses the [`PhaseTips`] ADT.
 ///
@@ -411,6 +423,11 @@ pub struct OwnerRecord {
 /// [`PhaseTips::Converged`]; otherwise the record is still in the replay half
 /// and maps to [`PhaseTips::Replay`], carrying `advanced_tips`. A both-empty
 /// record canonicalises to the empty replay half and serialises identically.
+///
+/// Schema v2 carries no default for any field here: every write goes through
+/// the full struct, so a record missing a key is malformed, not old, and
+/// [`read_owner`] surfaces that as a parse error rather than silently filling
+/// it in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WireOwnerRecord {
     id: String,
@@ -420,12 +437,8 @@ struct WireOwnerRecord {
     target: PathBuf,
     retire: bool,
     phase: OpPhase,
-    /// Empty on records predating this field (`#[serde(default)]`).
-    #[serde(default)]
     advanced_tips: BTreeMap<String, String>,
-    #[serde(default)]
     converged_tips: BTreeMap<String, String>,
-    #[serde(default)]
     overrides: Vec<Override>,
     started_at: String,
 }
@@ -557,9 +570,8 @@ pub struct LeaseRecord {
     /// decision input** — the classification is structural (owner record
     /// absent or op-id mismatch), not elapsed-time based.
     ///
-    /// `Option` for backward-compatibility: old lease files written before
-    /// this field was added deserialize cleanly (missing field → `None`).
-    #[serde(default)]
+    /// `write_lease` always populates this; `Option` stays only so `rwv
+    /// doctor --json`'s dead-lease finding keeps its existing nullable shape.
     pub created_at: Option<String>,
 }
 
@@ -652,8 +664,8 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
 /// [`check_no_op_in_progress`].
 pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result<()> {
     let path = OwnerRecord::path_in(workspace_dir);
-    let yaml = serde_yaml::to_string(record).context("failed to serialize owner record")?;
-    std::fs::write(&path, yaml)
+    let json = serde_json::to_string_pretty(record).context("failed to serialize owner record")?;
+    std::fs::write(&path, json)
         .with_context(|| format!("failed to write owner record to {}", path.display()))
 }
 
@@ -665,9 +677,9 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
     if !path.exists() {
         return Ok(None);
     }
-    let yaml = std::fs::read_to_string(&path)
+    let json = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read owner record from {}", path.display()))?;
-    let record: OwnerRecord = serde_yaml::from_str(&yaml)
+    let record: OwnerRecord = serde_json::from_str(&json)
         .with_context(|| format!("failed to parse owner record at {}", path.display()))?;
     Ok(Some(record))
 }
@@ -702,8 +714,8 @@ pub fn clear_owner(workspace_dir: &Path) {
 /// once per lease workspace at op start.
 pub fn write_lease(workspace_dir: &Path, lease: &LeaseRecord) -> anyhow::Result<()> {
     let path = LeaseRecord::path_in(workspace_dir);
-    let yaml = serde_yaml::to_string(lease).context("failed to serialize lease record")?;
-    std::fs::write(&path, yaml)
+    let json = serde_json::to_string_pretty(lease).context("failed to serialize lease record")?;
+    std::fs::write(&path, json)
         .with_context(|| format!("failed to write lease to {}", path.display()))
 }
 
@@ -715,9 +727,9 @@ pub fn read_lease(workspace_dir: &Path) -> anyhow::Result<Option<LeaseRecord>> {
     if !path.exists() {
         return Ok(None);
     }
-    let yaml = std::fs::read_to_string(&path)
+    let json = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read lease from {}", path.display()))?;
-    let lease: LeaseRecord = serde_yaml::from_str(&yaml)
+    let lease: LeaseRecord = serde_json::from_str(&json)
         .with_context(|| format!("failed to parse lease at {}", path.display()))?;
     Ok(Some(lease))
 }
@@ -951,9 +963,9 @@ pub fn acquire_op(
 
     // Owner first, then leases.
     let owner_path = OwnerRecord::path_in(owner_workspace_dir);
-    let owner_yaml = serde_yaml::to_string(owner_record)
+    let owner_json = serde_json::to_string_pretty(owner_record)
         .context("failed to serialize owner record for acquisition")?;
-    match crate::durable_file::create_new(&owner_path, owner_yaml.as_bytes()) {
+    match crate::durable_file::create_new(&owner_path, owner_json.as_bytes()) {
         Ok(()) => {}
         Err(CreateNewError::AlreadyExists) => {
             // Race: another op landed here. Read it back for the standard
@@ -985,7 +997,7 @@ pub fn acquire_op(
             owner: owner_workspace_dir.to_path_buf(),
             created_at: Some(utc_now_rfc3339()),
         };
-        let lease_yaml = match serde_yaml::to_string(&lease) {
+        let lease_json = match serde_json::to_string_pretty(&lease) {
             Ok(s) => s,
             Err(e) => {
                 // Serialize failure is not I/O contention but still needs to
@@ -995,7 +1007,7 @@ pub fn acquire_op(
                 return Err(anyhow::Error::new(e).context("failed to serialize lease record"));
             }
         };
-        match crate::durable_file::create_new(&lease_path, lease_yaml.as_bytes()) {
+        match crate::durable_file::create_new(&lease_path, lease_json.as_bytes()) {
             Ok(()) => acquired_leases.push(ws.clone()),
             Err(CreateNewError::AlreadyExists) => {
                 // Race on a lease: undo owner + any leases we already wrote,
@@ -1073,9 +1085,9 @@ pub struct DeadLease {
     /// Why the lease is dead (owner missing vs owner op id mismatch), for the
     /// human-facing message.
     pub reason: DeadLeaseReason,
-    /// RFC3339 UTC timestamp at which the lease was written, if the field was
-    /// present in the file (new leases carry it; old leases do not).
-    /// Observability-only: surfaced in doctor reports, never a decision input.
+    /// RFC3339 UTC timestamp at which the lease was written, carried through
+    /// from [`LeaseRecord::created_at`]. Observability-only: surfaced in
+    /// doctor reports, never a decision input.
     pub created_at: Option<String>,
 }
 
@@ -1358,33 +1370,32 @@ mod tests {
     }
 
     #[test]
-    fn advanced_tips_default_empty_when_field_absent() {
-        // A serialised record that pre-dates the advanced_tips field (i.e. the
-        // YAML has no advanced_tips key) must parse to an empty map.
+    fn wire_record_missing_advanced_tips_key_is_rejected() {
+        // Schema v2 carries no default for any WireOwnerRecord field — every
+        // write goes through the full struct, so a record missing a key is
+        // malformed, not old, and must fail to parse rather than silently
+        // filling it in.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        // Craft a minimal YAML record without the advanced_tips key, exactly as
-        // an in-flight record from before this change would look.
-        let yaml = r#"id: "9999999999999999999"
-verb: sync
-strategy: ff
-source: /src/ws
-target: /cwd/ws
-retire: false
-phase: replay
-converged_tips: {}
-overrides: []
-started_at: 2026-06-01T00:00:00Z
+        let json = r#"{
+  "id": "9999999999999999999",
+  "verb": "sync",
+  "strategy": "ff",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "replay",
+  "converged_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-01T00:00:00Z"
+}
 "#;
-        let path = dir.join(OP_STATE_FILE);
-        std::fs::write(&path, yaml).unwrap();
-        let record = read_owner(dir).unwrap().unwrap();
-        // A legacy record (no advanced_tips key, empty converged_tips) maps to
-        // the empty replay half.
-        assert_eq!(record.tips, PhaseTips::Replay(BTreeMap::new()));
-        // Verify the rest of the record parsed correctly too.
-        assert_eq!(record.id, "9999999999999999999");
-        assert_eq!(record.verb, OpVerb::Sync);
+        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
+        let err = read_owner(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse owner record"),
+            "a record missing advanced_tips must fail to parse; got: {err}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1453,14 +1464,14 @@ started_at: 2026-06-01T00:00:00Z
         record.phase = OpPhase::Relock;
 
         write_owner(dir, &record).unwrap();
-        // The persisted YAML keeps the flat shape with advanced_tips emptied.
+        // The persisted JSON keeps the flat shape with advanced_tips emptied.
         let raw = std::fs::read_to_string(dir.join(OP_STATE_FILE)).unwrap();
         assert!(
-            raw.contains("advanced_tips: {}"),
+            raw.contains("\"advanced_tips\": {}"),
             "expected emptied flat advanced_tips key, got:\n{raw}"
         );
         assert!(
-            raw.contains("converged_tips:"),
+            raw.contains("\"converged_tips\""),
             "expected converged_tips key, got:\n{raw}"
         );
 
@@ -1476,25 +1487,30 @@ started_at: 2026-06-01T00:00:00Z
     }
 
     #[test]
-    fn legacy_both_empty_record_canonicalises_to_replay() {
-        // A record with both maps empty (the common at-entry state) round-trips
-        // to the empty replay half and serialises identically — the both-empty
-        // case has a single canonical ADT representation.
+    fn both_empty_tip_maps_canonicalise_to_replay() {
+        // Both maps empty is ambiguous on the wire: it's the common at-entry
+        // state (a fresh op, still in replay), but it is *also* what
+        // Converged(empty) — relock with zero repos — flattens to, since the
+        // From<OwnerRecord> impl always empties the inactive half. The
+        // canonicalisation always resolves that ambiguity to the replay half,
+        // regardless of the recorded `phase`.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        let yaml = r#"id: "1"
-verb: sync
-strategy: rebase
-source: /src/ws
-target: /cwd/ws
-retire: false
-phase: relock
-advanced_tips: {}
-converged_tips: {}
-overrides: []
-started_at: 2026-06-01T00:00:00Z
+        let json = r#"{
+  "id": "1",
+  "verb": "sync",
+  "strategy": "rebase",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "relock",
+  "advanced_tips": {},
+  "converged_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-01T00:00:00Z"
+}
 "#;
-        std::fs::write(dir.join(OP_STATE_FILE), yaml).unwrap();
+        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
         let record = read_owner(dir).unwrap().unwrap();
         assert_eq!(record.tips, PhaseTips::Replay(BTreeMap::new()));
     }

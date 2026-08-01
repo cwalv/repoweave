@@ -267,7 +267,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 // ---------------------------------------------------------------------------
-// Op-state planting helpers (matching the YAML shape op_state.rs reads)
+// Op-state planting helpers (matching the JSON shape op_state.rs reads)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -277,7 +277,7 @@ enum PlantedVerb {
 }
 
 impl PlantedVerb {
-    fn yaml(self) -> &'static str {
+    fn wire(self) -> &'static str {
         match self {
             PlantedVerb::Sync => "sync",
             PlantedVerb::SyncTo => "sync-to",
@@ -286,7 +286,7 @@ impl PlantedVerb {
 }
 
 #[derive(Default, Clone)]
-struct OwnerRecordYaml {
+struct OwnerRecordFixture {
     id: String,
     verb_str: &'static str,
     source: String,
@@ -301,46 +301,28 @@ struct OwnerRecordYaml {
     overrides: Vec<&'static str>,
 }
 
-fn plant_owner_record(workspace: &Path, rec: &OwnerRecordYaml) {
-    let advanced_yaml = if rec.advanced_tips.is_empty() {
-        "advanced_tips: {}\n".to_owned()
-    } else {
-        let mut s = String::from("advanced_tips:\n");
-        for (k, v) in &rec.advanced_tips {
-            s.push_str(&format!("  \"{k}\": \"{v}\"\n"));
-        }
-        s
-    };
-    let tips_yaml = if rec.converged_tips.is_empty() {
-        "converged_tips: {}\n".to_owned()
-    } else {
-        let mut s = String::from("converged_tips:\n");
-        for (k, v) in &rec.converged_tips {
-            s.push_str(&format!("  \"{k}\": \"{v}\"\n"));
-        }
-        s
-    };
-    let overrides_yaml = if rec.overrides.is_empty() {
-        "overrides: []\n".to_owned()
-    } else {
-        let mut s = String::from("overrides:\n");
-        for o in &rec.overrides {
-            s.push_str(&format!("  - {o}\n"));
-        }
-        s
-    };
+fn tip_map_json(tips: &[(String, String)]) -> String {
+    tips.iter()
+        .map(|(k, v)| format!("\"{k}\": \"{v}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
+    let advanced_json = tip_map_json(&rec.advanced_tips);
+    let converged_json = tip_map_json(&rec.converged_tips);
+    let overrides_json = rec
+        .overrides
+        .iter()
+        .map(|o| format!("\"{o}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     let body = format!(
-        "id: \"{id}\"\n\
-         verb: {verb}\n\
-         strategy: rebase\n\
-         source: \"{src}\"\n\
-         target: \"{tgt}\"\n\
-         retire: {retire}\n\
-         phase: {phase}\n\
-         {advanced_yaml}\
-         {tips_yaml}\
-         {overrides_yaml}\
-         started_at: \"2026-06-10T00:00:00Z\"\n",
+        "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
+         \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
+         \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
+         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         id = rec.id,
         verb = rec.verb_str,
         src = rec.source,
@@ -353,7 +335,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordYaml) {
 
 fn plant_lease(workspace: &Path, owner: &Path, id: &str) {
     let body = format!(
-        "id: \"{id}\"\nowner: \"{owner}\"\n",
+        "{{\"id\": \"{id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
         owner = owner.display(),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
@@ -595,9 +577,9 @@ fn cell_e_replay_sync_continue_drives_to_clean_end_state() {
     let op_id = "crash-matrix-e-replay-sync";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -619,9 +601,9 @@ fn cell_e_replay_sync_abort_restores_to_pre_op() {
     let op_id = "crash-matrix-e-replay-sync-abort";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: ww.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -710,9 +692,9 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
 
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: ww.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -753,9 +735,9 @@ fn cell_j_replay_sync_continue_drives_to_clean_end_state() {
     let op_id = "crash-matrix-j-replay-sync";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -781,9 +763,9 @@ fn cell_e_relock_sync_continue_drives_to_clean_end_state() {
     let op_id = "crash-matrix-e-relock-sync";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "relock",
@@ -818,9 +800,9 @@ fn cell_m_relock_sync_continue_drives_to_clean_end_state() {
     let op_id = "crash-matrix-m-relock-sync";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "relock",
@@ -850,9 +832,9 @@ fn cell_j_relock_sync_continue_drives_to_clean_end_state() {
 
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "relock",
@@ -887,9 +869,9 @@ fn cell_e_replay_sync_to_owner_continue() {
     let op_id = "crash-matrix-e-replay-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -921,9 +903,9 @@ fn cell_e_replay_sync_to_lease_continue() {
     let op_id = "crash-matrix-e-replay-syncto-lease";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -955,9 +937,9 @@ fn cell_e_replay_sync_to_owner_abort() {
     let op_id = "crash-matrix-e-replay-syncto-owner-abort";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -994,9 +976,9 @@ fn cell_e_replay_sync_to_lease_abort() {
     let op_id = "crash-matrix-e-replay-syncto-lease-abort";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -1047,9 +1029,9 @@ fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
     let op_id = "crash-matrix-e-replay-syncto-lease-abort-symlink";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww_alias.display().to_string(),
             target: primary_alias.display().to_string(),
             phase: "replay",
@@ -1093,9 +1075,9 @@ fn cell_m_replay_sync_to_owner_continue() {
     let op_id = "crash-matrix-m-replay-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
@@ -1124,9 +1106,9 @@ fn cell_e_relock_sync_to_owner_continue() {
     let op_id = "crash-matrix-e-relock-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -1154,9 +1136,9 @@ fn cell_m_relock_sync_to_owner_continue() {
     let op_id = "crash-matrix-m-relock-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -1185,9 +1167,9 @@ fn cell_j_relock_sync_to_owner_continue() {
     let op_id = "crash-matrix-j-relock-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
@@ -1224,9 +1206,9 @@ fn cell_e_advance_target_sync_to_owner_continue() {
     let op_id = "crash-matrix-e-advance-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1263,9 +1245,9 @@ fn cell_e_advance_target_sync_to_lease_continue() {
     let op_id = "crash-matrix-e-advance-syncto-lease";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1323,9 +1305,9 @@ fn cell_m_advance_target_sync_to_owner_continue() {
     let op_id = "crash-matrix-m-advance-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1392,9 +1374,9 @@ fn cell_j_advance_target_sync_to_owner_continue() {
     let op_id = "crash-matrix-j-advance-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1454,9 +1436,9 @@ fn cell_m_advance_target_sync_to_owner_abort() {
     let op_id = "crash-matrix-m-advance-syncto-owner-abort";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1515,9 +1497,9 @@ fn cell_m_advance_target_sync_to_lease_abort() {
     let op_id = "crash-matrix-m-advance-syncto-lease-abort";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1582,9 +1564,9 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
     let op_id = "crash-matrix-j-advance-foreign-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "advance-target",
@@ -1724,9 +1706,9 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
     let op_id = "crash-matrix-e-retire-syncto-owner";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1780,9 +1762,9 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
     let op_id = "crash-matrix-retire-savepoint-leak";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1854,9 +1836,9 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
     let op_id = "crash-matrix-e-retire-syncto-lease";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1911,9 +1893,9 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
     let op_id = "crash-matrix-j-retire-syncto-owner-abort";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::SyncTo.yaml(),
+            verb_str: PlantedVerb::SyncTo.wire(),
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             retire: true,
@@ -1984,9 +1966,9 @@ fn cell_override_resume_fidelity_discard_local_commits() {
     let op_id = "crash-matrix-override-resume-discard";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2075,9 +2057,9 @@ fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
 
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2128,9 +2110,9 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
     let op_id = "crash-matrix-continue-after-source-mut";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2250,9 +2232,9 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
     let op_id = "crash-matrix-cell1-entry-write-no-advances";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2330,9 +2312,9 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
     let op_id = "crash-matrix-cell2-mid-fanout";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2424,9 +2406,9 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
     let op_id = "crash-matrix-cell3-rebase-captured";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2493,9 +2475,9 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
     let op_id = "crash-matrix-cell4-one-write-window";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2582,9 +2564,9 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
     let op_id = "crash-matrix-cell5-after-relock";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "relock",
@@ -2678,9 +2660,9 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
     let op_id = "crash-matrix-cell6-mixed";
     plant_owner_record(
         &ww.root,
-        &OwnerRecordYaml {
+        &OwnerRecordFixture {
             id: op_id.to_owned(),
-            verb_str: PlantedVerb::Sync.yaml(),
+            verb_str: PlantedVerb::Sync.wire(),
             source: primary.root.display().to_string(),
             target: ww.root.display().to_string(),
             phase: "replay",
@@ -2744,19 +2726,17 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
 }
 
 // ---------------------------------------------------------------------------
-// Cell 7: degradation — owner record with no advanced_tips key.
+// Cell 7: a `.rwv-op` record missing the `advanced_tips` key.
 //
-// Synthesises a record written by a pre-field binary: the YAML has no
-// `advanced_tips` field at all (serde(default) → empty map). Abort must
-// behave exactly as before the field existed: repos at savepoint are Untouched,
-// converged-tip repos are RestoredFromConverged, foreign tips still refuse.
+// Schema v2 carries no default for it — a record missing the key is
+// malformed, not old, and abort must refuse to parse it rather than
+// silently degrading to an empty map.
 // ---------------------------------------------------------------------------
 
-/// Cell 7 (§8.7): degradation — record with no `advanced_tips` key
-/// (pre-field record). Abort must parse the empty-map default and behave
-/// identically to pre-change behaviour. Repos at savepoint are Untouched.
+/// Cell 7 (§8.7): a record with no `advanced_tips` key fails to parse, and
+/// abort refuses without touching any repo.
 #[test]
-fn cell_advanced_tips_degradation_no_field_abort_behaves_as_pre_change() {
+fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 
@@ -2764,22 +2744,14 @@ fn cell_advanced_tips_degradation_no_field_abort_behaves_as_pre_change() {
     let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
     assert_eq!(ww_server_pre, sha);
 
-    let op_id = "crash-matrix-cell7-degradation";
+    let op_id = "crash-matrix-cell7-malformed";
 
-    // Write the owner record WITHOUT the advanced_tips key — exactly as a
-    // pre-field binary would have written it. The serde(default) attribute
-    // makes the absent key parse to an empty BTreeMap.
+    // Write the owner record WITHOUT the advanced_tips key.
     let body = format!(
-        "id: \"{op_id}\"\n\
-         verb: sync\n\
-         strategy: rebase\n\
-         source: \"{src}\"\n\
-         target: \"{tgt}\"\n\
-         retire: false\n\
-         phase: replay\n\
-         converged_tips: {{}}\n\
-         overrides: []\n\
-         started_at: \"2026-06-10T00:00:00Z\"\n",
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
+         \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
@@ -2788,22 +2760,33 @@ fn cell_advanced_tips_degradation_no_field_abort_behaves_as_pre_change() {
     plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
-    // Abort must succeed: repos at savepoint → Untouched, no attributable set
-    // expansion needed, no foreign-tip refusals.
-    run_abort_ok(&ww.root, "cell7/degradation");
+    let out = rwv()
+        .args(["abort"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv abort failed to spawn");
+    assert!(
+        !out.status.success(),
+        "[cell7] abort must refuse a record missing advanced_tips, not silently default"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("failed to parse owner record"),
+        "[cell7] refusal must name the parse failure; stderr:\n{stderr}"
+    );
 
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ww.server_dir),
         ww_server_pre,
-        "[cell7] degradation: abort must leave server at savepoint (Untouched)"
+        "[cell7] a record that fails to parse must not move any repo"
     );
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ww.project_dir),
         ww_project_pre,
-        "[cell7] degradation: abort must leave project at savepoint (Untouched)"
+        "[cell7] a record that fails to parse must not move any repo"
     );
     assert!(
-        !ww.root.join(".rwv-op").exists(),
-        "[cell7] owner record must be cleared"
+        ww.root.join(".rwv-op").exists(),
+        "[cell7] the unparseable record must be left in place for the operator to inspect"
     );
 }

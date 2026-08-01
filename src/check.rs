@@ -1480,7 +1480,7 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: DeadOpLeaseKind,
         /// RFC3339 UTC timestamp at which the lease was written.
-        /// `None` for old lease files. Observability-only.
+        /// Observability-only — never a decision input.
         #[serde(skip_serializing_if = "Option::is_none")]
         created_at: Option<String>,
     },

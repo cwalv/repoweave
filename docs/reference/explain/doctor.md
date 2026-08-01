@@ -1892,7 +1892,7 @@ Schema:
           ],
           "properties": {
             "created_at": {
-              "description": "RFC3339 UTC timestamp at which the lease was written. `None` for old lease files. Observability-only.",
+              "description": "RFC3339 UTC timestamp at which the lease was written. Observability-only — never a decision input.",
               "type": [
                 "string",
                 "null"
