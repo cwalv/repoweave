@@ -5,9 +5,22 @@
 //! the `WORKWEAVE_MARKER_FILE` constant could not catch, because it spelled
 //! the filename as the literal `".rwv-workweave"` instead of the constant.
 //!
-//! The needle is the classification expression duplicated from
-//! `observe_marker` (`raw.get("parent").map(|v| v.is_null()).unwrap_or(true)`),
-//! which is the tell for a parse rather than for a read.
+//! The needle is `as_mapping_get("primary")`, the field extraction
+//! `observe_marker` performs on the parsed document. Reading a marker's
+//! required field is the tell for a parse rather than for a read.
+//!
+//! It replaced `raw.get("parent").map(|v| v.is_null()).unwrap_or(true)`, the
+//! classification expression that served while the marker was parsed through
+//! serde_yaml. That expression no longer exists: markers are written as JSON
+//! and the legacy YAML shape is read through saphyr, which reaches its fields
+//! by name rather than by mutating a parsed tree. The vacuity guard below is
+//! what forced this needle to be re-minted rather than silently matching
+//! nothing.
+//!
+//! `YamlOwned::load_from_str` would be the more obvious tell and is the wrong
+//! one: `integrations/pnpm_workspaces.rs` parses `pnpm-workspace.yaml` through
+//! the same call, and that is a different file, not a second reader of this
+//! one. The needle has to name a field only this marker has.
 //!
 //! This scan once carried the literal path-join the second reader read
 //! through, `.join(".rwv-workweave")`, as a second needle. No module builds
@@ -31,7 +44,7 @@ mod common;
 
 use common::src_scan::production_lines;
 
-const PARSE_NEEDLE: &str = "raw.get(\"parent\").map(|v| v.is_null()).unwrap_or(true)";
+const PARSE_NEEDLE: &str = "as_mapping_get(\"primary\")";
 
 #[test]
 fn workspace_rs_still_mints_the_needle_this_scan_looks_for() {
