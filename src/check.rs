@@ -8109,10 +8109,12 @@ fn load_doctor_world(
             }
             Err(e) => {
                 if let Ok(project_name) = crate::manifest::ProjectName::new(name) {
-                    // `{:#}` rather than `to_string()`: the sentence naming the
-                    // remedy is minted at the parse boundary and sits under two
-                    // layers of load context, which the bare Display drops.
-                    unparseable_projects.push((project_name, manifest_path, format!("{e:#}")));
+                    // The root cause, not the chain: the sentence naming the
+                    // remedy is minted at the parse boundary, and every context
+                    // above it only restates the path this finding already
+                    // carries as a field.
+                    let cause = e.root_cause().to_string();
+                    unparseable_projects.push((project_name, manifest_path, cause));
                 }
             }
         }
