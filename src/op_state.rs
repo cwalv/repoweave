@@ -570,8 +570,12 @@ pub struct LeaseRecord {
     /// decision input** — the classification is structural (owner record
     /// absent or op-id mismatch), not elapsed-time based.
     ///
-    /// `write_lease` always populates this; `Option` stays only so `rwv
-    /// doctor --json`'s dead-lease finding keeps its existing nullable shape.
+    /// `write_lease` always populates this. `Option` stays regardless: a
+    /// syntactic `Option<T>` field deserializes a missing key as `None`
+    /// unconditionally — `#[serde(default)]` has no bearing on it — so this
+    /// key is optional on the wire whether or not that reads as intentional,
+    /// and `rwv doctor --json`'s dead-lease finding keeps its existing
+    /// nullable shape either way.
     pub created_at: Option<String>,
 }
 
@@ -1398,6 +1402,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn wire_record_missing_converged_tips_key_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let json = r#"{
+  "id": "9999999999999999999",
+  "verb": "sync",
+  "strategy": "ff",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-01T00:00:00Z"
+}
+"#;
+        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
+        let err = read_owner(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse owner record"),
+            "a record missing converged_tips must fail to parse; got: {err}"
+        );
+    }
+
+    #[test]
+    fn wire_record_missing_overrides_key_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let json = r#"{
+  "id": "9999999999999999999",
+  "verb": "sync",
+  "strategy": "ff",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {},
+  "converged_tips": {},
+  "started_at": "2026-06-01T00:00:00Z"
+}
+"#;
+        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
+        let err = read_owner(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse owner record"),
+            "a record missing overrides must fail to parse; got: {err}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // PhaseTips ADT — phase-scoped tip table
     // -----------------------------------------------------------------------
@@ -1598,6 +1652,21 @@ mod tests {
     fn read_lease_returns_none_when_absent() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(read_lease(tmp.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn lease_missing_created_at_key_parses_as_none() {
+        // Unlike WireOwnerRecord's fields, `created_at`'s missing-key
+        // tolerance isn't something `#[serde(default)]` controls: serde's
+        // derive treats a syntactic `Option<T>` field as optional-on-the-wire
+        // unconditionally, so this parses whether or not the attribute is
+        // present.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let json = r#"{"id": "1234567890", "owner": "/owner/ws"}"#;
+        std::fs::write(dir.join(OP_LEASE_FILE), json).unwrap();
+        let lease = read_lease(dir).unwrap().unwrap();
+        assert_eq!(lease.created_at, None);
     }
 
     #[test]
