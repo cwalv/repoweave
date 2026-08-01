@@ -307,7 +307,9 @@ written: YAML (markers are JSON now), possibly also missing the `parent:`
 field required before the format changed.
 
 **What to do:** `rwv doctor --fix` rewrites the marker as JSON, backfilling
-`parent: <primary value>` where it is absent.
+`parent: <primary value>` where it is absent. Run it from the primary weave —
+this finding is only ever reported from there, because from inside the
+workweave the marker refuses before any verb dispatches.
 
 ### `legacy-workweave-index`
 

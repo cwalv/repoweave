@@ -26,15 +26,14 @@ If `.rwv-workweave` was written by an older rwv, every command run from
 inside that workweave refuses immediately, including `rwv doctor` itself:
 
 ```text
-Error: <workweave>/.rwv-workweave is a legacy workweave marker (YAML format, or missing the required `parent:` field). Run `rwv doctor --fix` to migrate it before using this workweave.
+Error: <workweave>/.rwv-workweave is a legacy workweave marker (YAML format, or missing the required `parent:` field). Run `rwv doctor --fix` from the primary weave, not from inside this workweave: resolving the marker precedes the repair, so a self-invoked `--fix` hits this same refusal and changes nothing. The file is still readable YAML, so its own `primary:` names the weave to run from — `rwv doctor --fix -C <that path>` needs no `cd`.
 ```
 
-Running `rwv doctor --fix` from that same shell hits the identical refusal —
-a workweave cannot migrate its own marker from inside itself, because
-resolving *which* workspace the command is even running in happens before
-doctor's repair logic does, and that resolution is what is refusing. Run
-`--fix` from primary instead. The marker is plain YAML, so its `primary:`
-field is readable without fixing anything first:
+The reason a workweave cannot migrate its own marker is that resolving
+*which* workspace the command is running in happens before doctor's repair
+logic does, and that resolution is what refuses — so no verb, `--fix`
+included, gets far enough to rewrite the file. The marker is plain YAML,
+so its `primary:` field is readable without fixing anything first:
 
 ```bash
 cat .rwv-workweave        # primary: <path> — still readable, unmigrated

@@ -173,7 +173,7 @@ Written by `rwv workweave <project> create <name>`, which is also the verb that 
 | `project` | Project name this workweave is forked for |
 | `parent` | Absolute path to the workspace the workweave was forked from. `primary` value when forked from primary; the parent-workweave path when forked from inside another workweave |
 
-All three fields are required. A YAML-format marker (written before markers were JSON) or one missing `parent:` (written before parent tracking was introduced) is a legacy marker and must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` to migrate it to JSON, backfilling `parent:` where it is absent.
+All three fields are required. A YAML-format marker (written before markers were JSON) or one missing `parent:` (written before parent tracking was introduced) is a legacy marker and must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` from the primary weave to migrate it to JSON, backfilling `parent:` where it is absent — `--fix` cannot run from inside the workweave it would repair, because the marker is resolved before any verb dispatches. See [upgrade-rwv — Step 1](../how-to/upgrade-rwv.md#step-1--a-legacy-workweave-marker).
 
 Consumed by:
 

@@ -1413,8 +1413,11 @@ impl MarkerDefect {
             ),
             MarkerDefect::Legacy => format!(
                 "{} is a legacy workweave marker (YAML format, or missing the required \
-                 `parent:` field). Run `rwv doctor --fix` to migrate it before using \
-                 this workweave.",
+                 `parent:` field). Run `rwv doctor --fix` from the primary weave, not \
+                 from inside this workweave: resolving the marker precedes the repair, \
+                 so a self-invoked `--fix` hits this same refusal and changes nothing. \
+                 The file is still readable YAML, so its own `primary:` names the weave \
+                 to run from — `rwv doctor --fix -C <that path>` needs no `cd`.",
                 marker_path.display()
             ),
             MarkerDefect::Unreadable { detail } => format!(
