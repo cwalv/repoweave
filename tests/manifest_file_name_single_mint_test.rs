@@ -1,5 +1,6 @@
-//! Pins the on-disk file names `rwv.toml` and `rwv.lock` to the types that
-//! own those formats, `Manifest` and `LockFile` in `src/manifest.rs`.
+//! Pins the on-disk file names `rwv.toml`, `rwv.lock` and the pre-TOML
+//! `rwv.yaml` to the types that own those formats, `Manifest` and `LockFile`
+//! in `src/manifest.rs`.
 //!
 //! The names are a published interface — operators type them, `.gitattributes`
 //! merge rules name them — so the constants are `pub` and this test does not
@@ -24,9 +25,14 @@ use common::src_scan::{production_lines, SourceLine};
 use repoweave::manifest::{LockFile, Manifest};
 
 /// `("owner file", "\"<name>\"")` for each format whose name is pinned.
+///
+/// The legacy name earns its place for the same reason the live ones do: it
+/// is a name this program still matches on disk, and a second spelling of it
+/// would let the refusal go looking for a file nothing ever wrote.
 fn pinned_names() -> Vec<(&'static str, String)> {
     vec![
         ("manifest.rs", format!("\"{}\"", Manifest::FILE_NAME)),
+        ("manifest.rs", format!("\"{}\"", Manifest::LEGACY_FILE_NAME)),
         ("manifest.rs", format!("\"{}\"", LockFile::FILE_NAME)),
     ]
 }
@@ -40,13 +46,19 @@ fn lines_quoting(lines: &[SourceLine], needle: &str) -> Vec<SourceLine> {
 }
 
 #[test]
-fn the_two_file_names_are_distinct() {
-    assert_ne!(
+fn the_pinned_file_names_are_distinct() {
+    let mut seen = std::collections::HashSet::new();
+    for name in [
         Manifest::FILE_NAME,
+        Manifest::LEGACY_FILE_NAME,
         LockFile::FILE_NAME,
-        "one needle standing in for both would make this scan blind to a \
-         mint of the other"
-    );
+    ] {
+        assert!(
+            seen.insert(name),
+            "`{name}` is pinned twice; one needle standing in for two names \
+             would make this scan blind to a mint of the other"
+        );
+    }
 }
 
 #[test]
