@@ -681,7 +681,7 @@
       }
     },
     "MarkerDefect": {
-      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` is the marker shape written before `parent:` became required; [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
+      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every marker shape this build no longer writes: YAML (markers are JSON now) and, within that YAML shape, one missing the `parent:` field that became required before the format changed. [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
       "oneOf": [
         {
           "type": "string",
@@ -2010,7 +2010,7 @@
           "additionalProperties": false
         },
         {
-          "description": "The marker itself cannot witness the identity it claims — unreadable, legacy (missing `parent:`), or naming a `primary:` that verifies as no workspace at all. `observe_root` classifies a root like this `MarkerUnverifiable` rather than `Disputed` even with `.rwv-active` present alongside: a marker that cannot prove its own claim cannot prove which of the two files is the stray either, so this is report-only for the same reason `Unwitnessed` is. Never auto-fixed — repairing the marker (`rwv doctor --fix` migrates a legacy one; a dangling or unreadable one needs a hand edit) is a separate step from clearing a pointer whose redundancy the marker cannot yet vouch for.",
+          "description": "The marker itself cannot witness the identity it claims — unreadable, legacy (YAML, or missing `parent:`), or naming a `primary:` that verifies as no workspace at all. `observe_root` classifies a root like this `MarkerUnverifiable` rather than `Disputed` even with `.rwv-active` present alongside: a marker that cannot prove its own claim cannot prove which of the two files is the stray either, so this is report-only for the same reason `Unwitnessed` is. Never auto-fixed — repairing the marker (`rwv doctor --fix` migrates a legacy one; a dangling or unreadable one needs a hand edit) is a separate step from clearing a pointer whose redundancy the marker cannot yet vouch for.",
           "type": "object",
           "required": [
             "marker-unverifiable"
