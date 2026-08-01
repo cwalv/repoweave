@@ -117,13 +117,18 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 
 /// Write rwv.lock.
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
-    for (path, url, sha) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: {sha}\n"
-        ));
-    }
-    std::fs::write(project_dir.join("rwv.lock"), &yaml).unwrap();
+    // Round-trip through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let entries: Vec<String> = repos
+        .iter()
+        .map(|(path, url, sha)| {
+            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
+        })
+        .collect();
+    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 }
 
 fn rwv() -> AssertCommand {

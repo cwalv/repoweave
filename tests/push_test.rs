@@ -141,16 +141,21 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
 
-    // Write a lock that exactly matches manifest HEAD SHAs.
-    let mut lock_yaml = String::from("repositories:\n");
+    // Write a lock that exactly matches manifest HEAD SHAs. Round-trips
+    // through the real parser + `lock::write_lock`: a hand-formatted string
+    // that differs only in whitespace from what `rwv lock` itself would
+    // emit still diffs against a real relock.
+    let mut lock_entries = Vec::new();
     for (rp, sha) in &manifest_shas {
         let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
         let bare_url = bare.to_str().unwrap();
-        lock_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
     }
-    std::fs::write(project_dir.join("rwv.lock"), lock_yaml).unwrap();
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
@@ -207,7 +212,7 @@ fn push_happy_path_pushes_manifest_then_project() {
         ("local/org/c", "dependency"),
     ];
     let mut manifest_yaml = String::from("repositories:\n");
-    let mut lock_yaml = String::from("repositories:\n");
+    let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
     for (rp, role) in &repos {
         let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
@@ -220,14 +225,18 @@ fn push_happy_path_pushes_manifest_then_project() {
         manifest_yaml.push_str(&format!(
             "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
         ));
-        lock_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
         expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    // Round-trips through the real parser + `lock::write_lock` (see
+    // `build_workspace` above for why).
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "advance lock"]);
     let project_head = git_run(&project_dir, &["rev-parse", "HEAD"]);
@@ -306,11 +315,12 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
 
     // Rewrite lock to match the new HEAD so the precondition passes.
     let bare_url = manifest_bare.to_str().unwrap();
-    let lock = format!(
-        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {new_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {new_sha:?}}}}}}}"
     );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "relock"]);
 
@@ -573,11 +583,12 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
     // Update lock to point at the new SHA (HEAD on feat-x).
     let (_, bare) = &ws.manifest_bares[0];
     let bare_url = bare.to_str().unwrap();
-    let lock = format!(
-        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {feat_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {feat_sha:?}}}}}}}"
     );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "relock"]);
 
@@ -631,11 +642,12 @@ fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
 
     let (_, bare) = &ws.manifest_bares[0];
     let bare_url = bare.to_str().unwrap();
-    let lock = format!(
-        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {feat_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {feat_sha:?}}}}}}}"
     );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "relock"]);
 
@@ -670,7 +682,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
     let baseline_project = bare_main_sha(&ws.project_bare);
 
     // Advance both local repos.
-    let mut lock = String::from("repositories:\n");
+    let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<String> = Vec::new();
     for (rp, bare) in &ws.manifest_bares {
         let local = ws.workspace.join(rp);
@@ -680,12 +692,14 @@ fn push_aborts_before_project_when_manifest_push_fails() {
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         expected_shas.push(sha.clone());
         let bare_url = bare.to_str().unwrap();
-        lock.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "relock"]);
 
@@ -737,11 +751,12 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     let manifest_sha = git_run(&local, &["rev-parse", "HEAD"]);
 
     let bare_url = manifest_bare.to_str().unwrap();
-    let lock = format!(
-        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {manifest_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {manifest_sha:?}}}}}}}"
     );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "relock"]);
 
@@ -828,7 +843,7 @@ fn build_workspace_with_advances(
 
     // Advance each manifest repo with a distinct commit so SHAs differ.
     let mut manifest_yaml = String::from("repositories:\n");
-    let mut lock_yaml = String::from("repositories:\n");
+    let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
     for ((rp, bare), (_, role)) in ws.manifest_bares.iter().zip(repos.iter()) {
         let local = ws.workspace.join(rp);
@@ -840,14 +855,16 @@ fn build_workspace_with_advances(
         manifest_yaml.push_str(&format!(
             "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
         ));
-        lock_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
         expected_shas.push((rp.clone(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "advance lock"]);
 
@@ -1041,15 +1058,16 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
         &ws.workspace.join("local/org/b"),
         &["rev-parse", "HEAD~1"], // the original lock SHA from build_workspace
     );
-    let lock = format!(
-        "repositories:\n  local/org/a:\n    type: git\n    url: {a}\n    version: {a_sha}\n  local/org/b:\n    type: git\n    url: {b}\n    version: {b_stale}\n",
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {a:?}, \"version\": {a_sha:?}}}, \"local/org/b\": {{\"type\": \"git\", \"url\": {b:?}, \"version\": {b_stale:?}}}}}}}",
         a = a_bare.to_str().unwrap(),
         a_sha = new_shas[0],
         b = b_bare.to_str().unwrap(),
         b_stale = stale_b_lock_sha,
     );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "partial relock"]);
 

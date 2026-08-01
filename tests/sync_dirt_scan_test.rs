@@ -161,10 +161,14 @@ fn fixture() -> Fixture {
         "repositories:\n  {REPO_PATH}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
     );
     std::fs::write(primary_project.join("rwv.yaml"), manifest).unwrap();
-    let lock = format!(
-        "repositories:\n  {REPO_PATH}:\n    type: git\n    url: {url}\n    version: {initial_sha}\n"
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let raw_lock = format!(
+        "{{\"repositories\": {{{REPO_PATH:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {initial_sha:?}}}}}}}"
     );
-    std::fs::write(primary_project.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &primary_project.join("rwv.lock")).unwrap();
     git(
         &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
         &primary_project,
@@ -243,10 +247,11 @@ fn advance_primary(f: &Fixture) -> String {
         "primary: advance",
     );
     let url = format!("file://{}", f.primary.repo_dir.display());
-    let lock = format!(
-        "repositories:\n  {REPO_PATH}:\n    type: git\n    url: {url}\n    version: {new_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{{REPO_PATH:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {new_sha:?}}}}}}}"
     );
-    std::fs::write(f.primary.project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &f.primary.project_dir.join("rwv.lock")).unwrap();
     git(&["add", "rwv.lock"], &f.primary.project_dir);
     git(&["commit", "-m", "lock: advance"], &f.primary.project_dir);
     new_sha
@@ -518,9 +523,12 @@ fn sync_dirty_lock_in_destination_project_refuses() {
     let ww_project_head_before = head(&f.ww.project_dir);
 
     // Hand-edit the destination's rwv.lock so it shows as tracked-dirty.
+    // Trailing whitespace is the only append JSON tolerates without
+    // becoming unparseable — a comment line (the YAML-era trick) is
+    // trailing *content* and fails to parse.
     let lock_path = f.ww.project_dir.join("rwv.lock");
     let mut lock = std::fs::read_to_string(&lock_path).unwrap();
-    lock.push_str("# stale comment to make rwv.lock tracked-dirty\n");
+    lock.push('\n');
     std::fs::write(&lock_path, lock).unwrap();
 
     // Confirm the test precondition: rwv.lock is tracked-dirty.

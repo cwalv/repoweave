@@ -425,13 +425,14 @@ fn build_push_fixture() -> PushFixture {
         ),
     )
     .unwrap();
-    std::fs::write(
-        project_dir.join("rwv.lock"),
-        format!(
-            "repositories:\n  local/org/repo:\n    type: git\n    url: {bare_url}\n    version: {manifest_head}\n"
-        ),
-    )
-    .unwrap();
+    // Round-trip through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let raw = format!(
+        "{{\"repositories\": {{\"local/org/repo\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {manifest_head:?}}}}}}}"
+    );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git(&["add", "."], &project_dir);
     git(&["commit", "-m", "manifest + lock"], &project_dir);
 
@@ -448,13 +449,11 @@ fn build_push_fixture() -> PushFixture {
 
 fn write_lock_at(fixture: &PushFixture, sha: &str) {
     let bare_url = fixture.manifest_bare.to_string_lossy();
-    std::fs::write(
-        fixture.project_dir.join("rwv.lock"),
-        format!(
-            "repositories:\n  local/org/repo:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
-        ),
-    )
-    .unwrap();
+    let raw = format!(
+        "{{\"repositories\": {{\"local/org/repo\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}}}}}"
+    );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &fixture.project_dir.join("rwv.lock")).unwrap();
     git(&["add", "rwv.lock"], &fixture.project_dir);
     git(&["commit", "-m", "relock"], &fixture.project_dir);
 }

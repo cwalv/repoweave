@@ -1310,7 +1310,7 @@ fn legacy_role_primary_regex() -> &'static regex::Regex {
 // Lock file — pinned SHAs
 // ---------------------------------------------------------------------------
 
-/// A single entry in an `rwv.lock` file as parsed from YAML — version is
+/// A single entry in an `rwv.lock` file as parsed from JSON — version is
 /// the raw string scalar; it has not yet been verified against any repo.
 ///
 /// Use [`LockFile::resolve_versions`] to upgrade to [`ResolvedLockEntry`].
@@ -1343,11 +1343,14 @@ pub struct LockEntry {
 ///
 /// The `repositories` field is `pub(crate)`; external callers must use the
 /// accessor methods above.
+///
+/// `deny_unknown_fields` rejects any key besides `repositories` — a lock
+/// carrying a field this version no longer knows how to interpret is a
+/// hand-edit or a lock from a different `rwv` era, and silently dropping
+/// the key would make either indistinguishable from a clean parse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LockFile {
-    /// Which workweave this lock was generated from, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
-    pub workweave: Option<WorkweaveName>,
     pub(crate) repositories: BTreeMap<RepoPath, LockEntry>,
 }
 
@@ -1386,8 +1389,6 @@ pub struct ResolvedLockEntry {
 /// accessor methods above.
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedLockFile {
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
-    pub workweave: Option<WorkweaveName>,
     pub(crate) repositories: BTreeMap<RepoPath, ResolvedLockEntry>,
 }
 
@@ -1474,17 +1475,17 @@ impl LockFile {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        Self::from_yaml_str(&content)
+        Self::from_json_str(&content)
             .with_context(|| format!("failed to parse rwv.lock at {}", path.display()))
     }
 
-    /// Parse a lock file from a YAML string.
+    /// Parse a lock file from a JSON string.
     ///
     /// Used by snapshot reads, where content is obtained via
     /// [`crate::vcs::Vcs::read_file_at_revision`] rather than from the
     /// working tree.
-    pub fn from_yaml_str(content: &str) -> anyhow::Result<Self> {
-        let lock: Self = serde_yaml::from_str(content)?;
+    pub fn from_json_str(content: &str) -> anyhow::Result<Self> {
+        let lock: Self = serde_json::from_str(content)?;
         Ok(lock)
     }
 
@@ -1509,10 +1510,7 @@ impl LockFile {
         self,
         workspace_dir: &Path,
     ) -> (ResolvedLockFile, Vec<(RepoPath, RawRevisionId)>) {
-        let LockFile {
-            workweave,
-            repositories,
-        } = self;
+        let LockFile { repositories } = self;
         let mut resolved = BTreeMap::new();
         let mut failures: Vec<(RepoPath, RawRevisionId)> = Vec::new();
         for (repo_path, entry) in repositories {
@@ -1543,7 +1541,6 @@ impl LockFile {
         }
         (
             ResolvedLockFile {
-                workweave,
                 repositories: resolved,
             },
             failures,
@@ -1809,21 +1806,15 @@ repositories:
     role: owned
 "#;
 
-    const VALID_LOCK: &str = r#"
-workweave: hotfix-42
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: abc123def456
-"#;
-
-    const VALID_LOCK_NO_WORKWEAVE: &str = r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: abc123def456
+    const VALID_LOCK: &str = r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "abc123def456"
+    }
+  }
+}
 "#;
 
     // ========================================================================
@@ -1997,27 +1988,12 @@ repositories:
     // ========================================================================
 
     #[test]
-    fn lock_from_path_with_workweave() {
+    fn lock_from_path_valid() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rwv.lock");
         std::fs::write(&path, VALID_LOCK).unwrap();
 
         let lock = LockFile::from_path(&path).unwrap();
-        assert_eq!(
-            lock.workweave,
-            Some(WorkweaveName::new("hotfix-42").unwrap())
-        );
-        assert_eq!(lock.repositories.len(), 1);
-    }
-
-    #[test]
-    fn lock_from_path_without_workweave() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("rwv.lock");
-        std::fs::write(&path, VALID_LOCK_NO_WORKWEAVE).unwrap();
-
-        let lock = LockFile::from_path(&path).unwrap();
-        assert_eq!(lock.workweave, None);
         assert_eq!(lock.repositories.len(), 1);
     }
 
@@ -2033,10 +2009,10 @@ repositories:
     }
 
     #[test]
-    fn lock_from_path_invalid_yaml() {
+    fn lock_from_path_invalid_json() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad.lock");
-        std::fs::write(&path, "not: [valid: yaml: {{").unwrap();
+        std::fs::write(&path, "not valid json {{").unwrap();
 
         let result = LockFile::from_path(&path);
         assert!(result.is_err());
@@ -2046,10 +2022,26 @@ repositories:
     fn lock_from_path_missing_repositories() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.lock");
-        std::fs::write(&path, "workweave: test\n").unwrap();
+        std::fs::write(&path, "{}\n").unwrap();
 
         let result = LockFile::from_path(&path);
         assert!(result.is_err(), "lock without repositories should fail");
+    }
+
+    /// A lock from before the `workweave` field was dropped must not parse
+    /// as if the field were merely absent — `deny_unknown_fields` turns a
+    /// stale key into a hard error rather than a silent drop.
+    #[test]
+    fn lock_from_path_rejects_legacy_workweave_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rwv.lock");
+        std::fs::write(&path, r#"{"workweave": "hotfix-42", "repositories": {}}"#).unwrap();
+
+        let result = LockFile::from_path(&path);
+        assert!(
+            result.is_err(),
+            "a lock carrying the retired workweave key must be rejected, not silently accepted"
+        );
     }
 
     // ========================================================================
@@ -2073,12 +2065,11 @@ repositories:
     }
 
     #[test]
-    fn lock_serde_round_trip_with_workweave() {
-        let original: LockFile = serde_yaml::from_str(VALID_LOCK).unwrap();
-        let yaml = serde_yaml::to_string(&original).unwrap();
-        let restored: LockFile = serde_yaml::from_str(&yaml).unwrap();
+    fn lock_serde_round_trip() {
+        let original: LockFile = serde_json::from_str(VALID_LOCK).unwrap();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: LockFile = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(original.workweave, restored.workweave);
         assert_eq!(original.repositories.len(), restored.repositories.len());
         for (key, orig) in &original.repositories {
             let rest = &restored.repositories[key];
@@ -2086,22 +2077,6 @@ repositories:
             assert_eq!(orig.url, rest.url);
             assert_eq!(orig.version, rest.version);
         }
-    }
-
-    #[test]
-    fn lock_round_trip_no_workweave_omits_key() {
-        let original: LockFile = serde_yaml::from_str(VALID_LOCK_NO_WORKWEAVE).unwrap();
-        let yaml = serde_yaml::to_string(&original).unwrap();
-        assert!(
-            !yaml.contains("workweave:"),
-            "workweave key should be omitted via skip_serializing_if"
-        );
-        assert!(
-            !yaml.contains("weave:"),
-            "weave key should be omitted via skip_serializing_if"
-        );
-        let restored: LockFile = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(restored.workweave, None);
     }
 
     #[test]
@@ -2585,18 +2560,6 @@ repositories:
         );
     }
 
-    /// `LockFile.workweave` deserializes through this same boundary — a
-    /// hand-edited `rwv.lock` cannot smuggle an invalid name past it.
-    #[test]
-    fn workweave_name_deserialize_rejected_in_lock_file() {
-        let yaml = "workweave: feat-a/main\nrepositories: {}\n";
-        let result: Result<LockFile, _> = serde_yaml::from_str(yaml);
-        assert!(
-            result.is_err(),
-            "rwv.lock with a slash workweave must be rejected"
-        );
-    }
-
     // ========================================================================
     // Project::from_dir edge cases
     // ========================================================================
@@ -2835,10 +2798,9 @@ repositories:
 
     #[test]
     fn lock_empty_repositories() {
-        let yaml = "repositories: {}\n";
-        let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
+        let json = r#"{"repositories": {}}"#;
+        let lock: LockFile = serde_json::from_str(json).unwrap();
         assert!(lock.repositories.is_empty());
-        assert_eq!(lock.workweave, None);
     }
 
     // ========================================================================
@@ -2883,43 +2845,8 @@ workweave:
         assert!(m.workweave.is_none());
     }
 
-    #[test]
-    fn lock_file_workweave_field() {
-        let yaml = r#"
-workweave: agent-42
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: abc123
-"#;
-        let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            lock.workweave,
-            Some(WorkweaveName::new("agent-42").unwrap())
-        );
-    }
-
-    #[test]
-    fn lock_file_weave_alias_backward_compat() {
-        // Old lock files used `weave:` — the serde alias should read them.
-        let yaml = r#"
-weave: hotfix-99
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: deadbeef
-"#;
-        let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(
-            lock.workweave,
-            Some(WorkweaveName::new("hotfix-99").unwrap())
-        );
-    }
-
     // ========================================================================
-    // Project::from_dir with workweave in lock
+    // Project::from_dir with a lock present
     // ========================================================================
 
     #[test]
@@ -2935,10 +2862,7 @@ repositories:
         let project = Project::from_dir(&project_dir).unwrap();
         assert!(project.lock.is_some());
         let lock = project.lock.unwrap();
-        assert_eq!(
-            lock.workweave,
-            Some(WorkweaveName::new("hotfix-42").unwrap())
-        );
+        assert_eq!(lock.repositories.len(), 1);
     }
 
     // ========================================================================

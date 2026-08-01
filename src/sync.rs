@@ -3989,7 +3989,7 @@ fn pin_source_snapshot(
                     source_project_dir.display()
                 )
             })?;
-        LockFile::from_yaml_str(&content).with_context(|| {
+        LockFile::from_json_str(&content).with_context(|| {
             format!(
                 "failed to parse source lock at revision {} in {}",
                 source_project_tip,
@@ -4407,14 +4407,13 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// mismatch so the operator can fix and re-run.
 ///
 /// We deliberately compare **manifest repo tips** rather than project repo
-/// tips. The project repo's post-sync state typically diverges from the target
-/// by exactly the auto-relock commit (Phase 3 always writes the workweave's
-/// `workweave:` field into the lock, which the primary's lock lacks). That
-/// commit is purely derived — the parent will regenerate it on its next
-/// sync — so refusing on project-tip inequality would refuse every retire,
-/// even the happy path the spec describes. Manifest tip equality is the
-/// honest "work has converged" signal: Phase 2 advances both sides to the
-/// same SHAs, so post-sync the manifest repos should be byte-equal.
+/// tips. The project repo's post-sync state can diverge from the target by
+/// exactly the auto-relock commit Phase 3 writes; that commit is purely
+/// derived — the parent will regenerate it on its next sync — so refusing on
+/// project-tip inequality would refuse every retire, even the happy path the
+/// spec describes. Manifest tip equality is the honest "work has converged"
+/// signal: Phase 2 advances both sides to the same SHAs, so post-sync the
+/// manifest repos should be byte-equal.
 fn retire_workweave_after_sync_to(
     project_vcs: &dyn Vcs,
     ctx: &WorkspaceContext,

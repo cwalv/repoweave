@@ -150,10 +150,6 @@ fn lock_in_primary_creates_lock_file() {
     // Parse as LockFile to verify structure
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     assert_eq!(lock.len(), 2);
-    assert!(
-        lock.workweave.is_none(),
-        "primary lock should have no workweave"
-    );
 
     let entry_a = lock
         .get_entry(&repoweave::manifest::RepoPath::new(repo_a_path).expect("known-safe literal"))
@@ -168,7 +164,7 @@ fn lock_in_primary_creates_lock_file() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. `rwv lock` in a workweave — includes workweave provenance
+// 2. `rwv lock` in a workweave — writes to the workweave's own project dir
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -225,18 +221,13 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
         .assert()
         .success();
 
-    // The workweave's lock must be created with workweave provenance.
+    // The workweave's own lock must be created, pinned to the workweave's tip.
     let workweave_lock_path = workweave_project_dir.join("rwv.lock");
     assert!(
         workweave_lock_path.exists(),
         "workweave's rwv.lock should be created"
     );
     let workweave_lock = repoweave::manifest::LockFile::from_path(&workweave_lock_path).unwrap();
-    assert_eq!(
-        workweave_lock.workweave,
-        Some(repoweave::manifest::WorkweaveName::new("hotfix").unwrap()),
-        "lock should include workweave name"
-    );
     let entry = workweave_lock
         .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
         .expect("workweave lock should contain repo");
@@ -282,21 +273,21 @@ fn lock_file_format_has_correct_fields() {
     let lock_path = project_dir.join("rwv.lock");
     let lock_content = std::fs::read_to_string(&lock_path).unwrap();
 
-    // Verify raw YAML contains expected keys
+    // Verify raw JSON contains expected keys
     assert!(
-        lock_content.contains("repositories:"),
+        lock_content.contains("\"repositories\""),
         "lock file should have repositories key"
     );
     assert!(
-        lock_content.contains("type: git"),
+        lock_content.contains("\"type\": \"git\""),
         "lock entries should have VcsType"
     );
     assert!(
-        lock_content.contains(&format!("version: {sha}")),
+        lock_content.contains(&format!("\"version\": \"{sha}\"")),
         "lock entries should have pinned SHA as version"
     );
     assert!(
-        lock_content.contains("url: https://github.com/acme/server.git"),
+        lock_content.contains("\"url\": \"https://github.com/acme/server.git\""),
         "lock entries should have repo url"
     );
     assert!(
@@ -803,10 +794,10 @@ fn lock_all_is_removed_cli_error() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_round_trip_preserves_tag_form_in_yaml() {
+fn lock_round_trip_preserves_tag_form_in_json() {
     // Generate a lock with a tag at HEAD, parse it back, write again — the
-    // tag-form should survive the round-trip (i.e., `version: v1.0.0`, not the
-    // canonical SHA).
+    // tag-form should survive the round-trip (i.e., `"version": "v1.0.0"`,
+    // not the canonical SHA).
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -833,18 +824,18 @@ fn lock_round_trip_preserves_tag_form_in_yaml() {
         .success();
 
     let lock_path = project_dir.join("rwv.lock");
-    let yaml_first = std::fs::read_to_string(&lock_path).unwrap();
+    let json_first = std::fs::read_to_string(&lock_path).unwrap();
     assert!(
-        yaml_first.contains("version: v1.0.0"),
-        "first lock should serialize tag-form: {yaml_first}"
+        json_first.contains("\"version\": \"v1.0.0\""),
+        "first lock should serialize tag-form: {json_first}"
     );
 
     // Reparse and reserialize via the public LockFile API.
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let yaml_round = serde_yaml::to_string(&lock).unwrap();
+    let json_round = serde_json::to_string(&lock).unwrap();
     assert!(
-        yaml_round.contains("version: v1.0.0"),
-        "round-tripped YAML should preserve tag-form: {yaml_round}"
+        json_round.contains("\"version\":\"v1.0.0\""),
+        "round-tripped JSON should preserve tag-form: {json_round}"
     );
 }
 
@@ -876,11 +867,15 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: v1.0.0
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "v1.0.0"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -923,11 +918,15 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: v9.9.9-nonexistent
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "v9.9.9-nonexistent"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -1086,7 +1085,7 @@ fn lock_commit_flag_skips_when_lock_unchanged() {
 #[test]
 fn status_ok_when_lock_pins_tag_at_current_head() {
     // From SME's gc-wisp-mdcj: a workspace where rwv.lock has
-    // `version: v0.3.3` for repoweave and HEAD is at the v0.3.3 commit
+    // `"version": "v0.3.3"` for repoweave and HEAD is at the v0.3.3 commit
     // should report `ok` (not `ahead`).
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
@@ -1110,11 +1109,15 @@ fn status_ok_when_lock_pins_tag_at_current_head() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: v0.3.3
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "v0.3.3"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -1153,11 +1156,15 @@ fn check_locked_ok_when_lock_pins_tag_at_current_head() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: v0.3.3
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "v0.3.3"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -1374,11 +1381,15 @@ fn lock_file_from_path_yields_raw_entries() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: v1.0.0
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "v1.0.0"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -1411,11 +1422,15 @@ fn resolve_versions_surfaces_unknown_ref_in_failures() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: deadbeef-not-a-real-ref
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "deadbeef-not-a-real-ref"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -1433,9 +1448,9 @@ fn resolve_versions_surfaces_unknown_ref_in_failures() {
 }
 
 #[test]
-fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
+fn resolve_versions_roundtrip_raw_then_resolved_json_shape() {
     // Both LockFile (raw) and ResolvedLockFile (post-resolve) serialize
-    // to a single YAML scalar per version — the parse-boundary type does
+    // to a single JSON string per version — the parse-boundary type does
     // not leak into the on-disk shape. A round-trip through
     // `from_path` -> `resolve_versions` -> `write_lock` -> `from_path`
     // preserves the version's display string for a tag-form entry.
@@ -1457,11 +1472,15 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
     let lock_path = project_dir.join("rwv.lock");
     std::fs::write(
         &lock_path,
-        r#"repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: v1.0.0
+        r#"{
+  "repositories": {
+    "github/acme/server": {
+      "type": "git",
+      "url": "https://github.com/acme/server.git",
+      "version": "v1.0.0"
+    }
+  }
+}
 "#,
     )
     .unwrap();
@@ -1472,8 +1491,8 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
     repoweave::lock::write_lock(&resolved, &out_path).unwrap();
     let round = std::fs::read_to_string(&out_path).unwrap();
     assert!(
-        round.contains("version: v1.0.0"),
-        "post-resolve YAML should preserve tag-form display string: {round}"
+        round.contains("\"version\": \"v1.0.0\""),
+        "post-resolve JSON should preserve tag-form display string: {round}"
     );
     // And re-parsing through the parse boundary yields the same raw value.
     let reparsed = repoweave::manifest::LockFile::from_path(&out_path).unwrap();
@@ -1513,7 +1532,7 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
 
     // Plant a conflict-markered rwv.lock — the state you'd see after a
     // `git rebase` stopped on rwv.lock and left the file with 3-way
-    // merge markers in it. Strict YAML parsing dies on the marker
+    // merge markers in it. Strict JSON parsing dies on the marker
     // lines; `Project::from_dir_skip_lock` bypasses that.
     let markered = format!(
         "repositories:\n\
@@ -1560,7 +1579,7 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
     );
 
     // And the strict loader now parses it — the write really produced
-    // clean YAML, not something merely "not conflict-markered".
+    // clean JSON, not something merely "not conflict-markered".
     let reparsed = repoweave::manifest::LockFile::from_path(&lock_path)
         .expect("strict parse must succeed post-regeneration");
     let entry = &reparsed.repo_map()

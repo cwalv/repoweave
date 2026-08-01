@@ -195,15 +195,21 @@ impl Fixture {
     }
 
     /// Write an `rwv.lock` covering exactly `entries` — `(repo_path, sha)`.
+    ///
+    /// Round-trips through the real parser + `lock::write_lock`: a
+    /// hand-formatted string that differs only in whitespace from what
+    /// `rwv lock` itself would emit still diffs against a real relock.
     fn write_lock(&self, entries: &[(&str, &str)]) {
-        let mut lock = String::from("repositories:\n");
+        let mut parts = Vec::new();
         for (path, sha) in entries {
             let url = url_of(&self.repo(path).bare);
-            lock.push_str(&format!(
-                "  {path}:\n    type: git\n    url: {url}\n    version: {sha}\n"
+            parts.push(format!(
+                "{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}"
             ));
         }
-        std::fs::write(self.lock_path(), &lock).unwrap();
+        let raw = format!("{{\"repositories\": {{{}}}}}", parts.join(","));
+        let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+        repoweave::lock::write_lock(&lock, &self.lock_path()).unwrap();
     }
 
     /// Materialize a manifest repo and leave it ON `main` at the second

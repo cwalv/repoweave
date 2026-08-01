@@ -185,18 +185,18 @@ fn make_primary(parent: &Path) -> Primary {
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
-    let lock = format!(
-        "repositories:\n\
-         \x20 {owned_path}:\n    type: git\n    url: file://{owned}\n    version: {owned_sha}\n\
-         \x20 {ref_path}:\n    type: git\n    url: file://{reference}\n    version: {ref_sha}\n",
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let owned_url = format!("file://{}", owned.display());
+    let reference_url = format!("file://{}", reference.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{owned_path:?}: {{\"type\": \"git\", \"url\": {owned_url:?}, \"version\": {owned_sha:?}}}, {ref_path:?}: {{\"type\": \"git\", \"url\": {reference_url:?}, \"version\": {ref_sha:?}}}}}}}",
         owned_path = OWNED_PATH,
-        owned = owned.display(),
-        owned_sha = owned_sha,
         ref_path = REF_PATH,
-        reference = reference.display(),
-        ref_sha = ref_sha,
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
         &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],

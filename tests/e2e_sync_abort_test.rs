@@ -89,13 +89,21 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)], integrations: Opti
 
 /// Write an rwv.lock file into `project_dir`.
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut yaml = String::from("repositories:\n");
-    for (path, url, sha) in repos {
-        yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: {sha}\n"
-        ));
-    }
-    std::fs::write(project_dir.join("rwv.lock"), &yaml).unwrap();
+    // Round-trip through the real parser + `lock::write_lock` rather than
+    // hand-formatting the on-disk JSON: a byte-level mismatch against what
+    // `rwv lock` itself would emit for equal content shows up as a phantom
+    // diff to anything that stages/commits `rwv.lock` (e.g. Phase 3's
+    // auto-relock), which is exactly what round-trip convergence tests
+    // check for.
+    let entries: Vec<String> = repos
+        .iter()
+        .map(|(path, url, sha)| {
+            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
+        })
+        .collect();
+    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 }
 
 fn rwv() -> AssertCommand {

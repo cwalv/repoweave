@@ -185,10 +185,14 @@ fn write_manifest(project_dir: &Path) {
 }
 
 fn write_lock_at(project_dir: &Path, sha: &str) {
-    let body = format!(
-        "repositories:\n  {SERVER_PATH}:\n    type: git\n    url: {SERVER_URL}\n    version: {sha}\n"
+    // Round-trip through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let raw = format!(
+        "{{\"repositories\": {{{SERVER_PATH:?}: {{\"type\": \"git\", \"url\": {SERVER_URL:?}, \"version\": {sha:?}}}}}}}"
     );
-    std::fs::write(project_dir.join("rwv.lock"), body).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 }
 
 fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
@@ -470,8 +474,8 @@ fn run_abort_refuses_foreign(cwd: &Path, cell_name: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// After a successful `--continue` of a plain `sync` from ww (sharing tips
-/// with primary), the markers must be cleared and the auto-relock commit
-/// applied to the project repo (the lock now contains a `workweave:` field).
+/// with primary), the markers must be cleared and the project repo must
+/// carry a well-formed lock.
 fn assert_plain_sync_continued_clean(ww: &Workspace, cell_name: &str) {
     assert!(
         !ww.root.join(".rwv-op").exists(),
@@ -488,7 +492,7 @@ fn assert_plain_sync_continued_clean(ww: &Workspace, cell_name: &str) {
     let lock = std::fs::read_to_string(ww.project_dir.join("rwv.lock"))
         .expect("rwv.lock must exist after sync --continue");
     assert!(
-        lock.contains("repositories:"),
+        lock.contains("\"repositories\""),
         "[cell {cell_name}] lock must be well-formed after sync --continue; got:\n{lock}"
     );
 }

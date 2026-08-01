@@ -82,10 +82,14 @@ fn write_manifest(project_dir: &Path) {
 }
 
 fn write_lock(project_dir: &Path, sha: &str) {
-    let body = format!(
-        "repositories:\n  {SERVER_PATH}:\n    type: git\n    url: {SERVER_URL}\n    version: {sha}\n"
+    // Round-trip through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let raw = format!(
+        "{{\"repositories\": {{{SERVER_PATH:?}: {{\"type\": \"git\", \"url\": {SERVER_URL:?}, \"version\": {sha:?}}}}}}}"
     );
-    std::fs::write(project_dir.join("rwv.lock"), body).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 }
 
 fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
@@ -208,10 +212,9 @@ fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
 
     // The server (manifest) repo must be untouched on a converged-replay
     // re-entry — the §4 invariant for replay's per-repo no-op detection.
-    // (The CWD project repo's tip MAY move by exactly the auto-relock
-    // commit that adds the `workweave:` field to the lock; that's relock
-    // legitimately doing its first commit in a fresh workweave, not a
-    // replay mutation.)
+    // (The CWD project repo's tip MAY move by exactly an auto-relock
+    // commit; that's relock legitimately doing its first commit in a
+    // fresh workweave, not a replay mutation.)
     let server_tip_before = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
 
     rwv()

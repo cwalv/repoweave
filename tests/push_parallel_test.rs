@@ -131,15 +131,20 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
 
-    let mut lock_yaml = String::from("repositories:\n");
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let mut lock_entries = Vec::new();
     for (rp, sha) in &manifest_shas {
         let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
         let bare_url = bare.to_str().unwrap();
-        lock_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
     }
-    std::fs::write(project_dir.join("rwv.lock"), lock_yaml).unwrap();
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
@@ -176,7 +181,7 @@ fn advance_all_and_relock(
     repos: &[(&str, &str)],
 ) -> (Vec<(String, String)>, String) {
     let mut manifest_yaml = String::from("repositories:\n");
-    let mut lock_yaml = String::from("repositories:\n");
+    let mut lock_entries = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
     for (rp, role) in repos {
         let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
@@ -193,14 +198,18 @@ fn advance_all_and_relock(
         manifest_yaml.push_str(&format!(
             "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
         ));
-        lock_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
         expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    // Round-trips through the real parser + `lock::write_lock` (see
+    // `build_workspace` above for why).
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "advance lock"]);
     let project_head = git_run(&project_dir, &["rev-parse", "HEAD"]);

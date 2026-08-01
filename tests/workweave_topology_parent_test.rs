@@ -115,13 +115,17 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
-    let lock = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {sha}\n",
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let repo_url = format!("file://{}", manifest_repo.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
         sha = initial_sha
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
         &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],

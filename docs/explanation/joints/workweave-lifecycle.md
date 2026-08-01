@@ -202,12 +202,11 @@ tips, so this should hold. Retire refuses (with the diverged repos listed)
 if it does not.
 
 The check compares **manifest repo tips**, not project repo tips. The
-project repo's post-sync state normally diverges from the target by exactly
-the auto-relock commit — Phase 3 always writes the workweave's `workweave:`
-field into the lock, which the parent's lock lacks. That commit is purely
-derived and will be regenerated on the parent's next sync, so comparing
-project tips would refuse every retire, including the happy path. Manifest
-tip equality is the honest convergence signal.
+project repo's post-sync state can diverge from the target by exactly
+the auto-relock commit Phase 3 writes. That commit is purely derived
+and will be regenerated on the parent's next sync, so comparing project
+tips would refuse every retire, including the happy path. Manifest tip
+equality is the honest convergence signal.
 
 Anchored at `src/sync.rs::retire_workweave_after_sync_to`.
 

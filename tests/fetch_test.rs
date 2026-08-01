@@ -498,7 +498,7 @@ fn fetch_mode_default_updates_lock() {
         "lock should reference the fetched repo"
     );
     assert!(
-        lock_content.contains("version:"),
+        lock_content.contains("\"version\""),
         "lock should contain pinned versions"
     );
 }
@@ -638,11 +638,15 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
     );
     let first_sha = run(&["rev-parse", "HEAD"], &dep_clone);
 
-    // Write a lock file pinning the dep at first_sha.
-    let lock_yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: {first_sha}\n"
+    // Write a lock file pinning the dep at first_sha. Round-trips through
+    // the real parser + `lock::write_lock`: a hand-formatted string that
+    // differs only in whitespace from what `rwv lock` itself would emit
+    // still diffs against a real relock.
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {first_sha:?}}}}}}}"
     );
-    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
     run_quiet(&["add", "rwv.lock"], &work);
     run_quiet(&["commit", "-m", "add lock"], &work);
 
@@ -799,11 +803,12 @@ fn fetch_frozen_errors_on_incomplete_lock() {
     );
 
     // Lock only covers ONE repo — incomplete.
-    let lock_yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: {}\n",
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {:?}}}}}}}",
         "a".repeat(40)
     );
-    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
 
     run(&["add", "."], &work);
     run(&["commit", "-m", "incomplete lock"], &work);
@@ -881,10 +886,11 @@ fn fetch_frozen_succeeds_with_valid_lock() {
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
 
     // Write a valid lock that matches the manifest.
-    let lock_yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: {dep_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {dep_sha:?}}}}}}}"
     );
-    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
 
     run_quiet(&["add", "."], &work);
     run_quiet(&["commit", "-m", "manifest+lock"], &work);
@@ -1166,10 +1172,11 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     // Lock file covers ONLY the primary — reference is intentionally absent.
     // Without --no-reference this would be incomplete; with --no-reference,
     // find_incomplete_repos must skip the reference entry.
-    let lock_yaml = format!(
-        "repositories:\n  local/team/primary:\n    type: git\n    url: {primary_url}\n    version: {primary_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/team/primary\": {{\"type\": \"git\", \"url\": {primary_url:?}, \"version\": {primary_sha:?}}}}}}}"
     );
-    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
 
     run_quiet(&["add", "."], &work);
     run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
@@ -1244,11 +1251,12 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     );
 
     // Lock covers only primary; reference absent.
-    let lock_yaml = format!(
-        "repositories:\n  local/team/primary:\n    type: git\n    url: {primary_url}\n    version: {}\n",
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/team/primary\": {{\"type\": \"git\", \"url\": {primary_url:?}, \"version\": {:?}}}}}}}",
         "a".repeat(40)
     );
-    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
 
     run_quiet(&["add", "."], &work);
     run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);

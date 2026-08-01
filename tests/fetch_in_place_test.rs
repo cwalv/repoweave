@@ -144,15 +144,20 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     }
     std::fs::write(project_dir.join("rwv.yaml"), &manifest).unwrap();
 
-    // Write a lock that pins each repo to its FIRST commit.
-    let mut lock = String::from("repositories:\n");
+    // Write a lock that pins each repo to its FIRST commit. Round-trips
+    // through the real parser + `lock::write_lock`: a hand-formatted string
+    // that differs only in whitespace from what `rwv lock` itself would
+    // emit still diffs against a real relock.
+    let mut lock_entries = Vec::new();
     for (rp, bare, first, _) in &repos {
         let url = format!("file://{}", bare.display());
-        lock.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {url}\n    version: {first}\n"
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {first:?}}}"
         ));
     }
-    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     // Activate the project.
     std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
@@ -657,11 +662,11 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     // Lock only covers repo_a (pinned to first_a).
-    let lock = format!(
-        "repositories:\n  \
-         github/acme/a:\n    type: git\n    url: {url_a}\n    version: {first_a}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"github/acme/a\": {{\"type\": \"git\", \"url\": {url_a:?}, \"version\": {first_a:?}}}}}}}"
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
 

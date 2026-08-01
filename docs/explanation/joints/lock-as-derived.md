@@ -98,10 +98,9 @@ records. The lock is the *artifact*; manifest commits are the *source*.
 
 ## What the lock contains
 
-The persisted shape is small. Each entry pins one manifest repo to one
-revision (canonical SHA, with optional display form when a tag pointed
-at HEAD). The file also carries top-level provenance fields such as
-which workweave produced it. Detailed schema lives in
+The persisted shape is small: one entry per manifest repo, pinning it to
+one revision (canonical SHA, with optional display form when a tag
+pointed at HEAD). Detailed schema lives in
 [reference/formats](../../reference/formats.md); the conceptual point
 here is that *every* field in the file is a function of state recorded
 elsewhere.

@@ -271,11 +271,10 @@ target included. The removal itself is idempotent (a missing workweave
 directory is a no-op).
 
 Retire compares **manifest repo tips** rather than project repo tips.
-The project repo's post-sync state typically diverges from the target
-by exactly the auto-relock commit (Phase 3 always writes the
-workweave's `workweave:` field into the lock, which the primary's lock
-lacks). That commit is purely derived, so manifest tip equality is the
-honest "work has converged" signal.
+The project repo's post-sync state can diverge from the target by
+exactly the auto-relock commit Phase 3 writes. That commit is purely
+derived, so manifest tip equality is the honest "work has converged"
+signal.
 
 Retire is only meaningful inside a workweave. Run from a primary weave,
 it emits a warning and is otherwise a no-op.

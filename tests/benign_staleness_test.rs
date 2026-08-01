@@ -124,13 +124,17 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
         repo = manifest_repo.display()
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
-    let lock = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {sha}\n",
+    // Round-trip through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": \"file://{repo}\", \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display(),
         sha = initial_sha
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git(
         &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
         &project_dir,
@@ -456,12 +460,13 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
     let f = fixture();
     // Rewrite main's committed lock to pin a nonexistent tag.
     let manifest_repo = f.main.manifest_repo.clone();
-    let bad_lock = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: v9.9.9-nope\n",
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": \"file://{repo}\", \"version\": \"v9.9.9-nope\"}}}}}}",
         path = MANIFEST_REPO_PATH,
         repo = manifest_repo.display(),
     );
-    std::fs::write(f.main.project_dir.join("rwv.lock"), bad_lock).unwrap();
+    let bad_lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&bad_lock, &f.main.project_dir.join("rwv.lock")).unwrap();
     git(&["add", "rwv.lock"], &f.main.project_dir);
     git(
         &["commit", "-m", "lock: nonexistent tag"],
@@ -557,10 +562,13 @@ fn dirty_source_rwv_lock_only_is_carved_out() {
     // file MODIFIED-BUT-UNCOMMITTED in the project repo — the only tracked dirt
     // in the project repo is rwv.lock, which the carve-out permits.
     commit_file(&f.ww.manifest_repo, "adv.txt", "adv\n", "ww: adv");
-    // Hand-edit the committed lock file so it shows as a tracked modification.
+    // Hand-edit the committed lock file so it shows as a tracked
+    // modification. Trailing whitespace is the only append JSON tolerates
+    // without becoming unparseable — a comment line (the YAML-era trick)
+    // is trailing *content* and fails to parse.
     let lock_path = f.ww.project_dir.join("rwv.lock");
     let mut contents = std::fs::read_to_string(&lock_path).unwrap();
-    contents.push_str("# scratch edit to dirty the lock\n");
+    contents.push('\n');
     std::fs::write(&lock_path, contents).unwrap();
     // Confirm the carve-out target really is dirty-tracked before we assert.
     let porcelain = git_out(&["status", "--porcelain"], &f.ww.project_dir);

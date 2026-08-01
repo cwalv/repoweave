@@ -160,13 +160,17 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
-    let lock = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {sha}\n",
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let repo_url = format!("file://{}", manifest_repo.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
         sha = initial_sha
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     git(
         &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
@@ -450,13 +454,17 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
         repo = manifest_repo.display()
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
-    let lock = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {sha}\n",
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let repo_url = format!("file://{}", manifest_repo.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
         sha = initial_sha
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git(&["add", "rwv.yaml", "rwv.lock"], &project_dir);
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
@@ -754,13 +762,17 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
         repo = manifest_repo.display()
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
-    let lock = format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {sha}\n",
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let repo_url = format!("file://{}", manifest_repo.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
         sha = initial_sha
     );
-    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git(
         &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
         &project_dir,
@@ -858,15 +870,19 @@ fn bare_status(dir: &Path) -> String {
     bare_git_ok(&["status", "--porcelain"], dir)
 }
 
-/// Lock-file YAML in the exact shape `make_primary` writes, with a chosen
-/// version value — both branches rewrite the same `version:` line so a
+/// Lock-file JSON in the exact shape `make_primary` writes, with a chosen
+/// version value — both branches rewrite the same `"version"` line so a
 /// 3-way merge without the driver is guaranteed to conflict.
-fn lock_yaml(manifest_repo: &Path, version: &str) -> String {
-    format!(
-        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {version}\n",
+fn lock_json(manifest_repo: &Path, version: &str) -> String {
+    let repo_url = format!("file://{}", manifest_repo.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {version:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
-    )
+    );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    let mut json = serde_json::to_string_pretty(&lock).unwrap();
+    json.push('\n');
+    json
 }
 
 /// The literal incident shape this closes, driven end-to-end by a
@@ -908,7 +924,7 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     git(&["branch", "feature"], &repo);
 
     // main: bump the lock and shared.txt in one commit.
-    let main_lock = lock_yaml(
+    let main_lock = lock_json(
         &primary.manifest_repo,
         "1111111111111111111111111111111111111111",
     );
@@ -925,7 +941,7 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
         "feature version\n",
         "F1: edit shared.txt",
     );
-    let feat_lock = lock_yaml(
+    let feat_lock = lock_json(
         &primary.manifest_repo,
         "2222222222222222222222222222222222222222",
     );

@@ -149,21 +149,19 @@ pub fn generate_lock(
         );
     }
 
-    Ok(ResolvedLockFile {
-        workweave: workweave.map(|(name, _)| name.clone()),
-        repositories,
-    })
+    Ok(ResolvedLockFile { repositories })
 }
 
-/// Write a lock file as YAML to the given path.
+/// Write a lock file as JSON to the given path.
 ///
 /// Generic over any serializable lock form so callers can write either a
 /// raw [`LockFile`] (round-trip) or a [`ResolvedLockFile`] (post-lock
-/// generation). Both serialize as the same YAML shape — a single scalar
+/// generation). Both serialize as the same JSON shape — a single string
 /// per `version`.
 pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<()> {
-    let yaml = serde_yaml::to_string(lock).context("failed to serialize lock file")?;
-    std::fs::write(path, &yaml).with_context(|| format!("failed to write {}", path.display()))?;
+    let mut json = serde_json::to_string_pretty(lock).context("failed to serialize lock file")?;
+    json.push('\n');
+    std::fs::write(path, &json).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 

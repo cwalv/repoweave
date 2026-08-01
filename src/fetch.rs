@@ -1051,7 +1051,6 @@ mod tests {
 
         // Lock covers only the primary — reference is incomplete.
         let mut lock = LockFile {
-            workweave: None,
             repositories: Default::default(),
         };
         lock.repositories.insert(primary, make_lock_entry());
@@ -1077,7 +1076,6 @@ mod tests {
             .insert(reference, make_entry(Role::Reference));
 
         let mut lock = LockFile {
-            workweave: None,
             repositories: Default::default(),
         };
         lock.repositories.insert(primary, make_lock_entry());

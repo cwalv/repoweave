@@ -159,15 +159,20 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
-    let mut lock_yaml = String::from("repositories:\n");
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let mut lock_entries = Vec::new();
     for (rp, sha) in &manifest_shas {
         let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
-        lock_yaml.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {}\n    version: {sha}\n",
-            bare.to_str().unwrap()
+        let bare_url = bare.to_str().unwrap();
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
     }
-    std::fs::write(project_dir.join("rwv.lock"), lock_yaml).unwrap();
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     git_run(&project_dir, &["add", "."]);
     git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
 
@@ -182,37 +187,18 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
 }
 
 fn read_lock_sha(workspace: &Path, project_name: &str, repo_path: &str) -> String {
-    let lock = std::fs::read_to_string(
-        workspace
-            .join("projects")
-            .join(project_name)
-            .join("rwv.lock"),
-    )
-    .expect("rwv.lock should exist after update");
-
-    // Parse the per-repo block. The lock format is:
-    //   <path>:
-    //     type: git
-    //     url: ...
-    //     version: <sha>
-    let mut in_block = false;
-    for line in lock.lines() {
-        let trimmed = line.trim_end();
-        if trimmed == format!("  {repo_path}:") {
-            in_block = true;
-            continue;
-        }
-        if in_block {
-            if let Some(rest) = trimmed.strip_prefix("    version: ") {
-                return rest.to_string();
-            }
-            // A new repo block starts at this indentation.
-            if trimmed.starts_with("  ") && !trimmed.starts_with("    ") {
-                break;
-            }
-        }
-    }
-    panic!("could not find version for {repo_path} in lock:\n{lock}");
+    let lock_path = workspace
+        .join("projects")
+        .join(project_name)
+        .join("rwv.lock");
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path)
+        .expect("rwv.lock should exist and parse after update");
+    let path = repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal");
+    lock.get_entry(&path)
+        .unwrap_or_else(|| panic!("could not find version for {repo_path} in lock:\n{lock:?}"))
+        .version
+        .as_str()
+        .to_string()
 }
 
 // ===========================================================================
@@ -349,10 +335,11 @@ fn update_advances_lock_while_fetch_does_not() {
         "repositories:\n  local/team/dep:\n    type: git\n    url: {manifest_url}\n    version: main\n    role: owned\n"
     );
     std::fs::write(project_work.join("rwv.yaml"), yaml).unwrap();
-    let lock = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {manifest_url}\n    version: {initial_sha}\n"
+    let raw_lock = format!(
+        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {manifest_url:?}, \"version\": {initial_sha:?}}}}}}}"
     );
-    std::fs::write(project_work.join("rwv.lock"), lock).unwrap();
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_work.join("rwv.lock")).unwrap();
     git_run(&project_work, &["add", "."]);
     git_run(&project_work, &["commit", "-m", "manifest + lock"]);
     git_run(&project_work, &["push", "origin", "main"]);
