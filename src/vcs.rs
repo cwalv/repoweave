@@ -2624,7 +2624,7 @@ pub trait Vcs: Send + Sync {
     /// snapshot-reads primitive.
     ///
     /// `file_path` is a path relative to the repo root (e.g.
-    /// `Path::new("rwv.lock")` or `Path::new("rwv.yaml")`).
+    /// `Path::new("rwv.lock")` or `Path::new("rwv.toml")`).
     ///
     /// Returns [`VcsError::RevisionNotFound`] when `revision` is not
     /// reachable in `repo`, and also when the file does not exist at that

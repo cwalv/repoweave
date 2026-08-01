@@ -520,11 +520,10 @@ impl<'de> Deserialize<'de> for RepoUrl {
 /// How freely code in this repo may be modified within the owning project.
 ///
 /// **Naming.** The variant is spelled `owned` everywhere on the wire
-/// (manifest YAML, `--role` CLI arguments, `--json` output). The legacy
+/// (the manifest, `--role` CLI arguments, `--json` output). The legacy
 /// `primary` spelling — used before the rename — is **not** accepted by
-/// the parser; manifests carrying it must be migrated via `rwv doctor --fix`.
-/// See `docs/reference/roles.md` for the migration path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+/// the parser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]
 pub enum Role {
@@ -563,18 +562,17 @@ impl Role {
     }
 
     /// The spelling this role is no longer accepted under, and the sentence
-    /// telling an operator what to run instead.
+    /// naming the one that replaced it.
     ///
-    /// Manifest loading and `--role` parsing both hit this rejection, from
-    /// different parsers, and an operator who sees two different sentences
-    /// for one migration reads it as two different problems.
+    /// Manifest loading and `--role` parsing reach this through the same
+    /// [`FromStr`], so an operator meets one sentence per migration rather
+    /// than one per parser.
     pub const LEGACY_SPELLING: &'static str = "primary";
 
     pub fn legacy_spelling_hint() -> String {
         format!(
-            "the `{legacy}` role spelling is no longer accepted (the role is \
-             spelled `{owned}`); run `rwv doctor --fix` to migrate manifests \
-             still using `role: {legacy}`",
+            "the `{legacy}` role spelling is no longer accepted; the role is \
+             spelled `{owned}`",
             legacy = Self::LEGACY_SPELLING,
             owned = Role::Owned.as_str()
         )
@@ -628,6 +626,18 @@ impl FromStr for Role {
     }
 }
 
+/// Deserializes through [`FromStr`] rather than by derive, so that a manifest
+/// naming [`Role::LEGACY_SPELLING`] is rejected by [`RoleParseError`] and
+/// carries its migration sentence. A derived impl would answer with serde's
+/// unknown-variant list, which names every accepted spelling but not the one
+/// the operator actually typed.
+impl<'de> Deserialize<'de> for Role {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Repo entry — one item in `repositories:`
 // ---------------------------------------------------------------------------
@@ -654,44 +664,42 @@ pub struct RepoEntry {
 // Integration config — per-integration overrides in `rwv.yaml`
 // ---------------------------------------------------------------------------
 
-/// Per-integration configuration from the `integrations:` key.
+/// Per-integration configuration from the `[integrations]` table.
 ///
-/// Stored as a raw YAML mapping so each integration can define its own typed
+/// Stored as a raw TOML table so each integration can define its own typed
 /// settings struct without polluting a shared flat struct. The framework only
 /// inspects the `enabled` key; all other keys are integration-specific.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct IntegrationConfig(serde_yaml::Mapping);
+pub struct IntegrationConfig(toml::Table);
 
 impl IntegrationConfig {
     /// Whether the integration should run.
     ///
-    /// Returns `Some(true)` / `Some(false)` when `enabled:` is present in the
-    /// YAML mapping, `None` when absent (fall back to `default_enabled()`).
+    /// Returns `Some(true)` / `Some(false)` when `enabled` is present in the
+    /// table, `None` when absent (fall back to `default_enabled()`).
     pub fn enabled(&self) -> Option<bool> {
-        self.0
-            .get(serde_yaml::Value::String("enabled".into()))
-            .and_then(|v| v.as_bool())
+        self.0.get("enabled").and_then(|v| v.as_bool())
     }
 
     /// Parse integration-specific settings into a typed struct.
     ///
-    /// Returns `Err` if the YAML mapping cannot be deserialized into `T` so
-    /// that callers can surface the parse error rather than silently falling
-    /// back to a default.
-    pub fn settings<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_yaml::Error> {
-        serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone()))
+    /// Returns `Err` if the table cannot be deserialized into `T` so that
+    /// callers can surface the parse error rather than silently falling back
+    /// to a default.
+    pub fn settings<T: serde::de::DeserializeOwned>(&self) -> Result<T, toml::de::Error> {
+        toml::Value::Table(self.0.clone()).try_into()
     }
 
-    /// Convenience constructor: parse an `IntegrationConfig` from a YAML string.
+    /// Convenience constructor: parse an `IntegrationConfig` from a TOML string.
     ///
-    /// Useful in tests where you want to supply inline YAML rather than
-    /// constructing a `serde_yaml::Mapping` by hand.
+    /// Useful in tests where you want to supply inline TOML rather than
+    /// constructing a [`toml::Table`] by hand.
     ///
     /// # Panics
-    /// Panics if the YAML is invalid or does not represent a mapping.
-    pub fn from_yaml(yaml: &str) -> Self {
-        serde_yaml::from_str(yaml).expect("IntegrationConfig::from_yaml: invalid YAML")
+    /// Panics if the TOML is invalid or does not represent a table.
+    pub fn from_toml(toml_str: &str) -> Self {
+        toml::from_str(toml_str).expect("IntegrationConfig::from_toml: invalid TOML")
     }
 }
 
@@ -1139,11 +1147,18 @@ impl Manifest {
     /// carry it and documentation quotes it — it is an interface, not an
     /// implementation detail to be hidden. The constant exists so it is
     /// spelled once rather than re-typed at every path join.
-    pub const FILE_NAME: &'static str = "rwv.yaml";
+    pub const FILE_NAME: &'static str = "rwv.toml";
+
+    /// The name the manifest had before it became TOML.
+    ///
+    /// Nothing parses a file under this name. It exists so a project
+    /// directory still holding one is refused by name rather than reported as
+    /// having no manifest at all — see [`Self::legacy_format_refusal`].
+    pub const LEGACY_FILE_NAME: &'static str = "rwv.yaml";
 
     /// The manifest text a project starts life with.
     pub const SKELETON: &'static str =
-        "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\nrepositories: {}\n";
+        "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\n[repositories]\n";
 
     /// Iterate over every [`RepoPath`] in the manifest, in sorted order.
     ///
@@ -1206,104 +1221,74 @@ impl Manifest {
         self.repositories.retain(keep);
     }
 
-    /// Load from a YAML file.
-    pub fn from_path(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        Self::from_yaml_str(&content)
-            .with_context(|| format!("failed to parse rwv.yaml at {}", path.display()))
-    }
-
-    /// Parse a manifest from a YAML string, surfacing the
-    /// legacy-`role: primary` migration hint when the parser rejects an
-    /// otherwise-recognisable manifest.
+    /// The path a pre-TOML manifest would sit at, when one is there.
     ///
-    /// The back-compat alias on `role: primary` has been dropped; manifests
-    /// using the legacy spelling now fail to parse. Detect that case up
-    /// front and emit a pointer at `rwv doctor --fix` so users find the
-    /// migration path instead of staring at a raw serde error.
-    pub fn from_yaml_str(content: &str) -> anyhow::Result<Self> {
-        match serde_yaml::from_str::<Self>(content) {
-            Ok(manifest) => Ok(manifest),
-            Err(err) => {
-                if manifest_has_legacy_role_primary(content) {
-                    Err(anyhow::anyhow!("{}", Role::legacy_spelling_hint()))
-                } else {
-                    Err(err.into())
-                }
-            }
-        }
+    /// `path` is the manifest path rwv looked for, so the legacy file is its
+    /// sibling.
+    pub fn legacy_beside(path: &Path) -> Option<PathBuf> {
+        let legacy = path.with_file_name(Self::LEGACY_FILE_NAME);
+        legacy.is_file().then_some(legacy)
     }
 
-    /// Serialize to YAML and write to `path`.
+    /// The refusal for a project directory still holding a pre-TOML manifest.
+    ///
+    /// Report-only, and no `--fix` arm answers it: the file is hand-authored,
+    /// so its comments and key order carry intent that no mechanical
+    /// cross-format rewrite can place. Converting is the operator's, and
+    /// saying so is the remedy rather than a gap.
+    pub fn legacy_format_refusal(legacy_path: &Path) -> String {
+        format!(
+            "{legacy} is a YAML manifest; rwv reads {name}. Rewrite it as {name} by \
+             hand and delete {legacy} — rwv will not convert it, because the comments \
+             and key order you wrote cannot be carried across formats.",
+            legacy = legacy_path.display(),
+            name = Self::FILE_NAME
+        )
+    }
+
+    /// Load from a TOML file.
+    ///
+    /// A project directory holding only the pre-TOML manifest is refused by
+    /// name; without that arm it would read as having no manifest at all.
+    pub fn from_path(path: &Path) -> anyhow::Result<Self> {
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(err) => {
+                if let Some(legacy) = Self::legacy_beside(path) {
+                    anyhow::bail!("{}", Self::legacy_format_refusal(&legacy));
+                }
+                return Err(anyhow::Error::new(err))
+                    .with_context(|| format!("failed to read {}", path.display()));
+            }
+        };
+        Self::from_toml_str(&content).with_context(|| {
+            format!(
+                "failed to parse {} at {}",
+                Self::FILE_NAME,
+                path.display()
+            )
+        })
+    }
+
+    /// Parse a manifest from a TOML string.
+    ///
+    /// A rejected `role` value carries [`Role::legacy_spelling_hint`] through
+    /// [`RoleParseError`], located at the offending line by the TOML parser.
+    pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
+        Ok(toml::from_str(content)?)
+    }
+
+    /// Serialize to TOML and write to `path`.
     ///
     /// The round-trip runs through serde, so any comment an operator wrote
     /// in the file being overwritten is gone afterwards — including the
     /// header [`Self::SKELETON`] starts a project with.
     pub fn write(&self, path: &Path) -> anyhow::Result<()> {
-        let yaml = serde_yaml::to_string(self).context("failed to serialize manifest")?;
-        std::fs::write(path, &yaml)
+        let text = toml::to_string(self).context("failed to serialize manifest")?;
+        std::fs::write(path, &text)
             .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
-}
-
-/// True iff `content` contains at least one `role: primary` line where
-/// `primary` is the *full* value (not a prefix like `primary_repo`).
-///
-/// Used by the manifest loader and `rwv doctor` to detect the legacy
-/// spelling now that its serde alias is gone. Targeted regex over raw
-/// text avoids a full YAML round-trip, which would destroy comments and
-/// key ordering when later rewriting the file under `--fix`.
-pub fn manifest_has_legacy_role_primary(content: &str) -> bool {
-    legacy_role_primary_regex().is_match(content)
-}
-
-/// Rewrite every `role: primary` in `content` to `role: owned`,
-/// preserving surrounding whitespace, comments, and key ordering.
-///
-/// Idempotent: calling on a migrated manifest leaves it unchanged.
-/// Returns `(new_content, replacements)`; `replacements` is `0` when no
-/// legacy spellings were present.
-pub fn migrate_legacy_role_primary(content: &str) -> (String, usize) {
-    let re = legacy_role_primary_regex();
-    let mut count = 0;
-    let out = re
-        .replace_all(content, |caps: &regex::Captures<'_>| {
-            count += 1;
-            // `$1` captures the indentation + `role:` + whitespace prefix.
-            // `$2` captures the trailing character (whitespace, '#', or
-            // newline) we need to preserve so that `role: primary  # foo`
-            // and `role: primary\n` keep their original shape.
-            format!("{}{}{}", &caps[1], Role::Owned.as_str(), &caps[2])
-        })
-        .into_owned();
-    (out, count)
-}
-
-fn legacy_role_primary_regex() -> &'static regex::Regex {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    // (?m) — multiline so `^` matches line start.
-    //
-    // Capture 1: "<indent>role:<inter-token whitespace>" so the rewriter
-    // can swap the value while keeping the line shape identical.
-    //
-    // Capture 2: the boundary character following `primary` —
-    // whitespace, `#` (inline comment start), `\r`, or end-of-line. The
-    // `regex` crate doesn't support lookaround, so we capture-and-emit
-    // this character to fake the boundary; `primary_repo` and similar
-    // identifiers fail to match because `_` isn't in the boundary set.
-    //
-    // End-of-input is matched separately via the `$` alternative which
-    // consumes nothing (Capture 2 falls back to an empty match in that
-    // case, which `replace_all` re-emits as empty).
-    RE.get_or_init(|| {
-        regex::Regex::new(&format!(
-            r"(?m)^([ \t]*role:[ \t]+){}([ \t#\r\n]|$)",
-            regex::escape(Role::LEGACY_SPELLING)
-        ))
-        .expect("legacy_role_primary regex compiles")
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1717,6 +1702,23 @@ mod tests {
     // IntegrationConfig — new transparent mapping API
     // ========================================================================
 
+    /// Deserialize a bare scalar through the manifest's codec.
+    ///
+    /// TOML has no bare-scalar document, so a newtype whose validation lives
+    /// in its `Deserialize` is reached through a [`toml::Value`] rather than
+    /// by parsing a one-line file.
+    fn from_scalar<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, toml::de::Error> {
+        toml::Value::String(s.to_owned()).try_into()
+    }
+
+    /// The inverse of [`from_scalar`], for round-trip assertions.
+    fn to_scalar<T: Serialize>(value: &T) -> String {
+        match toml::Value::try_from(value).unwrap() {
+            toml::Value::String(s) => s,
+            other => panic!("expected a string scalar, got {other:?}"),
+        }
+    }
+
     #[derive(serde::Deserialize, Default, Debug, PartialEq)]
     struct TestSettings {
         #[serde(default)]
@@ -1726,39 +1728,39 @@ mod tests {
     }
 
     #[test]
-    fn integration_config_default_is_empty_mapping() {
+    fn integration_config_default_is_empty_table() {
         let config = IntegrationConfig::default();
         assert!(config.enabled().is_none());
     }
 
     #[test]
     fn integration_config_enabled_some_true() {
-        let config = IntegrationConfig::from_yaml("enabled: true");
+        let config = IntegrationConfig::from_toml("enabled = true");
         assert_eq!(config.enabled(), Some(true));
     }
 
     #[test]
     fn integration_config_enabled_some_false() {
-        let config = IntegrationConfig::from_yaml("enabled: false");
+        let config = IntegrationConfig::from_toml("enabled = false");
         assert_eq!(config.enabled(), Some(false));
     }
 
     #[test]
     fn integration_config_enabled_absent_returns_none() {
-        let config = IntegrationConfig::from_yaml("files: [foo.txt]");
+        let config = IntegrationConfig::from_toml("files = [\"foo.txt\"]");
         assert_eq!(config.enabled(), None);
     }
 
     #[test]
     fn integration_config_settings_deserializes_files_list() {
-        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [a.txt, b.txt]");
+        let config = IntegrationConfig::from_toml("enabled = true\nfiles = [\"a.txt\", \"b.txt\"]");
         let settings: TestSettings = config.settings().unwrap();
         assert_eq!(settings.files, vec!["a.txt", "b.txt"]);
     }
 
     #[test]
     fn integration_config_settings_returns_default_when_keys_missing() {
-        let config = IntegrationConfig::from_yaml("enabled: true");
+        let config = IntegrationConfig::from_toml("enabled = true");
         let settings: TestSettings = config.settings().unwrap();
         assert_eq!(settings, TestSettings::default());
     }
@@ -1766,17 +1768,17 @@ mod tests {
     #[test]
     fn integration_config_settings_errors_on_wrong_type() {
         // `files` expects a sequence, but we supply a scalar — parse error surfaces.
-        let config = IntegrationConfig::from_yaml("files: not-a-list");
+        let config = IntegrationConfig::from_toml("files = \"not-a-list\"");
         assert!(config.settings::<TestSettings>().is_err());
     }
 
     #[test]
     fn integration_config_arbitrary_keys_round_trip() {
         // IntegrationConfig should preserve unknown keys through serde.
-        let yaml = "enabled: true\nfiles:\n  - x.json\ncount: 42\n";
-        let config: IntegrationConfig = serde_yaml::from_str(yaml).unwrap();
-        let restored = serde_yaml::to_string(&config).unwrap();
-        let config2: IntegrationConfig = serde_yaml::from_str(&restored).unwrap();
+        let text = "enabled = true\nfiles = [\"x.json\"]\ncount = 42\n";
+        let config: IntegrationConfig = toml::from_str(text).unwrap();
+        let restored = toml::to_string(&config).unwrap();
+        let config2: IntegrationConfig = toml::from_str(&restored).unwrap();
         assert_eq!(config2.enabled(), Some(true));
         let settings: TestSettings = config2.settings().unwrap();
         assert_eq!(settings.files, vec!["x.json"]);
@@ -1784,40 +1786,39 @@ mod tests {
     }
 
     #[test]
-    fn integration_config_default_serializes_as_empty_mapping() {
+    fn integration_config_default_serializes_as_empty_table() {
         let config = IntegrationConfig::default();
-        let yaml = serde_yaml::to_string(&config).unwrap();
-        // Deserializing back should still give us an empty mapping
-        let restored: IntegrationConfig = serde_yaml::from_str(&yaml).unwrap();
+        let text = toml::to_string(&config).unwrap();
+        // Deserializing back should still give us an empty table
+        let restored: IntegrationConfig = toml::from_str(&text).unwrap();
         assert!(restored.enabled().is_none());
     }
 
-    // -- YAML test fixtures --------------------------------------------------
+    // -- Manifest test fixtures ----------------------------------------------
 
     const VALID_MANIFEST: &str = r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-  github/acme/client:
-    type: git
-    url: https://github.com/acme/client.git
-    version: develop
-    role: fork
-integrations:
-  cargo:
-    enabled: true
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[repositories."github/acme/client"]
+type = "git"
+url = "https://github.com/acme/client.git"
+version = "develop"
+role = "fork"
+
+[integrations.cargo]
+enabled = true
 "#;
 
     const MINIMAL_MANIFEST: &str = r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
 "#;
 
     const VALID_LOCK: &str = r#"{
@@ -1898,7 +1899,7 @@ repositories:
     #[test]
     fn manifest_from_path_valid() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("rwv.yaml");
+        let path = dir.path().join(Manifest::FILE_NAME);
         std::fs::write(&path, VALID_MANIFEST).unwrap();
 
         let m = Manifest::from_path(&path).unwrap();
@@ -1909,7 +1910,7 @@ repositories:
     #[test]
     fn manifest_from_path_minimal() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("rwv.yaml");
+        let path = dir.path().join(Manifest::FILE_NAME);
         std::fs::write(&path, MINIMAL_MANIFEST).unwrap();
 
         let m = Manifest::from_path(&path).unwrap();
@@ -1959,16 +1960,15 @@ repositories:
     #[test]
     fn manifest_from_path_wrong_role_value() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("bad_role.yaml");
+        let path = dir.path().join("bad_role.toml");
         std::fs::write(
             &path,
             r#"
-repositories:
-  foo:
-    type: git
-    url: https://example.com
-    version: main
-    role: nonexistent_role
+[repositories.foo]
+type = "git"
+url = "https://example.com"
+version = "main"
+role = "nonexistent_role"
 "#,
         )
         .unwrap();
@@ -1980,15 +1980,14 @@ repositories:
     #[test]
     fn manifest_from_path_missing_url_in_entry() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("no_url.yaml");
+        let path = dir.path().join("no_url.toml");
         std::fs::write(
             &path,
             r#"
-repositories:
-  foo:
-    type: git
-    version: main
-    role: owned
+[repositories.foo]
+type = "git"
+version = "main"
+role = "owned"
 "#,
         )
         .unwrap();
@@ -2090,9 +2089,9 @@ repositories:
 
     #[test]
     fn manifest_serde_round_trip() {
-        let original: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
-        let yaml = serde_yaml::to_string(&original).unwrap();
-        let restored: Manifest = serde_yaml::from_str(&yaml).unwrap();
+        let original: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
+        let text = toml::to_string(&original).unwrap();
+        let restored: Manifest = toml::from_str(&text).unwrap();
 
         assert_eq!(original.repositories.len(), restored.repositories.len());
         for (key, orig) in &original.repositories {
@@ -2122,114 +2121,50 @@ repositories:
     #[test]
     fn role_serde_round_trip_all_variants() {
         for role in [Role::Owned, Role::Fork, Role::Dependency, Role::Reference] {
-            let yaml = serde_yaml::to_string(&role).unwrap();
-            let restored: Role = serde_yaml::from_str(&yaml).unwrap();
+            let restored: Role = from_scalar(&to_scalar(&role)).unwrap();
             assert_eq!(role, restored);
         }
     }
 
-    /// The back-compat alias on `role: primary` is gone. A bare `primary`
-    /// scalar must no longer deserialize as `Role::Owned` — otherwise the
-    /// doctor-fix migration path wouldn't trigger.
+    /// The back-compat alias on the legacy spelling is gone: it must not
+    /// deserialize as `Role::Owned`, or a manifest carrying it would load
+    /// silently under a role its author did not write.
     #[test]
-    fn role_primary_yaml_no_longer_deserializes() {
+    fn role_legacy_spelling_no_longer_deserializes() {
         assert!(
-            serde_yaml::from_str::<Role>("primary").is_err(),
-            "`primary` must not parse as Role"
+            from_scalar::<Role>(Role::LEGACY_SPELLING).is_err(),
+            "`{}` must not parse as Role",
+            Role::LEGACY_SPELLING
         );
     }
 
-    /// Loading a full manifest with `role: primary` must surface a
-    /// migration hint pointing at `rwv doctor --fix`. Without this,
-    /// users hitting a legacy manifest see only the raw serde error.
+    /// A manifest carrying the legacy spelling is refused with the sentence
+    /// naming the spelling that replaced it, located at the line that holds
+    /// it. Nothing rewrites the file, so the sentence is the whole remedy and
+    /// an operator who cannot find the offending line has not been given one.
     #[test]
-    fn role_primary_yaml_fails_to_parse_with_helpful_error() {
-        let yaml = r#"
-repositories:
-  github/acme/lib:
-    type: git
-    url: https://example.com/acme/lib.git
-    version: main
-    role: primary
+    fn legacy_role_spelling_is_refused_with_the_replacement_named() {
+        let text = r#"
+[repositories."github/acme/lib"]
+type = "git"
+url = "https://example.com/acme/lib.git"
+version = "main"
+role = "primary"
 "#;
-        let err = Manifest::from_yaml_str(yaml).unwrap_err();
+        let err = Manifest::from_toml_str(text).unwrap_err();
         let msg = format!("{err}");
         assert!(
-            msg.contains("rwv doctor --fix"),
-            "legacy `role: primary` manifest should point users at `rwv doctor --fix`, got: {msg}"
+            msg.contains(&Role::legacy_spelling_hint()),
+            "refusal should carry the migration sentence, got: {msg}"
         );
         assert!(
-            msg.contains("role: primary") || msg.contains("`role: primary`"),
-            "error should name the deprecated spelling, got: {msg}"
+            msg.contains(Role::Owned.as_str()),
+            "refusal should name the replacement spelling, got: {msg}"
         );
-    }
-
-    #[test]
-    fn manifest_has_legacy_role_primary_detects_canonical_line() {
-        let yaml = "    role: primary\n";
-        assert!(manifest_has_legacy_role_primary(yaml));
-    }
-
-    #[test]
-    fn manifest_has_legacy_role_primary_ignores_prefix_match() {
-        // `primary_repo` is not the legacy spelling — must not match.
-        let yaml = "    role: primary_repo\n";
-        assert!(!manifest_has_legacy_role_primary(yaml));
-    }
-
-    #[test]
-    fn manifest_has_legacy_role_primary_accepts_trailing_comment() {
-        let yaml = "    role: primary  # legacy spelling\n";
-        assert!(manifest_has_legacy_role_primary(yaml));
-    }
-
-    #[test]
-    fn migrate_legacy_role_primary_rewrites_to_owned() {
-        let yaml = "repositories:\n  github/acme/lib:\n    role: primary\n";
-        let (out, count) = migrate_legacy_role_primary(yaml);
-        assert_eq!(count, 1);
-        assert!(out.contains("role: owned"));
-        assert!(!out.contains("role: primary"));
-    }
-
-    #[test]
-    fn migrate_legacy_role_primary_is_idempotent() {
-        let yaml = "    role: owned\n";
-        let (out, count) = migrate_legacy_role_primary(yaml);
-        assert_eq!(count, 0);
-        assert_eq!(out, yaml);
-    }
-
-    #[test]
-    fn migrate_legacy_role_primary_preserves_comments_and_order() {
-        let yaml = "\
-# header comment
-repositories:
-  github/acme/lib:
-    type: git           # inline comment
-    url: https://example.com/acme/lib.git
-    version: main
-    role: primary       # legacy
-  github/acme/app:
-    type: git
-    url: https://example.com/acme/app.git
-    version: main
-    role: owned
-";
-        let (out, count) = migrate_legacy_role_primary(yaml);
-        assert_eq!(count, 1);
-        // Header comment retained.
-        assert!(out.contains("# header comment"));
-        // Inline comment after migration retained.
-        assert!(out.contains("# legacy"));
-        // Order preserved (lib appears before app).
-        let lib_pos = out.find("github/acme/lib").unwrap();
-        let app_pos = out.find("github/acme/app").unwrap();
-        assert!(lib_pos < app_pos);
-        // The lib entry now uses `owned`.
-        assert!(out.contains("role: owned       # legacy"));
-        // No stray `role: primary` left.
-        assert!(!out.contains("role: primary"));
+        assert!(
+            msg.contains("line 6"),
+            "refusal should locate the offending line, got: {msg}"
+        );
     }
 
     /// Serialization is one-way: `Role::Owned` writes as `owned`, never
@@ -2237,14 +2172,12 @@ repositories:
     /// spelling.
     #[test]
     fn role_owned_serializes_as_owned_not_primary() {
-        let yaml = serde_yaml::to_string(&Role::Owned).unwrap();
-        assert_eq!(yaml.trim(), "owned");
+        assert_eq!(to_scalar(&Role::Owned), "owned");
     }
 
     #[test]
     fn vcs_type_serde_round_trip() {
-        let yaml = serde_yaml::to_string(&VcsType::Git).unwrap();
-        let restored: VcsType = serde_yaml::from_str(&yaml).unwrap();
+        let restored: VcsType = from_scalar(&to_scalar(&VcsType::Git)).unwrap();
         assert_eq!(VcsType::Git, restored);
     }
 
@@ -2265,14 +2198,14 @@ repositories:
     /// A valid forward-slash path must deserialize without error.
     #[test]
     fn repo_path_deserialize_forward_slash_accepted() {
-        let rp: RepoPath = serde_yaml::from_str("github/acme/server").unwrap();
+        let rp: RepoPath = from_scalar("github/acme/server").unwrap();
         assert_eq!(rp.as_str(), "github/acme/server");
     }
 
     /// A path containing only a backslash must be rejected at parse time.
     #[test]
     fn repo_path_deserialize_backslash_rejected() {
-        let result: Result<RepoPath, _> = serde_yaml::from_str("github\\acme\\server");
+        let result: Result<RepoPath, _> = from_scalar("github\\acme\\server");
         assert!(result.is_err(), "backslash path must be rejected");
         let msg = format!("{}", result.unwrap_err());
         assert!(
@@ -2288,7 +2221,7 @@ repositories:
     /// A mixed-slash path (forward and back) must also be rejected.
     #[test]
     fn repo_path_deserialize_mixed_slash_rejected() {
-        let result: Result<RepoPath, _> = serde_yaml::from_str("github/acme\\server");
+        let result: Result<RepoPath, _> = from_scalar("github/acme\\server");
         assert!(result.is_err(), "mixed-slash path must be rejected");
         let msg = format!("{}", result.unwrap_err());
         assert!(
@@ -2297,19 +2230,18 @@ repositories:
         );
     }
 
-    /// Backslash rejection surfaces correctly when embedded as a YAML map key
+    /// Backslash rejection surfaces correctly when embedded as a table key
     /// in a full manifest, so users get a clear error rather than a generic one.
     #[test]
     fn repo_path_deserialize_backslash_rejected_in_manifest() {
-        let yaml = r#"
-repositories:
-  github\acme\server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
+        let text = r#"
+[repositories."github\\acme\\server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
 "#;
-        let result = Manifest::from_yaml_str(yaml);
+        let result = Manifest::from_toml_str(text);
         assert!(
             result.is_err(),
             "manifest with backslash key must be rejected"
@@ -2326,16 +2258,15 @@ repositories:
     /// behavior rather than adding a new restriction outside this spec's scope.
     #[test]
     fn repo_path_deserialize_empty_string_accepted() {
-        let rp: RepoPath = serde_yaml::from_str("''").unwrap();
+        let rp: RepoPath = from_scalar("").unwrap();
         assert_eq!(rp.as_str(), "");
     }
 
-    /// Serialization of a RepoPath round-trips correctly through YAML.
+    /// Serialization of a RepoPath round-trips correctly.
     #[test]
     fn repo_path_serde_round_trip() {
         let rp = RepoPath::new("github/acme/server").expect("known-safe literal");
-        let yaml = serde_yaml::to_string(&rp).unwrap();
-        let restored: RepoPath = serde_yaml::from_str(&yaml).unwrap();
+        let restored: RepoPath = from_scalar(&to_scalar(&rp)).unwrap();
         assert_eq!(rp, restored);
     }
 
@@ -2388,7 +2319,7 @@ repositories:
     #[test]
     fn repo_path_new_and_serde_produce_same_error_wording() {
         let new_msg = format!("{}", RepoPath::new("foo\\bar").unwrap_err());
-        let serde_result: Result<RepoPath, _> = serde_yaml::from_str("foo\\bar");
+        let serde_result: Result<RepoPath, _> = from_scalar("foo\\bar");
         let serde_msg = format!("{}", serde_result.unwrap_err());
         // Both messages must contain the canonical diagnostic phrase.
         assert!(
@@ -2510,13 +2441,13 @@ repositories:
 
     #[test]
     fn project_name_deserialize_rejects_double_dash() {
-        let result: Result<ProjectName, _> = serde_yaml::from_str("p--x");
+        let result: Result<ProjectName, _> = from_scalar("p--x");
         assert!(result.is_err(), "double-dash project name must be rejected");
     }
 
     #[test]
     fn project_name_deserialize_accepts_multi_segment() {
-        let name: ProjectName = serde_yaml::from_str("chatly/web-app").unwrap();
+        let name: ProjectName = from_scalar("chatly/web-app").unwrap();
         assert_eq!(name.as_str(), "chatly/web-app");
     }
 
@@ -2526,7 +2457,7 @@ repositories:
     #[test]
     fn project_name_new_and_serde_agree_on_rejection() {
         assert!(ProjectName::new("p--x").is_err());
-        let via_serde: Result<ProjectName, _> = serde_yaml::from_str("p--x");
+        let via_serde: Result<ProjectName, _> = from_scalar("p--x");
         assert!(via_serde.is_err());
     }
 
@@ -2584,7 +2515,7 @@ repositories:
 
     #[test]
     fn workweave_name_deserialize_rejects_slash() {
-        let result: Result<WorkweaveName, _> = serde_yaml::from_str("feat-a/main");
+        let result: Result<WorkweaveName, _> = from_scalar("feat-a/main");
         assert!(
             result.is_err(),
             "slash-containing workweave name must be rejected"
@@ -2593,7 +2524,7 @@ repositories:
 
     #[test]
     fn workweave_name_deserialize_rejects_double_dash() {
-        let result: Result<WorkweaveName, _> = serde_yaml::from_str("feat--v2--rc1");
+        let result: Result<WorkweaveName, _> = from_scalar("feat--v2--rc1");
         assert!(
             result.is_err(),
             "double-dash workweave name must be rejected"
@@ -2625,7 +2556,7 @@ repositories:
         // loader nest under a plain-named subdirectory instead.
         let project_dir = dir.path().join("proj");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
 
         let project = Project::from_dir(&project_dir).unwrap();
         assert!(project.lock.is_none());
@@ -2636,7 +2567,7 @@ repositories:
     #[test]
     fn project_from_dir_bad_lock_errors() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(dir.path().join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         std::fs::write(dir.path().join("rwv.lock"), "{{bad yaml").unwrap();
 
         let result = Project::from_dir(dir.path());
@@ -2664,7 +2595,7 @@ repositories:
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         let conflict_content = "\
 <<<<<<< HEAD\nworkweave: hotfix\nrepositories: {}\n=======\nrepositories: {}\n>>>>>>> abc1234\n";
         std::fs::write(project_dir.join("rwv.lock"), conflict_content).unwrap();
@@ -2697,7 +2628,7 @@ repositories:
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         // No rwv.lock written.
 
         let project = Project::from_dir_skip_lock(&project_dir).unwrap();
@@ -2718,7 +2649,7 @@ repositories:
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         std::fs::write(project_dir.join("rwv.lock"), "").unwrap();
 
         // Strict loader must fail on an empty file.
@@ -2772,7 +2703,7 @@ repositories:
         let base = tempfile::tempdir().unwrap();
         let project_dir = base.path().join("projects").join("my-app");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
 
         // Verify name_from_dir directly with the absolute path.
         let name = Project::name_from_dir(&project_dir);
@@ -2796,7 +2727,7 @@ repositories:
         let base = tempfile::tempdir().unwrap();
         let project_dir = base.path().join("projects").join("chatly").join("web-app");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
 
         let name = Project::name_from_dir(&project_dir);
         assert_eq!(
@@ -2814,7 +2745,7 @@ repositories:
         let base = tempfile::tempdir().unwrap();
         let project_dir = base.path().join("projects").join("my-service");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
 
         let project = Project::from_dir_skip_lock(&project_dir).unwrap();
         assert_eq!(
@@ -2830,8 +2761,7 @@ repositories:
 
     #[test]
     fn manifest_empty_repositories() {
-        let yaml = "repositories: {}\n";
-        let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+        let m: Manifest = toml::from_str("[repositories]\n").unwrap();
         assert!(m.repositories.is_empty());
         assert!(m.integrations.is_empty());
     }
@@ -2853,27 +2783,25 @@ repositories:
             link: vec!["target/".to_string(), ".cargo/registry".to_string()],
             copy: vec![".env".to_string(), ".vscode/settings.json".to_string()],
         };
-        let yaml = serde_yaml::to_string(&original).unwrap();
-        let restored: WorkweaveConfig = serde_yaml::from_str(&yaml).unwrap();
+        let text = toml::to_string(&original).unwrap();
+        let restored: WorkweaveConfig = toml::from_str(&text).unwrap();
         assert_eq!(original, restored);
     }
 
     #[test]
     fn manifest_with_workweave_section() {
-        let yaml = r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-workweave:
-  link:
-    - target/
-  copy:
-    - .env
+        let text = r#"
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[workweave]
+link = ["target/"]
+copy = [".env"]
 "#;
-        let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+        let m: Manifest = toml::from_str(text).unwrap();
         let ww = m.workweave.expect("workweave should be Some");
         assert_eq!(ww.link, vec!["target/"]);
         assert_eq!(ww.copy, vec![".env"]);
@@ -2881,7 +2809,7 @@ workweave:
 
     #[test]
     fn manifest_without_workweave_section() {
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         assert!(m.workweave.is_none());
     }
 
@@ -2896,7 +2824,7 @@ workweave:
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
         std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join("rwv.yaml"), VALID_MANIFEST).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), VALID_MANIFEST).unwrap();
         std::fs::write(project_dir.join("rwv.lock"), VALID_LOCK).unwrap();
 
         let project = Project::from_dir(&project_dir).unwrap();
@@ -2913,14 +2841,14 @@ workweave:
 
     #[test]
     fn iter_repo_paths_empty_manifest() {
-        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let m: Manifest = toml::from_str("[repositories]\n").unwrap();
         let paths: Vec<_> = m.iter_repo_paths().collect();
         assert!(paths.is_empty());
     }
 
     #[test]
     fn iter_repo_paths_single_repo() {
-        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
         let paths: Vec<_> = m.iter_repo_paths().collect();
         assert_eq!(paths.len(), 1);
         assert_eq!(
@@ -2932,7 +2860,7 @@ workweave:
     #[test]
     fn iter_repo_paths_multi_repo_sorted() {
         // VALID_MANIFEST has two repos; BTreeMap keeps them in sorted order.
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         let paths: Vec<_> = m.iter_repo_paths().collect();
         assert_eq!(paths.len(), 2);
         // BTreeMap guarantees ascending key order.
@@ -2947,14 +2875,14 @@ workweave:
 
     #[test]
     fn get_entry_empty_manifest_returns_none() {
-        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let m: Manifest = toml::from_str("[repositories]\n").unwrap();
         let result = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"));
         assert!(result.is_none());
     }
 
     #[test]
     fn get_entry_present_returns_some() {
-        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
         let entry = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"));
         assert!(entry.is_some());
         let entry = entry.unwrap();
@@ -2964,7 +2892,7 @@ workweave:
 
     #[test]
     fn get_entry_absent_path_returns_none() {
-        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
         let result =
             m.get_entry(&RepoPath::new("github/acme/nonexistent").expect("known-safe literal"));
         assert!(result.is_none());
@@ -2972,7 +2900,7 @@ workweave:
 
     #[test]
     fn get_entry_multi_repo_each_lookup() {
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         let server = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"));
         let client = m.get_entry(&RepoPath::new("github/acme/client").expect("known-safe literal"));
         assert!(server.is_some());
@@ -2985,14 +2913,14 @@ workweave:
 
     #[test]
     fn iter_entries_empty_manifest() {
-        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let m: Manifest = toml::from_str("[repositories]\n").unwrap();
         let entries: Vec<_> = m.iter_entries().collect();
         assert!(entries.is_empty());
     }
 
     #[test]
     fn iter_entries_single_repo() {
-        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
         let entries: Vec<_> = m.iter_entries().collect();
         assert_eq!(entries.len(), 1);
         let (path, entry) = entries[0];
@@ -3005,7 +2933,7 @@ workweave:
 
     #[test]
     fn iter_entries_multi_repo_all_present() {
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         let entries: Vec<_> = m.iter_entries().collect();
         assert_eq!(entries.len(), 2);
         // Paths reported by iter_entries must match iter_repo_paths.
@@ -3017,7 +2945,7 @@ workweave:
     #[test]
     fn iter_entries_consistent_with_get_entry() {
         // Every (path, entry) pair from iter_entries must agree with get_entry.
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         for (path, entry) in m.iter_entries() {
             let looked_up = m
                 .get_entry(path)
@@ -3032,37 +2960,37 @@ workweave:
 
     #[test]
     fn len_empty_manifest() {
-        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let m: Manifest = toml::from_str("[repositories]\n").unwrap();
         assert_eq!(m.len(), 0);
     }
 
     #[test]
     fn len_single_repo() {
-        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
         assert_eq!(m.len(), 1);
     }
 
     #[test]
     fn len_multi_repo() {
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         assert_eq!(m.len(), 2);
     }
 
     #[test]
     fn is_empty_empty_manifest() {
-        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let m: Manifest = toml::from_str("[repositories]\n").unwrap();
         assert!(m.is_empty());
     }
 
     #[test]
     fn is_empty_single_repo() {
-        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
         assert!(!m.is_empty());
     }
 
     #[test]
     fn is_empty_multi_repo() {
-        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         assert!(!m.is_empty());
     }
 }

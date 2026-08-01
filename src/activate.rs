@@ -1216,29 +1216,31 @@ mod tests {
         let project_dir = root.join("projects").join(project);
         std::fs::create_dir_all(&project_dir).unwrap();
 
-        let files_yaml = declared
+        let files_list = declared
             .iter()
-            .map(|f| format!("      - {f}"))
+            .map(|f| format!("\"{f}\""))
             .collect::<Vec<_>>()
-            .join("\n");
+            .join(", ");
         // Disable the default-enabled integrations that declare files
         // unconditionally (vscode-workspace surfaces `<project>.code-workspace`,
         // go-work surfaces `go.sum`) so the surfacing union under test is
         // exactly the static-files set we declare. The surfacing machinery is
         // integration-agnostic; isolating one integration keeps the asserts
         // deterministic.
-        let manifest_yaml = format!(
-            "repositories: {{}}\n\
-             integrations:\n\
-             \x20 static-files:\n\
-             \x20   enabled: true\n\
-             \x20   files:\n{files_yaml}\n\
-             \x20 vscode-workspace:\n\
-             \x20   enabled: false\n\
-             \x20 go-work:\n\
-             \x20   enabled: false\n"
+        let manifest_toml = format!(
+            "[repositories]\n\
+             \n\
+             [integrations.static-files]\n\
+             enabled = true\n\
+             files = [{files_list}]\n\
+             \n\
+             [integrations.vscode-workspace]\n\
+             enabled = false\n\
+             \n\
+             [integrations.go-work]\n\
+             enabled = false\n"
         );
-        std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+        std::fs::write(project_dir.join(Manifest::FILE_NAME), &manifest_toml).unwrap();
 
         // Author the requested files in the project dir so they can be surfaced.
         for f in authored {
@@ -1256,7 +1258,7 @@ mod tests {
         let path = root
             .join("projects")
             .join(project.as_str())
-            .join("rwv.yaml");
+            .join(Manifest::FILE_NAME);
         Manifest::from_path(&path).unwrap()
     }
 

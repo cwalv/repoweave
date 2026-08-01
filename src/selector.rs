@@ -282,12 +282,12 @@ mod tests {
     /// `--role primary` is no longer accepted; the error must direct
     /// users at `rwv doctor --fix` so the migration path is discoverable.
     #[test]
-    fn parse_role_rejects_legacy_primary_with_doctor_hint() {
-        let err = RepoFilter::parse(&["primary".into()], &[]).unwrap_err();
+    fn parse_role_rejects_legacy_primary_naming_the_replacement() {
+        let err = RepoFilter::parse(&[Role::LEGACY_SPELLING.into()], &[]).unwrap_err();
         let msg = format!("{err}");
         assert!(
-            msg.contains("rwv doctor --fix"),
-            "legacy --role primary error must direct at `rwv doctor --fix`, got: {msg}"
+            msg.contains(&Role::legacy_spelling_hint()),
+            "legacy --role error must carry the migration sentence, got: {msg}"
         );
     }
 

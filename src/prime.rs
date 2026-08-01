@@ -212,10 +212,10 @@ mod tests {
         root
     }
 
-    fn write_manifest(root: &Path, project: &str, yaml: &str) {
+    fn write_manifest(root: &Path, project: &str, manifest_toml: &str) {
         let dir = root.join("projects").join(project);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("rwv.yaml"), yaml).unwrap();
+        std::fs::write(dir.join(Manifest::FILE_NAME), manifest_toml).unwrap();
     }
 
     // -- prime is silent outside workspace ------------------------------------
@@ -296,20 +296,20 @@ mod tests {
             &root,
             "web-app",
             r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
-  github/acme/client:
-    type: git
-    url: https://github.com/acme/client.git
-    version: develop
-    role: fork
-integrations:
-  cargo:
-    enabled: true
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[repositories."github/acme/client"]
+type = "git"
+url = "https://github.com/acme/client.git"
+version = "develop"
+role = "fork"
+
+[integrations.cargo]
+enabled = true
 "#,
         );
 
@@ -436,12 +436,11 @@ integrations:
             &root,
             "ws",
             r#"
-repositories:
-  github/acme/server:
-    type: git
-    url: https://github.com/acme/server.git
-    version: main
-    role: owned
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
 "#,
         );
 
@@ -476,7 +475,7 @@ repositories:
         let tmp = tempfile::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
 
-        write_manifest(&root, "minimal", "repositories: {}\n");
+        write_manifest(&root, "minimal", "[repositories]\n");
         std::fs::write(root.join(".rwv-active"), "minimal\n").unwrap();
 
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();

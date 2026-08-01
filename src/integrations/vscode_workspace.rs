@@ -674,7 +674,7 @@ mod tests {
     fn managed_files_carries_the_hybrid_workspace_file_not_generated_files() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let manifest = Manifest::from_yaml_str("repositories: {}\n").unwrap();
+        let manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();

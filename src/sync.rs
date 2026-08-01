@@ -4012,7 +4012,7 @@ fn pin_source_snapshot(
                     source_project_dir.display()
                 )
             })?;
-        Manifest::from_yaml_str(&content).with_context(|| {
+        Manifest::from_toml_str(&content).with_context(|| {
             format!(
                 "failed to parse source manifest at revision {} in {}",
                 source_project_tip,
@@ -6943,7 +6943,7 @@ mod tests {
             "must identify the Phase 1' reload site; msg: {msg}"
         );
         assert!(
-            msg.contains("manifest") || msg.contains("rwv.yaml"),
+            msg.contains("manifest") || msg.contains(Manifest::FILE_NAME),
             "must mention the manifest; msg: {msg}"
         );
     }

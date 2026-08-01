@@ -831,15 +831,15 @@ mod tests {
     }
 
     fn make_manifest_local(repos: Vec<(&str, Role)>) -> Manifest {
-        let mut yaml = String::from("repositories:\n");
+        let mut manifest_toml = String::from("[repositories]\n");
         for (path, role) in &repos {
             let last = path.split('/').next_back().unwrap();
-            yaml.push_str(&format!(
-                "  {path}:\n    type: git\n    url: https://github.com/test/{last}.git\n    version: main\n    role: {}\n",
+            manifest_toml.push_str(&format!(
+                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
                 role.as_str()
             ));
         }
-        Manifest::from_yaml_str(&yaml).unwrap()
+        Manifest::from_toml_str(&manifest_toml).unwrap()
     }
 
     fn make_ctx_local<'a>(
@@ -1214,7 +1214,7 @@ mod tests {
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         // Set go_version explicitly in config.
-        let config = IntegrationConfig::from_yaml("go-version: \"1.23\"");
+        let config = IntegrationConfig::from_toml("go-version = \"1.23\"");
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
 

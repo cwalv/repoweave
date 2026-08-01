@@ -336,15 +336,15 @@ mod tests {
     use tempfile::TempDir;
 
     fn make_manifest(repos: &[(&str, Role)]) -> Manifest {
-        let mut yaml = String::from("repositories:\n");
+        let mut manifest_toml = String::from("[repositories]\n");
         for (path, role) in repos {
             let last = path.split('/').next_back().unwrap();
-            yaml.push_str(&format!(
-                "  {path}:\n    type: git\n    url: https://github.com/test/{last}.git\n    version: main\n    role: {}\n",
+            manifest_toml.push_str(&format!(
+                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
                 role.as_str()
             ));
         }
-        Manifest::from_yaml_str(&yaml).unwrap()
+        Manifest::from_toml_str(&manifest_toml).unwrap()
     }
 
     fn make_ctx<'a>(

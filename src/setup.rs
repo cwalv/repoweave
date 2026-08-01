@@ -295,6 +295,7 @@ fn group_contains_command(group: &Value, command: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::Manifest;
     use std::path::PathBuf;
 
     fn make_workspace(parent: &Path, name: &str) -> PathBuf {
@@ -304,10 +305,10 @@ mod tests {
         root
     }
 
-    fn write_manifest(root: &Path, project: &str, yaml: &str) {
+    fn write_manifest(root: &Path, project: &str, manifest_toml: &str) {
         let dir = root.join("projects").join(project);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("rwv.yaml"), yaml).unwrap();
+        std::fs::write(dir.join(Manifest::FILE_NAME), manifest_toml).unwrap();
     }
 
     /// Helper: call claude_at with a temp settings path.
@@ -319,7 +320,7 @@ mod tests {
     fn agents_md_creates_file() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        write_manifest(&root, "demo", "repositories: {}\n");
+        write_manifest(&root, "demo", "[repositories]\n");
         std::fs::write(root.join(".rwv-active"), "demo\n").unwrap();
 
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();
@@ -337,7 +338,7 @@ mod tests {
     fn agents_md_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        write_manifest(&root, "demo", "repositories: {}\n");
+        write_manifest(&root, "demo", "[repositories]\n");
         std::fs::write(root.join(".rwv-active"), "demo\n").unwrap();
 
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();
@@ -356,7 +357,7 @@ mod tests {
     fn agents_md_refuses_hand_edited() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        write_manifest(&root, "demo", "repositories: {}\n");
+        write_manifest(&root, "demo", "[repositories]\n");
         std::fs::write(root.join(".rwv-active"), "demo\n").unwrap();
 
         // Write a hand-edited AGENTS.md (no generated header).
@@ -371,7 +372,7 @@ mod tests {
     fn agents_md_overwrites_generated() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        write_manifest(&root, "demo", "repositories: {}\n");
+        write_manifest(&root, "demo", "[repositories]\n");
         std::fs::write(root.join(".rwv-active"), "demo\n").unwrap();
 
         // Write a previously-generated AGENTS.md with stale content.

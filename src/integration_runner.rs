@@ -507,7 +507,7 @@ mod tests {
         let mut configs = BTreeMap::new();
         configs.insert(
             "npm".to_string(),
-            IntegrationConfig::from_yaml("enabled: true"),
+            IntegrationConfig::from_toml("enabled = true"),
         );
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();
@@ -527,7 +527,7 @@ mod tests {
         let mut configs = BTreeMap::new();
         configs.insert(
             "cargo".to_string(),
-            IntegrationConfig::from_yaml("enabled: false"),
+            IntegrationConfig::from_toml("enabled = false"),
         );
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();
@@ -570,7 +570,7 @@ mod tests {
         let mut configs = BTreeMap::new();
         configs.insert(
             "cargo".to_string(),
-            IntegrationConfig::from_yaml("enabled: true"),
+            IntegrationConfig::from_toml("enabled = true"),
         );
         // npm gets default config (no entry)
         let manifest = make_manifest(configs);
@@ -778,7 +778,7 @@ mod tests {
         let mut configs = BTreeMap::new();
         configs.insert(
             "npm".to_string(),
-            IntegrationConfig::from_yaml("enabled: true"),
+            IntegrationConfig::from_toml("enabled = true"),
         );
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();

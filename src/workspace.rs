@@ -2546,7 +2546,7 @@ mod tests {
         use crate::integration::IntegrationContext;
         use crate::manifest::IntegrationConfig;
 
-        let manifest = Manifest::from_yaml_str("repositories: {}\n").unwrap();
+        let manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
         let config = IntegrationConfig::default();
         let cache = std::collections::HashMap::new();
         let project = ProjectName::new("web-app").unwrap();

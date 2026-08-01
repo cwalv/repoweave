@@ -126,18 +126,17 @@ pub enum CheckViolation {
         repo: RepoPath,
     },
 
-    /// A project's `rwv.yaml` uses the legacy `role: primary` spelling
-    /// (replaced by `role: owned`; the back-compat alias has since been
-    /// dropped). Auto-fixable: rewrite each affected line in place,
-    /// preserving comments and key order.
-    LegacyRolePrimary {
-        /// Project the manifest belongs to (or a synthetic name when the
-        /// detector runs without a fully-loaded project — manifests with
-        /// `role: primary` can't reach `Project::from_dir` since the
-        /// parse fails).
+    /// A project directory holds the pre-TOML manifest and no
+    /// [`Manifest::FILE_NAME`], so nothing in the project loads. Report-only:
+    /// the file is hand-authored, and the comments and key order in it do not
+    /// survive a mechanical cross-format rewrite.
+    LegacyManifestFormat {
+        /// Project the manifest belongs to. Derived from the directory rather
+        /// than read off a `Project`, which cannot load without a manifest
+        /// rwv can parse.
         project: ProjectName,
-        /// Absolute path to the offending `rwv.yaml`.
-        manifest_path: PathBuf,
+        /// Absolute path to the pre-TOML manifest.
+        legacy_path: PathBuf,
     },
 
     /// `.rwv-active` names a project whose `projects/<name>/` directory does
@@ -564,6 +563,7 @@ impl CheckViolation {
             | CheckViolation::StaleLock { .. }
             | CheckViolation::IncompleteLock { .. }
             | CheckViolation::UnparseableProject { .. }
+            | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::WorkweaveDrift { .. }
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::CargoVersionSkew { .. }
@@ -577,7 +577,6 @@ impl CheckViolation {
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
             CheckViolation::MissingMergeDriverConfig { .. }
-            | CheckViolation::LegacyRolePrimary { .. }
             | CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
             | CheckViolation::LegacyWorkweaveIndex { .. }
@@ -1385,9 +1384,9 @@ pub enum ViolationOutput {
         absolute_path: String,
         project: String,
     },
-    LegacyRolePrimary {
+    LegacyManifestFormat {
         project: String,
-        manifest_path: String,
+        legacy_path: String,
     },
     DanglingActiveProject {
         project: String,
@@ -1733,12 +1732,12 @@ impl ViolationOutput {
                     project: project.to_string(),
                 }
             }
-            CheckViolation::LegacyRolePrimary {
+            CheckViolation::LegacyManifestFormat {
                 project,
-                manifest_path,
-            } => Self::LegacyRolePrimary {
+                legacy_path,
+            } => Self::LegacyManifestFormat {
                 project: project.to_string(),
-                manifest_path: manifest_path.to_string_lossy().into_owned(),
+                legacy_path: legacy_path.to_string_lossy().into_owned(),
             },
             CheckViolation::DanglingActiveProject {
                 project,
@@ -2059,31 +2058,25 @@ impl IssueOutput {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy-role-primary scanning
+// Legacy-manifest-format scanning
 // ---------------------------------------------------------------------------
 
-/// One project manifest carrying the legacy `role: primary` spelling.
-///
-/// Carries both the project name and the absolute manifest path so the
-/// finding can be reported (without --fix) and rewritten (with --fix)
-/// without re-walking the workspace.
+/// One project directory holding a pre-TOML manifest and no
+/// [`Manifest::FILE_NAME`].
 #[derive(Debug, Clone)]
-pub struct LegacyRolePrimaryManifest {
+pub struct LegacyManifestFile {
     pub project: ProjectName,
-    pub manifest_path: PathBuf,
+    pub legacy_path: PathBuf,
 }
 
-/// Walk every `projects/*/rwv.yaml` under `workspace_dir` and collect
-/// manifests that contain the legacy `role: primary` spelling.
+/// Walk every project directory under `workspace_dir` for a manifest left in
+/// the pre-TOML format.
 ///
-/// Pre-parse text scan — the doctor needs to detect the legacy spelling
-/// *before* `Project::from_dir`, since the parser rejects it. Without
-/// this scan, the only signal would be the parse error from
-/// `Project::from_dir`, which doesn't fan out across all manifests in
-/// the workspace.
-pub fn scan_workspace_for_legacy_role_primary(
-    workspace_dir: &Path,
-) -> Vec<LegacyRolePrimaryManifest> {
+/// Runs instead of, not alongside, a parse: a project whose only manifest is
+/// the legacy one has nothing `Project::from_dir` can open, so without this
+/// scan it reads as a directory with no manifest and is passed over in
+/// silence.
+pub fn scan_workspace_for_legacy_manifests(workspace_dir: &Path) -> Vec<LegacyManifestFile> {
     let projects_root = projects_dir(workspace_dir);
     let mut found = Vec::new();
     for name in discover_project_paths(workspace_dir) {
@@ -2092,32 +2085,30 @@ pub fn scan_workspace_for_legacy_role_primary(
     found
 }
 
-/// Recursively walk a project directory in `projects/` for `rwv.yaml`
-/// files using `role: primary`. Project names are derived as the
-/// path relative to `projects/` (so `projects/chatly/web-app/rwv.yaml`
-/// yields project name `chatly/web-app`), matching the existing
-/// nested-project convention used by `Project::from_dir`.
+/// Recursively walk a project directory in `projects/`. Project names are
+/// derived as the path relative to `projects/` (so
+/// `projects/chatly/web-app/` yields project name `chatly/web-app`),
+/// matching the nested-project convention `Project::from_dir` uses.
+///
+/// A directory carrying both names is not reported: rwv reads the one it
+/// understands, and the leftover is the operator's to remove.
 fn scan_project_dir_for_legacy(
     projects_dir: &Path,
     project_dir: &Path,
-    out: &mut Vec<LegacyRolePrimaryManifest>,
+    out: &mut Vec<LegacyManifestFile>,
 ) {
-    let manifest_path = project_dir.join(Manifest::FILE_NAME);
-    if manifest_path.is_file() {
-        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-            if crate::manifest::manifest_has_legacy_role_primary(&content) {
-                let project_name = project_dir
-                    .strip_prefix(projects_dir)
-                    .unwrap_or(project_dir)
-                    .to_string_lossy()
-                    .into_owned();
-                if let Ok(project) = ProjectName::new(project_name) {
-                    out.push(LegacyRolePrimaryManifest {
-                        project,
-                        manifest_path,
-                    });
-                }
-            }
+    let legacy_path = project_dir.join(Manifest::LEGACY_FILE_NAME);
+    if legacy_path.is_file() && !project_dir.join(Manifest::FILE_NAME).is_file() {
+        let project_name = project_dir
+            .strip_prefix(projects_dir)
+            .unwrap_or(project_dir)
+            .to_string_lossy()
+            .into_owned();
+        if let Ok(project) = ProjectName::new(project_name) {
+            out.push(LegacyManifestFile {
+                project,
+                legacy_path,
+            });
         }
     }
     // Recurse into subdirectories for the `projects/<owner>/<repo>` nested
@@ -2135,22 +2126,6 @@ fn scan_project_dir_for_legacy(
             }
         }
     }
-}
-
-/// Apply the `rwv doctor --fix` migration to a single manifest path.
-///
-/// Idempotent: if no `role: primary` lines remain, the file is not
-/// rewritten and the returned count is `0`. Returns the number of
-/// rewritten lines so the caller can print a meaningful "[fixed]" line.
-pub fn fix_legacy_role_primary(manifest_path: &Path) -> anyhow::Result<usize> {
-    let content = std::fs::read_to_string(manifest_path)
-        .with_context(|| format!("failed to read {} for --fix", manifest_path.display()))?;
-    let (new_content, count) = crate::manifest::migrate_legacy_role_primary(&content);
-    if count > 0 {
-        std::fs::write(manifest_path, new_content)
-            .with_context(|| format!("failed to write {} during --fix", manifest_path.display()))?;
-    }
-    Ok(count)
 }
 
 // ---------------------------------------------------------------------------
@@ -6030,15 +6005,14 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                          run `rwv lock` or fetch"
                     ),
                 ),
-                CheckViolation::LegacyRolePrimary {
+                CheckViolation::LegacyManifestFormat {
                     project,
-                    manifest_path,
+                    legacy_path,
                 } => (
-                    crate::integration::Severity::Warning,
+                    crate::integration::Severity::Error,
                     format!(
-                        "{project}: manifest at {} uses deprecated `role: primary`; \
-                         run `rwv doctor --fix` to migrate to `role: owned`",
-                        manifest_path.display()
+                        "{project}: {}",
+                        Manifest::legacy_format_refusal(legacy_path.as_path())
                     ),
                 ),
                 CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => (
@@ -7256,42 +7230,10 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
     Ok(any_drift)
 }
 
-/// Repairs that have to land before any manifest is parsed. The parser
-/// rejects the legacy `role: primary` spelling outright, so a project
-/// carrying it does not load at all until the rewrite has run.
-fn apply_prelude_repairs(
-    ctx: &crate::workspace::WorkspaceContext,
-    scope_all: bool,
-    fix_errors: &mut Vec<String>,
-) {
-    let active_project = ctx.active_project().cloned();
-    let project_scope = if scope_all {
-        None
-    } else {
-        active_project.as_ref().map(|n| n.as_str())
-    };
-
-    for finding in scan_workspace_for_legacy_role_primary(ctx.active_path()) {
-        if let Some(active) = project_scope {
-            if finding.project.as_str() != active {
-                continue;
-            }
-        }
-        match fix_legacy_role_primary(&finding.manifest_path) {
-            // The detector saw the legacy spelling and the rewriter found
-            // none: something else migrated it between the two reads.
-            Ok(0) => {}
-            Ok(count) => println!(
-                "[fixed] core: migrated {count} `role: primary` → `role: owned` in {}",
-                finding.manifest_path.display()
-            ),
-            Err(e) => fix_errors.push(format!(
-                "{}: legacy `role: primary` fix failed: {e}",
-                finding.project
-            )),
-        }
-    }
-
+/// Repairs that have to land before the workspace is read. A legacy marker
+/// leaves a workweave unusable, so migrating it is what lets the rest of the
+/// run resolve context at all.
+fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &mut Vec<String>) {
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         match fix_legacy_workweave_marker(&finding) {
             Ok(true) => println!(
@@ -7986,7 +7928,7 @@ pub fn run_check(
     let mut fix_errors: Vec<String> = Vec::new();
 
     if fix {
-        apply_prelude_repairs(ctx, scope_all, &mut fix_errors);
+        apply_prelude_repairs(ctx, &mut fix_errors);
     }
 
     let world = load_doctor_world(ctx, scope_all)?;
@@ -8167,7 +8109,10 @@ fn load_doctor_world(
             }
             Err(e) => {
                 if let Ok(project_name) = crate::manifest::ProjectName::new(name) {
-                    unparseable_projects.push((project_name, manifest_path, e.to_string()));
+                    // `{:#}` rather than `to_string()`: the sentence naming the
+                    // remedy is minted at the parse boundary and sits under two
+                    // layers of load context, which the bare Display drops.
+                    unparseable_projects.push((project_name, manifest_path, format!("{e:#}")));
                 }
             }
         }
@@ -8279,17 +8224,17 @@ fn collect_doctor_violations(
         });
     }
 
-    // Text-scanned rather than read off a `Project`: the parser rejects the
-    // legacy spelling, so a manifest carrying it never loads.
-    for finding in scan_workspace_for_legacy_role_primary(workspace_dir) {
+    // Found by walking the directory rather than read off a `Project`: a
+    // project whose only manifest is the legacy one never loads.
+    for finding in scan_workspace_for_legacy_manifests(workspace_dir) {
         if let Some(active) = project_scope {
             if finding.project.as_str() != active {
                 continue;
             }
         }
-        violations.push(CheckViolation::LegacyRolePrimary {
+        violations.push(CheckViolation::LegacyManifestFormat {
             project: finding.project,
-            manifest_path: finding.manifest_path,
+            legacy_path: finding.legacy_path,
         });
     }
 

@@ -34,6 +34,14 @@ dirs = "6.0.0"
 # hybrid-merge contract on cargo/uv (Cargo.toml, pyproject.toml). serde + toml
 # round-trips would clobber user-authored profile blocks, lint policy, etc.
 toml_edit = "0.22"
+# Serde front-end for rwv's own manifest. Distinct from `toml_edit` above by
+# intent: that one preserves comments and key order because rwv merges into
+# files a user also edits; the manifest round-trip is destructive by design
+# (`Manifest::write` replaces the file), so the manifest wants a plain serde
+# codec and none of the decoration machinery. `toml` is a facade over the same
+# `toml_edit` version already resolved here, so this adds an API, not a second
+# TOML parser.
+toml = "0.8"
 # Added for fo-cnpjy.12 (gita hardening). `csv` provides RFC-4180-compliant
 # quoting so repo paths containing commas, quotes, or newlines are emitted as
 # valid CSV rather than corrupting the output.
