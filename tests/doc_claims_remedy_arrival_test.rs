@@ -113,25 +113,26 @@ fn the_lock_remedy_does_not_displace_the_parser_error() {
     );
 }
 
-/// One finding covers two files, so it has to say which one it is about.
+/// One finding covers two files, so what it prints has to say which one.
 ///
-/// The finding's own `manifest_path` field names the manifest whatever failed,
-/// because it locates the project. That makes the message the only thing that
-/// can distinguish a broken lock from a broken manifest, and a message naming
-/// the file that parsed fine sends the operator to edit a healthy file.
+/// Asserted against the rendered report rather than the `message` field: the
+/// finding's `manifest_path` names the manifest whatever failed, because it
+/// locates the project, so a template that narrates from the fields instead of
+/// relaying the message sends the operator to edit a healthy file — and does
+/// it without touching `message` at all.
 #[test]
 fn a_broken_lock_is_reported_against_the_lock() {
     let tmp = common::tempdir().unwrap();
     let workspace = make_workspace(tmp.path(), GOOD_MANIFEST, YAML_ERA_LOCK);
 
-    let message = unparseable_message(&workspace);
+    let combined = doctor(&workspace, &[]);
     assert!(
-        message.contains(repoweave::manifest::LockFile::FILE_NAME),
-        "a lock failure must name the lock, got:\n{message}"
+        combined.contains(repoweave::manifest::LockFile::FILE_NAME),
+        "a lock failure must name the lock, got:\n{combined}"
     );
     assert!(
-        !message.contains(repoweave::manifest::Manifest::FILE_NAME),
-        "a lock failure must not be reported against the manifest, got:\n{message}"
+        !combined.contains(repoweave::manifest::Manifest::FILE_NAME),
+        "a lock failure must not be reported against the manifest, got:\n{combined}"
     );
 }
 
@@ -154,11 +155,7 @@ fn the_manifest_remedy_reaches_the_operator() {
 #[test]
 fn a_broken_manifest_is_located_at_its_line() {
     let tmp = common::tempdir().unwrap();
-    let workspace = make_workspace(
-        tmp.path(),
-        "[repositories]\n\n\nnot-a-key\n",
-        "",
-    );
+    let workspace = make_workspace(tmp.path(), "[repositories]\n\n\nnot-a-key\n", "");
 
     let message = unparseable_message(&workspace);
     assert!(

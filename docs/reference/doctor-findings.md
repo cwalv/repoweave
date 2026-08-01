@@ -107,12 +107,20 @@ ecosystem workspace files.
 
 ### `unparseable-project`
 
-**Error. Report-only.** A project's `rwv.toml` exists but does not parse. It
-is reported at error severity specifically so a broken manifest does not read
-as a clean project with zero findings.
+**Error. Report-only.** A project directory exists but does not load: either
+its `rwv.toml` or its `rwv.lock` failed to parse. It is reported at error
+severity specifically so a project rwv cannot see into does not read as a
+clean project with zero findings.
 
-**What to do:** fix the file by hand and re-run. `--fix` deliberately has no
-arm here — rewriting a file rwv could not parse would be guesswork.
+**What to do:** the message names which of the two files failed, and carries
+that file's remedy — the manifest is yours to edit, at the line the parser
+names; the lock is generated, so `rwv lock` rewrites it. Note that the
+`manifest_path` field always names the manifest, because it locates the
+project rather than the failure.
+
+`--fix` deliberately has no arm for either. Rewriting a manifest rwv could not
+parse would be guesswork, and regenerating a lock re-pins the workspace to
+whatever the working tips happen to be — a decision about state, not a repair.
 
 ### `legacy-manifest-format`
 

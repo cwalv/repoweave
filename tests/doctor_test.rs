@@ -2045,8 +2045,8 @@ fn check_unparseable_project_reported_as_violation() {
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
-        out.contains("unparseable-project") || out.contains("cannot be parsed"),
-        "expected unparseable-project violation, got stdout: {out}"
+        out.contains("[error]") && out.contains("failed to parse rwv.toml"),
+        "expected the parse failure reported at error severity, got stdout: {out}"
     );
     assert!(
         out.contains("broken-app"),

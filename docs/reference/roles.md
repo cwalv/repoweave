@@ -138,7 +138,7 @@ The `owned` role was previously spelled `primary`. The rename to `owned` resolve
 
 ```
 $ rwv doctor
-error: alpha: manifest at projects/alpha/rwv.toml cannot be parsed: TOML parse error at line 5, column 8
+error: alpha: failed to parse rwv.toml at projects/alpha/rwv.toml: rwv.toml is yours to edit; rwv will not rewrite a file it could not parse: TOML parse error at line 5, column 8
   |
 5 | role = "primary"
   |        ^^^^^^^^^
