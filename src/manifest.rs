@@ -1947,8 +1947,8 @@ role = "owned"
     #[test]
     fn manifest_from_path_missing_repositories_field() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("missing.yaml");
-        std::fs::write(&path, "integrations: {}\n").unwrap();
+        let path = dir.path().join("missing.toml");
+        std::fs::write(&path, "[integrations]\n").unwrap();
 
         let result = Manifest::from_path(&path);
         assert!(

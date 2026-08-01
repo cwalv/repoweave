@@ -55,7 +55,7 @@ fn make_workspace(parent: &Path) -> PathBuf {
         std::fs::write(
             project_dir.join("rwv.toml"),
             format!(
-                "repositories = \"{{}}\"\n\n[integrations.static-files]\nenabled = true\nfiles = [\"CLAUDE.md\", \"{project}.code-workspace\"]\n\n[integrations.vscode-workspace]\nenabled = false\n\n[integrations.go-work]\nenabled = false\n"
+                "[repositories]\n\n[integrations.static-files]\nenabled = true\nfiles = [\"CLAUDE.md\", \"{project}.code-workspace\"]\n\n[integrations.vscode-workspace]\nenabled = false\n\n[integrations.go-work]\nenabled = false\n"
             ),
         )
         .unwrap();

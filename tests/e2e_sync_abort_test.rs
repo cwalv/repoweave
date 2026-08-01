@@ -81,7 +81,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)], integrations: Opti
         ));
     }
     if let Some(int) = integrations {
-        manifest_toml.push_str("\nintegrations:\n");
+        manifest_toml.push('\n');
         manifest_toml.push_str(int);
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
@@ -1159,7 +1159,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     // left rwv.lock with conflict markers.
     std::fs::write(
         project_dir.join("rwv.lock"),
-        "<<<<<<< HEAD workweave\nrepositories: {}\n=======\nrepositories: {}\n>>>>>>> abc1234\n",
+        "<<<<<<< HEAD\n[repositories]\n=======\n[repositories]\n>>>>>>> abc1234\n",
     )
     .unwrap();
 
@@ -1922,7 +1922,7 @@ fn gita_is_opt_in() {
     write_manifest(
         &root.join("projects/with-gita"),
         &[(SERVER_PATH, SERVER_URL)],
-        Some("  gita:\n    enabled: true\n"),
+        Some("[integrations.gita]\nenabled = true\n"),
     );
     std::fs::write(root.join(".rwv-active"), "with-gita\n").unwrap();
     rwv()
@@ -1955,7 +1955,7 @@ fn gita_is_opt_in() {
 /// We simulate post-Phase-1' corruption via a `post-merge` git hook installed
 /// in the shared git hooks directory.  `git merge --ff-only` (the default
 /// Phase 1' path when CWD is behind source) triggers `post-merge`, which
-/// replaces `rwv.toml` with invalid YAML.  The reload at the fixed code site
+/// replaces `rwv.toml` with text no parser accepts.  The reload at the fixed code site
 /// sees garbage and must bail — not warn and proceed.
 ///
 /// The workweave's project repo is a git worktree of primary's project, so
@@ -1991,7 +1991,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
     // Because ww.project_dir is a worktree of primary.project_dir, both
     // share the same hooks directory (primary.project_dir/.git/hooks/).
     // `git merge --ff-only` (the default Phase 1' path) triggers post-merge.
-    // The hook writes invalid YAML to rwv.toml in the current working tree
+    // The hook writes an unparseable rwv.toml in the current working tree
     // (the workweave's project dir at hook-call time).
     let hooks_dir = primary.project_dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
@@ -2000,7 +2000,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
     // and unconditionally corrupt the manifest.
     std::fs::write(
         &hook_path,
-        "#!/bin/sh\nprintf '!!!invalid manifest_toml!!!\\n' > rwv.toml\n",
+        "#!/bin/sh\nprintf '[[[not a manifest\\n' > rwv.toml\n",
     )
     .unwrap();
     #[cfg(unix)]

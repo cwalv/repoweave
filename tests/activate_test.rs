@@ -55,7 +55,7 @@ fn make_project(
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, role, manifest_files) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{}.git\"\nversion = \"main\"\n\n[repositories.\"{}\".role]\n",
+            "[repositories.\"{}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
             path,
             path.split('/').next_back().unwrap(),
             role,

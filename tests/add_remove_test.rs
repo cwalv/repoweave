@@ -105,9 +105,6 @@ fn setup_workspace_with_project(
 /// Write an `rwv.toml` manifest pointing repos at the given URLs.
 fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
-    if repos.is_empty() {
-        manifest_toml.push_str("  {}\n");
-    }
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
             "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
@@ -265,7 +262,7 @@ fn add_with_role_flag_sets_annotation() {
     let manifest_content =
         std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add");
     assert!(
-        manifest_content.contains("role: fork"),
+        manifest_content.contains(r#"role = "fork""#),
         "manifest should have role set to fork, got:\n{manifest_content}"
     );
 }
@@ -689,7 +686,7 @@ fn add_new_sets_role_to_primary() {
     // Find the entry for our repo and verify it has role: owned.
     // The YAML should contain "role: owned" in the newrepo entry.
     assert!(
-        manifest_content.contains("role: owned"),
+        manifest_content.contains(r#"role = "owned""#),
         "new repo should have role owned, got:\n{manifest_content}"
     );
 }
@@ -1522,16 +1519,13 @@ fn setup_two_project_workspace(
     git_run(&["init", "--initial-branch=main"], &project_a_dir);
     git_run(&["config", "user.email", "test@test.com"], &project_a_dir);
     git_run(&["config", "user.name", "Test"], &project_a_dir);
-    let mut yaml_a = String::from("[repositories]\n");
-    if project_a_repos.is_empty() {
-        yaml_a.push_str("  {}\n");
-    }
+    let mut manifest_a = String::from("[repositories]\n");
     for (path, url, role) in project_a_repos {
-        yaml_a.push_str(&format!(
+        manifest_a.push_str(&format!(
             "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
-    std::fs::write(project_a_dir.join("rwv.toml"), &yaml_a).unwrap();
+    std::fs::write(project_a_dir.join("rwv.toml"), &manifest_a).unwrap();
     git_run(&["add", "rwv.toml"], &project_a_dir);
     git_run(&["commit", "-m", "init-a"], &project_a_dir);
 
@@ -1541,7 +1535,7 @@ fn setup_two_project_workspace(
     git_run(&["init", "--initial-branch=main"], &project_b_dir);
     git_run(&["config", "user.email", "test@test.com"], &project_b_dir);
     git_run(&["config", "user.name", "Test"], &project_b_dir);
-    std::fs::write(project_b_dir.join("rwv.toml"), "repositories:\n  {}\n").unwrap();
+    std::fs::write(project_b_dir.join("rwv.toml"), "[repositories]\n").unwrap();
     git_run(&["add", "rwv.toml"], &project_b_dir);
     git_run(&["commit", "-m", "init-b"], &project_b_dir);
 

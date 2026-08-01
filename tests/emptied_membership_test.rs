@@ -73,9 +73,6 @@ fn setup_weave(root: &Path) {
 
 fn write_manifest(root: &Path, members: &[&str]) {
     let mut manifest_toml = String::from("[repositories]\n");
-    if members.is_empty() {
-        manifest_toml = String::from("[repositories]\n");
-    }
     for member in members {
         manifest_toml.push_str(&format!(
             "[repositories.\"{member}\"]\ntype = \"git\"\nurl = \"https://example.com/{member}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
@@ -86,7 +83,7 @@ fn write_manifest(root: &Path, members: &[&str]) {
     // fixable finding. `doctor --fix` gates the repair on the finding set being
     // non-empty, not on which integration spoke, so leaving it enabled lets an
     // unrelated finding drive the repair these tests attribute to the strip.
-    manifest_toml.push_str("integrations:\n  vscode-workspace:\n    enabled: false\n");
+    manifest_toml.push_str("\n[integrations.vscode-workspace]\nenabled = false\n");
     std::fs::write(root.join("projects/demo/rwv.toml"), manifest_toml).unwrap();
 }
 

@@ -114,16 +114,14 @@ fn init_creates_empty_rwv_yaml() {
     assert!(manifest_path.exists(), "rwv.toml should exist after init");
 
     let content = std::fs::read_to_string(&manifest_path).unwrap();
-    // The manifest should parse as valid YAML with an empty repositories map.
-    let manifest: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+    // The manifest should parse as valid TOML with an empty repositories table.
+    let manifest: toml::Table = toml::from_str(&content).unwrap();
     let repos = manifest
         .get("repositories")
         .expect("should have repositories key");
-    // Empty map can be represented as Mapping with 0 entries or as Null.
     match repos {
-        serde_yaml::Value::Mapping(m) => assert!(m.is_empty(), "repositories should be empty"),
-        serde_yaml::Value::Null => {} // `repositories:` with no value is fine for empty
-        other => panic!("repositories should be empty map or null, got: {:?}", other),
+        toml::Value::Table(t) => assert!(t.is_empty(), "repositories should be empty"),
+        other => panic!("repositories should be an empty table, got: {:?}", other),
     }
 }
 

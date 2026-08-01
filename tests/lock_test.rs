@@ -1535,18 +1535,14 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
     // merge markers in it. Strict JSON parsing dies on the marker
     // lines; `Project::from_dir_skip_lock` bypasses that.
     let markered = format!(
-        "repositories:\n\
+        "{{\n  \"repositories\": {{\n\
          <<<<<<< HEAD\n\
-           {path}:\n\
-             type: git\n\
-             url: https://github.com/acme/server.git\n\
-             version: cafefacecafefacecafefacecafefacecafeface\n\
+             \"{path}\": {{ \"type\": \"git\", \"url\": \"https://github.com/acme/server.git\", \
+         \"version\": \"cafefacecafefacecafefacecafefacecafeface\" }}\n\
          =======\n\
-           {path}:\n\
-             type: git\n\
-             url: https://github.com/acme/server.git\n\
-             version: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n\
-         >>>>>>> upstream\n",
+             \"{path}\": {{ \"type\": \"git\", \"url\": \"https://github.com/acme/server.git\", \
+         \"version\": \"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\" }}\n\
+         >>>>>>> upstream\n  }}\n}}\n",
         path = repo_path,
     );
     let lock_path = project_dir.join("rwv.lock");

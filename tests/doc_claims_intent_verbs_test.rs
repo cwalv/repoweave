@@ -155,9 +155,6 @@ fn setup_git_project(tmp: &Path, project: &str, repos: &[(&str, &str)]) -> (Path
 
 fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
-    if repos.is_empty() {
-        manifest_toml.push_str("  {}\n");
-    }
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
             "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"

@@ -2029,12 +2029,12 @@ fn check_unparseable_project_reported_as_violation() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
-    // Write a syntactically broken rwv.toml — invalid YAML.
+    // Write a syntactically broken rwv.toml — the table header never closes.
     let project_dir = root.join("projects").join("broken-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "repositories = \"{\"\n\"this is not\" = \"valid manifest_toml: [ unclosed\"\n",
+        "[repositories.\"github/acme/server\"\ntype = \"git\"\n",
     )
     .unwrap();
 
@@ -2065,7 +2065,7 @@ fn check_unparseable_project_in_json_output() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "repositories = \"{\"\n\"this is not\" = \"valid manifest_toml: [ unclosed\"\n",
+        "[repositories.\"github/acme/server\"\ntype = \"git\"\n",
     )
     .unwrap();
 
@@ -2107,17 +2107,17 @@ fn check_unparseable_project_in_json_output() {
 }
 
 /// `rwv doctor --fix` against a workspace with a broken manifest does NOT
-/// auto-repair the YAML; the violation persists after --fix. This confirms
+/// auto-repair it; the violation persists after --fix. This confirms
 /// that no automated unsafe mutation is attempted.
 #[test]
 fn check_unparseable_project_not_fixed_by_fix_flag() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
-    let bad_yaml = "repositories = \"{\"\n\"this is not\" = \"valid manifest_toml: [ unclosed\"\n";
+    let unparseable = "[repositories.\"github/acme/server\"\ntype = \"git\"\n";
     let project_dir = root.join("projects").join("broken-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), bad_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.toml"), unparseable).unwrap();
 
     // --fix should not crash and should still exit non-zero (violation remains).
     rwv_cmd()
@@ -2126,10 +2126,10 @@ fn check_unparseable_project_not_fixed_by_fix_flag() {
         .assert()
         .failure();
 
-    // The manifest must be unchanged — --fix must not touch broken YAML.
+    // The manifest must be unchanged — --fix must not touch a broken manifest.
     let content_after = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     assert_eq!(
-        content_after, bad_yaml,
+        content_after, unparseable,
         "--fix must not modify an unparseable manifest"
     );
 }

@@ -42,11 +42,11 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
     for (path, role) in &repos {
         let last = path.split('/').next_back().unwrap();
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\n\n[repositories.\"{path}\".role]\n",
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
             role.as_str()
         ));
     }
-    Manifest::from_yaml_str(&manifest_toml).unwrap()
+    Manifest::from_toml_str(&manifest_toml).unwrap()
 }
 
 fn make_ctx<'a>(
@@ -1112,11 +1112,9 @@ fn scan_members_explicit_config_overrides_auto_enumeration() {
     let project = ProjectName::new("test-project").unwrap();
 
     // Operator explicitly configures only crate-a (not crate-b).
-    // IntegrationConfig::from_yaml takes the settings block for the
+    // IntegrationConfig::from_toml takes the settings block for the
     // integration (the content under `integrations.cargo-workspace:`).
-    let config = repoweave::manifest::IntegrationConfig::from_yaml(
-        "members:\n  github/xai/big-repo:\n    include: [crate-a]\n",
-    );
+    let config = repoweave::manifest::IntegrationConfig::from_toml("[members.\"github/xai/big-repo\"]\ninclude = [\"crate-a\"]\n");
     let cache: HashMap<String, Vec<String>> = HashMap::new();
     let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
@@ -1231,9 +1229,9 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
     ]);
     let project = ProjectName::new("test-project").unwrap();
 
-    // Enable derived patch mode. IntegrationConfig::from_yaml parses the
+    // Enable derived patch mode. IntegrationConfig::from_toml parses the
     // cargo-workspace integration settings block directly.
-    let config = repoweave::manifest::IntegrationConfig::from_yaml("patch: derived\n");
+    let config = repoweave::manifest::IntegrationConfig::from_toml("patch = \"derived\"\n");
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     // Detection cache for "Cargo.toml": only ACTIVE repos (owned/fork/dep)
     // appear here — Reference-role repos are excluded from the manifest

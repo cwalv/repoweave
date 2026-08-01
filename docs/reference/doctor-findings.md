@@ -107,21 +107,27 @@ ecosystem workspace files.
 
 ### `unparseable-project`
 
-**Error. Report-only.** A project's `rwv.yaml` exists but does not parse. It
+**Error. Report-only.** A project's `rwv.toml` exists but does not parse. It
 is reported at error severity specifically so a broken manifest does not read
 as a clean project with zero findings.
 
-**What to do:** fix the YAML by hand and re-run. `--fix` deliberately has no
+**What to do:** fix the file by hand and re-run. `--fix` deliberately has no
 arm here — rewriting a file rwv could not parse would be guesswork.
 
-### `legacy-role-primary`
+### `legacy-manifest-format`
 
-**Warning. Auto-fixable.** The manifest uses the retired `role: primary`
-spelling, replaced by `role: owned`. The back-compat alias has since been
-dropped, so the parse now fails on it.
+**Error. Report-only.** A project directory holds an `rwv.yaml`, the name the
+manifest had before it became TOML, and no `rwv.toml`. It is reported at error
+severity because nothing in the project loads: without this finding the
+directory would read as having no manifest at all and be passed over in
+silence.
 
-**What to do:** `rwv doctor --fix` rewrites each affected line in place,
-preserving comments and key order.
+**What to do:** rewrite it as `rwv.toml` by hand and delete the `rwv.yaml`.
+`--fix` deliberately has no arm here, for the same reason as
+`unparseable-project` above and one more: the manifest is hand-authored, and
+the comments and key order you wrote have no mechanical translation between
+the two formats. A conversion that guessed at them would be worse than the
+refusal. See [Formats](./formats.md) for the shape to write.
 
 ### `stale-lock`
 

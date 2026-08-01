@@ -1324,17 +1324,17 @@
           "type": "object",
           "required": [
             "kind",
-            "manifest_path",
+            "legacy_path",
             "project"
           ],
           "properties": {
             "kind": {
               "type": "string",
               "enum": [
-                "legacy-role-primary"
+                "legacy-manifest-format"
               ]
             },
-            "manifest_path": {
+            "legacy_path": {
               "type": "string"
             },
             "project": {

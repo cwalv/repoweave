@@ -52,9 +52,6 @@ fn init_repo(path: &Path) -> String {
 fn write_manifest_only(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
     let mut manifest_toml = String::from("[repositories]\n");
-    if repos.is_empty() {
-        manifest_toml.push_str("  {}\n");
-    }
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
             "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"

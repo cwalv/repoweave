@@ -134,16 +134,20 @@ Roles surface in `rwv status --json` output so agent harnesses and shell scripts
 
 The `owned` role was previously spelled `primary`. The rename to `owned` resolved an overload — "primary" is also the name for the *workspace* (the non-workweave weave root, as in `rwv sync primary`). Using one word for two distinct concepts caused enough confusion to justify the rename.
 
-**Manifests using `role: primary` must be migrated via `rwv doctor --fix`; the parser does not accept the legacy spelling.** A `rwv.yaml` carrying `role: primary` fails to load with a message directing you at `rwv doctor --fix`:
+**The parser does not accept the legacy spelling, and nothing rewrites it for you.** A manifest carrying `role = "primary"` fails to load, and the error names the spelling that replaced it at the line holding it:
 
 ```
 $ rwv doctor
-error: failed to parse rwv.yaml at projects/<name>/rwv.yaml: manifest uses the deprecated `role: primary` spelling; run `rwv doctor --fix` to migrate to `role: owned`
+error: alpha: manifest at projects/alpha/rwv.toml cannot be parsed: TOML parse error at line 5, column 8
+  |
+5 | role = "primary"
+  |        ^^^^^^^^^
+the `primary` role spelling is no longer accepted; the role is spelled `owned`
 ```
 
-`rwv doctor` (without `--fix`) reports each affected manifest as a `legacy-role-primary` violation. `rwv doctor --fix` rewrites every `role: primary` line to `role: owned` in place, preserving comments and key order. The migration is idempotent — running `--fix` against a clean tree is a no-op.
+Change the value to `owned`. Editing the manifest is yours because the manifest is yours — see [formats](./formats.md).
 
-The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) also rejects the legacy spelling. `--role primary` returns an error pointing at the same `rwv doctor --fix` migration path.
+The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) rejects the legacy spelling through the same parser, so it answers with the same sentence.
 
 `rwv status --json` and other machine-readable outputs always emit the canonical `"owned"` spelling; that contract was unchanged by this revision.
 

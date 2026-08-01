@@ -110,14 +110,14 @@ fn is_enabled_default_enabled_no_override() {
 #[test]
 fn is_enabled_default_enabled_with_false_override() {
     let integration = MockIntegration::new("test", true);
-    let config = IntegrationConfig::from_yaml("enabled: false");
+    let config = IntegrationConfig::from_toml("enabled = false");
     assert!(!is_enabled(&integration, &config));
 }
 
 #[test]
 fn is_enabled_default_disabled_with_true_override() {
     let integration = MockIntegration::new("test", false);
-    let config = IntegrationConfig::from_yaml("enabled: true");
+    let config = IntegrationConfig::from_toml("enabled = true");
     assert!(is_enabled(&integration, &config));
 }
 
