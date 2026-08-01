@@ -21,6 +21,7 @@
 - [Add an integration](./how-to/add-an-integration.md)
 - [Reconcile repos with the lock](./how-to/reconcile-repos.md)
 - [Regenerate ecosystem workspace files](./how-to/regenerate-ecosystem-files.md)
+- [Upgrade to a new rwv on an existing weave](./how-to/upgrade-rwv.md)
 - [Write a plugin](./how-to/write-a-plugin.md)
 
 # Explanation — Lenses

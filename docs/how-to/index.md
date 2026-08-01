@@ -26,6 +26,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual material i
 
 - [Reconcile repos with the lock](./reconcile-repos.md) — `rwv status`, `rwv doctor --locked`, `rwv fetch` in-place repair
 - [Regenerate ecosystem workspace files](./regenerate-ecosystem-files.md) — `rwv activate` after membership changes
+- [Upgrade to a new rwv on an existing weave](./upgrade-rwv.md) — the marker, manifest, and lock refusals a new binary surfaces, and the order to clear them
 
 ## Release and integration
 
