@@ -29,6 +29,7 @@ use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use crate::registry::{builtin_registries, builtin_registry_names, Registry};
 use crate::vcs::Vcs;
 use anyhow::Context;
+use saphyr::{LoadableYamlNode, YamlOwned};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -1331,7 +1332,7 @@ impl WorkweaveMarker {
     /// Returns `Ok(false)` if `dir` already holds a JSON marker — idempotent,
     /// so callers can retry across a race without double-writing. `Err` on
     /// I/O failure or if the file is not readable as a legacy (YAML) marker
-    /// with at least the `primary:` field it requires.
+    /// with at least the `primary:` and `project:` fields it requires.
     pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
         let path = Self::path_in(dir);
         let content = std::fs::read_to_string(&path)
@@ -1339,21 +1340,31 @@ impl WorkweaveMarker {
         if serde_json::from_str::<Self>(&content).is_ok() {
             return Ok(false);
         }
-        let mut raw: serde_yaml::Value = serde_yaml::from_str(&content)
+        let docs = YamlOwned::load_from_str(&content)
             .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
-        if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
-            let primary = raw.get("primary").cloned().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{} is missing the required `primary:` field",
-                    path.display()
-                )
-            })?;
-            raw.as_mapping_mut()
-                .ok_or_else(|| anyhow::anyhow!("{} is not a YAML mapping", path.display()))?
-                .insert(serde_yaml::Value::String("parent".into()), primary);
-        }
-        let marker: Self = serde_yaml::from_value(raw)
-            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
+        let raw = docs
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("{} is not a YAML mapping", path.display()))?;
+        let field = |key: &str| raw.as_mapping_get(key).and_then(|v| v.as_str());
+        let primary = field("primary").ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} is missing the required `primary:` field",
+                path.display()
+            )
+        })?;
+        let project = field("project").ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} is missing the required `project:` field",
+                path.display()
+            )
+        })?;
+        let parent = field("parent").unwrap_or(primary);
+        let marker = Self {
+            primary: PathBuf::from(primary),
+            project: ProjectName::new(project)
+                .with_context(|| format!("{} has an invalid `project:` value", path.display()))?,
+            parent: PathBuf::from(parent),
+        };
         marker.write(dir)?;
         Ok(true)
     }
@@ -1463,8 +1474,8 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
     if let Ok(marker) = serde_json::from_str::<WorkweaveMarker>(&content) {
         return MarkerPresence::Usable(marker);
     }
-    let raw: serde_yaml::Value = match serde_yaml::from_str(&content) {
-        Ok(raw) => raw,
+    let docs = match YamlOwned::load_from_str(&content) {
+        Ok(docs) => docs,
         Err(e) => {
             return unreadable(
                 format!(
@@ -1476,21 +1487,21 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
             );
         }
     };
-    if raw.as_mapping().is_none() {
+    let Some(raw) = docs.first().filter(|raw| raw.as_mapping().is_some()) else {
         return unreadable(
             format!("{} is not a JSON or YAML mapping", marker_path.display()),
             None,
             None,
         );
-    }
+    };
     let project_hint = raw
-        .get("project")
+        .as_mapping_get("project")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|project| !project.is_empty())
         .and_then(|project| ProjectName::new(project).ok());
     let primary_hint = raw
-        .get("primary")
+        .as_mapping_get("primary")
         .and_then(|v| v.as_str())
         .map(PathBuf::from);
     MarkerPresence::Defective {
