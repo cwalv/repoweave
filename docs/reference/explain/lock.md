@@ -4,8 +4,19 @@
 
 Snapshot each manifest repo's current HEAD into `rwv.lock`. No network
 access, no integration hooks, no manifest mutations. `lock` is a pure
-local operation: it reads each repo's HEAD SHA from disk and writes the
+local operation: it reads each repo's HEAD from disk and writes the
 resulting snapshot into the project's `rwv.lock`.
+
+### What each entry records
+
+A tag pointing at HEAD is recorded by name (`v1.2.3`); everything else is
+recorded as the commit id. A project that would rather not depend on
+upstream tag discipline can set `[lock] forgo-tag-names = true` in its
+`rwv.toml`, which records the commit id for every entry — giving up the
+readable form, and the lock's implicit released-vs-unreleased signal, for a
+lock that resolves to the same tree regardless of where a tag points later.
+The policy is project-wide and applies to every writer of the lock,
+including the `rwv sync` and `rwv fetch` paths that call `lock` internally.
 
 ### Lock as derived state
 
