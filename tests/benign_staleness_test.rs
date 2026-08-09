@@ -694,6 +694,190 @@ fn relation_ahead_sync_from_workweave_source_pulls_tips_with_note() {
     );
 }
 
+/// A pull from an `Ahead` workweave source, stranded mid-replay and made ready
+/// to resume.
+///
+/// The source relocks once and then commits again, so its lock and its tip are
+/// distinct revisions the destination starts at neither of: what the resume
+/// leaves behind names which of the two replay targeted.
+///
+/// The strand is a project-repo conflict. Replay syncs the MEMBER repos first
+/// and the project repo second, so this stops the op with the members already
+/// landed under the fresh invocation's pin — which is why the source then
+/// commits again inside the operator's window. The resume re-pins at its own
+/// T0, so that later commit is what tips-as-truth must reach and what the
+/// recorded consent must decline to chase. Without it both outcomes would look
+/// identical to "the resume did nothing".
+struct StrandedPull {
+    f: Fixture,
+    /// The source's committed lock revision: replay's target under the
+    /// recorded `allow-stale-lock` consent.
+    locked: String,
+    /// The source's member tip at the moment the resume re-pins: replay's
+    /// target under tips-as-truth.
+    tip_at_resume: String,
+    /// Where the fresh invocation left the destination's member repo.
+    dest_after_strand: String,
+}
+
+fn strand_a_pull_from_an_ahead_workweave(extra: &[&str]) -> StrandedPull {
+    let f = fixture();
+    let weaveroot = f.main.root.parent().unwrap().join(".workweaves");
+    let src = create_workweave(&f.main, &weaveroot, "src");
+    let dest_before = head(&f.main.manifest_repo);
+
+    commit_file(&src.manifest_repo, "x.txt", "x\n", "src: x");
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&src.root)
+        .assert()
+        .success();
+    let locked = head(&src.manifest_repo);
+    commit_file(&src.manifest_repo, "y.txt", "y\n", "src: y");
+
+    commit_file(
+        &src.project_dir,
+        "notes/shared.md",
+        "src take\n",
+        "docs: src take",
+    );
+    commit_file(
+        &f.main.project_dir,
+        "notes/shared.md",
+        "main take\n",
+        "docs: main take",
+    );
+
+    let mut args: Vec<String> = ["sync", &src.root.to_string_lossy(), "--strategy", "rebase"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    args.extend(extra.iter().map(|s| s.to_string()));
+    rwv()
+        .args(&args)
+        .current_dir(&f.main.root)
+        .assert()
+        .failure();
+
+    assert_eq!(
+        repoweave::git::git_vcs()
+            .mid_operation(&f.main.project_dir)
+            .as_deref(),
+        Some("mid-rebase"),
+        "the pull must strand mid-replay, or there is nothing for `--continue` to resume"
+    );
+    let dest_after_strand = head(&f.main.manifest_repo);
+    assert_ne!(
+        dest_after_strand, dest_before,
+        "the strand must follow the member sync, or the source's later commit is not \
+         what separates the two targets"
+    );
+
+    std::fs::write(
+        f.main.project_dir.join("notes/shared.md"),
+        "operator-resolved\n",
+    )
+    .unwrap();
+    git(&["add", "notes/shared.md"], &f.main.project_dir);
+    git(&["rebase", "--continue"], &f.main.project_dir);
+
+    commit_file(&src.manifest_repo, "z.txt", "z\n", "src: z");
+    let tip_at_resume = head(&src.manifest_repo);
+
+    StrandedPull {
+        f,
+        locked,
+        tip_at_resume,
+        dest_after_strand,
+    }
+}
+
+/// Read the `overrides` array off the in-progress owner record.
+fn recorded_overrides(workspace_root: &Path) -> Vec<String> {
+    let raw = std::fs::read_to_string(workspace_root.join(".rwv-op"))
+        .expect("a stranded op must leave an owner record");
+    let doc: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    doc["overrides"]
+        .as_array()
+        .expect("owner record must carry an overrides array")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// A tips-as-truth pull that was interrupted and resumed still targets the
+/// source's committed tips.
+///
+/// The fresh path's coverage above cannot see this one: `--continue` re-pins
+/// the snapshot from scratch, so the classification the fresh guard reached is
+/// thrown away and reached again from the persisted record. A regression here
+/// is a state-reconstruction bug — no signature and no call site changes.
+#[test]
+fn a_resumed_pull_from_an_ahead_workweave_source_still_targets_the_tips() {
+    let sp = strand_a_pull_from_an_ahead_workweave(&[]);
+    assert_ne!(
+        sp.dest_after_strand, sp.tip_at_resume,
+        "setup: the source must have moved in the window, or the resume has nowhere to go"
+    );
+    assert!(
+        recorded_overrides(&sp.f.main.root).is_empty(),
+        "setup: the record must carry no consent, or this is the sibling test"
+    );
+
+    rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&sp.f.main.root)
+        .assert()
+        .success();
+
+    let delivered = head(&sp.f.main.manifest_repo);
+    assert_eq!(
+        delivered, sp.tip_at_resume,
+        "the resumed pull must deliver the source's committed tip, not its lock ({})",
+        sp.locked
+    );
+    let lock = std::fs::read_to_string(sp.f.main.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        lock.contains(&sp.tip_at_resume),
+        "the destination lock must pin what the resume delivered; lock:\n{lock}"
+    );
+}
+
+/// The negative half, and the one that pins the read-back specifically: the
+/// consent was spelled on the fresh invocation only, so the resume can honour
+/// it solely by recovering `allow-stale-lock` from the owner record. Under it
+/// the source's later commit must NOT be chased — replay's target stays the
+/// lock.
+#[test]
+fn a_resumed_pull_carrying_allow_stale_lock_still_targets_the_lock() {
+    let sp = strand_a_pull_from_an_ahead_workweave(&["--allow-stale-lock"]);
+    assert_eq!(
+        recorded_overrides(&sp.f.main.root),
+        vec!["allow-stale-lock".to_string()],
+        "the consent must reach the record, or the resume has nothing to read back"
+    );
+    assert_eq!(
+        sp.dest_after_strand, sp.locked,
+        "setup: the consented fresh pull must have targeted the lock"
+    );
+
+    rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&sp.f.main.root)
+        .assert()
+        .success();
+
+    let delivered = head(&sp.f.main.manifest_repo);
+    assert_eq!(
+        delivered, sp.locked,
+        "under the recorded consent the resumed pull must keep the lock as replay's target"
+    );
+    assert_ne!(
+        delivered, sp.tip_at_resume,
+        "the recorded consent must survive the resume; chasing the tip means it did not"
+    );
+}
+
 /// sync (pull) from a PRIMARY-weave source whose lock is behind HEAD (`Ahead`):
 /// tips-as-truth is scoped to workweave sources, so a primary source keeps the
 /// REFUSAL (naming the relation + `--allow-stale-lock`).
