@@ -26,7 +26,10 @@ CWD, and target is only ever advanced via fast-forward.
    and the project repo in target is on to CWD's converged tips. This step is
    always FF regardless of `--strategy` — all rewriting happened in CWD during
    step 1. If FF is not possible (e.g. concurrent modification), the operation
-   bails with an actionable error.
+   bails with an actionable error. The manifest repos go first and the project
+   repo last: the project repo carries the lock, so advancing it while a manifest
+   repo failed to land would leave the target's lock naming revisions the target
+   does not hold. A failed manifest repo skips the project advance entirely.
 
 ### End-state semantics
 
@@ -834,7 +837,8 @@ rwv abort
 - *step 3 FF-advance failed* — the target holds commits CWD's tip does not, so
   landing CWD onto it would drop them. Either the target moved after step 1, or
   `--allow-stale-lock` let step 1 replay against a lock that was behind those
-  commits. Roll back with `rwv abort` and re-run.
+  commits. The target's project repo is left un-advanced, so its lock still
+  describes the target's pre-op state. Roll back with `rwv abort` and re-run.
 - *missing-replay-exclusion* — the project repo doesn't have
   `rwv.lock merge=rwv-ours` in `.gitattributes` (or still carries the
   legacy `merge=ours` spelling). Run `rwv doctor --fix`.

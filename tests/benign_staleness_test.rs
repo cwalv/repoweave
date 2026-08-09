@@ -523,6 +523,75 @@ fn allow_stale_lock_target_ahead_still_fails_at_step_3_without_blaming_concurren
     );
 }
 
+/// Every revision the target's lock names must be one the target actually
+/// holds. A manifest repo that fails to land must therefore stop the project
+/// repo — the one that carries the lock — from being advanced past it. The
+/// consented path is where this is reachable, so it is where it is pinned.
+#[test]
+fn allow_stale_lock_step_3_failure_leaves_the_target_lock_true_about_its_members() {
+    let f = fixture();
+
+    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
+    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
+    commit_file(&f.ww.manifest_repo, "feature.txt", "f\n", "ww: feature");
+
+    let target_project_before = head(&f.main.project_dir);
+    let target_lock_before = std::fs::read(f.main.project_dir.join("rwv.lock")).unwrap();
+
+    let assert = rwv()
+        .args([
+            "sync-to",
+            &f.main.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("(project): not advanced"),
+        "the skipped project advance must be named where the per-repo lines are; got \
+         stderr:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.main.project_dir),
+        target_project_before,
+        "a manifest repo that did not land must leave the target's project repo where it was"
+    );
+    let target_lock_after = std::fs::read(f.main.project_dir.join("rwv.lock")).unwrap();
+    assert_eq!(
+        target_lock_after, target_lock_before,
+        "the target's lock must be byte-identical after a failed landing"
+    );
+
+    // The invariant itself, not a proxy for it: every revision the lock the
+    // target is LEFT WITH pins is reachable from the branch its repo is on.
+    // Read back from disk rather than reusing the pre-op bytes, so this holds
+    // independently of the equality assertion above.
+    let lock = repoweave::manifest::LockFile::from_json_str(
+        &String::from_utf8(target_lock_after).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        lock.len(),
+        1,
+        "the sweep below is vacuous unless the lock has the fixture's one entry"
+    );
+    let target_lib_tip = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    for (_repo_path, entry) in lock.iter_entries() {
+        git(
+            &[
+                "merge-base",
+                "--is-ancestor",
+                entry.version.as_str(),
+                &target_lib_tip,
+            ],
+            &f.main.manifest_repo,
+        );
+    }
+}
+
 /// The full stranded-then-resumed shape, end to end: the consented path strands
 /// the op at advance-target, the operator rebases CWD onto the target's live tip
 /// by hand, and resumes. The resume reports success — so what it delivered has to

@@ -284,6 +284,22 @@ in CWD during replay.
 
 Re-entry rule: ff to an already-reached tip is a no-op.
 
+**Ordering rule: manifest repos first, project repo last, and the project
+advance is gated on all of them landing.** The project repo carries the
+lock and the lock names the manifest tips, so advancing it past a
+manifest repo that did not land would leave the target asserting
+revisions it does not hold — the one target state no later phase
+repairs. Manifest repos that did land stay landed: their pre-op
+revisions are ancestors of what the target now holds, so the
+un-advanced lock remains true about them, and it is the benign
+lock-behind-HEAD shape `rwv lock --commit` refreshes.
+
+Rolling the landed repos back instead was rejected. `rwv abort` is
+already the transactional exit, is savepoint-verified, and is named in
+the failure. A second, implicit rollback would write to the target at
+the moment least is known about why the landing failed, and would fight
+the idempotent re-entry rule a `--continue` depends on.
+
 ### retire (--retire only)
 
 Run the merged-check (manifest repo tips equal in CWD and target after

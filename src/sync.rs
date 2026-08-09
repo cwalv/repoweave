@@ -4341,6 +4341,26 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
+    // The project repo carries the lock, and the lock names the manifest tips.
+    // Advancing it while a manifest repo failed to land would leave the target
+    // asserting revisions it does not hold — a worse state than the one the
+    // failure already produced, and one no later phase repairs. Every manifest
+    // repo that DID land is left landed: those tips are ancestors of nothing the
+    // target lacks, so the un-advanced lock stays true about them.
+    if any_ff_failure {
+        if emit_text {
+            eprintln!("  (project): not advanced — a manifest repo did not land (see above)");
+        }
+        anyhow::bail!(
+            "sync-to advance-target failed for one or more manifest repos (see above).\n\
+             The target's project repo was NOT advanced, so its lock still describes the \
+             target's pre-op state rather than naming revisions the target does not have.\n\
+             Op-state remains in both workspaces.\n\
+             Rerun `{resume}` after resolving, or `rwv abort` to roll the whole op back.",
+            resume = op_state::resume_command(ctx.verb),
+        );
+    }
+
     let cwd_project_tip = ctx
         .project_vcs
         .head_revision(&ctx.cwd_project_dir)
@@ -4376,18 +4396,15 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if emit_text {
                 eprintln!("  (project): ff-advance failed: {e}");
             }
-            any_ff_failure = true;
+            anyhow::bail!(
+                "sync-to advance-target could not advance the target's project repo (see \
+                 above). Every manifest repo landed, so the target holds the work but its \
+                 lock does not yet name those tips.\n\
+                 Op-state remains in both workspaces.\n\
+                 Rerun `{resume}` after resolving, or `rwv abort` to roll the whole op back.",
+                resume = op_state::resume_command(ctx.verb),
+            );
         }
-    }
-
-    if any_ff_failure {
-        anyhow::bail!(
-            "sync-to advance-target failed for one or more repos (see above).\n\
-             This should not happen after a clean replay; possible concurrent modification.\n\
-             Op-state remains in both workspaces.\n\
-             Rerun `{resume}` after resolving, or `rwv abort` to roll back.",
-            resume = op_state::resume_command(ctx.verb),
-        );
     }
 
     if ctx.handler.emit_text() {
