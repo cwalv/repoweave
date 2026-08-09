@@ -21,6 +21,16 @@ affected repo. This relaxation applies only to workweave sources; a primary
 source with a lock behind HEAD is still refused (primary locks are a
 reproducibility anchor).
 
+The **destination** (CWD) applies the same relaxation without the workweave
+scoping: a destination repo whose lock is behind its HEAD is accepted with a
+note per repo. Replay's targets come from the source, never from the
+destination's lock, and Phase 3 regenerates that lock at op end — so the pull
+performs the relock rather than demanding it first. Every other non-`ok`
+destination relation still refuses. Unlike `sync-to`'s CWD there is no
+op-start relock: the destination's project repo is itself a replay target, and
+a relock commit made before Phase 1' would leave `--strategy ff` a project
+repo it can no longer fast-forward.
+
 `role: reference` repos materialized as symlinks (the default; see
 `rwv explain workweave`) are **excluded from the sync graph**: they
 are read-only aliases of the single canonical clone, identical across

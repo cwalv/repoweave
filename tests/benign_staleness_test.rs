@@ -725,6 +725,105 @@ fn relation_ahead_sync_from_primary_source_refuses() {
 }
 
 // ===========================================================================
+// LockRelation::Ahead on the pull DESTINATION — benign
+// ===========================================================================
+
+/// The two-step trap, driven whole. A workweave commits member work, so its own
+/// lock is behind its HEAD; the destination's lock is not replay's input and
+/// Phase 3 regenerates it, so the pull proceeds and performs the relock the old
+/// refusal used to demand.
+///
+/// The refusal this replaces named `rwv lock --commit` as the remedy, and that
+/// relock commit then tripped the ancestry gate on the retry — the two
+/// preconditions were mutually unsatisfiable for the bare form. Pinning only
+/// "step 1 no longer refuses" would pass on a fix that leaves the operator at
+/// step 3, so this asserts what the op DELIVERED: the lock pins the tip.
+#[test]
+fn pull_destination_lock_behind_head_syncs_and_performs_the_relock_itself() {
+    let f = fixture();
+    // The ordinary thing a workweave does: commit member work, do not relock.
+    let ww_tip = commit_file(&f.ww.manifest_repo, "f.txt", "f\n", "ww: feature");
+
+    let assert = rwv()
+        .args(["sync", "primary"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    // Accepted, not silently: the relation and its commit count are announced.
+    assert!(
+        stderr.contains("lock behind HEAD by 1 commits"),
+        "the accepted destination relation must be announced with its count; got:\n{stderr}"
+    );
+
+    // DELIVERED — the op relocked, so the destination's lock now pins the
+    // destination's member tip. This is the state the old first refusal was
+    // demanding the operator reach by hand.
+    let lock = repoweave::manifest::LockFile::from_json_str(
+        &std::fs::read_to_string(f.ww.project_dir.join("rwv.lock")).unwrap(),
+    )
+    .unwrap();
+    let pinned = lock
+        .iter_entries()
+        .find(|(p, _)| p.as_str() == MANIFEST_REPO_PATH)
+        .expect("the fixture's one manifest repo must be in the lock")
+        .1
+        .version
+        .as_str()
+        .to_owned();
+    assert_eq!(
+        pinned, ww_tip,
+        "after the pull the destination's lock must pin the destination's member tip"
+    );
+    // The local member work survived the pull.
+    assert_eq!(
+        head(&f.ww.manifest_repo),
+        ww_tip,
+        "a pull must not rewind the destination's own committed member work"
+    );
+}
+
+/// The relaxation is scoped to `Ahead`. A destination whose lock records a
+/// commit HEAD lacks is still anomalous and still refuses — and because the
+/// remedy it names lands a project-repo commit, the refusal must also name the
+/// `--strategy rebase` that commit then requires. Naming only the relock is
+/// what made the two gates mutually unsatisfiable.
+#[test]
+fn pull_destination_anomalous_lock_refuses_and_names_the_follow_on_strategy() {
+    let f = fixture();
+    // lock pins C2, HEAD reset to C1 → Behind.
+    let c1 = head(&f.ww.manifest_repo);
+    commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    git(&["reset", "--hard", &c1], &f.ww.manifest_repo);
+
+    let assert = rwv()
+        .args(["sync", "primary"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("lock-freshness precondition failed") && stderr.contains("behind"),
+        "an anomalous destination relation must still refuse, naming it; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv lock --commit"),
+        "the refusal must still name the relock remedy; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--strategy rebase"),
+        "the refusal must name the strategy its own remedy then requires, or the \
+         operator lands at a second refusal caused by the first one's fix; got:\n{stderr}"
+    );
+}
+
+// ===========================================================================
 // LockRelation::Behind (spec term "ahead" — HEAD reset below lock) — refuse
 // ===========================================================================
 

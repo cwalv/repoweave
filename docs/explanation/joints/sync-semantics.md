@@ -247,6 +247,40 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
   and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
   branch pointer advances without replaying anything.
 
+**A pull does not refuse a destination whose own lock is behind its
+HEAD.** That lock is not replay's input — the targets come from the
+source — and relock regenerates it at op end, so the gate was refusing
+to start over a condition the op's own last phase establishes. The
+relation is announced per repo rather than accepted silently. Every
+other non-`ok` destination relation still refuses.
+
+Two narrower alternatives were rejected. Naming `--strategy rebase` in
+the freshness refusal *without* relaxing leaves the operator three
+commands deep on the single most routine operation in the tool, and the
+refusal's own prescribed remedy (`rwv lock --commit`) lands a
+destination-only project commit that the ancestry gate then refuses —
+the two preconditions were mutually unsatisfiable for the bare form.
+Teaching the ancestry gate to ignore a destination-only lock-only
+commit does not work under `ff` at all: there is no replay to exclude
+`rwv.lock` from, the destination is no longer an ancestor of the
+source, and honouring it would mean resetting past a commit the
+operator made — `--discard-local-commits` minted silently. The
+`rwv.lock`-excluded property the remedy relies on belongs to replay,
+and `ff` has no replay.
+
+The relaxation is deliberately not scoped to workweave destinations the
+way tips-as-truth is scoped to workweave sources. That scoping answers
+"may this op consume another workspace's unblessed commits?"; the
+destination question is whether the operator's own workspace may start
+an op while its own lock lags, and nothing about it is published
+anywhere. A primary weave deadlocks identically, so scoping would have
+kept two tests green and left the trap in place.
+
+Unlike `sync-to`'s CWD there is no op-start relock on a pull: the
+destination's project repo is itself a replay target, and a relock
+commit made before Phase 1' would leave `--strategy=ff` a project repo
+it can no longer fast-forward.
+
 Re-entry rule: per-repo state is derived from the VCS itself. A repo
 at its savepoint is redone; a repo mid-conflict resumes via the
 VCS-native continue; a repo already at the converged target is a no-op.

@@ -458,16 +458,26 @@ fn sync_refuses_when_source_lock_is_stale() {
 #[test]
 fn sync_refuses_when_cwd_lock_is_stale() {
     let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
+    let (primary, c1) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
-    // Advance primary past its lock without updating the lock.
+    // Drive the lock ANOMALOUS, not merely behind HEAD: advance to C2, lock at
+    // C2, then reset the worktree back to C1, so the lock records a commit HEAD
+    // does not have. A lock that is merely behind HEAD is the benign shape a
+    // pull now accepts and relocks — pinning the refusal on that relation would
+    // pin the deadlock this gate used to create with the ancestry gate.
     make_commit(
         &primary.server_dir,
         "extra.txt",
         "extra\n",
         "primary: advance past lock",
     );
+    rwv()
+        .args(["lock", "--commit", "--project", "web-app"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    git(&["reset", "--hard", &c1], &primary.server_dir);
 
     rwv()
         .args(["sync", &source.root.to_string_lossy()])
@@ -861,15 +871,23 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
 #[test]
 fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
     let tmp = common::tempdir().unwrap();
-    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
+    let (primary, c1) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
+    // Anomalous relation (lock records a commit HEAD lacks), not the benign
+    // lock-behind-HEAD a pull now accepts.
     make_commit(
         &primary.server_dir,
         "extra.txt",
         "extra\n",
         "primary: advance past lock",
     );
+    rwv()
+        .args(["lock", "--commit", "--project", "web-app"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    git(&["reset", "--hard", &c1], &primary.server_dir);
 
     let assertion = rwv()
         .args(["sync", &source.root.to_string_lossy()])
@@ -900,6 +918,14 @@ fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
     assert!(
         stderr.contains("--allow-stale-lock"),
         "lock-freshness error must name --allow-stale-lock override; got: {stderr}"
+    );
+    // The relock it prescribes lands a project-repo commit that a bare
+    // fast-forward `sync` then refuses to advance past. A refusal whose remedy
+    // sets up the next refusal has to name the way out of both.
+    assert!(
+        stderr.contains("--strategy rebase"),
+        "destination lock-freshness error must name the strategy its own remedy \
+         requires; got: {stderr}"
     );
     assert!(
         !stderr.contains("--force"),
@@ -1557,15 +1583,25 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
     let tmp = common::tempdir().unwrap();
     let ws = make_marker_workweave(tmp.path(), "feat");
 
-    // Advance the workweave's server tip without updating the workweave's
-    // own committed lock. (Primary's lock is left untouched at C1 to guarantee
-    // we are not silently reading primary's value.)
+    // Drive the workweave's own lock ANOMALOUS: advance to C2, relock, then
+    // reset the worktree back, so the workweave's lock records a commit its
+    // HEAD lacks. Primary is left at C1 with a matching (ok) lock, so this
+    // still refuses only if the freshness check reads the WORKWEAVE's lock —
+    // reading primary's would see `ok` and pass. A lock merely behind HEAD is
+    // now benign on a pull, so it can no longer serve as that discriminator.
+    let ww_c1 = git_out(&["rev-parse", "HEAD"], &ws.ww_server_dir);
     make_commit(
         &ws.ww_server_dir,
         "ww-advance.txt",
         "ww advance\n",
         "ww: advance past lock",
     );
+    rwv()
+        .args(["lock", "--commit", "--project", "web-app"])
+        .current_dir(&ws.ww_root)
+        .assert()
+        .success();
+    git(&["reset", "--hard", &ww_c1], &ws.ww_server_dir);
 
     rwv()
         .args(["sync", &ws.primary.root.to_string_lossy()])

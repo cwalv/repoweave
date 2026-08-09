@@ -2197,8 +2197,15 @@ fn run_preconditions_after_acquire(
     //     fast-forward could not proceed; tips-as-truth is scoped to the pull.
     //   - sync (pull) SOURCE: a lock-behind-HEAD (`Ahead`) source is tips-as-truth
     //     for a WORKWEAVE source; a PRIMARY-weave source keeps the refusal.
-    //   - sync (pull) DESTINATION (CWD): held at pre-Design-B behavior — any
-    //     non-`ok` relation (INCLUDING `Ahead`) refuses.
+    //   - sync (pull) DESTINATION (CWD): a lock-behind-HEAD (`Ahead`) CWD repo
+    //     is benign, LOUD line per repo. Replay's targets come from the source,
+    //     never from CWD's lock, and phase 3 regenerates that lock at op end —
+    //     so the gate was refusing to start over a condition the op's own last
+    //     phase establishes. Every other non-`ok` relation still refuses.
+    //     Unlike sync-to's CWD there is no op-start relock: on a pull the
+    //     project repo is itself a replay target, and a relock commit made
+    //     before Phase 1' would leave `--strategy=ff` a project repo it can no
+    //     longer fast-forward.
     //
     // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
     // corrupt-lock error distinct from any relation and refuse first, naming the
@@ -2257,6 +2264,23 @@ fn run_preconditions_after_acquire(
             anyhow::bail!("{msg}");
         }
 
+        // CWD side, both verbs: same rule, same refusal. `Ahead` is the benign
+        // in-progress shape each verb then handles its own way below — sync-to
+        // relocks it at op start, a pull announces it and lets relock heal it.
+        let cwd_anomalous: Vec<&RepoRelation> = cwd_class
+            .relations
+            .iter()
+            .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
+            .collect();
+        if let Some(msg) = lock_relation_refusal(
+            Side::Destination,
+            &cwd_workspace_name_str,
+            cwd_project_name.as_str(),
+            &cwd_anomalous,
+        ) {
+            anyhow::bail!("{msg}");
+        }
+
         match verb {
             MachineVerb::Sync => {
                 let source_lock_behind: Vec<&RepoRelation> = source_class
@@ -2290,18 +2314,22 @@ fn run_preconditions_after_acquire(
                     }
                 }
 
-                let cwd_stale: Vec<&RepoRelation> = cwd_class
-                    .relations
-                    .iter()
-                    .filter(|r| r.relation != LockRelation::Ok)
-                    .collect();
-                if let Some(msg) = lock_relation_refusal(
-                    Side::Destination,
-                    &cwd_workspace_name_str,
-                    cwd_project_name.as_str(),
-                    &cwd_stale,
-                ) {
-                    anyhow::bail!("{msg}");
+                if emit_text {
+                    for r in cwd_class
+                        .relations
+                        .iter()
+                        .filter(|r| r.relation == LockRelation::Ahead)
+                    {
+                        let n = r
+                            .ahead_count
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "?".to_string());
+                        eprintln!(
+                            "note: {cwd_workspace_name_str}/{}: lock behind HEAD by {n} commits \
+                             — pulling anyway; this op's relock refreshes it",
+                            r.repo_path,
+                        );
+                    }
                 }
             }
             MachineVerb::SyncTo => {
@@ -2314,19 +2342,6 @@ fn run_preconditions_after_acquire(
                     source_workspace_name,
                     source_project_name.as_str(),
                     &target_lock_behind,
-                ) {
-                    anyhow::bail!("{msg}");
-                }
-                let cwd_anomalous: Vec<&RepoRelation> = cwd_class
-                    .relations
-                    .iter()
-                    .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
-                    .collect();
-                if let Some(msg) = lock_relation_refusal(
-                    Side::Destination,
-                    &cwd_workspace_name_str,
-                    cwd_project_name.as_str(),
-                    &cwd_anomalous,
                 ) {
                     anyhow::bail!("{msg}");
                 }
@@ -3522,6 +3537,30 @@ fn classify_lock_relations(
     }
 }
 
+/// The relock a lock-side refusal asks for, and what it costs on each side.
+///
+/// One spelling for every lock-side refusal, because the destination half
+/// carries a follow-on that is wrong to state in one refusal and omit from
+/// another: the relock lands a commit in the destination's project repo, and a
+/// bare (fast-forward) `sync` then refuses to advance past it. Naming only the
+/// relock leaves the operator at a second refusal caused by the first one's
+/// remedy. The source half has no such cost — the ancestry gate measures the
+/// destination.
+fn relock_recovery(side: Side, project_name: &str) -> String {
+    match side {
+        Side::Source => format!(
+            "Run `rwv lock --commit --project {project_name}` in the source workspace before \
+             syncing"
+        ),
+        Side::Destination => format!(
+            "Run `rwv lock --commit --project {project_name}` to refresh, then rerun with \
+             `--strategy rebase` — that relock lands a commit in the destination's project repo \
+             which a bare (fast-forward) `sync` cannot advance past, and `rebase` replays the \
+             destination's project commits with `rwv.lock` excluded"
+        ),
+    }
+}
+
 /// Refusal naming the first unresolvable lock entry (a tag/branch the lock pins
 /// that no longer exists on disk). Distinct from a relation — the lock itself is
 /// corrupt. Preserves the old lock-freshness "unknown revision" diagnostic,
@@ -3540,15 +3579,7 @@ fn unresolvable_lock_refusal(
     // "commit before syncing" teaches the broken pattern where a
     // written-but-unstaged `rwv.lock` then kills the re-run mid-op. `rwv lock
     // --commit` writes AND commits in one step.
-    let recovery = match side {
-        Side::Source => format!(
-            "Run `rwv lock --commit --project {project_name}` in the source workspace before \
-             syncing"
-        ),
-        Side::Destination => {
-            format!("Run `rwv lock --commit --project {project_name}` to refresh before syncing")
-        }
-    };
+    let recovery = relock_recovery(side, project_name);
     format!(
         "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
          references unknown revision {raw} for {repo_path}.\n\
@@ -3595,15 +3626,7 @@ fn lock_relation_refusal(
     // Atomic `--commit` form (Correction 4): teach `rwv lock --commit`, not the
     // two-step `rwv lock` + "commit before syncing" whose written-but-unstaged
     // `rwv.lock` kills a re-run mid-op.
-    let recovery = match side {
-        Side::Source => format!(
-            "Run `rwv lock --commit --project {project_name}` in the source workspace before \
-             syncing"
-        ),
-        Side::Destination => {
-            format!("Run `rwv lock --commit --project {project_name}` to refresh before syncing")
-        }
-    };
+    let recovery = relock_recovery(side, project_name);
     // Lead with the documented phrase (`lock-freshness precondition`) so the
     // `--allow-stale-lock` doc stays accurate; keep the "stale lock" wording the
     // detailed message tests assert on.
