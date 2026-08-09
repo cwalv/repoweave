@@ -86,6 +86,15 @@ start (after writing savepoints, so the auto-relock commit is covered by
 many commits HEAD is ahead of the lock. Phase 3 re-relocks idempotently at op
 end regardless.
 
+The same relation on the TARGET side refuses instead. Step 1 replays CWD
+against the target's committed lock, so a target holding commits its lock does
+not record would leave those commits missing from CWD's tip and step 3 could
+not fast-forward the target onto it. `sync-to` names the target repo and its
+commit count at op start, before anything mutates, and the fix is to run
+`rwv lock --commit` in the target workspace and re-run. Taking the target's
+committed tips instead is deliberately not done: that relaxation is scoped to
+the `sync` pull's source.
+
 ### Multi-workspace op-state
 
 Op-state is written to both CWD and target before step 1. The owner record
@@ -210,18 +219,21 @@ rwv abort
   merge cleanly. Resolve manually in the repo, then `rwv sync-to --continue`.
 - *ff-impossible (--strategy=ff)* — CWD is not strictly ahead of target. Use
   `--strategy=rebase` to replay CWD's commits onto target's tip first.
-- *step 3 FF-advance failed* — target's repo was modified concurrently after
-  step 1 completed. Investigate, then `rwv sync-to --continue` or
-  `rwv abort`.
+- *step 3 FF-advance failed* — the target holds commits CWD's tip does not, so
+  landing CWD onto it would drop them. Either the target moved after step 1, or
+  `--allow-stale-lock` let step 1 replay against a lock that was behind those
+  commits. Roll back with `rwv abort` and re-run.
 - *missing-replay-exclusion* — the project repo doesn't have
   `rwv.lock merge=rwv-ours` in `.gitattributes` (or still carries the
   legacy `merge=ours` spelling). Run `rwv doctor --fix`.
 - *bare sync-to in primary weave* — `rwv sync-to` (no target) requires a
   workweave context. Provide an explicit `<target>` or run from inside a workweave.
 - *lock-freshness precondition failed (stale lock)* — a repo's lock↔HEAD relation
-  is not `ok` (e.g. `behind`, `diverged`, `no-lock`). Usual fix: run
-  `rwv lock --commit` in the relevant workspace to refresh the lock, then retry.
-  Pass `--allow-stale-lock` to skip this check when the stale state is intentional.
+  is not `ok` (e.g. `behind`, `diverged`, `no-lock`), or the TARGET's lock is
+  behind its HEAD. Usual fix: run `rwv lock --commit` in the workspace the
+  refusal names, then retry. `--allow-stale-lock` skips the check, but for a
+  target whose lock is behind its HEAD it only defers the failure to step 3 —
+  refresh that lock instead.
 - *uncommitted tracked changes in source* — CWD has tracked dirt in a manifest
   repo or project repo (outside `rwv.lock`). Commit or stash the changes, then
   retry.

@@ -216,7 +216,12 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
   `--strategy`. Exception: a plain `sync` from a workweave source whose
   lock is behind its committed HEAD targets that source's committed tips
   instead (tips-as-truth — a note names the lag, and the source's lock
-  is left alone for its own next op to heal). Repos already at the
+  is left alone for its own next op to heal). `sync-to` gets no such
+  exception: a target whose lock is behind its committed HEAD is refused
+  at op start, naming the target repo, its commit count and the
+  `rwv lock --commit` that fixes it, because replaying CWD against that
+  lock would leave the target's unlocked commits out of CWD's tip and
+  advance-target could not fast-forward onto it. Repos already at the
   target SHA are no-ops. Repos behind
   the target are advanced via the strategy (ff / rebase). Repos
   ahead of the target surface as `already-ahead` — the engine does not
@@ -547,7 +552,10 @@ that `--force` previously bypassed now has its own named override:
 
 - `--allow-stale-lock` — skip the lock-freshness precondition on both
   source and destination. Use when the lock is intentionally ahead of
-  HEAD. Recorded as `allow-stale-lock` in `overrides`.
+  HEAD. On a `sync-to` whose target lock is *behind* its HEAD it only
+  defers the refusal to advance-target's fast-forward, so refresh that
+  lock rather than passing this. Recorded as `allow-stale-lock` in
+  `overrides`.
 - `--discard-local-commits` — hard-reset the CWD project repo to the
   source tip, discarding any destination-only committed divergence.
   Refused if the project repo has uncommitted changes (those would be

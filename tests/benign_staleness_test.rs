@@ -279,6 +279,192 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
     );
 }
 
+/// sync-to: the TARGET's manifest repo advanced past the target's committed
+/// lock (relation `Ahead` on the target side). Replay takes its targets from the
+/// target's lock, so the target's unlocked commits would be missing from the tip
+/// CWD replays onto and step 3's fast-forward could not proceed. Refuse at op
+/// start — parity with the CWD side's auto-relock — naming the target repo, the
+/// commit count, and the `rwv lock --commit` that fixes it.
+///
+/// The outcome is what this pins: an op-start refusal leaves BOTH workspaces
+/// exactly as they were. Before this refusal existed the same state ran to step
+/// 3, failed the fast-forward there, and left the target's project repo already
+/// advanced onto a lock behind its own manifest tip.
+#[test]
+fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
+    let f = fixture();
+
+    // The TARGET (main) advances its manifest repo TWICE without relocking.
+    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
+    commit_file(&f.main.manifest_repo, "d2.txt", "d2\n", "main: docs 2");
+    // CWD (ww) has a project commit to land.
+    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
+
+    let target_lib_before = head(&f.main.manifest_repo);
+    let target_project_before = head(&f.main.project_dir);
+    let target_lock_before = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
+    let cwd_project_before = head(&f.ww.project_dir);
+
+    let assert = rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("lock-freshness precondition failed")
+            && stderr.contains("target workspace")
+            && stderr.contains(MANIFEST_REPO_PATH)
+            && stderr.contains("HEAD ahead of lock by 2 commits")
+            && stderr.contains("rwv lock --commit"),
+        "target lock-behind-HEAD must refuse at op start naming the repo, the commit \
+         count and the remedy; got stderr:\n{stderr}"
+    );
+    // The refusal must not sanction the flag that skips it without converging.
+    assert!(
+        !stderr.contains("--allow-stale-lock"),
+        "the target lock-behind refusal must not offer `--allow-stale-lock`; it skips \
+         this check without making the op converge. got stderr:\n{stderr}"
+    );
+
+    // NOTHING moved on either side — this is the whole point of refusing at op
+    // start rather than at step 3.
+    assert_eq!(
+        head(&f.main.manifest_repo),
+        target_lib_before,
+        "a refused sync-to must leave the target's manifest repo untouched"
+    );
+    assert_eq!(
+        head(&f.main.project_dir),
+        target_project_before,
+        "a refused sync-to must NOT advance the target's project repo"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap(),
+        target_lock_before,
+        "a refused sync-to must leave the target's lock file untouched"
+    );
+    assert_eq!(
+        head(&f.ww.project_dir),
+        cwd_project_before,
+        "a refused sync-to must leave CWD's project repo untouched"
+    );
+
+    // No op-state leaked: a re-run repeats the SAME refusal rather than
+    // reporting an in-flight op.
+    let again = rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr_again = String::from_utf8_lossy(&again.get_output().stderr).into_owned();
+    assert!(
+        stderr_again.contains("lock-freshness precondition failed")
+            && !stderr_again.contains("in-flight")
+            && !stderr_again.contains("--continue"),
+        "the op-start refusal must leave no op-state; got stderr:\n{stderr_again}"
+    );
+}
+
+/// The remedy the refusal names has to actually work. Run exactly what the
+/// message says — `rwv lock --commit --project <p>` in the TARGET workspace —
+/// and the landing converges and DELIVERS: the target's manifest tip and
+/// project tip both reach CWD's, and the target's lock pins the manifest tip it
+/// just landed rather than the revision it was stuck on.
+#[test]
+fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
+    let f = fixture();
+
+    let target_docs = commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
+    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
+
+    rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+
+    // The remedy, verbatim from the refusal, run in the target workspace.
+    rwv()
+        .args(["lock", "--commit", "--project", PROJECT])
+        .current_dir(&f.main.root)
+        .assert()
+        .success();
+
+    rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+
+    // DELIVERED: the target's manifest repo still holds the commit that was
+    // stranding the op, CWD's replay picked it up, and both sides converged.
+    let target_lib = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    assert_eq!(
+        target_lib,
+        head(&f.ww.manifest_repo),
+        "after the remedy, CWD and the target must agree on the manifest tip"
+    );
+    // The target's own unlocked commit survived the landing (git exits non-zero
+    // when it is not an ancestor, which `git` turns into a failure here).
+    git(
+        &["merge-base", "--is-ancestor", &target_docs, &target_lib],
+        &f.main.manifest_repo,
+    );
+    assert_eq!(
+        head(&f.main.project_dir),
+        head(&f.ww.project_dir),
+        "after the remedy, sync-to must land CWD's project commit on the target"
+    );
+    // The lock the target ends up with pins the tip it holds — not the stale
+    // revision the refusal was about.
+    let target_lock = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        target_lock.contains(&target_lib),
+        "the target's lock must pin the manifest tip it now holds; lock:\n{target_lock}"
+    );
+}
+
+/// `--allow-stale-lock` skips the op-start refusal without making the op
+/// converge, so the landing still dies at step 3's fast-forward. That is the one
+/// path where an operator still reads the late failure, and it must not blame a
+/// concurrent modification that did not happen: nothing touched either workspace
+/// between op start and step 3 here.
+#[test]
+fn allow_stale_lock_target_ahead_still_fails_at_step_3_without_blaming_concurrency() {
+    let f = fixture();
+
+    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
+    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
+
+    let assert = rwv()
+        .args([
+            "sync-to",
+            &f.main.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("cannot be fast-forwarded"),
+        "the consented path must still refuse the fast-forward; got stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("This indicates concurrent modification"),
+        "step 3 must not assert a concurrent modification it cannot know happened — \
+         nothing modified either workspace during this op. got stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("The target holds commits CWD's tip does not") && stderr.contains("lock"),
+        "step 3 must state what it observed and name the lock-behind cause; got \
+         stderr:\n{stderr}"
+    );
+}
+
 /// sync (pull) from a WORKWEAVE source whose lock is behind HEAD (`Ahead`):
 /// tips-as-truth. The pull prints a NOTE naming the source's lag, pulls the
 /// source's committed tips, and leaves the source's lock file alone (no
@@ -384,6 +570,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
         .assert()
         .success();
     git(&["reset", "--hard", &c1], &f.ww.manifest_repo);
+    let target_project_before = head(&f.main.project_dir);
 
     let assert = rwv()
         .args(["sync-to", &f.main.root.to_string_lossy()])
@@ -396,6 +583,11 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
             && stderr.contains("behind")
             && stderr.contains("--allow-stale-lock"),
         "Behind CWD must refuse naming the relation + flag; got:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.main.project_dir),
+        target_project_before,
+        "a refused sync-to must leave the target's project repo untouched"
     );
 
     // Escape hatch still works: --allow-stale-lock bypasses the gate. Use
@@ -430,6 +622,7 @@ fn relation_behind_source_sync_refuses() {
         .assert()
         .success();
     git(&["reset", "--hard", &c1], &src.manifest_repo);
+    let dest_lib_before = head(&f.main.manifest_repo);
 
     let assert = rwv()
         .args(["sync", &src.root.to_string_lossy()])
@@ -440,6 +633,11 @@ fn relation_behind_source_sync_refuses() {
     assert!(
         stderr.contains("lock-freshness precondition failed") && stderr.contains("behind"),
         "Behind source must refuse naming the relation; got:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.main.manifest_repo),
+        dest_lib_before,
+        "a refused pull must leave the destination untouched"
     );
 }
 
@@ -467,6 +665,8 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
     git(&["reset", "--hard", &c1], &f.ww.manifest_repo);
     commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: c2b");
     assert_ne!(head(&f.ww.manifest_repo), c2a);
+    let target_project_before = head(&f.main.project_dir);
+    let target_lib_before = head(&f.main.manifest_repo);
 
     let assert = rwv()
         .args(["sync-to", &f.main.root.to_string_lossy()])
@@ -480,6 +680,16 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
             && stderr.contains("rwv lock --commit")
             && stderr.contains("--allow-stale-lock"),
         "Diverged must refuse, name the relation, and hint `rwv lock --commit`; got:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.main.project_dir),
+        target_project_before,
+        "a refused sync-to must leave the target's project repo untouched"
+    );
+    assert_eq!(
+        head(&f.main.manifest_repo),
+        target_lib_before,
+        "a refused sync-to must leave the target's manifest repo untouched"
     );
 }
 
@@ -507,6 +717,7 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
         &f.main.project_dir,
     );
 
+    let dest_lib_before = head(&f.ww.manifest_repo);
     let assert = rwv()
         .args(["sync", "primary"])
         .current_dir(&f.ww.root)
@@ -516,6 +727,11 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
     assert!(
         stderr.contains("unknown revision") && stderr.contains("v9.9.9-nope"),
         "unresolvable source lock must name the unknown revision; got:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.ww.manifest_repo),
+        dest_lib_before,
+        "a refused pull must leave the destination untouched"
     );
 }
 
@@ -527,6 +743,7 @@ fn no_lock_sync_to_refuses() {
     // Remove the committed rwv.lock from ww's project repo entirely.
     git(&["rm", "rwv.lock"], &f.ww.project_dir);
     git(&["commit", "-m", "drop lock"], &f.ww.project_dir);
+    let target_project_before = head(&f.main.project_dir);
 
     let assert = rwv()
         .args(["sync-to", &f.main.root.to_string_lossy()])
@@ -537,6 +754,11 @@ fn no_lock_sync_to_refuses() {
     assert!(
         stderr.contains("lock-freshness precondition failed") && stderr.contains("no-lock"),
         "a project with no committed lock must refuse as no-lock; got:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.main.project_dir),
+        target_project_before,
+        "a refused sync-to must leave the target's project repo untouched"
     );
 }
 

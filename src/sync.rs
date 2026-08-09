@@ -2142,9 +2142,13 @@ fn run_preconditions_after_acquire(
     // (tip ahead of lock). `--allow-stale-lock` bypasses the whole gate.
     //
     // Scope of the benign relaxation:
-    //   - sync-to (landing): CWD is the landing set. A lock-behind-HEAD (`Ahead`)
-    //     CWD repo auto-relocks at op start (below), LOUD line per repo with
-    //     commit count. Every other non-`ok` CWD relation refuses.
+    //   - sync-to (landing) CWD: CWD is the landing set. A lock-behind-HEAD
+    //     (`Ahead`) CWD repo auto-relocks at op start (below), LOUD line per repo
+    //     with commit count. Every other non-`ok` CWD relation refuses.
+    //   - sync-to (landing) TARGET: a lock-behind-HEAD (`Ahead`) target refuses.
+    //     Replay's targets come from the target's lock, so the target's unlocked
+    //     commits would be missing from the tip CWD replays onto and step 3's
+    //     fast-forward could not proceed; tips-as-truth is scoped to the pull.
     //   - sync (pull) SOURCE: a lock-behind-HEAD (`Ahead`) source is tips-as-truth
     //     for a WORKWEAVE source; a PRIMARY-weave source keeps the refusal.
     //   - sync (pull) DESTINATION (CWD): held at pre-Design-B behavior — any
@@ -2264,6 +2268,18 @@ fn run_preconditions_after_acquire(
                 }
             }
             MachineVerb::SyncTo => {
+                let target_lock_behind: Vec<&RepoRelation> = source_class
+                    .relations
+                    .iter()
+                    .filter(|r| r.relation == LockRelation::Ahead)
+                    .collect();
+                if let Some(msg) = target_lock_behind_refusal(
+                    source_workspace_name,
+                    source_project_name.as_str(),
+                    &target_lock_behind,
+                ) {
+                    anyhow::bail!("{msg}");
+                }
                 let cwd_anomalous: Vec<&RepoRelation> = cwd_class
                     .relations
                     .iter()
@@ -3552,6 +3568,48 @@ fn lock_relation_refusal(
          intentionally ahead of HEAD).",
     );
     Some(msg)
+}
+
+/// Refusal for a `sync-to` TARGET whose committed lock is behind its HEAD
+/// (`LockRelation::Ahead`). Replay takes its targets from the target's lock, so
+/// the target's unlocked commits are absent from the tip CWD replays onto and
+/// advance-target's fast-forward cannot proceed. Refusing at op start is the
+/// parity of the CWD side's auto-relock: the same relation is answered on both
+/// sides before anything mutates, rather than surfacing as a late
+/// fast-forward failure with the landing already partly done.
+///
+/// The remedy names the target workspace because that is where `rwv lock
+/// --commit` has to run. `--allow-stale-lock` is deliberately not offered: it
+/// skips this check without making the op converge.
+fn target_lock_behind_refusal(
+    target_workspace_name: &str,
+    target_project_name: &str,
+    offending: &[&RepoRelation],
+) -> Option<String> {
+    if offending.is_empty() {
+        return None;
+    }
+    let mut lines = String::new();
+    for r in offending {
+        let n = r
+            .ahead_count
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        lines.push_str(&format!(
+            "\n  {}: HEAD ahead of lock by {n} commits",
+            r.repo_path
+        ));
+    }
+    Some(format!(
+        "lock-freshness precondition failed: target workspace '{target_workspace_name}' has a \
+         stale lock — its committed lock is behind HEAD for:{lines}\n\
+         \n\
+         sync-to replays CWD against the target's committed lock, so those commits would be \
+         missing from CWD's tip and step 3 could not fast-forward the target onto it.\n\
+         \n\
+         Fix: run `rwv lock --commit --project {target_project_name}` in the target workspace \
+         ('{target_workspace_name}'), then re-run sync-to.\n"
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -5643,7 +5701,12 @@ fn ff_advance_repo(
     if !is_ancestor {
         anyhow::bail!(
             "target repo at {} cannot be fast-forwarded: target tip ({}) is not an ancestor \
-             of CWD tip ({}). This indicates concurrent modification after step 1 completed.",
+             of CWD tip ({}). The target holds commits CWD's tip does not, so landing CWD \
+             onto it would drop them. Either the target moved after step 1, or replay took \
+             the target's lock as its base while that lock was behind these commits \
+             (`--allow-stale-lock` permits that). Roll back with `rwv abort` and re-run; a \
+             target whose lock is behind its HEAD is named at op start with the \
+             `rwv lock --commit` that fixes it.",
             target_repo.display(),
             target_tip,
             cwd_tip,
