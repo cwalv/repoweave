@@ -500,6 +500,19 @@ actually existed. Combined with the start-time no-op-in-progress check
 on the source workspace, source reads are effectively serializable with
 no locks.
 
+**The tips-as-truth pull is the one read that is not content-addressed.**
+A member checkout's committed tip is a live ref, so it is read at T₀
+alongside the project `HEAD` and carried on the snapshot. The source's
+lock↔HEAD classification is taken exactly once there, and everything
+downstream — the staleness refusals, the note naming the lag, and the
+per-repo replay targets — reads that one result. Classifying a second
+time to serve a second surface reads the refs at a second instant: a
+member that is `Ok` at the first read and `Ahead` at the second pins no
+tip, so replay targets the lock while the note announces committed tips.
+The op guard does not exclude a plain `git commit` into the source, and
+that is precisely the scenario tips-as-truth exists for, so the window is
+reachable rather than theoretical.
+
 **T₀ is per-session, not per-op.** On `--continue`, the source snapshot
 is re-established at the start of the resumed session — a new T₀ is
 pinned, not the one from the original session. Per-repo no-op detection

@@ -1756,6 +1756,25 @@ struct OpContext<'a> {
     snapshot: SourceSnapshot,
 }
 
+/// What a source snapshot classifies about the source's member checkouts.
+///
+/// The staleness gate and the tips-as-truth pull are two consumers of ONE
+/// classification, so the snapshot takes it once and both read the result.
+/// Two invocations of the same predicate read the checkouts' HEADs at two
+/// instants, and a member that is `Ok` at the first read and `Ahead` at the
+/// second pins no tip while the note announces one.
+enum ClassifySource<'a> {
+    /// No consumer: `--allow-stale-lock` bypasses the gate, and a resumed
+    /// session re-runs no preconditions.
+    Skip,
+    /// Classify the checkouts under this workspace dir. The gate's refusals
+    /// read the relations.
+    Relations(&'a Path),
+    /// Classify, and additionally pin the `Ahead` checkouts' committed tips as
+    /// replay's targets.
+    RelationsAndTips(&'a Path),
+}
+
 /// Atomic source snapshot pinned at T0 (start of replay).
 ///
 /// The source's project tip is read once and everything derived from it —
@@ -1769,6 +1788,10 @@ struct SourceSnapshot {
     source_manifest: Manifest,
     /// Source lock (raw, unresolved), read at `source_project_tip`.
     raw_source_lock: LockFile,
+    /// The source's member checkouts classified at T0, `None` under
+    /// [`ClassifySource::Skip`]. The staleness refusals, the tips-as-truth
+    /// note and `pull_tips` all derive from this one value.
+    source_class: Option<LockClassification>,
     /// Committed member tips of the source's `Ahead` checkouts, read at T0.
     /// Replay targets these over the lock entries. Empty when tips-as-truth
     /// does not apply (primary source, sync-to, or `--allow-stale-lock`).
@@ -2142,10 +2165,14 @@ fn run_preconditions_after_acquire(
     // at that revision; everything downstream is content-addressed. The one
     // exception is the tips-as-truth pull, whose member tips are per-repo ref
     // reads of the source checkouts, pinned here at the same T0.
-    let pull_tips_from =
-        (matches!(verb, MachineVerb::Sync) && source_is_workweave && !allow_stale_lock)
-            .then_some(source_workspace_dir);
-    let snapshot = pin_source_snapshot(project_vcs, source_project_dir, pull_tips_from)?;
+    let classify = if allow_stale_lock {
+        ClassifySource::Skip
+    } else if matches!(verb, MachineVerb::Sync) && source_is_workweave {
+        ClassifySource::RelationsAndTips(source_workspace_dir)
+    } else {
+        ClassifySource::Relations(source_workspace_dir)
+    };
+    let snapshot = pin_source_snapshot(project_vcs, source_project_dir, classify)?;
 
     // Replay preconditions (pure reads; refusals leave no trace on-workspace —
     // the acquired op-state is cleaned up by the caller on Err).
@@ -2176,15 +2203,6 @@ fn run_preconditions_after_acquire(
     // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
     // corrupt-lock error distinct from any relation and refuse first, naming the
     // unknown revision.
-    let source_class = if allow_stale_lock {
-        None
-    } else {
-        Some(classify_lock_relations(
-            source_workspace_dir,
-            &snapshot.source_manifest,
-            Some(&snapshot.raw_source_lock),
-        ))
-    };
     let cwd_class = if allow_stale_lock {
         None
     } else {
@@ -2197,7 +2215,7 @@ fn run_preconditions_after_acquire(
 
     let mut cwd_lock_behind: Vec<RepoRelation> = Vec::new();
 
-    if let (Some(source_class), Some(cwd_class)) = (source_class, cwd_class) {
+    if let (Some(source_class), Some(cwd_class)) = (snapshot.source_class.as_ref(), cwd_class) {
         if let Some((rp, raw)) = source_class.unresolvable.first() {
             anyhow::bail!(
                 "{}",
@@ -2886,11 +2904,15 @@ fn load_continuing_context<'a>(
     // replay's re-entry rule a coherent set of inputs. Per-repo no-op
     // detection handles already-converged repos cleanly.
     let project_vcs = project_vcs();
-    let pull_tips_from = (matches!(recorded_verb, MachineVerb::Sync)
+    let classify = if matches!(recorded_verb, MachineVerb::Sync)
         && source_is_workweave
-        && !allow_stale_lock_resumed)
-        .then_some(source_workspace_dir.as_path());
-    let snapshot = pin_source_snapshot(project_vcs.as_ref(), &source_project_dir, pull_tips_from)?;
+        && !allow_stale_lock_resumed
+    {
+        ClassifySource::RelationsAndTips(source_workspace_dir.as_path())
+    } else {
+        ClassifySource::Skip
+    };
+    let snapshot = pin_source_snapshot(project_vcs.as_ref(), &source_project_dir, classify)?;
 
     Ok(OpContext {
         cwd_ctx,
@@ -4089,7 +4111,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn pin_source_snapshot(
     source_vcs: &dyn Vcs,
     source_project_dir: &Path,
-    pull_tips_from: Option<&Path>,
+    classify: ClassifySource<'_>,
 ) -> anyhow::Result<SourceSnapshot> {
     let source_project_tip = source_vcs
         .head_revision(source_project_dir)
@@ -4141,24 +4163,28 @@ fn pin_source_snapshot(
         })?
     };
 
-    let pull_tips = match pull_tips_from {
-        Some(source_workspace_dir) => classify_lock_relations(
-            source_workspace_dir,
-            &source_manifest,
-            Some(&raw_source_lock),
-        )
-        .relations
-        .into_iter()
-        .filter(|r| r.relation == LockRelation::Ahead)
-        .filter_map(|r| r.tip.map(|tip| (r.repo_path, tip)))
-        .collect(),
-        None => std::collections::BTreeMap::new(),
+    let source_class = match classify {
+        ClassifySource::Skip => None,
+        ClassifySource::Relations(dir) | ClassifySource::RelationsAndTips(dir) => Some(
+            classify_lock_relations(dir, &source_manifest, Some(&raw_source_lock)),
+        ),
+    };
+
+    let pull_tips = match (&classify, &source_class) {
+        (ClassifySource::RelationsAndTips(_), Some(class)) => class
+            .relations
+            .iter()
+            .filter(|r| r.relation == LockRelation::Ahead)
+            .filter_map(|r| r.tip.clone().map(|tip| (r.repo_path.clone(), tip)))
+            .collect(),
+        _ => std::collections::BTreeMap::new(),
     };
 
     Ok(SourceSnapshot {
         source_project_tip,
         source_manifest,
         raw_source_lock,
+        source_class,
         pull_tips,
     })
 }
