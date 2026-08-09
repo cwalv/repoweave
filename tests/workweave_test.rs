@@ -2712,7 +2712,7 @@ fn workweave_create_no_project_repo_skips_dirty_check() {
 }
 
 // ============================================================================
-// Workweave parent tracking + bare sync follows parent
+// Workweave parent tracking (the edge a bare `rwv sync-to` lands along)
 // ============================================================================
 
 #[test]

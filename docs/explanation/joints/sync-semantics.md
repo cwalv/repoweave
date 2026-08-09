@@ -775,6 +775,20 @@ recorded parent from `.rwv-workweave`. In a primary weave, bare
 `rwv sync` always requires an explicit `<source>`. There is no
 "absorb from parent" default.
 
+The asymmetry is deliberate rather than an omission. A landing has one
+meaning — advance the parent to CWD's tip — so `sync-to` can default its
+target without choosing anything. A downward pull would have to pick a
+shape (which of the parent's repos, at whose lock, under which strategy)
+that nothing has settled, and inventing one to fill a gap in the surface
+is the wrong order of operations.
+
+That prohibition lives entirely in argument parsing: `<SOURCE>` is a
+required CLI argument, and the engine has no branch that reads the
+marker's parent for a pull. `e2e_two_workweaves_test.rs`'s
+`bare_sync_inside_a_workweave_is_refused_at_argument_parsing` pins both
+the refusal and the non-movement, so re-adding the default is a red test
+rather than a quiet resurrection.
+
 ## Abort and recovery
 
 Before any mutating phase, the engine writes savepoints under

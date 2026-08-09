@@ -215,7 +215,7 @@ fn relation_ok_sync_to_succeeds() {
 #[test]
 fn relation_ok_sync_succeeds() {
     let f = fixture();
-    // main advances + relocks so a bare `rwv sync` from ww has content to pull,
+    // main advances + relocks so a `rwv sync primary` from ww has content to pull,
     // with both sides at a fresh (ok) lock relation.
     commit_file(&f.main.manifest_repo, "m.txt", "m\n", "main: advance");
     rwv()

@@ -1267,8 +1267,8 @@ impl<'de> Deserialize<'de> for CanonicalPath {
 ///
 /// `parent` is the workspace the workweave was created from: `primary` when
 /// created from the primary, the parent workweave's path when created from
-/// inside another workweave. Workweaves form a tree; `parent` lets `rwv sync`
-/// (with no explicit source) sync one hop toward the primary.
+/// inside another workweave. Workweaves form a tree; `parent` is the edge a
+/// bare `rwv sync-to` lands along, one hop toward the primary.
 ///
 /// All three fields (`primary`, `project`, `parent`) are required. Written
 /// and read as JSON; a YAML marker, or one written before `parent` was

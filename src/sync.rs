@@ -163,8 +163,8 @@ fn looks_path_like(s: &str) -> bool {
         || PathBuf::from(s).is_absolute()
 }
 
-/// Refuse a bare `rwv sync` / `rwv sync-to` when the workweave's recorded
-/// `parent:` no longer exists on disk (retired or deleted out-of-band).
+/// Refuse when the workweave's recorded `parent:` no longer exists on disk
+/// (retired or deleted out-of-band).
 ///
 /// Without this guard the parent path flows into `WorkspaceContext::resolve`,
 /// which calls `.canonicalize()` and dies with a raw `failed to canonicalize
@@ -1834,15 +1834,6 @@ impl MachineVerb {
 // Top-level entry points (public API surface unchanged)
 // ---------------------------------------------------------------------------
 
-/// Execute `rwv sync <source>`.
-///
-/// `source` is required; bare `rwv sync` (no source) is not supported.
-/// Use `rwv sync-to` to land work upward.
-///
-/// `do_continue = true` activates `--continue` mode: instead of refusing when
-/// an op-state file is present, the call resumes from the recorded phase.
-/// All parameters are read from the recorded state in that path.
-#[allow(clippy::too_many_arguments)]
 /// Bundled arguments for a `sync` or `sync-to` invocation.
 ///
 /// Replaces the positional argument lists that were duplicated across the
@@ -1851,9 +1842,8 @@ impl MachineVerb {
 /// `SyncRequest` and pass it by value to an entry point.
 #[derive(Debug, Clone)]
 pub struct SyncRequest {
-    /// Source (sync) or target (sync-to) workspace. `None` under `--continue`
-    /// (read from op-state) or for a bare `rwv sync` inside a workweave
-    /// (read from the `.rwv-workweave` parent marker).
+    /// Source (sync) or target (sync-to) workspace, already resolved by the
+    /// caller. `None` only under `--continue`, which reads it from op-state.
     pub source: Option<SyncSource>,
     /// How to advance each repo to its lock target. Defaults to `ff`.
     pub strategy: SyncStrategy,
@@ -1889,6 +1879,11 @@ impl Default for SyncRequest {
     }
 }
 
+/// Execute `rwv sync <source>`.
+///
+/// `request.source` is required; there is no bare `rwv sync` that absorbs
+/// from the workweave's recorded parent. `<SOURCE>` is a required CLI
+/// argument and `rwv sync-to` is the verb that reads the parent marker.
 pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let stdout_lock: Mutex<()> = Mutex::new(());
     let handler = TextHandler {
@@ -2425,32 +2420,19 @@ fn guard_and_mark<'a>(
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
     // Resolve the SyncSource the operator passed. For sync, this is the
-    // source workspace; for sync-to, this is the target workspace.
+    // source workspace; for sync-to, this is the target workspace. Both are
+    // resolved before the machine is entered — sync's by clap (`<SOURCE>` is
+    // required), sync-to's by the dispatcher, which reads the marker's parent
+    // for the bare form. Neither verb defaults one here.
     let resolved_arg = match source {
         Some(s) => s.clone(),
-        None => match (verb, &cwd_ctx.checkout) {
-            // Bare `rwv sync` inside a workweave: use the marker's recorded
-            // parent, carried on `Checkout::Workweave` since `resolve`.
-            (MachineVerb::Sync, Checkout::Workweave { parent, .. }) => {
-                // A dangling parent (retired/deleted out-of-band) would
-                // otherwise die on a raw `failed to canonicalize … (os error
-                // 2)` inside WorkspaceContext::resolve. Detect it here and
-                // emit the friendly doctor-remediation text instead.
-                check_parent_not_dangling(parent, cwd_ctx.primary_path())?;
-                SyncSource::Path(parent.clone())
-            }
-            (MachineVerb::Sync, Checkout::Primary { .. }) => {
-                anyhow::bail!(
-                    "bare `rwv sync` syncs to the workweave's recorded parent, but CWD \
-                     ({}) is in the primary weave, not a workweave; pass an explicit source",
-                    cwd_ctx.active_path().display()
-                );
-            }
-            (MachineVerb::SyncTo, _) => {
-                anyhow::bail!(
-                    "sync-to requires an explicit target (resolved by the caller); none provided"
-                );
-            }
+        None => match verb {
+            MachineVerb::Sync => anyhow::bail!(
+                "sync requires an explicit source (resolved by the caller); none provided"
+            ),
+            MachineVerb::SyncTo => anyhow::bail!(
+                "sync-to requires an explicit target (resolved by the caller); none provided"
+            ),
         },
     };
     let cli_path = resolved_arg.resolve(cwd_ctx)?;

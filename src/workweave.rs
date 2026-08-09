@@ -1819,8 +1819,8 @@ pub fn create_workweave(
     // Write .rwv-workweave marker file. The marker records the primary so
     // workweaves always know how to find their parent weave regardless of
     // where they were forked from. `parent` records the workspace this
-    // workweave was forked from (= source_root) so bare `rwv sync` knows
-    // where to sync to. For workweaves forked directly from primary, parent
+    // workweave was forked from (= source_root) so a bare `rwv sync-to` knows
+    // where to land. For workweaves forked directly from primary, parent
     // == primary; for workweaves forked from another workweave, parent is
     // that workweave's directory.
     let marker = WorkweaveMarker::new(primary_root.to_path_buf(), project.clone(), source_root);

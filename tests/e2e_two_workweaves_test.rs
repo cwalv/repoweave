@@ -779,6 +779,65 @@ fn bare_sync_no_source_fails() {
         .failure();
 }
 
+/// Bare `rwv sync` is refused by argument parsing, from inside a workweave —
+/// the one place a "sync toward the recorded parent" default would work, and
+/// so the only place its absence is worth pinning.
+///
+/// Both halves carry weight. The exit code and clap's own wording pin *where*
+/// the refusal happens: a refusal raised inside the sync machine is also a
+/// non-zero exit naming a source, so `bare_sync_no_source_fails` above and
+/// `workweave_test.rs`'s `bare_sync_outside_workweave_errors_clearly` — which
+/// both run from the primary weave and assert only that — stay green when the
+/// argument requirement is dropped. The tip assertion pins the outcome:
+/// primary is ahead and relocked, so a bare sync that reached the machine and
+/// resolved the parent would move ww1.
+#[test]
+fn bare_sync_inside_a_workweave_is_refused_at_argument_parsing() {
+    let tmp = common::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+    let ww1_head_before = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
+
+    let primary_sha = commit_file(
+        &main.manifest_repo,
+        "primary.txt",
+        "from primary\n",
+        "primary: add primary.txt",
+    );
+    rwv_lock_commit(&main.root);
+    assert_ne!(
+        ww1_head_before, primary_sha,
+        "setup: ww1 must be behind primary, or the tip assertion below proves nothing"
+    );
+
+    let assert = rwv()
+        .args(["sync"])
+        .current_dir(&ww1.root)
+        .assert()
+        .failure();
+    let out = assert.get_output();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "bare `rwv sync` must fail clap's usage check (exit 2), not reach rwv; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("required arguments were not provided") && stderr.contains("<SOURCE>"),
+        "expected clap's missing-required-argument error naming <SOURCE>; got: {stderr}"
+    );
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo),
+        ww1_head_before,
+        "bare `rwv sync` must not pull from the recorded parent"
+    );
+}
+
 /// Sibling-sync warning: when CWD is one workweave and an explicit
 /// source is another (non-parent) workweave, sync should emit a warning
 /// that names both paths and then proceed — the warning is informational,
