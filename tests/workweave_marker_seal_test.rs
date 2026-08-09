@@ -95,9 +95,13 @@ fn a_marker_cannot_be_assembled_field_by_field_from_outside_the_crate() {
         "WorkweaveMarker's fields are private; only `new` builds one",
         r#"
         use repoweave::manifest::ProjectName;
-        use repoweave::workspace::WorkweaveMarker;
+        use repoweave::workspace::{CanonicalPath, WorkweaveMarker};
         use std::path::PathBuf;
-        pub fn forge(primary: PathBuf, project: ProjectName, parent: PathBuf) -> WorkweaveMarker {
+        pub fn forge(
+            primary: PathBuf,
+            project: ProjectName,
+            parent: CanonicalPath,
+        ) -> WorkweaveMarker {
             WorkweaveMarker { primary, project, parent }
         }
         "#,

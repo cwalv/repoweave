@@ -743,7 +743,7 @@ impl RootSite {
                 name,
                 dir: self.dir,
                 project,
-                parent: marker.parent,
+                parent: marker.parent.into_path_buf(),
             },
             project_provenance: Some(provenance),
         })
@@ -1225,6 +1225,41 @@ pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
 // WorkweaveMarker — `.rwv-workweave` marker file
 // ---------------------------------------------------------------------------
 
+/// A path held in the one spelling every equivalent spelling resolves to, so
+/// that two values denoting the same directory compare equal.
+///
+/// A path that is not on disk cannot be resolved and is kept verbatim — a
+/// marker naming another machine's tree still round-trips through this type.
+/// Equality between two such values is therefore textual, which is the most
+/// any comparison can offer for a path the filesystem cannot speak about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct CanonicalPath(PathBuf);
+
+impl CanonicalPath {
+    pub fn of(path: &Path) -> Self {
+        CanonicalPath(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for CanonicalPath {
+    /// Deriving this instead would let a hand-edited or migrated file put a
+    /// value in this type that its name promises is impossible, and every
+    /// comparison downstream would then be textual against an arbitrary
+    /// spelling.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(CanonicalPath::of(&PathBuf::deserialize(d)?))
+    }
+}
+
 /// Metadata written to `.rwv-workweave` in a workweave root.
 ///
 /// Records the relationship to the primary workspace and the workspace this
@@ -1243,7 +1278,7 @@ pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
 pub struct WorkweaveMarker {
     primary: PathBuf,
     project: ProjectName,
-    parent: PathBuf,
+    parent: CanonicalPath,
 }
 
 impl WorkweaveMarker {
@@ -1254,27 +1289,15 @@ impl WorkweaveMarker {
 
     /// Build a marker for a workweave forked from `parent_source`.
     ///
-    /// `parent_source` is canonicalized into `parent` (falling back to the
-    /// given path if canonicalization fails, e.g. in tests against a path
-    /// that was never created on disk) so that every marker this type
-    /// produces compares equal to the registry entries and chain-walks that
-    /// key off `parent`, regardless of which of two equivalent spellings the
-    /// caller had on hand.
-    ///
-    /// `primary` is recorded as given, not canonicalized — an asymmetry with
-    /// `parent`, not an oversight. `create_workweave` passes `primary_root`
-    /// straight through uncanonicalized, and every comparison against
-    /// `marker.primary()` (the already-exists guard, registry-entry
-    /// validation) canonicalizes both sides again at compare time rather
-    /// than trusting the stored value. Canonicalizing `primary` here would
-    /// change the bytes this type writes to `.rwv-workweave` for a
-    /// non-canonical input — an on-disk format change this constructor has
-    /// no mandate to make.
+    /// `primary` is recorded as given. Resolving it here would change the
+    /// bytes this type writes to `.rwv-workweave` for a non-canonical input,
+    /// which is an on-disk format change; [`Self::names_primary`] carries the
+    /// resolution instead, at every comparison.
     pub fn new(primary: PathBuf, project: ProjectName, parent_source: &Path) -> Self {
         WorkweaveMarker {
             primary,
             project,
-            parent: canonicalize_or(parent_source),
+            parent: CanonicalPath::of(parent_source),
         }
     }
 
@@ -1282,18 +1305,25 @@ impl WorkweaveMarker {
         &self.primary
     }
 
+    pub fn primary_resolved(&self) -> CanonicalPath {
+        CanonicalPath::of(&self.primary)
+    }
+
+    /// Whether `candidate` is the primary workspace this marker names.
+    pub fn names_primary(&self, candidate: &Path) -> bool {
+        self.primary_resolved() == CanonicalPath::of(candidate)
+    }
+
     pub fn project(&self) -> &ProjectName {
         &self.project
     }
 
-    pub fn parent(&self) -> &Path {
+    pub fn parent(&self) -> &CanonicalPath {
         &self.parent
     }
 
-    /// Re-point `parent` at `parent_source`, canonicalized the same way
-    /// [`Self::new`] canonicalizes it at creation.
     pub fn repoint_parent(&mut self, parent_source: &Path) {
-        self.parent = canonicalize_or(parent_source);
+        self.parent = CanonicalPath::of(parent_source);
     }
 
     /// Read the marker file from `dir`.
@@ -1363,15 +1393,11 @@ impl WorkweaveMarker {
             primary: PathBuf::from(primary),
             project: ProjectName::new(project)
                 .with_context(|| format!("{} has an invalid `project:` value", path.display()))?,
-            parent: PathBuf::from(parent),
+            parent: CanonicalPath::of(Path::new(parent)),
         };
         marker.write(dir)?;
         Ok(true)
     }
-}
-
-fn canonicalize_or(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 // ---------------------------------------------------------------------------
@@ -1983,7 +2009,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("ws").unwrap(),
-            parent: primary_canon,
+            parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
 
@@ -2256,7 +2282,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: PathBuf::from("/home/user/weaveroot"),
             project: ProjectName::new("my-project").unwrap(),
-            parent: PathBuf::from("/home/user/weaveroot"),
+            parent: CanonicalPath::of(Path::new("/home/user/weaveroot")),
         };
         marker.write(dir).unwrap();
 
@@ -2283,12 +2309,63 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary.clone(),
             project: ProjectName::new("p").unwrap(),
-            parent: parent.clone(),
+            parent: CanonicalPath::of(&parent),
         };
         marker.write(dir).unwrap();
 
         let read_back = WorkweaveMarker::read(dir).unwrap().unwrap();
-        assert_eq!(read_back.parent, parent);
+        assert_eq!(read_back.parent.as_path(), parent);
+    }
+
+    /// The file is the one place a `parent` this program never wrote can get
+    /// in, so reading is where the type's promise has to be re-established —
+    /// a consumer comparing against it cannot tell where the value came from.
+    #[test]
+    fn workweave_marker_resolves_a_hand_written_parent_on_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("ww");
+        let primary = tmp.path().join("primary");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&primary).unwrap();
+
+        let detoured = primary.join("..").join("primary");
+        std::fs::write(
+            dir.join(".rwv-workweave"),
+            format!(
+                "{{\n  \"primary\": \"{p}\",\n  \"project\": \"p\",\n  \"parent\": \"{d}\"\n}}\n",
+                p = primary.display(),
+                d = detoured.display(),
+            ),
+        )
+        .unwrap();
+
+        let marker = WorkweaveMarker::read(&dir).unwrap().unwrap();
+        assert_eq!(
+            marker.parent().as_path(),
+            primary.canonicalize().unwrap(),
+            "a parent read off disk must arrive in the same spelling one built here would"
+        );
+    }
+
+    /// `parent` is a JSON string, as it was before it acquired a type. A
+    /// marker this build writes must stay readable by one that predates it.
+    #[test]
+    fn workweave_marker_parent_is_written_as_a_bare_string() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        WorkweaveMarker {
+            primary: PathBuf::from("/home/user/primary"),
+            project: ProjectName::new("p").unwrap(),
+            parent: CanonicalPath::of(Path::new("/home/user/parent")),
+        }
+        .write(dir)
+        .unwrap();
+
+        let written = std::fs::read_to_string(dir.join(".rwv-workweave")).unwrap();
+        assert!(
+            written.contains(r#""parent": "/home/user/parent""#),
+            "got: {written}"
+        );
     }
 
     #[test]
@@ -2348,7 +2425,7 @@ mod tests {
         let migrated = WorkweaveMarker::read(dir)
             .expect("migrated marker must parse")
             .expect("migrated marker must be present");
-        assert_eq!(migrated.parent, PathBuf::from("/home/user/primary"));
+        assert_eq!(migrated.parent.as_path(), Path::new("/home/user/primary"));
     }
 
     #[test]
@@ -2368,8 +2445,8 @@ mod tests {
 
         let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
         assert_eq!(
-            marker.parent,
-            PathBuf::from("/home/user/.workweaves/primary--ww1"),
+            marker.parent.as_path(),
+            Path::new("/home/user/.workweaves/primary--ww1"),
             "explicit parent must survive migration"
         );
         assert_eq!(marker.primary, PathBuf::from("/home/user/primary"));
@@ -2392,7 +2469,7 @@ mod tests {
             marker.primary,
             PathBuf::from("/home/user/weaveroot/primary")
         );
-        assert_eq!(marker.parent, marker.primary);
+        assert_eq!(marker.parent.as_path(), marker.primary);
         assert_eq!(marker.project.as_str(), "legacy-project");
     }
 
@@ -2432,7 +2509,7 @@ mod tests {
             marker.primary,
             PathBuf::from("/home/user/weaveroot/has: a colon-space")
         );
-        assert_eq!(marker.parent, marker.primary);
+        assert_eq!(marker.parent.as_path(), marker.primary);
     }
 
     /// Fixture: a primary with `projects/<name>/`, ready for an index.
@@ -2501,7 +2578,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon.clone(),
+            parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
 
@@ -2623,7 +2700,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon,
+            parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
 
@@ -2656,7 +2733,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("marker-project").unwrap(),
-            parent: primary_canon,
+            parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
 
@@ -2716,7 +2793,7 @@ mod tests {
         WorkweaveMarker {
             primary: dangling.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: dangling.clone(),
+            parent: CanonicalPath::of(&dangling),
         }
         .write(&dir)
         .unwrap();
@@ -2775,7 +2852,7 @@ mod tests {
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon,
+            parent: CanonicalPath::of(&primary_canon),
         }
         .write(&dir)
         .unwrap();
@@ -2874,7 +2951,7 @@ mod tests {
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon.clone(),
+            parent: CanonicalPath::of(&primary_canon),
         }
         .write(&dir)
         .unwrap();
@@ -2901,7 +2978,7 @@ mod tests {
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: primary_canon.clone(),
+            parent: CanonicalPath::of(&primary_canon),
         }
         .write(&upper)
         .unwrap();
@@ -2912,7 +2989,7 @@ mod tests {
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
-            parent: upper_canon.clone(),
+            parent: CanonicalPath::of(&upper_canon),
         }
         .write(&lower)
         .unwrap();
@@ -3178,7 +3255,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary.to_path_buf(),
             project: ProjectName::new(project).unwrap(),
-            parent: primary.to_path_buf(),
+            parent: CanonicalPath::of(primary),
         };
         marker.write(dir).unwrap();
     }
@@ -3535,7 +3612,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("myproject").unwrap(),
-            parent: primary_canon,
+            parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
 
@@ -3605,7 +3682,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("myproject").unwrap(),
-            parent: primary_canon,
+            parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
 
@@ -3639,7 +3716,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: primary.to_path_buf(),
             project: ProjectName::new(project).unwrap(),
-            parent: primary.to_path_buf(),
+            parent: CanonicalPath::of(primary),
         };
         marker.write(&dir).unwrap();
         dir

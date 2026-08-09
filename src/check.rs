@@ -2259,7 +2259,7 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
 
     // Race guard: if the parent already exists, the dangling condition healed
     // (e.g. the parent was recreated) — leave the marker alone.
-    if marker.parent().exists() {
+    if marker.parent().as_path().exists() {
         return Ok(false);
     }
 
@@ -2693,14 +2693,7 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
         sub_kind: WeaveRootIdentityConflictKind::Unwitnessed { detail },
     };
 
-    let primary_canonical = primary_root
-        .canonicalize()
-        .unwrap_or_else(|_| primary_root.to_path_buf());
-    let marker_primary_canonical = marker
-        .primary()
-        .canonicalize()
-        .unwrap_or_else(|_| marker.primary().to_path_buf());
-    if marker_primary_canonical != primary_canonical {
+    if !marker.names_primary(primary_root) {
         return Some(unwitnessed(format!(
             "The marker names primary `{}`, which is not this workspace, so this \
              workspace's registry has no say over it.",
@@ -2823,20 +2816,18 @@ pub fn scan_workweave_tree_integrity(
         };
 
         // Foreign-primary check: marker's `primary` must resolve to ws_root.
-        let marker_primary_canonical = marker
-            .primary()
-            .canonicalize()
-            .unwrap_or_else(|_| marker.primary().to_path_buf());
-        if marker_primary_canonical != ws_canonical {
-            let sub_kind = if crate::workspace::is_workspace_root(&marker_primary_canonical) {
-                WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
-                    marker_primary: marker_primary_canonical.clone(),
-                }
-            } else {
-                WorkweaveTreeIntegrityKind::ForeignPrimary {
-                    marker_primary: marker.primary().to_path_buf(),
-                }
-            };
+        if !marker.names_primary(&ws_canonical) {
+            let marker_primary_canonical = marker.primary_resolved();
+            let sub_kind =
+                if crate::workspace::is_workspace_root(marker_primary_canonical.as_path()) {
+                    WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
+                        marker_primary: marker_primary_canonical.into_path_buf(),
+                    }
+                } else {
+                    WorkweaveTreeIntegrityKind::ForeignPrimary {
+                        marker_primary: marker.primary().to_path_buf(),
+                    }
+                };
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: dir.clone(),
                 sub_kind,
@@ -2848,11 +2839,11 @@ pub fn scan_workweave_tree_integrity(
         }
 
         // Dangling-parent check: the parent path must exist on disk.
-        if !marker.parent().exists() {
+        if !marker.parent().as_path().exists() {
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: dir.clone(),
                 sub_kind: WorkweaveTreeIntegrityKind::DanglingParent {
-                    parent_path: marker.parent().to_path_buf(),
+                    parent_path: marker.parent().as_path().to_path_buf(),
                 },
             });
             // Even with a dangling parent we can still collect the entry
@@ -2862,7 +2853,7 @@ pub fn scan_workweave_tree_integrity(
         marker_entries.push(MarkerEntry {
             dir: dir.clone(),
             project: marker.project().clone(),
-            parent: marker.parent().to_path_buf(),
+            parent: marker.parent().as_path().to_path_buf(),
         });
     }
 

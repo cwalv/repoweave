@@ -37,7 +37,7 @@ use crate::vcs::{
 };
 use crate::workspace::{
     parse_weave_dir_name, project_dir, project_rel_dir, project_rel_path, read_active_project,
-    weave_dir_name, WorkweaveMarker,
+    weave_dir_name, CanonicalPath, WorkweaveMarker,
 };
 use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
@@ -165,14 +165,7 @@ pub fn validate_registry_entry(
             }
         }
     };
-    let primary_canonical = primary_root
-        .canonicalize()
-        .unwrap_or_else(|_| primary_root.to_path_buf());
-    let marker_primary_canonical = marker
-        .primary()
-        .canonicalize()
-        .unwrap_or_else(|_| marker.primary().to_path_buf());
-    if marker_primary_canonical != primary_canonical {
+    if !marker.names_primary(primary_root) {
         return RegistryEntryValidation::ForeignPrimary;
     }
     if marker.project() != project {
@@ -1890,14 +1883,7 @@ fn reuse_existing_workweave(
         );
     }
 
-    let marker_primary = marker
-        .primary()
-        .canonicalize()
-        .unwrap_or_else(|_| marker.primary().to_path_buf());
-    let primary_canonical = primary_root
-        .canonicalize()
-        .unwrap_or_else(|_| primary_root.to_path_buf());
-    if marker_primary != primary_canonical {
+    if !marker.names_primary(primary_root) {
         bail!(
             "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
              rerun with --replace-existing to overwrite",
@@ -2018,9 +2004,10 @@ pub fn collect_dirty_paths(
 /// sync-to hops — checking primary alone would refuse every child retire.
 fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
     let mut baselines: Vec<PathBuf> = Vec::new();
+    let root = CanonicalPath::of(ws_root);
     if let Ok(Some(marker)) = WorkweaveMarker::read(workweave_dir) {
-        if marker.parent().exists() && marker.parent() != ws_root {
-            baselines.push(marker.parent().to_path_buf());
+        if marker.parent().as_path().exists() && *marker.parent() != root {
+            baselines.push(marker.parent().as_path().to_path_buf());
         }
     }
     baselines.push(ws_root.to_path_buf());
@@ -2348,17 +2335,14 @@ fn refuse_if_checkouts_host_foreign_worktrees(
 /// retiree's marker is unreadable, records no parent, or records a parent that
 /// no longer exists on disk (itself already retired), fall back to `primary`,
 /// which always exists.
-///
-/// The returned path is canonicalized when possible so the written child
-/// marker records a stable absolute path (matching what `create_workweave`
-/// writes via `source_root.canonicalize()`).
 fn adoptive_parent_for_children(retiree_dir: &Path, primary_root: &Path) -> PathBuf {
     let grandparent = match WorkweaveMarker::read(retiree_dir) {
-        Ok(Some(marker)) if marker.parent().exists() => Some(marker.parent().to_path_buf()),
+        Ok(Some(marker)) if marker.parent().as_path().exists() => Some(marker.parent().clone()),
         _ => None,
     };
-    let target = grandparent.unwrap_or_else(|| primary_root.to_path_buf());
-    target.canonicalize().unwrap_or(target)
+    grandparent
+        .unwrap_or_else(|| CanonicalPath::of(primary_root))
+        .into_path_buf()
 }
 
 /// Enumerate the live children of the workweave at `retiree_dir` and re-point
@@ -2384,21 +2368,15 @@ fn adoptive_parent_for_children(retiree_dir: &Path, primary_root: &Path) -> Path
 fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
     let new_parent = adoptive_parent_for_children(retiree_dir, primary_root);
 
-    let retiree_canonical = retiree_dir
-        .canonicalize()
-        .unwrap_or_else(|_| retiree_dir.to_path_buf());
+    let retiree_canonical = CanonicalPath::of(retiree_dir);
 
     // A retiree that IS its own adoptive parent (should not happen — the
     // grandparent is a different workspace) would create a self-loop; guard
     // against it defensively.
-    let new_parent_canonical = new_parent
-        .canonicalize()
-        .unwrap_or_else(|_| new_parent.clone());
+    let new_parent_canonical = CanonicalPath::of(&new_parent);
 
     for (child_name, child_dir) in list_workweave_dirs(primary_root) {
-        let child_canonical = child_dir
-            .canonicalize()
-            .unwrap_or_else(|_| child_dir.clone());
+        let child_canonical = CanonicalPath::of(&child_dir);
         // Never re-point the retiree's own marker.
         if child_canonical == retiree_canonical {
             continue;
@@ -2407,11 +2385,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
             Ok(Some(m)) => m,
             _ => continue,
         };
-        let marker_parent_canonical = marker
-            .parent()
-            .canonicalize()
-            .unwrap_or_else(|_| marker.parent().to_path_buf());
-        if marker_parent_canonical != retiree_canonical {
+        if *marker.parent() != retiree_canonical {
             continue;
         }
         // Defensive: don't create a self-parent marker.
@@ -3058,9 +3032,6 @@ pub fn doctor_scan_container(
     ws_root: &Path,
     container: &Path,
 ) -> Vec<(ProjectName, String, PathBuf)> {
-    let primary_canonical = ws_root
-        .canonicalize()
-        .unwrap_or_else(|_| ws_root.to_path_buf());
     let mut result = Vec::new();
     let entries = match std::fs::read_dir(container) {
         Ok(e) => e,
@@ -3085,11 +3056,7 @@ pub fn doctor_scan_container(
             Ok(Some(m)) => m,
             _ => continue,
         };
-        let m_primary = marker
-            .primary()
-            .canonicalize()
-            .unwrap_or_else(|_| marker.primary().to_path_buf());
-        if m_primary != primary_canonical {
+        if !marker.names_primary(ws_root) {
             continue;
         }
         result.push((project_name, parsed_name.as_str().to_string(), dir));
@@ -4071,5 +4038,69 @@ mod tests {
 
         assert!(fake.branch_tip(&store, &raw).is_none());
         assert!(registry.lookup(&store, &raw).unwrap().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Merge baselines: one directory must not appear twice
+    //
+    // `merge_baselines` returns the workspaces whose lineage counts as "this
+    // work has landed", and `delete_workweave` names them in its refusal.
+    // Whether the recorded parent IS the workspace already being appended is
+    // a comparison between a value stored resolved and one handed in raw, so
+    // it holds only if both sides are brought to the same spelling.
+    // -----------------------------------------------------------------------
+
+    /// A primary and a workweave whose marker records that primary as its
+    /// parent. Returns `(tempdir, primary, workweave_dir)`.
+    fn forked_from_primary() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let workweave_dir = tmp.path().join(".workweaves").join("web-app--feat");
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir_all(&workweave_dir).unwrap();
+        WorkweaveMarker::new(
+            primary.clone(),
+            ProjectName::new("web-app").unwrap(),
+            &primary,
+        )
+        .write(&workweave_dir)
+        .unwrap();
+        (tmp, primary, workweave_dir)
+    }
+
+    #[test]
+    fn merge_baselines_recognises_an_unresolved_spelling_of_the_parent() {
+        let (_tmp, primary, workweave_dir) = forked_from_primary();
+        let detoured = primary.join("..").join("ws");
+        assert_eq!(
+            detoured.canonicalize().unwrap(),
+            primary.canonicalize().unwrap(),
+            "precondition: the detoured spelling resolves to the primary"
+        );
+
+        let baselines = merge_baselines(&workweave_dir, &detoured);
+
+        assert_eq!(
+            baselines,
+            vec![detoured],
+            "the recorded parent IS this workspace, so it must not be listed a second \
+             time under another spelling"
+        );
+    }
+
+    #[test]
+    fn merge_baselines_keeps_a_parent_that_is_a_different_workspace() {
+        let (tmp, _primary, workweave_dir) = forked_from_primary();
+        let elsewhere = tmp.path().join("other");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        let baselines = merge_baselines(&workweave_dir, &elsewhere);
+
+        assert_eq!(
+            baselines.len(),
+            2,
+            "a parent that is not this workspace is a baseline in its own right, got \
+             {baselines:?}"
+        );
     }
 }
