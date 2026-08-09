@@ -669,8 +669,7 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
 pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result<()> {
     let path = OwnerRecord::path_in(workspace_dir);
     let json = serde_json::to_string_pretty(record).context("failed to serialize owner record")?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("failed to write owner record to {}", path.display()))
+    crate::durable_file::replace(&path, json.as_bytes())
 }
 
 /// Read the `.rwv-op` file from `workspace_dir`, returning `None` if absent.
@@ -1627,6 +1626,134 @@ mod tests {
         advance_phase(dir, OpPhase::Relock).unwrap();
         let updated = read_owner(dir).unwrap().unwrap();
         assert_eq!(updated.phase, OpPhase::Relock);
+    }
+
+    // -----------------------------------------------------------------------
+    // write_owner durability — crash recovery via the durable_file rename
+    // -----------------------------------------------------------------------
+
+    /// Atomicity, pinned by the mechanism rather than by hoping: an overwrite
+    /// replaces `.rwv-op` by `rename(2)`, so the target's inode changes and no
+    /// reader can ever catch a partial write. An in-place rewrite (the pre-fix
+    /// `std::fs::write`) would keep the inode — and would be observable
+    /// half-written.
+    #[test]
+    #[cfg(unix)]
+    fn write_owner_replaces_by_rename_not_in_place() {
+        use std::os::unix::fs::MetadataExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let mut record = OwnerRecord::new_sync(
+            &op_id,
+            SyncStrategy::Rebase,
+            PathBuf::from("/src"),
+            PathBuf::from("/tgt"),
+        );
+        write_owner(dir, &record).unwrap();
+        let path = OwnerRecord::path_in(dir);
+        let first_inode = std::fs::metadata(&path).unwrap().ino();
+
+        record.phase = OpPhase::Relock;
+        write_owner(dir, &record).unwrap();
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().ino(),
+            first_inode,
+            "the owner record must be replaced by rename, not rewritten in place"
+        );
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
+    }
+
+    /// A write that fails partway must not touch `.rwv-op` at all: the prior
+    /// record has to survive exactly as it was. A read-only directory forces
+    /// the failure at the earliest point `durable_file::replace` can hit one
+    /// — its temp file needs `O_CREAT` on a fresh name, which the directory
+    /// refuses — while leaving the existing `.rwv-op` itself writable. That's
+    /// the same asymmetry a crash mid-write exploits: truncating an
+    /// already-existing, already-permitted file needs no directory
+    /// permission at all, so the pre-fix `std::fs::write` would sail through
+    /// this and clobber the record instead of failing.
+    #[test]
+    #[cfg(unix)]
+    fn write_owner_failure_leaves_prior_record_recoverable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let original = OwnerRecord::new_sync(
+            &op_id,
+            SyncStrategy::Rebase,
+            PathBuf::from("/src"),
+            PathBuf::from("/tgt"),
+        );
+        write_owner(dir, &original).unwrap();
+
+        let writable_perms = std::fs::metadata(dir).unwrap().permissions();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let mut next = original.clone();
+        next.phase = OpPhase::Relock;
+        let result = write_owner(dir, &next);
+
+        std::fs::set_permissions(dir, writable_perms).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a write into a read-only directory must fail, not silently succeed"
+        );
+        assert_eq!(
+            read_owner(dir).unwrap().unwrap(),
+            original,
+            "a failed write must leave the prior record exactly as it was"
+        );
+    }
+
+    /// `read_owner` must never mis-parse a torn record as something else, and
+    /// must never panic on one: no prefix of a valid record's bytes shorter
+    /// than the whole thing parses, since a truncated JSON object is always
+    /// missing its closing brace. This pins the read side's half of crash
+    /// safety; the write side — `write_owner_replaces_by_rename_not_in_place`
+    /// and `write_owner_failure_leaves_prior_record_recoverable` — is what
+    /// keeps a torn file from ever landing at `.rwv-op` through `write_owner`
+    /// itself. This test only covers a torn file that got there some other
+    /// way (a full disk mid-rename, a hand-edited file).
+    #[test]
+    fn read_owner_rejects_every_truncated_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let record = OwnerRecord::new_sync(
+            &op_id,
+            SyncStrategy::Rebase,
+            PathBuf::from("/src/ws"),
+            PathBuf::from("/cwd/ws"),
+        );
+        let json = serde_json::to_string_pretty(&record).unwrap();
+        let path = OwnerRecord::path_in(dir);
+
+        for len in 0..json.len() {
+            std::fs::write(&path, &json.as_bytes()[..len]).unwrap();
+            let result = read_owner(dir);
+            assert!(
+                result.is_err(),
+                "a {len}-byte prefix of a valid record must not parse; got {result:?}"
+            );
+        }
+
+        std::fs::write(&path, &json).unwrap();
+        assert_eq!(read_owner(dir).unwrap().unwrap(), record);
     }
 
     // -----------------------------------------------------------------------
