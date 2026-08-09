@@ -224,13 +224,13 @@ changes to a specified path are silently overridden by the replay
 target's version. For git, this is a three-layer mechanism: a
 namespaced `merge=rwv-ours` entry in committed `.gitattributes`
 (assigns the driver to the path), an inline `-c merge.rwv-ours.driver=true`
-flag on each `git rebase` and `git rebase --continue` invocation
+flag carried by whatever derived-content policy the replay states
 (defines the driver for that process), and a durable `merge.rwv-ours.*`
-repo-local config planted at the start of every rebase-strategy sync
-(makes bare `git rebase --continue` safe when the operator resumes
-outside rwv). The namespaced name `rwv-ours` avoids collisions with
-any unrelated global `merge.ours.driver` config or third-party
-`merge=ours` lines in the same repo.
+repo-local config planted in the project repo at the start of every
+rebase-strategy sync (makes bare `git rebase --continue` safe when the
+operator resumes outside rwv). The namespaced name `rwv-ours` avoids
+collisions with any unrelated global `merge.ours.driver` config or
+third-party `merge=ours` lines in the same repo.
 
 Rebase replays each commit as a 3-way merge, which is why the driver
 is still needed even though the `merge` sync strategy was removed.
@@ -251,12 +251,16 @@ fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsErro
 `<path> merge=rwv-ours` to `<repo>/.gitattributes`, idempotently (and
 migrates legacy `merge=ours` lines in place when found). The
 `merge.rwv-ours.driver=true` config that makes the driver succeed
-without modifying the merged file is supplied in two ways: inline `-c`
-flags on every `Vcs::rebase` and `Vcs::rebase_continue`
-invocation (belt-and-braces for the rwv-driven path), plus a durable
-repo-local config plant that `verify_replay_exclusion_invariant` writes
-before each rebase-strategy sync (so bare `git rebase --continue` —
-the git-native resume path — is safe without rwv's inline flags).
+without modifying the merged file reaches a replay by two routes that
+do not cover each other. Inline `-c` flags come from the
+`DerivedContentPolicy` each `Vcs::rebase` and `Vcs::rebase_continue`
+call states, and that is the only route on manifest repos. The durable
+repo-local plant that `verify_replay_exclusion_invariant` writes before
+each rebase-strategy sync lands in the project repo only, and it is the
+only route for bare `git rebase --continue` — the git-native resume
+path, which inherits no inline flags. They overlap on one case, a
+project-repo replay driven by rwv; dropping either route strands the
+case the other never covered.
 
 **Used by** [sync-semantics](./sync-semantics.md)'s Phase 1' to keep
 `rwv.lock` out of the merge inputs. The lock is regenerated from

@@ -988,11 +988,15 @@ fn per_conflict_bail_message(
 ///    driver to `rwv.lock` — this half lives in the committed tree.
 /// 2. A `merge.rwv-ours.driver` config entry *defines* the driver's shell
 ///    command. This half must be visible to whatever git process runs the
-///    replay — rwv's own rebase passes it inline with `-c` (belt-and-braces),
-///    but bare `git rebase --continue` (the resume path git itself
-///    advertises in conflict stderr) inherits neither the inline flag nor
-///    the environment; only durable config keeps the driver defined on
-///    that resume. This function plants that config as its first act — it
+///    replay, and it reaches one by two routes that do not cover each
+///    other. The [`DerivedContentPolicy`] an rwv-driven replay states
+///    passes it inline with `-c`; that is the only route on manifest repos,
+///    which never receive this plant. Bare `git rebase --continue` (the
+///    resume path git itself advertises in conflict stderr) inherits
+///    neither the inline flags nor the environment, so durable config is
+///    the only route there. The two overlap on one case — this repo under
+///    an rwv-driven replay — and dropping either strands the case the other
+///    never covered. This function plants the config as its first act; it
 ///    is derived, local, idempotent state, so writing (not just checking)
 ///    is the right primitive.
 ///
@@ -2774,10 +2778,12 @@ fn load_continuing_context<'a>(
     let (record, owner_workspace_dir) = op_state::resume(&invocation_workspace_dir)?;
     let op_id = OpId::from_string(record.id.clone());
 
-    // The recorded verb is authoritative; cross-check against the entry-point
-    // verb. (Same kind of belt-and-braces as the destructive-ops tripwire:
-    // catches "operator ran `rwv sync --continue` on a `rwv sync-to` op", which
-    // is harmless because we'd ignore their verb anyway, but worth flagging.)
+    // Everything below reads the recorded verb, and `verb` reaches no other
+    // consumer — so without this refusal `rwv sync --continue` on a `rwv
+    // sync-to` op would complete the recorded op correctly and silently, and
+    // the operator who asked to pull from a source would watch their
+    // workspace land into its target instead. The refusal buys the
+    // diagnosis, not the outcome.
     let recorded_verb = match record.verb {
         op_state::OpVerb::Sync => MachineVerb::Sync,
         op_state::OpVerb::SyncTo => MachineVerb::SyncTo,
@@ -4674,13 +4680,16 @@ fn retire_workweave_after_sync_to(
         );
     }
 
-    // Both invariants hold: delete the workweave. Waive nothing —
-    // collect_dirty_paths already returned empty, so the inner checks are
-    // belt-and-braces. Use the primary path (delete_workweave needs to
-    // locate the workweave under the primary's parent dir). Use the
-    // retire-specific entry point, which skips the cross-verb op guard: THIS op
-    // still holds its `.rwv-op` record on the workweave (cleared later in
-    // cleanup), so the guard would otherwise refuse the op's own retire.
+    // Both invariants hold: delete the workweave. `--retire` has no flag that
+    // could waive the delete's own dirty check, so `false` is the absence of
+    // consent to waive rather than a judgement about the check — the refusal
+    // above evaluates the same predicate, and the second evaluation is the
+    // delete primitive's precondition, which every caller of it pays. Pass the
+    // primary path (the delete resolves the workweave under the primary's
+    // parent dir). Use the retire-specific entry point, which skips the
+    // cross-verb op guard: THIS op still holds its `.rwv-op` record on the
+    // workweave (cleared later in cleanup), so the guard would otherwise
+    // refuse the op's own retire.
     crate::workweave::delete_workweave_for_retire(
         ctx.primary_path(),
         project,
@@ -7225,10 +7234,13 @@ mod tests {
     // `verify_replay_exclusion_invariant` plants in the project repo only —
     // so here the stated policy is the only route, and a test can tell a
     // stated policy from an ignored one. Through the CLI it could not: sync
-    // plants before every rebase-strategy phase, so the project-repo call
-    // sites in `apply_project_strategy` resolve declared paths whatever they
-    // state. That is deliberate belt-and-braces, not a gap in the policy, but
-    // it does mean this is the layer where the threading is falsifiable.
+    // plants once per rebase-strategy invocation and the config is durable,
+    // so the project-repo call sites in `apply_project_strategy` resolve
+    // declared paths whatever they state. That overlap is deliberate and not
+    // removable: durable config is the only route for a bare `git rebase
+    // --continue`, a stated policy is the only route here, and neither covers
+    // the other's case. What it costs is falsifiability, which is why the
+    // threading is pinned at this layer.
     // -----------------------------------------------------------------------
 
     /// A repo whose committed `.gitattributes` declares `generated.txt`
