@@ -951,9 +951,9 @@ pub fn acquire_op(
 ) -> anyhow::Result<AcquiredOp> {
     let owner_workspace_dir = touched.owner();
     let lease_workspaces = &touched.leases;
-    // Belt-and-braces: acquisition dominates every other refusal, so if any
-    // touched workspace already carries op-state we must emit the rich in-flight
-    // refusal from IT rather than a raw AlreadyExists context. We check first
+    // Acquisition dominates every other refusal, so if any touched workspace
+    // already carries op-state we must emit the rich in-flight refusal from IT
+    // rather than a raw AlreadyExists context. We check first
     // (cheap) and then atomic-create; a losing racer whose file lands between
     // check and create still gets the correct shape via the AlreadyExists
     // branch below (which re-reads and re-derives the same message).
