@@ -213,7 +213,11 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
 
 - **Phase 2 — manifest repos**: advance each of CWD's manifest repo
   branches to the named workspace's lock target, using the chosen
-  `--strategy`. Repos already at the target SHA are no-ops. Repos behind
+  `--strategy`. Exception: a plain `sync` from a workweave source whose
+  lock is behind its committed HEAD targets that source's committed tips
+  instead (tips-as-truth — a note names the lag, and the source's lock
+  is left alone for its own next op to heal). Repos already at the
+  target SHA are no-ops. Repos behind
   the target are advanced via the strategy (ff / rebase). Repos
   ahead of the target surface as `already-ahead` — the engine does not
   silently rewind CWD's working state.

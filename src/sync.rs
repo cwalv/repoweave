@@ -1769,6 +1769,10 @@ struct SourceSnapshot {
     source_manifest: Manifest,
     /// Source lock (raw, unresolved), read at `source_project_tip`.
     raw_source_lock: LockFile,
+    /// Committed member tips of the source's `Ahead` checkouts, read at T0.
+    /// Replay targets these over the lock entries. Empty when tips-as-truth
+    /// does not apply (primary source, sync-to, or `--allow-stale-lock`).
+    pull_tips: std::collections::BTreeMap<RepoPath, ResolvedRevisionId>,
 }
 
 impl OpContext<'_> {
@@ -2116,8 +2120,13 @@ fn run_preconditions_after_acquire(
     // Pin the source snapshot now so the remaining replay preconditions are
     // all reads against a coherent T0. This is the "snapshot reads"
     // mechanism: one atomic ref read pins source; manifest + lock are read
-    // at that revision; everything downstream is content-addressed.
-    let snapshot = pin_source_snapshot(project_vcs, source_project_dir)?;
+    // at that revision; everything downstream is content-addressed. The one
+    // exception is the tips-as-truth pull, whose member tips are per-repo ref
+    // reads of the source checkouts, pinned here at the same T0.
+    let pull_tips_from =
+        (matches!(verb, MachineVerb::Sync) && source_is_workweave && !allow_stale_lock)
+            .then_some(source_workspace_dir);
+    let snapshot = pin_source_snapshot(project_vcs, source_project_dir, pull_tips_from)?;
 
     // Replay preconditions (pure reads; refusals leave no trace on-workspace —
     // the acquired op-state is cleaned up by the caller on Err).
@@ -2793,11 +2802,12 @@ fn load_continuing_context<'a>(
         (_, Checkout::Primary { .. }) => project_override.clone(),
     };
 
-    let (source_project_dir, source_workspace_name) = {
+    let (source_project_dir, source_workspace_name, source_is_workweave) = {
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, other_project_override)?;
         let pname = find_project_name(&source_ctx)?;
         let dir = project_dir(source_ctx.active_path(), pname.as_str());
-        (dir, workspace_name(&source_ctx))
+        let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
+        (dir, workspace_name(&source_ctx), is_workweave)
     };
 
     let dest_project_dir = match recorded_verb {
@@ -2805,22 +2815,29 @@ fn load_continuing_context<'a>(
         MachineVerb::SyncTo => source_project_dir.clone(),
     };
 
+    // --continue resumes with the same consents recorded at fresh-start
+    // time: read `overrides` and re-derive each named override from the
+    // persisted record so the resumed session behaves identically to the
+    // original without requiring the operator to re-supply flags.
+    // `discard-local-commits` gates Phase 1'; `allow-stale-lock` disables the
+    // tips-as-truth pull below (the lock stays replay's target).
+    let allow_stale_lock_resumed = record
+        .overrides
+        .contains(&op_state::Override::AllowStaleLock);
+    let discard_local_commits_resumed = record
+        .overrides
+        .contains(&op_state::Override::DiscardLocalCommits);
+
     // Re-pin the source snapshot for this --continue session. The source's
     // T0 is "the start of the (resumed) replay" — re-pinning here gives
     // replay's re-entry rule a coherent set of inputs. Per-repo no-op
     // detection handles already-converged repos cleanly.
     let project_vcs = project_vcs();
-    let snapshot = pin_source_snapshot(project_vcs.as_ref(), &source_project_dir)?;
-
-    // --continue resumes with the same consents recorded at fresh-start
-    // time: read `overrides` and re-derive each named override from the
-    // persisted record so the resumed session behaves identically to the
-    // original without requiring the operator to re-supply flags.
-    // Note: `allow-stale-lock` was checked only in guard (not needed in
-    // resumption phases); only `discard-local-commits` gates Phase 1'.
-    let discard_local_commits_resumed = record
-        .overrides
-        .contains(&op_state::Override::DiscardLocalCommits);
+    let pull_tips_from = (matches!(recorded_verb, MachineVerb::Sync)
+        && source_is_workweave
+        && !allow_stale_lock_resumed)
+        .then_some(source_workspace_dir.as_path());
+    let snapshot = pin_source_snapshot(project_vcs.as_ref(), &source_project_dir, pull_tips_from)?;
 
     Ok(OpContext {
         cwd_ctx,
@@ -3347,6 +3364,8 @@ struct RepoRelation {
     /// `Some(n)` only when `relation == Ahead`: how many commits HEAD is ahead
     /// of the lock (`lock..HEAD`). `None` for every other relation.
     ahead_count: Option<usize>,
+    /// The checkout's HEAD at classification time; `None` when unreadable.
+    tip: Option<ResolvedRevisionId>,
 }
 
 /// Result of classifying a workspace's committed lock against its repos: the
@@ -3419,6 +3438,7 @@ fn classify_lock_relations(
             repo_path: repo_path.clone(),
             relation,
             ahead_count,
+            tip,
         });
     }
     LockClassification {
@@ -3737,12 +3757,16 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .get_entry(repo_path)
             .map(|e| vcs_for(e.vcs_type))
             .unwrap_or_else(crate::vcs::probe_vcs);
+        let target = match snapshot.pull_tips.get(repo_path) {
+            Some(tip) => tip.clone(),
+            None => lock_entry.version.clone(),
+        };
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
             pre_replay_tip: vcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
             abs,
             vcs,
-            target: lock_entry.version.clone(),
+            target,
         });
     }
 
@@ -3970,6 +3994,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn pin_source_snapshot(
     source_vcs: &dyn Vcs,
     source_project_dir: &Path,
+    pull_tips_from: Option<&Path>,
 ) -> anyhow::Result<SourceSnapshot> {
     let source_project_tip = source_vcs
         .head_revision(source_project_dir)
@@ -4021,10 +4046,25 @@ fn pin_source_snapshot(
         })?
     };
 
+    let pull_tips = match pull_tips_from {
+        Some(source_workspace_dir) => classify_lock_relations(
+            source_workspace_dir,
+            &source_manifest,
+            Some(&raw_source_lock),
+        )
+        .relations
+        .into_iter()
+        .filter(|r| r.relation == LockRelation::Ahead)
+        .filter_map(|r| r.tip.map(|tip| (r.repo_path, tip)))
+        .collect(),
+        None => std::collections::BTreeMap::new(),
+    };
+
     Ok(SourceSnapshot {
         source_project_tip,
         source_manifest,
         raw_source_lock,
+        pull_tips,
     })
 }
 
@@ -6819,6 +6859,7 @@ mod tests {
             repo_path: crate::manifest::RepoPath::new("github/org/lib").unwrap(),
             relation: LockRelation::Behind,
             ahead_count: None,
+            tip: None,
         };
         for side in [Side::Source, Side::Destination] {
             let msg = lock_relation_refusal(side, "ws", "app", &[&offending])
@@ -6842,6 +6883,7 @@ mod tests {
             repo_path: crate::manifest::RepoPath::new("github/org/lib").unwrap(),
             relation: LockRelation::Diverged,
             ahead_count: None,
+            tip: None,
         };
         let msg = lock_relation_refusal(Side::Source, "ws", "app", &[&diverged])
             .expect("non-empty offending set yields a refusal");

@@ -204,6 +204,12 @@ fn relation_ok_sync_to_succeeds() {
         .current_dir(&f.ww.root)
         .assert()
         .success();
+    // The landing DELIVERED: main's project repo advanced to ww's tip.
+    assert_eq!(
+        head(&f.main.project_dir),
+        head(&f.ww.project_dir),
+        "sync-to must land ww's project commit on main"
+    );
 }
 
 #[test]
@@ -222,6 +228,12 @@ fn relation_ok_sync_succeeds() {
         .current_dir(&f.ww.root)
         .assert()
         .success();
+    // The pull DELIVERED: ww's manifest repo advanced to main's tip.
+    assert_eq!(
+        head(&f.ww.manifest_repo),
+        head(&f.main.manifest_repo),
+        "pull must deliver main's locked advance to ww"
+    );
 }
 
 // ===========================================================================
@@ -304,6 +316,21 @@ fn relation_ahead_sync_from_workweave_source_pulls_tips_with_note() {
         src_lock_before, src_lock_after,
         "tips-as-truth must NOT touch the source's lock file"
     );
+
+    // The pull DELIVERED the tips the note announced: main's manifest repo
+    // landed on src's committed HEAD (not src's stale lock), and main's
+    // relock pinned it.
+    let main_lib = head(&f.main.manifest_repo);
+    let src_lib = head(&src.manifest_repo);
+    assert_eq!(
+        main_lib, src_lib,
+        "pull must deliver the source's committed tips"
+    );
+    let main_lock = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        main_lock.contains(&src_lib),
+        "destination lock must pin the delivered tip; lock:\n{main_lock}"
+    );
 }
 
 /// sync (pull) from a PRIMARY-weave source whose lock is behind HEAD (`Ahead`):
@@ -314,6 +341,7 @@ fn relation_ahead_sync_from_primary_source_refuses() {
     let f = fixture();
     // main (primary) advances its manifest repo WITHOUT relocking → lock behind
     // HEAD on the primary source.
+    let ww_lib_before = head(&f.ww.manifest_repo);
     commit_file(&f.main.manifest_repo, "p.txt", "p\n", "main: advance");
 
     let assert = rwv()
@@ -326,6 +354,12 @@ fn relation_ahead_sync_from_primary_source_refuses() {
         stderr.contains("lock-freshness precondition failed")
             && stderr.contains("--allow-stale-lock"),
         "primary source lock-behind-HEAD must refuse naming the flag; got:\n{stderr}"
+    );
+    // The refusal delivered NOTHING: ww's manifest repo did not move.
+    assert_eq!(
+        head(&f.ww.manifest_repo),
+        ww_lib_before,
+        "a refused pull must leave the destination untouched"
     );
 }
 
