@@ -773,7 +773,14 @@ pub fn run() -> anyhow::Result<()> {
                     }) => {
                         let source_root = match from.as_deref() {
                             None => ctx.active_path().to_path_buf(),
-                            Some("primary") => primary_root.to_path_buf(),
+                            Some(s)
+                                if matches!(
+                                    s.parse::<sync::SyncSource>(),
+                                    Ok(sync::SyncSource::Primary)
+                                ) =>
+                            {
+                                primary_root.to_path_buf()
+                            }
                             Some(s) => {
                                 let p = std::path::PathBuf::from(s);
                                 if p.is_absolute() {
