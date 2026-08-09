@@ -1332,7 +1332,14 @@ pub fn create_workweave(
                 // `--discard-unmerged-commits` at CLI dispatch. The scan
                 // proved there is nothing unmerged either, so every recorded ref
                 // gets a `Merged` warrant on its own merits.
-                delete_workweave(primary_root, project, name, true, None)?;
+                delete_workweave(
+                    primary_root,
+                    project,
+                    name,
+                    Some(&workweave_dir),
+                    true,
+                    None,
+                )?;
             } else {
                 // No valid marker for this project, so delete_workweave
                 // cannot be used (it would load the wrong manifest).
@@ -2563,10 +2570,18 @@ fn retire_recorded_refs(
 /// cannot safely proceed because the destructive worktree-remove + dir
 /// removal would orphan the dependents. The operator must repair topology
 /// via `rwv doctor` first.
+///
+/// `expected_dir` is the directory the caller believes `name` denotes, for a
+/// caller that reached this workweave through a path rather than through the
+/// name alone. The registry decides where the deletion lands either way; a
+/// caller that supplies one and disagrees with the registry gets a refusal
+/// instead of a deletion somewhere else. A caller holding nothing but a name
+/// passes `None`.
 pub fn delete_workweave(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
+    expected_dir: Option<&Path>,
     discard_uncommitted: bool,
     discard_unmerged: Option<DiscardUnmergedConsent>,
 ) -> anyhow::Result<()> {
@@ -2576,6 +2591,7 @@ pub fn delete_workweave(
         ws_root,
         project,
         name,
+        expected_dir,
         discard_uncommitted,
         discard_unmerged,
         false,
@@ -2633,10 +2649,18 @@ pub(crate) fn delete_workweave_for_retire(
 /// silent no-op or, worse, a computed guess at where the directory might
 /// live. `workweave_path_for` (the pre-registry reconstruction) has been
 /// deleted; there is no fallback address rwv is willing to invent.
+///
+/// The round-trip validates the resolved directory against `(ws_root,
+/// project)` — which a wrong-but-registered workweave of the same project
+/// satisfies. It witnesses that the victim is a legitimate workweave, never
+/// that it is the one the caller meant; `expected_dir` is the only thing that
+/// witnesses the latter, and only a caller that already holds a path can
+/// supply it.
 fn delete_workweave_inner(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
+    expected_dir: Option<&Path>,
     discard_uncommitted: bool,
     discard_unmerged: Option<DiscardUnmergedConsent>,
     skip_op_guard: bool,
@@ -2645,6 +2669,21 @@ fn delete_workweave_inner(
     // (create --replace-existing also gets here indirectly via
     // `can_use_structured_delete` in create_workweave).
     let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
+    if let Some(expected) = expected_dir {
+        let expected = CanonicalPath::of(expected);
+        if CanonicalPath::of(&workweave_dir) != expected {
+            bail!(
+                "workweave `{name}` of project `{project}` is registered at {registered}, \
+                 but the caller reached it through {expected} — refusing to delete either.\n\n\
+                 Two directories cannot both be this workweave. Run `rwv doctor` to find \
+                 out which of them the registry should name.",
+                name = name.as_str(),
+                project = project.as_str(),
+                registered = workweave_dir.display(),
+                expected = expected.as_path().display(),
+            );
+        }
+    }
     delete_workweave_inner_at(
         ws_root,
         project,
@@ -3518,7 +3557,14 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     // for the same reason: "Claude moved on" is not the
                     // operator consenting to lose their edits, and a refusal on
                     // stderr is strictly better than a silent destroy.
-                    delete_workweave(marker.primary(), marker.project(), &name, false, None)
+                    delete_workweave(
+                        marker.primary(),
+                        marker.project(),
+                        &name,
+                        Some(Path::new(&worktree_path)),
+                        false,
+                        None,
+                    )
                 });
                 if let Err(e) = outcome {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");

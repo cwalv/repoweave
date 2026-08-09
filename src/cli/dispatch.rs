@@ -327,6 +327,7 @@ pub fn workweave_delete(
         primary_root,
         project,
         name,
+        None,
         discard_uncommitted,
         discard_unmerged,
     )

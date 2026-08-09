@@ -300,6 +300,7 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
         &ws,
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("feat").unwrap(),
+        Some(ww.as_path()),
         false,
         None,
     )
@@ -359,6 +360,7 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
         &ws,
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("feat").unwrap(),
+        Some(ww.as_path()),
         false, // no waiver: alias dirty state must not be attributed here
         None,
     )
@@ -479,6 +481,7 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
         &ws,
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("wa").unwrap(),
+        Some(wa.as_path()),
         false,
         None,
     )
