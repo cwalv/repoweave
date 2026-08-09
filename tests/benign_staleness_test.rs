@@ -367,6 +367,64 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
     );
 }
 
+/// The same refusal on the topology this was first hit in: a child workweave
+/// landing into its parent workweave, where the parent picked up a commit
+/// without relocking. The target being workweave-typed rather than the primary
+/// changes nothing — the classification reads the target workspace either way —
+/// and the remedy still converges and delivers.
+#[test]
+fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
+    let f = fixture();
+    let weaveroot = f.main.root.parent().unwrap().join(".workweaves");
+    let child = create_workweave(&f.main, &weaveroot, "child");
+
+    // The parent workweave (ww) picks up a commit without relocking.
+    commit_file(&f.ww.manifest_repo, "p1.txt", "p1\n", "ww: parent commit");
+    commit_file(&child.project_dir, "note.txt", "n\n", "child: note");
+
+    let ww_project_before = head(&f.ww.project_dir);
+    let assert = rwv()
+        .args(["sync-to", &f.ww.root.to_string_lossy()])
+        .current_dir(&child.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("lock-freshness precondition failed")
+            && stderr.contains("target workspace 'ww'")
+            && stderr.contains("HEAD ahead of lock by 1 commits")
+            && stderr.contains("rwv lock --commit"),
+        "a workweave target's lock-behind state must refuse the same way; got:\n{stderr}"
+    );
+    assert_eq!(
+        head(&f.ww.project_dir),
+        ww_project_before,
+        "a refused sync-to must leave the workweave target's project repo untouched"
+    );
+
+    rwv()
+        .args(["lock", "--commit", "--project", PROJECT])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    rwv()
+        .args(["sync-to", &f.ww.root.to_string_lossy()])
+        .current_dir(&child.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        head(&f.ww.project_dir),
+        head(&child.project_dir),
+        "after the remedy the child's project commit must land in the parent workweave"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &f.ww.manifest_repo),
+        head(&child.manifest_repo),
+        "after the remedy both workweaves must agree on the manifest tip"
+    );
+}
+
 /// The remedy the refusal names has to actually work. Run exactly what the
 /// message says — `rwv lock --commit --project <p>` in the TARGET workspace —
 /// and the landing converges and DELIVERS: the target's manifest tip and
