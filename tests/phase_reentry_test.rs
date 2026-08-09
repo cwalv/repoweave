@@ -1010,3 +1010,91 @@ fn re_entering_each_phase_independently_completes_to_a_clean_state() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// A resume at advance-target re-enters relock first.
+//
+// Advance-target publishes CWD's manifest tips AND CWD's lock. Between the
+// failure that stranded the op and the resume, the operator moves CWD — that is
+// what a resume is for — which leaves the lock pinning revisions CWD no longer
+// holds. These tests assert the DELIVERED state: the target's lock names the
+// target's manifest tip. Exit code and the completion sentence are both 0 and
+// present either way.
+// ---------------------------------------------------------------------------
+
+fn write_sync_to_record_with_strategy(
+    owner: &Path,
+    target: &Path,
+    strategy: &str,
+    id: &str,
+) -> String {
+    let body = format!(
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"{strategy}\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
+         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+        src = owner.display(),
+        tgt = target.display(),
+    );
+    std::fs::write(owner.join(".rwv-op"), body).unwrap();
+    id.to_string()
+}
+
+/// Plant a stranded advance-target op whose CWD moved after the strand, resume
+/// it, and return `(delivered_target_tip, target_lock_contents)`.
+fn resume_stranded_advance_target(tmp: &Path, strategy: &str, id: &str) -> (String, String) {
+    let (primary, ww, _sha) = make_shared_workspaces(tmp);
+
+    // The operator's post-strand fix: a manifest-repo commit in CWD that the
+    // committed lock does not pin.
+    std::fs::write(ww.server_dir.join("fix.txt"), "operator fix\n").unwrap();
+    git(&["add", "fix.txt"], &ww.server_dir);
+    git(&["commit", "-m", "ww: post-strand fix"], &ww.server_dir);
+    let ww_server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+
+    let op_id = write_sync_to_record_with_strategy(&ww.root, &primary.root, strategy, id);
+    write_lease(&primary.root, &ww.root);
+    create_savepoint(&ww.project_dir, &op_id);
+    create_savepoint(&ww.server_dir, &op_id);
+
+    rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    let delivered = git_out(&["rev-parse", "refs/heads/main"], &primary.server_dir);
+    assert_eq!(
+        delivered, ww_server_tip,
+        "the resume must land CWD's post-strand tip on the target"
+    );
+    let target_lock = std::fs::read_to_string(primary.project_dir.join("rwv.lock")).unwrap();
+    (delivered, target_lock)
+}
+
+#[test]
+fn advance_target_resume_relocks_so_the_target_lock_pins_what_it_delivered() {
+    let tmp = common::tempdir().unwrap();
+    let (delivered, target_lock) =
+        resume_stranded_advance_target(tmp.path(), "rebase", "reentry-test-relock-on-resume");
+    assert!(
+        target_lock.contains(&delivered),
+        "the target's lock must pin the manifest tip the resume delivered ({delivered}); lock:\n\
+         {target_lock}"
+    );
+}
+
+/// `--strategy=ff` makes REPLAY a no-op, not relock: the operator's post-strand
+/// fix moved CWD's manifest repo under either strategy, so the lock has to be
+/// regenerated under either one too.
+#[test]
+fn advance_target_resume_relocks_under_ff_strategy_too() {
+    let tmp = common::tempdir().unwrap();
+    let (delivered, target_lock) =
+        resume_stranded_advance_target(tmp.path(), "ff", "reentry-test-relock-on-resume-ff");
+    assert!(
+        target_lock.contains(&delivered),
+        "the target's lock must pin the manifest tip the resume delivered ({delivered}); lock:\n\
+         {target_lock}"
+    );
+}

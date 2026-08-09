@@ -657,7 +657,7 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
 
 /// Write `record` to the `.rwv-op` file in `workspace_dir`.
 ///
-/// This is the **phase-persistence write path**: [`advance_phase`] and any
+/// This is the **phase-persistence write path**: [`set_phase`] and any
 /// caller updating fields on an *already-acquired* owner record (overrides,
 /// converged tips, `--continue` restarts) call it. It overwrites any existing
 /// file.
@@ -687,11 +687,13 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
     Ok(Some(record))
 }
 
-/// Advance the `phase` field in the owner record at `workspace_dir`.
+/// Record `new_phase` as the phase in progress in the owner record at
+/// `workspace_dir`.
 ///
-/// Reads the existing file, updates the phase, writes back. This is the
-/// one persistence write in the driver loop.
-pub fn advance_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()> {
+/// Reads the existing file, updates the phase, writes back. The driver loop's
+/// post-transition write is one caller; a resume that re-enters an earlier
+/// phase is the other, so this is not ordered.
+pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
         anyhow::anyhow!(
             "no owner record found at {} to advance phase",
@@ -1612,7 +1614,7 @@ mod tests {
     }
 
     #[test]
-    fn advance_phase_updates_owner_file() {
+    fn set_phase_updates_owner_file() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
@@ -1623,7 +1625,7 @@ mod tests {
             PathBuf::from("/tgt"),
         );
         write_owner(dir, &record).unwrap();
-        advance_phase(dir, OpPhase::Relock).unwrap();
+        set_phase(dir, OpPhase::Relock).unwrap();
         let updated = read_owner(dir).unwrap().unwrap();
         assert_eq!(updated.phase, OpPhase::Relock);
     }

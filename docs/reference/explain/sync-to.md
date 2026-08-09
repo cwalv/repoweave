@@ -116,6 +116,13 @@ If any step fails, op-state is left in place so the operator can resolve and
 rerun with `rwv sync-to --continue`, or use `rwv abort` to roll back both
 workspaces.
 
+A resume recorded at `advance-target` re-enters `relock` first, and says so on
+the line it prints. Advance-target publishes CWD's manifest tips and CWD's lock
+together; relock is what makes those two agree. Resolving the failure means
+moving CWD, so the agreement relock reached before the failure no longer holds —
+re-entering it gives the resumed path what the fresh path already has, relock
+immediately before advance-target with no operator window between them.
+
 ## Invocation
 
 ```
@@ -145,6 +152,8 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   Default is `1` (serial).
 - `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
   resolving a conflict). The recorded parameters must match — mismatch is an error.
+  A resume recorded at `advance-target` re-enters `relock` first, so the lock it
+  lands pins the tips it lands.
 
 Run `rwv --help sync-to` for the full clap surface.
 

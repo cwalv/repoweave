@@ -523,6 +523,54 @@ fn allow_stale_lock_target_ahead_still_fails_at_step_3_without_blaming_concurren
     );
 }
 
+/// The full stranded-then-resumed shape, end to end: the consented path strands
+/// the op at advance-target, the operator rebases CWD onto the target's live tip
+/// by hand, and resumes. The resume reports success — so what it delivered has to
+/// be right. The lock the target ends up with must pin the manifest tip the same
+/// resume just gave it, not the revision CWD held before the operator's fix.
+#[test]
+fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the_tip() {
+    let f = fixture();
+
+    commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
+    let target_live = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
+    commit_file(&f.ww.manifest_repo, "feature.txt", "f\n", "ww: feature");
+
+    rwv()
+        .args([
+            "sync-to",
+            &f.main.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+
+    // The operator's fix: put CWD's manifest repo on top of the target's live
+    // tip so step 3's fast-forward can proceed. Nothing relocks this.
+    git(&["rebase", &target_live], &f.ww.manifest_repo);
+    let cwd_lib_after_fix = head(&f.ww.manifest_repo);
+
+    rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+
+    let target_lib = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    assert_eq!(
+        target_lib, cwd_lib_after_fix,
+        "the resume must land the manifest tip CWD held after the operator's fix"
+    );
+    let target_lock = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        target_lock.contains(&target_lib),
+        "the lock the resume published must pin the tip the same resume delivered \
+         ({target_lib}); lock:\n{target_lock}"
+    );
+}
+
 /// sync (pull) from a WORKWEAVE source whose lock is behind HEAD (`Ahead`):
 /// tips-as-truth. The pull prints a NOTE naming the source's lag, pulls the
 /// source's committed tips, and leaves the source's lock file alone (no

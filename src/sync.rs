@@ -1681,7 +1681,7 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
 // The persisted record's phase starts at `Replay`. The driver loop is:
 //
 //   loop {
-//       op_state::advance_phase(owner, state.phase);   // one persistence point
+//       op_state::set_phase(owner, state.phase);   // one persistence point
 //       state.phase = run_phase(ctx, state.phase)?;
 //       if state.terminal { break }
 //   }
@@ -1912,17 +1912,17 @@ fn run_machine(
 ///
 /// Invariant: the persisted phase is the phase in progress. The owner record's
 /// `phase` field is the SINGLE source of truth and the persistence point is
-/// the post-transition `advance_phase` write — entry into the loop relies on
+/// the post-transition `set_phase` write — entry into the loop relies on
 /// either `guard_and_mark`'s initial write (fresh start: phase=replay) or the
 /// prior iteration's post-transition write (resume: phase=whatever crashed).
 ///
 /// Crash semantics:
 ///   - Inside `run_phase`: record stays at the phase that was running →
 ///     `--continue` re-enters that phase (idempotent by construction).
-///   - After `run_phase` returned but before `advance_phase` of the next phase
+///   - After `run_phase` returned but before `set_phase` of the next phase
 ///     committed: record still says current → `--continue` re-runs the just-
 ///     completed phase (idempotent), then transitions.
-///   - After `advance_phase` of the next phase committed: record says next →
+///   - After `set_phase` of the next phase committed: record says next →
 ///     `--continue` enters next directly.
 fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     loop {
@@ -1933,7 +1933,7 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 // Post-transition write: the canonical (and only) persistence
                 // point. Until this commits, a crash leaves the record at the
                 // just-completed phase, which re-runs idempotently on resume.
-                op_state::advance_phase(&ctx.owner_workspace_dir, p)
+                op_state::set_phase(&ctx.owner_workspace_dir, p)
                     .context("failed to advance phase between iterations")?;
             }
             None => {
@@ -1985,6 +1985,25 @@ fn next_after_advance_target(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
         Some(op_state::OpPhase::Retire)
     } else {
         None
+    }
+}
+
+/// The phase a `--continue` enters, given the phase the record was left at.
+///
+/// Advance-target publishes CWD's tips AND CWD's lock to the target; relock is
+/// what makes those two agree. A resume exists because the operator changed CWD
+/// after the op stranded, so the agreement relock established before the strand
+/// no longer holds — re-entering relock restores the property every other path
+/// into advance-target has: relock ran immediately before it with no operator
+/// window in between.
+///
+/// Replay reaches relock by running forward. Retire runs after the target was
+/// already advanced, and its merged-check refuses a CWD that moved rather than
+/// publishing it, so retire is entered as recorded.
+fn resume_entry_phase(recorded: &op_state::OpPhase) -> op_state::OpPhase {
+    match recorded {
+        op_state::OpPhase::AdvanceTarget => op_state::OpPhase::Relock,
+        other => other.clone(),
     }
 }
 
@@ -2740,14 +2759,6 @@ fn load_continuing_context<'a>(
     let (record, owner_workspace_dir) = op_state::resume(&invocation_workspace_dir)?;
     let op_id = OpId::from_string(record.id.clone());
 
-    if emit_text {
-        eprintln!(
-            "continuing {verb_str} (op {op_id}, mid `{phase}`)",
-            verb_str = record.verb,
-            phase = record.phase,
-        );
-    }
-
     // The recorded verb is authoritative; cross-check against the entry-point
     // verb. (Same kind of belt-and-braces as the destructive-ops tripwire:
     // catches "operator ran `rwv sync --continue` on a `rwv sync-to` op", which
@@ -2764,6 +2775,32 @@ fn load_continuing_context<'a>(
             invoked = op_state::resume_command(verb.op_verb()),
             resume = op_state::resume_command(record.verb),
         );
+    }
+
+    // Persist the re-entered phase before the driver reads it: the record stays
+    // the single source of truth, so a crash inside the re-entered phase resumes
+    // there rather than back at the phase that stranded.
+    let entry_phase = resume_entry_phase(&record.phase);
+    if entry_phase != record.phase {
+        op_state::set_phase(&owner_workspace_dir, entry_phase.clone())
+            .context("failed to record the phase this resume re-enters")?;
+    }
+
+    if emit_text {
+        if entry_phase == record.phase {
+            eprintln!(
+                "continuing {verb_str} (op {op_id}, mid `{phase}`)",
+                verb_str = record.verb,
+                phase = record.phase,
+            );
+        } else {
+            eprintln!(
+                "continuing {verb_str} (op {op_id}, mid `{phase}`); re-entering `{entry_phase}` \
+                 first so the lock this lands pins the tips it lands",
+                verb_str = record.verb,
+                phase = record.phase,
+            );
+        }
     }
 
     let strategy = record
@@ -4138,13 +4175,13 @@ fn pin_source_snapshot(
 // (write_lock + commit_lock_file_with_message both short-circuit when the
 // content hasn't changed). The per-repo HEAD reads that populate
 // `converged_tips` are pure reads.
+//
+// Runs for every verb and strategy. `--strategy=ff` makes replay a no-op, not
+// this phase: whatever last moved CWD's manifest repos — an operator's fix
+// between a stranded op and its resume, most of all — leaves a lock that no
+// longer pins them, and advance-target publishes that lock to the target.
 
 fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
-    // sync-to with `--strategy=ff`: relock is a no-op (replay was a no-op).
-    if matches!(ctx.verb, op_state::OpVerb::SyncTo) && ctx.strategy == SyncStrategy::Ff {
-        return Ok(());
-    }
-
     let emit_text = ctx.handler.emit_text();
 
     // Reload the project after replay (manifest may now include newly-added

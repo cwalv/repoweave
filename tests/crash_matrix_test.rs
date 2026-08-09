@@ -32,10 +32,10 @@
 //! > Crash semantics:
 //! >   - Inside `run_phase`: record stays at the phase that was running →
 //! >     `--continue` re-enters that phase (idempotent by construction).
-//! >   - After `run_phase` returned but before `advance_phase` of the next
+//! >   - After `run_phase` returned but before `set_phase` of the next
 //! >     phase committed: record still says current → `--continue` re-runs
 //! >     the just-completed phase (idempotent), then transitions.
-//! >   - After `advance_phase` of the next phase committed: record says
+//! >   - After `set_phase` of the next phase committed: record says
 //! >     next → `--continue` enters next directly.
 //!
 //! ## The matrix
@@ -1360,7 +1360,7 @@ fn cell_j_advance_target_sync_to_owner_continue() {
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     // Pre-advance primary's server AND project to ww's tips (modelling
-    // advance-target complete but advance_phase not yet committed).
+    // advance-target complete but set_phase not yet committed).
     git(
         &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
         &primary.server_dir,

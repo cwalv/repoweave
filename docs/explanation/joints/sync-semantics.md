@@ -112,16 +112,17 @@ stateDiagram-v2
     retire --> op_kept : check failed
 
     op_kept : op-state kept
-    op_kept --> replay : --continue (recorded phase)
-    op_kept --> relock : --continue (recorded phase)
-    op_kept --> advance_target : --continue (recorded phase)
-    op_kept --> retire : --continue (recorded phase)
+    op_kept --> replay : --continue (recorded replay)
+    op_kept --> relock : --continue (recorded relock)
+    op_kept --> relock : --continue (recorded advance-target)
+    op_kept --> retire : --continue (recorded retire)
     op_kept --> [*] : rwv abort (restore and clear)
 
     note right of op_kept
-        --continue re-enters whichever phase
-        the record names — only one arc fires.
-        rwv abort restores via savepoint refs.
+        --continue enters the phase the record
+        names, except advance-target, which
+        re-enters relock first — only one arc
+        fires. rwv abort restores via savepoints.
     end note
 ```
 
@@ -153,6 +154,18 @@ entering it, so a crash at any instruction re-enters the same phase on
 resume (idempotent by construction). `--continue` for both verbs is:
 load the owner record (following a lease pointer if invoked from a
 non-owner workspace), enter the driver loop.
+
+One phase is not re-entered where it was recorded. A resume at
+advance-target re-enters relock first, and the rewind is persisted before
+the loop reads it, so the record stays the single source of truth.
+Advance-target publishes CWD's manifest tips and CWD's lock together, and
+relock is what makes those two agree; resolving whatever stranded the op
+means moving CWD, which breaks the agreement relock had already reached.
+Re-entering relock gives the resumed path the property the fresh path has
+by construction — relock ran immediately before advance-target, with no
+operator window between them. Retire is entered as recorded: the target
+is already advanced by then, and retire's merged-check refuses a CWD that
+moved rather than publishing it.
 
 ### guard
 
@@ -257,8 +270,10 @@ by advance-target and by abort's HEAD-verified restore.
 
 Re-entry rule: regenerating a lock that is already current is a no-op.
 
-`--strategy=ff` with `rwv sync-to`: relock is a no-op (replay was a
-no-op).
+Relock runs under every verb and strategy. `--strategy=ff` makes replay a
+no-op, not this phase: whatever last moved CWD's manifest repos — an
+operator's fix between a stranded op and its resume, most of all — leaves
+a lock that no longer pins them, and advance-target publishes that lock.
 
 ### advance-target (sync-to only)
 
