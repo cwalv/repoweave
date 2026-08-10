@@ -392,6 +392,15 @@ impl Vcs for FakeVcs {
         unsupported("derived_content_dropped_by_replay")
     }
 
+    fn changed_paths_between(
+        &self,
+        _repo: &Path,
+        _from: &ResolvedRevisionId,
+        _to: &ResolvedRevisionId,
+    ) -> Result<Vec<String>, VcsError> {
+        unsupported("changed_paths_between")
+    }
+
     fn set_replay_exclusion(&self, _repo: &Path, _path: &Path) -> Result<(), VcsError> {
         unsupported("set_replay_exclusion")
     }

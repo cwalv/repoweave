@@ -2182,6 +2182,21 @@ pub trait Vcs: Send + Sync {
         landed: &ResolvedRevisionId,
     ) -> Result<Vec<String>, VcsError>;
 
+    /// File paths (relative to `repo`'s root) whose content differs between
+    /// the trees at `from` and `to`.
+    ///
+    /// A comparison of the two endpoint trees, not a history walk: a path
+    /// changed and changed back along the way is absent, and which side a
+    /// difference originated on is not part of the answer.
+    ///
+    /// For git: `git diff --name-only -z <from> <to>`.
+    fn changed_paths_between(
+        &self,
+        repo: &Path,
+        from: &ResolvedRevisionId,
+        to: &ResolvedRevisionId,
+    ) -> Result<Vec<String>, VcsError>;
+
     /// Configure `repo` so that during replay (rebase, merge) any changes to
     /// `path` are silently overridden — the replay target's version of `path`
     /// always wins.

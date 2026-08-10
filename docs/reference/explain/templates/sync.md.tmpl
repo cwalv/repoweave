@@ -31,6 +31,17 @@ op-start relock: the destination's project repo is itself a replay target, and
 a relock commit made before Phase 1' would leave `--strategy ff` a project
 repo it can no longer fast-forward.
 
+Sync moves committed state only; it never fires integration hooks. Generated
+ecosystem state that is rwv-owned and gitignored (a project's `Cargo.lock`
+and its `.rwv-owned-digests` ledger) therefore stays exactly as workweave
+creation left it, even when the source's own attested generation has moved
+on. When the delivered changes touch inputs that state is derived from — the
+project's `rwv.toml`, a member's detection manifest such as `Cargo.toml` —
+sync prints a trailing note naming `rwv materialize`, the verb whose mandate
+re-deriving it is. The note prints only in a checkout that materializes the
+synced project (a workweave always; a primary only for the active project)
+and only when an input actually moved: source-only deliveries stay quiet.
+
 `role: reference` repos materialized as symlinks (the default; see
 `rwv explain workweave`) are **excluded from the sync graph**: they
 are read-only aliases of the single canonical clone, identical across
@@ -85,7 +96,9 @@ Run `rwv --help sync` for the full clap surface.
 
 ## Output
 
-Default text output is one line per repo summarizing the outcome.
+Default text output is one line per repo summarizing the outcome, plus a
+trailing `note:` line naming `rwv materialize` when delivered changes
+touched materialized inputs (text output only).
 
 Under `--json` with `-j 1` (default) or `--json` alone, output is the
 pretty-printed envelope:

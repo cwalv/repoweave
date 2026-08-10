@@ -1182,6 +1182,18 @@ impl Vcs for GitVcs {
             .collect())
     }
 
+    fn changed_paths_between(
+        &self,
+        repo: &Path,
+        from: &ResolvedRevisionId,
+        to: &ResolvedRevisionId,
+    ) -> Result<Vec<String>, VcsError> {
+        Ok(nul_terminated_fields(&Self::run(
+            &["diff", "--name-only", "-z", from.as_str(), to.as_str()],
+            repo,
+        )?))
+    }
+
     fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError> {
         let attrs_path = repo.join(".gitattributes");
         let path_str = path.to_str().ok_or_else(|| VcsError::Io {

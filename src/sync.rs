@@ -3,10 +3,13 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
+use crate::integration::Integration;
+use crate::integration_runner::enabled_integrations;
+use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
-    project_repo_key, LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName,
-    WorkweaveNameError,
+    project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath, Role,
+    WorkweaveName, WorkweaveNameError,
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
@@ -4502,8 +4505,92 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 // `--continue` then re-runs that phase (it's idempotent) and reaches
 // cleanup again.
 
+/// Tree difference between a repo's pre-op savepoint and its current HEAD —
+/// what the op left changed in this checkout. `None` when the repo has no
+/// savepoint (it was born during the op; the membership change that birthed
+/// it is the project manifest's to report) or when nothing moved.
+fn delivered_changes(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) -> Option<Vec<String>> {
+    let pre = vcs.resolve_savepoint(repo, op_id.as_str())?;
+    let head = vcs.head_revision(repo).ok()?;
+    if pre == head {
+        return None;
+    }
+    vcs.changed_paths_between(repo, &pre, &head).ok()
+}
+
+/// `repo: file` pairs among the delivered changes that are inputs of the
+/// materialized project: the project manifest, plus each member's detection
+/// manifests for the integrations the project enables.
+///
+/// Generated ecosystem state is derived from exactly these inputs, and sync
+/// never fires the hooks that would re-derive it — materialization is
+/// activation's mandate — so a hit means this checkout's generated state may
+/// no longer agree with the inputs sync just delivered.
+///
+/// Empty when this root does not present the synced project — then nothing
+/// is materialized here to go stale. The root's own identity files answer
+/// that, not the resolved project name: `--project` can aim a primary's sync
+/// at a project its pointer does not present, and the note must stay quiet
+/// for exactly that delivery.
+fn delivered_materialized_input_changes(ctx: &OpContext<'_>) -> Vec<String> {
+    let presented = crate::workspace::observe_root(&ctx.cwd_workspace_dir)
+        .and_then(|obs| obs.presented_project().cloned());
+    if presented.as_ref() != Some(&ctx.cwd_project_name) {
+        return Vec::new();
+    }
+    let Ok(project) = Project::from_dir_skip_lock(&ctx.cwd_project_dir) else {
+        return Vec::new();
+    };
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let default_config = IntegrationConfig::default();
+    let member_inputs: std::collections::BTreeSet<&str> =
+        enabled_integrations(&integrations, &project.manifest, &default_config)
+            .flat_map(|(integration, _)| integration.detection_manifests().iter().copied())
+            .collect();
+
+    let mut hits = Vec::new();
+    if let Some(changed) =
+        delivered_changes(ctx.project_vcs.as_ref(), &ctx.cwd_project_dir, &ctx.op_id)
+    {
+        if changed.iter().any(|p| p == Manifest::FILE_NAME) {
+            hits.push(format!("{}: {}", project_repo_key(), Manifest::FILE_NAME));
+        }
+    }
+    for (repo_path, entry) in project.manifest.iter_entries() {
+        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        if !checkout_is_syncable(&abs) {
+            continue;
+        }
+        let vcs = vcs_for(entry.vcs_type);
+        let Some(changed) = delivered_changes(vcs.as_ref(), &abs, &ctx.op_id) else {
+            continue;
+        };
+        for file in changed
+            .iter()
+            .filter(|p| member_inputs.contains(p.as_str()))
+        {
+            hits.push(format!("{repo_path}: {file}"));
+        }
+    }
+    hits
+}
+
 fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
+
+    // Before the savepoints go: they are the pre-op tips the staleness note
+    // reads its delivered ranges from.
+    if matches!(ctx.verb, op_state::OpVerb::Sync) && emit_text {
+        let stale = delivered_materialized_input_changes(ctx);
+        if !stale.is_empty() {
+            eprintln!(
+                "note: delivered changes touch materialized inputs ({}); run `rwv materialize` \
+                 to bring the generated ecosystem state up to date",
+                stale.join(", ")
+            );
+        }
+    }
 
     // Savepoint refs (`refs/rwv/pre-op/*`) live in the shared clone refdb, not
     // in any worktree, so `git update-ref -d` from ANY live worktree of the
