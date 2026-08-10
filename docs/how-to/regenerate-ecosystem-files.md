@@ -23,7 +23,7 @@ rwv activate <project>
 2. Regenerates ecosystem workspace files in `projects/<project>/` from its current `rwv.toml`.
 3. Symlinks those files to the weave directory so build tools see them where they expect.
 
-The ecosystem install step runs automatically as part of activation (e.g., `npm install`, `uv sync`, `cargo generate-lockfile`). Pass `--no-install` to generate the workspace config files without running installs:
+The ecosystem install step runs automatically as part of activation (e.g., `npm install`, `uv sync`, `cargo fetch`). It brings the ecosystem state up to current membership; it never advances a version an existing lock file pins. Pass `--no-install` to generate the workspace config files without running installs:
 
 ```bash
 rwv activate <project> --no-install

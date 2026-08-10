@@ -4,7 +4,8 @@
 
 Set the active project, symlink its ecosystem workspace files to the weave
 root, and run integration install hooks (`npm install`, `uv sync`,
-`cargo generate-lockfile`, etc.).
+`cargo fetch`, etc.). The hooks materialize what current membership implies;
+they never move a version an existing lock file pins.
 
 `activate` **never authors integration content**: it surfaces the files
 already committed in the project directory and wires up the workspace for

@@ -7623,11 +7623,11 @@ mod activate_hooks {
     }
 
     // -----------------------------------------------------------------------
-    // cargo-workspace: `cargo generate-lockfile`
+    // cargo-workspace: the lockfile step
     // -----------------------------------------------------------------------
 
     #[test]
-    fn cargo_workspace_activate_hook_runs_cargo_generate_lockfile() {
+    fn cargo_workspace_activate_hook_produces_the_first_lock() {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -7689,7 +7689,7 @@ mod activate_hooks {
         );
     }
 
-    /// R13: when `cargo generate-lockfile` fails, the error
+    /// R13: when the cargo lockfile step fails, the error
     /// must hint at `integrations.cargo-workspace.exclude` and `members`
     /// config as the resolution paths for duplicate crate names.
     ///

@@ -190,9 +190,10 @@ those hooks invoke rewrite the lockfiles they own: `Cargo.lock`, `package-lock.j
 This holds at `init --adopt` even when the adopted repo **commits** its lock. A generated lock is
 fully rwv-owned derived state with no user author (§"Lockfiles are fully owned",
 [lock-as-derived](./lock-as-derived.md)); committing one does not transfer the pen, so an adopt
-regenerating it is a refresh of derived state, not re-authoring of committed content. (For
-`Cargo.lock` the refresh is also a re-resolve: `cargo generate-lockfile` rebuilds an existing lock
-with the latest compatible version of every package.) The adopt-time no-clobber guarantee is
+regenerating it is a refresh of derived state, not re-authoring of committed content. (A refresh
+is not a re-resolve: an existing `Cargo.lock` is materialized with `cargo fetch`, which honours
+the versions it already records. `cargo generate-lockfile`, which rebuilds a lock with the latest
+compatible version of every package, runs only where no lock exists.) The adopt-time no-clobber guarantee is
 exactly the authoring-path guarantee: managed regions, rwv-computed generated artifacts (a
 `.code-workspace`, gita CSVs — written only by intent-mode `activate()`), and static-files entries
 (surfaced, never written) all survive an adopt byte-for-byte.

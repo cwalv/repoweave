@@ -2,7 +2,7 @@
 //!
 //! Generates the `[workspace]` region of a hybrid root `Cargo.toml` declaring
 //! every Rust repo in the active project as a workspace member, then lets
-//! `cargo generate-lockfile` produce a shared `Cargo.lock`.
+//! cargo produce a shared `Cargo.lock`.
 //!
 //! ## Hybrid file ownership (the cargo merge port)
 //!
@@ -320,8 +320,8 @@ impl CargoWorkspace {
     /// alone, no clone required, which is what makes this integration live
     /// during an `init --adopt` (the adopt clones only the project repo). The
     /// gate therefore admits workspaces whose members are not on disk, while
-    /// `cargo generate-lockfile` requires every member to resolve. This
-    /// answers, first-hand, the question cargo would answer by exiting 101.
+    /// cargo requires every member to resolve. This answers, first-hand, the
+    /// question cargo would answer by exiting 101.
     ///
     /// Member paths resolve relative to the manifest cargo reads, which is the
     /// surfacing symlink at `workspace_root` — cargo does not canonicalize
@@ -348,6 +348,16 @@ impl CargoWorkspace {
             // the same way ("failed to read <member>/Cargo.toml").
             .filter(|m| !workspace_root.join(m).join("Cargo.toml").exists())
             .collect()
+    }
+
+    /// Whether `lock_path` holds a dependency resolve that must survive.
+    ///
+    /// Unreadable or unparseable takes the same arm as absent: there is no
+    /// resolve in it to keep, and it is the arm that re-computes, which is what
+    /// makes [`Self::verify_cargo_lock`]'s parse-fail finding auto-fixable.
+    fn lock_records_a_resolve(lock_path: &Path) -> bool {
+        std::fs::read_to_string(lock_path)
+            .is_ok_and(|text| text.parse::<toml_edit::DocumentMut>().is_ok())
     }
 
     /// Compute the sorted member-path list and the nested-workspace
@@ -756,27 +766,26 @@ impl Integration for CargoWorkspace {
             );
         }
 
-        // Precheck: a lockfile cannot be generated for members that are not on
-        // disk yet, and `init --adopt` is precisely the moment when none of
-        // them are — it clones only the project repo. Left to cargo this exits
-        // 101, which `report_and_check_activate_hook_issues` turns into an
-        // adopt that exits 1 after having otherwise succeeded, naming
-        // `rwv doctor --fix` as the remedy (it re-runs this same hook against
-        // the same absent members and fails identically).
+        // Precheck: cargo cannot resolve members that are not on disk yet, and
+        // `init --adopt` is precisely the moment when none of them are — it
+        // clones only the project repo. Left to cargo this exits 101, which
+        // `report_and_check_activate_hook_issues` turns into an adopt that
+        // exits 1 after having otherwise succeeded, naming `rwv doctor --fix`
+        // as the remedy (it re-runs this same hook against the same absent
+        // members and fails identically).
         //
-        // Skipping is a DEFERRAL, not a suppression: lockfile refresh is
-        // triggered by workspace-membership change (see `Integration::
-        // activate_hook`), fetching the members IS such a change, and the
-        // activate that follows generates the lock then. The lock first
-        // appears when it first can. Note this is not adopt-specific — the
-        // condition is keyed on the members, so a fetch that half-failed gets
-        // the same treatment at the next `rwv activate`.
+        // Skipping is a DEFERRAL, not a suppression: the hook materializes what
+        // current membership implies, fetching the members IS a membership
+        // change, and the activate that follows materializes then. The lock
+        // first appears when it first can. Note this is not adopt-specific —
+        // the condition is keyed on the members, so a fetch that half-failed
+        // gets the same treatment at the next `rwv activate`.
         let managed_text = std::fs::read_to_string(&managed)
             .with_context(|| format!("reading {}", managed.display()))?;
         let unfetched = Self::unfetched_members(&managed_text, ctx.workspace_root);
         if !unfetched.is_empty() {
             eprintln!(
-                "[warning] cargo-workspace: skipping `cargo generate-lockfile` — {} \
+                "[warning] cargo-workspace: skipping the cargo lockfile step — {} \
                  workspace member(s) named by {} are not on disk: {}. This is the \
                  expected state directly after `rwv init --adopt`, which clones only \
                  the project repo. Run `rwv fetch` to clone them, then `rwv activate` \
@@ -788,20 +797,33 @@ impl Integration for CargoWorkspace {
             return Ok(());
         }
 
-        // Run from workspace_root: that's where activation symlinks are
-        // in place so cargo sees the workspace the user sees. output_dir
-        // (project_dir) is where the canonical Cargo.toml lives, but the
-        // member paths in it are resolved relative to the symlink at
-        // workspace_root.
+        let lock_path = ctx.output_dir.join("Cargo.lock");
+
+        // `cargo fetch` honours the resolve the lock already records, adding
+        // only what current membership requires and downloading what the result
+        // names. `cargo generate-lockfile` computes a fresh resolve and
+        // discards whatever the lock held, pinned versions included — cargo's
+        // `--help` does not say so. So the second is correct only where there
+        // is no recorded resolve to discard.
+        //
+        // Run from workspace_root either way: that's where activation symlinks
+        // are in place so cargo sees the workspace the user sees. output_dir
+        // (project_dir) is where the canonical Cargo.toml lives, but the member
+        // paths in it are resolved relative to the symlink at workspace_root.
+        let subcommand = if Self::lock_records_a_resolve(&lock_path) {
+            "fetch"
+        } else {
+            "generate-lockfile"
+        };
         let status = std::process::Command::new("cargo")
-            .arg("generate-lockfile")
+            .arg(subcommand)
             .current_dir(ctx.workspace_root)
             .status()
             .context("failed to run cargo")?;
 
         if !status.success() {
             anyhow::bail!(
-                "cargo generate-lockfile failed (exit {status}); \
+                "cargo {subcommand} failed (exit {status}); \
                  if the error names duplicate crate names across workspace members, \
                  resolve by one of: (a) opt a repo out via \
                  `integrations.cargo-workspace.exclude` in rwv.toml, or (b) use \
@@ -820,7 +842,6 @@ impl Integration for CargoWorkspace {
         // surfacing step precedes hooks and intentionally creates dangling
         // lockfile symlinks so generated content flows back into the project
         // directory).
-        let lock_path = ctx.output_dir.join("Cargo.lock");
 
         // "cargo wrote through the symlink" is the happy path, not a
         // guarantee: a bare `cargo build` run in a weave whose lock has
@@ -836,7 +857,7 @@ impl Integration for CargoWorkspace {
             .unwrap_or(false);
         if !lock_path.exists() && surfaced_is_real_file {
             anyhow::bail!(
-                "cargo generate-lockfile wrote {} but the canonical {} is still missing: \
+                "cargo {subcommand} wrote {} but the canonical {} is still missing: \
                  a real file occupies the surfacing path, so the generation could not \
                  flow back into the project directory. rwv does not overwrite a real \
                  file at a surfacing path — remove {} and re-run `rwv doctor --fix`",

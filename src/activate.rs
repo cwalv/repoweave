@@ -511,7 +511,7 @@ fn remove_activation_symlinks_in(
 /// Symlinks for files that do not yet exist on disk are skipped (the workweave
 /// is a view onto an existing project, so dangling symlinks are not useful).
 ///
-/// Install hooks (`npm install`, `cargo generate-lockfile`, …) are
+/// Install hooks (`npm install`, `cargo fetch`, …) are
 /// skipped at workweave creation: the workweave shares clones with
 /// primary, so install state is typically inherited rather than
 /// regenerated. The user can run `rwv activate --reinstall`-style

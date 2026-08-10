@@ -145,7 +145,7 @@ Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfi
 
 ### `rwv activate <project>`
 
-Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace files in the project directory, symlinks them to the weave directory, then runs integration install hooks (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.).
+Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace files in the project directory, symlinks them to the weave directory, then runs integration install hooks (`npm install`, `uv sync`, `cargo fetch`, etc.).
 
 | Flag | Effect |
 |---|---|

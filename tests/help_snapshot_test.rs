@@ -29,7 +29,7 @@ A cross-repo workspace manager
 Usage: rwv [OPTIONS] [COMMAND]
 
 Commands:
-  activate     Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
+  activate     Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
   prime        Print structured workspace context for agent system prompts
   resolve      Print workspace root path
   add          Add a repo to the active project

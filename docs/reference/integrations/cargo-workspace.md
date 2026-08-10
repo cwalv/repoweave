@@ -13,7 +13,7 @@ written or stripped by rwv.
 | Default enabled | yes |
 | Auto-detects | repos with `Cargo.toml` |
 | Manages | `Cargo.toml` (hybrid merge — see below) |
-| Install hook | `cargo generate-lockfile` |
+| Install hook | `cargo fetch`, or `cargo generate-lockfile` when no lock exists yet |
 
 ## Managed keys
 
@@ -65,7 +65,7 @@ A Cargo workspace weave produces three distinct lock/manifest artifacts with sep
 | Artifact | Produced by | Pins | Committable |
 |---|---|---|---|
 | `Cargo.toml` (managed) | `rwv activate` | Workspace shape — which repos are members | Yes |
-| `Cargo.lock` | `cargo generate-lockfile` (install hook) | External crate versions from crates.io | Operator's choice ([details](./index.md#committed-files-and-committability)) |
+| `Cargo.lock` | the install hook (`cargo generate-lockfile` for the first resolve, `cargo fetch` after) | External crate versions from crates.io | Operator's choice ([details](./index.md#committed-files-and-committability)) |
 | `rwv.lock` | `rwv lock` | Internal repo revisions (git SHAs) | Yes |
 
 `Cargo.lock` answers "which version of `serde`?"; `rwv.lock` answers "which commit of `github/chatly/protocol`?". They operate at different layers — external ecosystem vs. internal repo graph — and neither subsumes the other.
@@ -257,7 +257,7 @@ rwv-generated files in the project dir.
 
 ## Nested workspaces
 
-Cargo refuses to nest workspaces. If a member repo declares its own `[workspace]` section in its root `Cargo.toml` — including a *virtual workspace* (a `Cargo.toml` with `[workspace]` and no `[package]`) — `cargo generate-lockfile` would fail with "multiple workspace roots found in the same workspace".
+Cargo refuses to nest workspaces. If a member repo declares its own `[workspace]` section in its root `Cargo.toml` — including a *virtual workspace* (a `Cargo.toml` with `[workspace]` and no `[package]`) — cargo would fail with "multiple workspace roots found in the same workspace".
 
 `rwv` detects this at activation time, **before** invoking cargo, and refuses with an actionable error naming the conflicting repo. There are three ways to resolve the conflict:
 
@@ -316,7 +316,8 @@ workweave-create) also run the read-only verify pass:
   `rwv doctor --fix`) / USER-HELD (surfaced, never auto-overwritten) /
   CLEAN — the shared four-state dispatch.
 - **`Cargo.lock`** (fully owned): MISSING and unparseable-content DRIFT are
-  auto-fixable (`--fix` regenerates via `cargo generate-lockfile`). A lock
+  auto-fixable (`--fix` regenerates via `cargo generate-lockfile` — neither
+  state holds a resolve there is anything to preserve). A lock
   that is present and parseable but whose bytes differ from the **last
   rwv-accepted generation** is reported as a warning: the activation hook
   records a SHA-256 of each accepted generation in `.rwv-owned-digests`

@@ -62,7 +62,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     // ── Workspace context ─────────────────────────────────────────────────────
-    /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
+    /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
     Activate {
         /// Project name
         project: String,

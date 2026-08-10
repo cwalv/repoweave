@@ -279,14 +279,19 @@ pub trait Integration {
     /// before activation completes.
     ///
     /// Integrations override this to run ecosystem install commands
-    /// (e.g., `npm install`, `uv sync`, `cargo generate-lockfile`) that
-    /// follow membership changes. Fires whenever the workspace's set of
-    /// active repos may have changed; users can suppress with
-    /// `rwv activate --no-install`.
+    /// (e.g., `npm install`, `uv sync`, `cargo fetch`) that follow membership
+    /// changes. Fires whenever the workspace's set of active repos may have
+    /// changed; users can suppress with `rwv activate --no-install`.
     ///
-    /// This hook was previously named `lock` (fired on `rwv lock`); the
-    /// trigger for ecosystem-lockfile refresh is workspace membership
-    /// change, which is what `rwv activate` represents.
+    /// **A hook materializes; it never moves a pin.** Its mandate is to make
+    /// the ecosystem state implied by current membership and the pins already
+    /// recorded real on disk — adding what membership requires, never
+    /// re-resolving what a lockfile already fixes. Advancing a dependency is
+    /// operator intent expressed through an operator verb, not a side effect
+    /// of activation. An implementation that cannot honour that must not run
+    /// here: a hook fires on paths the operator did not ask for a dependency
+    /// update on (`rwv doctor --fix` among them), and firing frequency is
+    /// only harmless because a materializing hook is idempotent.
     fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
         Ok(())
     }
