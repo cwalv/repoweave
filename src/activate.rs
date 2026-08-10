@@ -37,7 +37,7 @@ use std::path::Path;
 use crate::integration::{Integration, Severity};
 use crate::integration_runner::{
     build_detection_cache, enabled_integrations, run_activate_hooks, run_activations, run_checks,
-    run_verifications,
+    run_deactivations, run_verifications,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
@@ -252,6 +252,8 @@ pub fn activate_with_options(
         ),
     };
 
+    let incoming = ProjectName::new(project)?;
+
     activate_at(
         ctx.primary_path(),
         project,
@@ -263,7 +265,21 @@ pub fn activate_with_options(
     // Project SELECTION, after activation rather than inside it. An activate
     // hook that errored bails above, so a partially-activated workspace
     // still does not record success.
-    primary.select_project(&ProjectName::new(project)?)
+    primary.select_project(&incoming)
+}
+
+/// Run every enabled integration's `deactivate` against `project_dir`.
+///
+/// The caller is destroying the checkout `project_dir` belongs to. Nothing here
+/// is scoped to a weave root or to selection: a project that is merely not the
+/// selected one keeps its ecosystem files, which are its own repo's content.
+pub fn strip_project_regions(
+    project_dir: &Path,
+    manifest: &Manifest,
+) -> Vec<crate::integration::Issue> {
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    run_deactivations(&integrations, manifest, project_dir)
 }
 
 /// Shared activation logic.
@@ -601,22 +617,6 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
         },
         ActivationMode::Intent,
     )
-}
-
-/// Deactivate the current project: remove symlinks and `.rwv-active`.
-///
-/// Computes the owner-scoped union the same way `activate_at` does, then
-/// removes only symlinks claimed by the just-deactivated project's
-/// integration set. Symlinks the framework doesn't own (e.g. user-created
-/// workweave links to source-root paths) are preserved.
-#[allow(dead_code)]
-pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
-    let root = ctx.primary_path();
-
-    let owned = compute_active_owned_set(root)?;
-    remove_activation_symlinks(root, &owned)?;
-
-    crate::workspace::clear_active_project(root)
 }
 
 /// Compute the owner-scoped surfacing set for `project` at `root`: the union

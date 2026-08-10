@@ -2798,6 +2798,19 @@ fn delete_workweave_inner_at(
         }
     }
 
+    // Strip the managed regions this checkout's integrations own before the
+    // checkout is taken apart. The regions exist because this workweave
+    // presented the project; that ends here.
+    if workweave_dir.exists() {
+        let project_checkout = workweave_dir.join(project_rel_dir(project.as_str()));
+        for issue in crate::activate::strip_project_regions(&project_checkout, &manifest) {
+            eprintln!(
+                "rwv workweave delete: warning: {}: {}",
+                issue.integration, issue.message
+            );
+        }
+    }
+
     // Adopt any living children BEFORE destroying the retiree. This re-points
     // each child's recorded parent to the retiree's own recorded parent (the
     // grandparent; fall back to primary) so a bare `rwv sync-to` from a child
