@@ -6,7 +6,7 @@
 //! `projects/<name>/` — via `actions/checkout@v4`'s `path:` in CI, via
 //! `workspaceMount`/`workspaceFolder` in a devcontainer — then, from the
 //! parent directory:
-//!   1. `rwv activate <name> --no-install` — sets `.rwv-active`; no manifest
+//!   1. `rwv activate <name> --no-materialize` — sets `.rwv-active`; no manifest
 //!      repos need to be on disk yet.
 //!   2. `rwv fetch --frozen` (in-place, no SOURCE) — materializes the
 //!      manifest's repos at the revisions `rwv.lock` pins.
@@ -138,7 +138,7 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
 
 // ============================================================================
 // Doc claim — docs/adjacent-tools.md "CI multi-repo checkout": checkout with
-// `path: projects/web-app`, then `rwv activate web-app --no-install` and
+// `path: projects/web-app`, then `rwv activate web-app --no-materialize` and
 // `rwv fetch --frozen` run from the parent both succeed, and the manifest's
 // repo is materialized at the revision the lock pins.
 // ============================================================================
@@ -149,7 +149,7 @@ fn ci_recipe_activate_then_frozen_fetch_succeeds() {
     let (workspace, dep_sha) = setup_ci_shaped_workspace(tmp.path());
 
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -195,7 +195,7 @@ fn devcontainer_recipe_chained_shell_command_succeeds() {
     let status = process::Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "'{rwv_bin}' activate web-app --no-install && '{rwv_bin}' fetch --frozen"
+            "'{rwv_bin}' activate web-app --no-materialize && '{rwv_bin}' fetch --frozen"
         ))
         .current_dir(&workspace)
         .status()

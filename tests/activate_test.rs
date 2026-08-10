@@ -135,7 +135,7 @@ fn activate_writes_rwv_active_file() {
     );
 
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -158,7 +158,7 @@ fn activate_generates_ecosystem_files_in_project_dir() {
     );
 
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -193,7 +193,7 @@ fn activate_creates_symlinks_at_workspace_root() {
     );
 
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -233,7 +233,7 @@ fn activate_symlinks_point_to_correct_project_dir() {
     );
 
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -267,7 +267,7 @@ fn activate_handles_multiple_ecosystem_types() {
     );
 
     rwv()
-        .args(["activate", "polyglot", "--no-install"])
+        .args(["activate", "polyglot", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -320,7 +320,7 @@ fn switching_projects_swaps_symlinks() {
 
     // Activate project A
     rwv()
-        .args(["activate", "project-a", "--no-install"])
+        .args(["activate", "project-a", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -341,7 +341,7 @@ fn switching_projects_swaps_symlinks() {
 
     // Activate project B -- symlinks should swap
     rwv()
-        .args(["activate", "project-b", "--no-install"])
+        .args(["activate", "project-b", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -381,7 +381,7 @@ fn switching_projects_updates_rwv_active() {
     );
 
     rwv()
-        .args(["activate", "proj-a", "--no-install"])
+        .args(["activate", "proj-a", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -390,7 +390,7 @@ fn switching_projects_updates_rwv_active() {
     assert_eq!(active.trim(), "proj-a");
 
     rwv()
-        .args(["activate", "proj-b", "--no-install"])
+        .args(["activate", "proj-b", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -422,7 +422,7 @@ fn switching_removes_stale_symlinks_from_previous_project() {
 
     // Activate A -- both symlinks appear
     rwv()
-        .args(["activate", "proj-a", "--no-install"])
+        .args(["activate", "proj-a", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -432,7 +432,7 @@ fn switching_removes_stale_symlinks_from_previous_project() {
 
     // Activate B -- Cargo.toml symlink should be removed since B has no cargo repos
     rwv()
-        .args(["activate", "proj-b", "--no-install"])
+        .args(["activate", "proj-b", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -487,17 +487,17 @@ fn switching_back_restores_original_symlinks() {
 
     // A -> B -> A
     rwv()
-        .args(["activate", "proj-a", "--no-install"])
+        .args(["activate", "proj-a", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
-        .args(["activate", "proj-b", "--no-install"])
+        .args(["activate", "proj-b", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
-        .args(["activate", "proj-a", "--no-install"])
+        .args(["activate", "proj-a", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -531,7 +531,7 @@ fn activate_works_from_workspace_subdirectory() {
     );
 
     rwv()
-        .args(["activate", "my-proj", "--no-install"])
+        .args(["activate", "my-proj", "--no-materialize"])
         .current_dir(ws.join("github"))
         .assert()
         .success();
@@ -575,7 +575,7 @@ fn activate_same_project_twice_is_idempotent() {
     );
 
     rwv()
-        .args(["activate", "my-proj", "--no-install"])
+        .args(["activate", "my-proj", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -583,7 +583,7 @@ fn activate_same_project_twice_is_idempotent() {
     let content1 = std::fs::read_to_string(ws.join("package.json")).unwrap();
 
     rwv()
-        .args(["activate", "my-proj", "--no-install"])
+        .args(["activate", "my-proj", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -650,7 +650,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
 
     // Activate to refresh top-level + nested gita symlinks (context mode).
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -680,7 +680,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // Re-activate: this runs `remove_activation_symlinks` before re-creating
     // links, exercising the sweep on the gita subdirectory.
     rwv()
-        .args(["activate", "web-app", "--no-install"])
+        .args(["activate", "web-app", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -743,7 +743,7 @@ fn activate_from_workweave_is_rejected() {
 
     // Running activate from the workweave root must fail.
     rwv()
-        .args(["activate", "my-proj", "--no-install"])
+        .args(["activate", "my-proj", "--no-materialize"])
         .current_dir(&workweave_dir)
         .assert()
         .failure()
@@ -776,7 +776,7 @@ fn activate_different_project_from_workweave_is_rejected() {
 
     // Activate proj-a in primary so .rwv-active is set.
     rwv()
-        .args(["activate", "proj-a", "--no-install"])
+        .args(["activate", "proj-a", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -793,7 +793,7 @@ fn activate_different_project_from_workweave_is_rejected() {
 
     // Attempt to activate proj-b from the workweave — must fail.
     rwv()
-        .args(["activate", "proj-b", "--no-install"])
+        .args(["activate", "proj-b", "--no-materialize"])
         .current_dir(&workweave_dir)
         .assert()
         .failure()
@@ -854,7 +854,9 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
     repoweave::activate::activate_intent_with_options(
         "web-app",
         &ctx,
-        repoweave::activate::ActivateOptions { no_install: true },
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
     )
     .expect("intent activation from a workweave checkout should succeed");
 
@@ -881,7 +883,7 @@ fn activate_project_with_no_ecosystem_files() {
     make_project(&ws, "plain-proj", &[("github/acme/docs", "owned", &[])]);
 
     rwv()
-        .args(["activate", "plain-proj", "--no-install"])
+        .args(["activate", "plain-proj", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();

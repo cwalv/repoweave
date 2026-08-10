@@ -101,6 +101,7 @@ fn builtin_all_core_verbs_shadow_path_plugins() {
     // is a core verb, its plugin must NOT be dispatched.
     let core_verbs = [
         "activate",
+        "materialize",
         "prime",
         "resolve",
         "add",

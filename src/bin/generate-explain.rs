@@ -288,6 +288,11 @@ fn verbs() -> Vec<Verb> {
             schema: None,
         },
         Verb {
+            name: "materialize",
+            summary: "run the integration install hooks for the presented project, without selecting anything",
+            schema: None,
+        },
+        Verb {
             name: "init",
             summary: "create a new project (or adopt an existing repo) and auto-activate it",
             schema: None,

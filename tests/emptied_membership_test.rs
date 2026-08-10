@@ -224,7 +224,7 @@ fn activate_reports_the_stale_region_without_authoring_it() {
     write_manifest(root, &[]);
 
     let output = common::rwv()
-        .args(["activate", "demo", "--no-install"])
+        .args(["activate", "demo", "--no-materialize"])
         .current_dir(root)
         .output()
         .expect("rwv activate should run");

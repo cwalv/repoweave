@@ -295,18 +295,20 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // verb — it surfaces existing content but does not author. Drive the
     // intent path first so the project_dir/Cargo.toml exists for the
     // context-mode activate to surface. (Mirrors what `rwv add` does in
-    // a real workflow.) Use the no-install variant to skip
-    // `cargo generate-lockfile` (the CLI step is gated by --no-install).
+    // a real workflow.) Use the no-materialize variant to skip
+    // `cargo generate-lockfile` (the CLI step is gated by --no-materialize).
     let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "cargo-proj",
         &ctx,
-        repoweave::activate::ActivateOptions { no_install: true },
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
     )
     .expect("intent-mode activation should author Cargo.toml in project dir");
 
     rwv()
-        .args(["activate", "cargo-proj", "--no-install"])
+        .args(["activate", "cargo-proj", "--no-materialize"])
         .current_dir(&ws_root)
         .assert()
         .success();
@@ -382,7 +384,7 @@ files = ["exists.txt", "missing.txt"]
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let output = rwv()
-        .args(["activate", "my-project", "--no-install"])
+        .args(["activate", "my-project", "--no-materialize"])
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -439,7 +441,7 @@ files = ["turbo.json"]
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     rwv()
-        .args(["activate", "my-project", "--no-install"])
+        .args(["activate", "my-project", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -550,7 +552,7 @@ link = [".beads"]
 // ===========================================================================
 
 #[test]
-fn activate_npm_no_install_run_during_activate() {
+fn activate_npm_no_materialize_run_during_activate() {
     // Doc claim (project-reporoot-l56a): activate runs npm install.
     // Current observed behaviour: activate only generates package.json and
     // creates symlinks; it does NOT invoke npm install.
@@ -579,18 +581,20 @@ fn activate_npm_no_install_run_during_activate() {
 
     // Trigger-model split: pre-author via intent path so the
     // context-mode `rwv activate` below has content to surface. Use the
-    // no-install variant so this test (which asserts node_modules is NOT
+    // no-materialize variant so this test (which asserts node_modules is NOT
     // created) doesn't see the install hooks run during pre-authoring.
     let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "npm-proj",
         &ctx,
-        repoweave::activate::ActivateOptions { no_install: true },
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
     )
     .expect("intent-mode activation should author package.json in project dir");
 
     let output = rwv()
-        .args(["activate", "npm-proj", "--no-install"])
+        .args(["activate", "npm-proj", "--no-materialize"])
         .current_dir(&ws_root)
         .output()
         .unwrap();
@@ -648,7 +652,7 @@ fn activate_graceful_when_npm_unavailable() {
 
     // Activate must not fail regardless of available tools.
     rwv()
-        .args(["activate", "npm-proj", "--no-install"])
+        .args(["activate", "npm-proj", "--no-materialize"])
         .current_dir(&ws_root)
         .assert()
         .success();

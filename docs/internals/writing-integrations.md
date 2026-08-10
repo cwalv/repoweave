@@ -55,7 +55,7 @@ pub trait Integration {
 - **`activate_hook`** — run install commands (`npm install`, `uv sync`,
   `cargo fetch`) after `activate` has written config files. Fires whenever the
   workspace's set of active repos may have changed; users suppress it with
-  `rwv activate --no-install`. The hook materializes what membership and the
+  `rwv activate --no-materialize`. The hook materializes what membership and the
   recorded pins imply and never moves a pin — an implementation that
   re-resolves an existing lock does not belong here.
 - **`generated_files`** — paths this integration *fully* owns, relative to

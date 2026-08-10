@@ -1376,8 +1376,14 @@ mod fo_cnpjy_3 {
         // a coherent previously-active project's owned set to combine in
         // the removal candidate union.
         let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
-        activate_intent_with_options("p", &ctx, ActivateOptions { no_install: true })
-            .expect("intent-mode bootstrap should succeed");
+        activate_intent_with_options(
+            "p",
+            &ctx,
+            ActivateOptions {
+                no_materialize: true,
+            },
+        )
+        .expect("intent-mode bootstrap should succeed");
 
         // Plant a user-owned symlink at a name no built-in integration
         // produces (definitely not "user-config.json"). Target points

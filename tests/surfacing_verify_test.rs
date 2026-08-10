@@ -111,7 +111,7 @@ fn doctor_flags_missing_surfacing_symlink() {
     let ws = make_workspace(tmp.path());
 
     // Surface via activate (no install hooks needed).
-    rwv_output(&ws, &["activate", "alpha", "--no-install"]);
+    rwv_output(&ws, &["activate", "alpha", "--no-materialize"]);
     assert!(
         claude_surfaced(&ws),
         "activate should surface `.claude` as a symlink"
@@ -135,7 +135,7 @@ fn doctor_fix_re_surfaces_missing_symlink() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
-    rwv_output(&ws, &["activate", "alpha", "--no-install"]);
+    rwv_output(&ws, &["activate", "alpha", "--no-materialize"]);
     std::fs::remove_file(ws.join(".claude")).unwrap();
     assert!(!claude_surfaced(&ws));
 
@@ -164,7 +164,7 @@ fn doctor_clean_when_surfacing_intact() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
-    rwv_output(&ws, &["activate", "alpha", "--no-install"]);
+    rwv_output(&ws, &["activate", "alpha", "--no-materialize"]);
     assert!(claude_surfaced(&ws));
 
     let out = rwv_output(&ws, &["doctor"]);

@@ -149,11 +149,23 @@ Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace f
 
 | Flag | Effect |
 |---|---|
-| `--no-install` | Skip integration install hooks for a fast context-switch |
+| `--no-materialize` | Skip integration install hooks for a fast context-switch |
 
 `.rwv-active` is the single source of truth for the active project; CWD does not override.
 
 Anchored by `tests/doc_claims_activate_test.rs`.
+
+### `rwv materialize`
+
+Run the integration install hooks for the project this checkout already presents, and nothing else. No arguments, no flags.
+
+Activation is two operations: **selection** (`.rwv-active`, the weave root's shared names) and **materialization** (the install hooks). Only a primary can express selection, which is why `rwv activate` is refused inside a workweave. Materialization is meaningful wherever the project identity is already fixed — a workweave always, a primary for the project it currently presents — so this verb is valid in both.
+
+Hooks materialize; they never move a pin. A lock file gains what a new member requires and a version it already pins stays put. Advancing a dependency is `cargo update` / `npm update` / `uv lock --upgrade`, never a repoweave verb.
+
+It takes no project name, because naming one would be a selection. At a primary with no active project it refuses and names `rwv activate`.
+
+`rwv activate --no-materialize` is the mirror: select without materializing.
 
 ### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 

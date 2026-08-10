@@ -978,7 +978,9 @@ role = "owned"
     repoweave::activate::activate_intent_with_options(
         project,
         &ctx,
-        repoweave::activate::ActivateOptions { no_install: true },
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
     )
     .expect("intent-mode activation should pre-author Cargo.toml in project dir");
     ws

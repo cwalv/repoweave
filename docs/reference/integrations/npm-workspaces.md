@@ -44,7 +44,7 @@ Repos whose root `package.json` does **not** declare a `workspaces` key keep the
 
 ## Install hook
 
-Runs `npm install` during `rwv activate` to update `package-lock.json` and `node_modules/`. Suppress with `rwv activate --no-install`.
+Runs `npm install` during `rwv activate` to update `package-lock.json` and `node_modules/`. Suppress with `rwv activate --no-materialize`.
 
 ## Deactivation
 

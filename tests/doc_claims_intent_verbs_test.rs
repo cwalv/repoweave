@@ -391,7 +391,7 @@ fn activate_does_not_author_managed_content() {
     assert!(!code_workspace(&project_dir, "myapp").exists());
 
     rwv()
-        .args(["activate", "myapp", "--no-install"])
+        .args(["activate", "myapp", "--no-materialize"])
         .current_dir(&ws)
         .assert()
         .success();

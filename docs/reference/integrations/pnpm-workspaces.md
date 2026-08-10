@@ -57,7 +57,7 @@ Repos without a `pnpm-workspace.yaml`, or whose `pnpm-workspace.yaml` has no `pa
 
 ## Install hook
 
-Runs `pnpm install` during `rwv activate` to update `pnpm-lock.yaml` and `node_modules/`. Suppress with `rwv activate --no-install`.
+Runs `pnpm install` during `rwv activate` to update `pnpm-lock.yaml` and `node_modules/`. Suppress with `rwv activate --no-materialize`.
 
 ## Deactivation
 

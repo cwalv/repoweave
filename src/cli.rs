@@ -66,10 +66,12 @@ pub enum Commands {
     Activate {
         /// Project name
         project: String,
-        /// Skip integration install hooks (e.g., `npm install`, `uv sync`) for fast context-switch
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`) for fast context-switch; `rwv materialize` runs them later
         #[arg(long)]
-        no_install: bool,
+        no_materialize: bool,
     },
+    /// Run the integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
+    Materialize,
     /// Print structured workspace context for agent system prompts
     Prime {
         /// Always emit output, even when CWD is not inside a weave or workweave

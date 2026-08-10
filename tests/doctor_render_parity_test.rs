@@ -803,7 +803,7 @@ fn a_surfacing_finding_reaches_both_the_report_and_the_wire_format() {
     std::fs::write(project_dir.join("CLAUDE.md"), "alpha's instructions\n").unwrap();
 
     common::rwv()
-        .args(["activate", "alpha", "--no-install"])
+        .args(["activate", "alpha", "--no-materialize"])
         .current_dir(&root)
         .assert()
         .success();

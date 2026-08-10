@@ -590,14 +590,18 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Activate {
             project,
-            no_install,
+            no_materialize,
         }) => {
             let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
             activate::activate_with_options(
                 &project,
                 &ctx,
-                activate::ActivateOptions { no_install },
+                activate::ActivateOptions { no_materialize },
             )?;
+        }
+        Some(Commands::Materialize) => {
+            let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+            activate::materialize(&ctx)?;
         }
         Some(Commands::Prime { no_suppress }) => {
             // `prime` tolerates the not-in-a-workspace case (silent unless

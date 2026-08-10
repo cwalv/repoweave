@@ -76,7 +76,7 @@ fn make_workspace(parent: &Path) -> PathBuf {
 /// Activate `project` so the root presents it and its files are surfaced.
 fn activate(root: &Path, project: &str) {
     common::rwv()
-        .args(["activate", project, "--no-install"])
+        .args(["activate", project, "--no-materialize"])
         .current_dir(root)
         .assert()
         .success();

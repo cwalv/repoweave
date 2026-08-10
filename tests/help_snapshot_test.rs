@@ -30,6 +30,7 @@ Usage: rwv [OPTIONS] [COMMAND]
 
 Commands:
   activate     Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
+  materialize  Run the integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
   prime        Print structured workspace context for agent system prompts
   resolve      Print workspace root path
   add          Add a repo to the active project

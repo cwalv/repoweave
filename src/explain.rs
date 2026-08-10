@@ -27,6 +27,7 @@ const ADD_EXPLAIN: &str = include_str!("../docs/reference/explain/add.md");
 const REMOVE_EXPLAIN: &str = include_str!("../docs/reference/explain/remove.md");
 const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
+const MATERIALIZE_EXPLAIN: &str = include_str!("../docs/reference/explain/materialize.md");
 const INIT_EXPLAIN: &str = include_str!("../docs/reference/explain/init.md");
 
 /// Every verb `rwv explain` recognizes, paired with its embedded bundle, in
@@ -48,6 +49,7 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("remove", REMOVE_EXPLAIN),
     ("lock", LOCK_EXPLAIN),
     ("activate", ACTIVATE_EXPLAIN),
+    ("materialize", MATERIALIZE_EXPLAIN),
     ("init", INIT_EXPLAIN),
 ];
 

@@ -25,6 +25,7 @@ rwv explain <verb>
 - **remove** — remove a repo from the active project manifest
 - **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
 - **activate** — set the active project, create symlinks, run integration install hooks
+- **materialize** — run the integration install hooks for the presented project, without selecting anything
 - **init** — create a new project (or adopt an existing repo) and auto-activate it
 
 Committed schemas live under `docs/reference/schemas/`. CI fails on drift between Rust types and committed artifacts; do not hand-edit the assembled files — edit `docs/reference/explain/templates/<verb>.md.tmpl` and re-run `cargo run --bin generate-explain`.

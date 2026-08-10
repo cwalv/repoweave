@@ -159,7 +159,9 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         repoweave::activate::activate_intent_with_options(
             name,
             &ctx,
-            repoweave::activate::ActivateOptions { no_install: true },
+            repoweave::activate::ActivateOptions {
+                no_materialize: true,
+            },
         )
         .expect("staging intent-mode activation should author integration outputs");
         // Copy generated outputs from staging back into the project source

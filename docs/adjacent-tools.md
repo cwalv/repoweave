@@ -63,7 +63,7 @@ Place `.envrc` in the project directory and use the `static-files` integration t
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/ws/projects/web-app,type=bind,consistency=cached",
   "workspaceFolder": "/workspaces/ws/projects/web-app",
-  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv activate web-app --no-install && rwv fetch --frozen",
+  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv activate web-app --no-materialize && rwv fetch --frozen",
   "forwardPorts": [5432]
 }
 ```
@@ -77,7 +77,7 @@ Place `.envrc` in the project directory and use the `static-files` integration t
 - uses: actions/checkout@v4
   with:
     path: projects/web-app
-- run: rwv activate web-app --no-install
+- run: rwv activate web-app --no-materialize
 - run: rwv fetch --frozen            # clones the repos listed in rwv.toml, pinned to rwv.lock
 - run: npm install && npm test
 ```

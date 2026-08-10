@@ -59,6 +59,11 @@ pub enum ActivationMode {
     /// content and what `activate()` would produce — but **never
     /// authors content**.
     Context,
+    /// Only the hooks: the ecosystem state implied by current membership and
+    /// the recorded pins is made real on disk. No authoring, no verify pass,
+    /// and no claim on the weave root's shared names — the project acted on is
+    /// the one the root already presents, so there is nothing to select.
+    Materialize,
 }
 
 /// What a surfacing call may do with the weave root's SHARED names — the
@@ -162,7 +167,7 @@ pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()>
 
 /// Run intent-mode activation with explicit options. Used by tests that need
 /// to drive the write path without running install hooks (the test
-/// equivalent of `rwv add --no-install` if that existed).
+/// equivalent of `rwv add --no-materialize` if that existed).
 pub fn activate_intent_with_options(
     project: &str,
     ctx: &WorkspaceContext,
@@ -177,16 +182,54 @@ pub fn activate_intent_with_options(
     )
 }
 
+/// Run `rwv materialize`: the integration hooks, for the project this checkout
+/// already presents, with no claim on selection state.
+///
+/// Activation conflates two operations. SELECTION decides which project the
+/// weave root presents — `.rwv-active`, the root's shared names — and only a
+/// primary can express it. MATERIALIZATION makes the ecosystem state implied by
+/// current membership and the recorded pins real on disk, and is meaningful in
+/// any checkout whose project identity is already fixed: a workweave always,
+/// a primary for the project it currently presents. This verb is the second
+/// half alone, which is why it takes no project argument — a project name here
+/// would be a selection, and the one operation this verb does not perform is
+/// selection.
+///
+/// The refusal and the target come from one read of the root, so the case that
+/// refuses is exactly the case with no project to name.
+pub fn materialize(ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let root = ctx.active_path();
+    let Some(project) = observe_root(root)
+        .as_ref()
+        .and_then(RootObservation::presented_project)
+        .cloned()
+    else {
+        anyhow::bail!(
+            "nothing is materialized at {}: no project is active here. \
+             Run `rwv activate <name>` to select one first.",
+            root.display()
+        );
+    };
+
+    activate_at(
+        root,
+        project.as_str(),
+        false,
+        ActivateOptions::default(),
+        ActivationMode::Materialize,
+    )
+}
+
 /// Options for [`activate_with_options`].
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ActivateOptions {
     /// When true, skip integration activate hooks (install commands like
-    /// `npm install`). Used by `rwv activate --no-install` for fast
+    /// `npm install`). Used by `rwv activate --no-materialize` for fast
     /// context-switches.
-    pub no_install: bool,
+    pub no_materialize: bool,
 }
 
-/// Run activate with options. Public so the CLI can pass `--no-install`.
+/// Run activate with options. Public so the CLI can pass `--no-materialize`.
 ///
 /// The witness lookup is the workweave guard. Activate has no meaning inside
 /// a workweave — the project is fixed at creation time (`rwv workweave
@@ -292,6 +335,7 @@ fn activate_at(
                 eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
             }
         }
+        ActivationMode::Materialize => {}
     }
 
     // Everything below acts on the weave ROOT. Which project the root
@@ -325,12 +369,12 @@ fn activate_at(
     //    does NOT write `.rwv-active` (project SELECTION) and does NOT
     //    author integration content.
     //    Context mode IS the selection verb, so it may move the root's shared
-    //    names; intent mode reached this line only because the root already
-    //    presents `project_name`, which is the same permission by the other
-    //    route.
+    //    names; intent and materialize modes reached this line only because the
+    //    root already presents `project_name`, which is the same permission by
+    //    the other route.
     let surfacing_mode = match mode {
         ActivationMode::Context => SurfacingMode::Select,
-        ActivationMode::Intent => SurfacingMode::Repair,
+        ActivationMode::Intent | ActivationMode::Materialize => SurfacingMode::Repair,
     };
     surface_symlinks(
         root,
@@ -343,10 +387,10 @@ fn activate_at(
     // Run integration activate hooks (install commands).
     //    Per-integration hooks operate on the now-in-place symlinks at the
     //    workspace root (e.g., `npm install` reads the symlinked
-    //    package.json). Suppressed by `--no-install` for fast
+    //    package.json). Suppressed by `--no-materialize` for fast
     //    context-switches; the user can run install commands directly when
     //    they need them.
-    if !opts.no_install {
+    if !opts.no_materialize {
         let hook_issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         report_and_check_activate_hook_issues(&hook_issues)?;
     }
@@ -514,8 +558,8 @@ fn remove_activation_symlinks_in(
 /// Install hooks (`npm install`, `cargo fetch`, …) are
 /// skipped at workweave creation: the workweave shares clones with
 /// primary, so install state is typically inherited rather than
-/// regenerated. The user can run `rwv activate --reinstall`-style
-/// commands inside the workweave when they actually need a refresh.
+/// regenerated. `rwv materialize` is what runs them inside the workweave when
+/// a refresh is actually wanted.
 ///
 /// Context mode here buys the surfacing-and-verify half only. The project
 /// SELECTION half — writing `.rwv-active` — is not skipped so much as
@@ -527,7 +571,9 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
         workweave_dir,
         project,
         true,
-        ActivateOptions { no_install: true },
+        ActivateOptions {
+            no_materialize: true,
+        },
         ActivationMode::Context,
     )
 }
@@ -550,7 +596,9 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
         workweave_dir,
         project,
         true,
-        ActivateOptions { no_install: true },
+        ActivateOptions {
+            no_materialize: true,
+        },
         ActivationMode::Intent,
     )
 }

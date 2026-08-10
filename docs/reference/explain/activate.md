@@ -40,7 +40,7 @@ previous state.
    to `projects/<project>/<file>` for each file in the active integrations'
    union of `generated_files()` and `managed_files()` (Axis-1 surfacing).
 4. **Install hooks:** integration install commands run against the now-in-place
-   symlinks. Suppressed by `--no-install`.
+   symlinks. Suppressed by `--no-materialize`.
 5. **Write `.rwv-active`.**
 
 The per-integration `verify()` pass (step 1) covers Axis-2 content drift
@@ -67,15 +67,16 @@ weave-root symlinks. Switch projects only from the primary weave.
 ## Invocation
 
 ```
-rwv activate <project> [--no-install]
+rwv activate <project> [--no-materialize]
 ```
 
 - `<project>` — project name to activate. Must have a corresponding directory
   at `projects/<project>/` with a valid `rwv.toml`.
-- `--no-install` — skip integration install hooks (`npm install`, `uv sync`,
+- `--no-materialize` — skip integration install hooks (`npm install`, `uv sync`,
   etc.) for a fast context-switch. Useful when you are only switching to a
   different project's editors and tools, and the install state is already
-  correct.
+  correct. `rwv materialize` runs them later, and is the only way to run them
+  inside a workweave.
 
 Run `rwv --help activate` for the full clap surface.
 
@@ -108,7 +109,7 @@ rwv activate web-app
 Activate without running install hooks (fast switch):
 
 ```
-rwv activate web-app --no-install
+rwv activate web-app --no-materialize
 ```
 
 Check what is currently active:

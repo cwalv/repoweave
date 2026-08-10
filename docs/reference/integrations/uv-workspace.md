@@ -24,7 +24,7 @@ Generated in the project directory, symlinked to the weave directory. Committabl
 
 ## Install hook
 
-Runs `uv sync` during `rwv activate` to update `uv.lock` and `.venv/`. Suppress with `rwv activate --no-install`.
+Runs `uv sync` during `rwv activate` to update `uv.lock` and `.venv/`. Suppress with `rwv activate --no-materialize`.
 
 ## Deactivation
 

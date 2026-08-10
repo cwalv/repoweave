@@ -164,7 +164,9 @@ fn fixture() -> Fixture {
     repoweave::activate::activate_intent_with_options(
         "web-app",
         &ctx,
-        repoweave::activate::ActivateOptions { no_install: true },
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
     )
     .expect("primary intent activation should succeed");
     assert!(

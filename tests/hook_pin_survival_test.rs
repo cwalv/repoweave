@@ -642,6 +642,74 @@ fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
     );
 }
 
+/// `rwv materialize` is the verb an operator is told to run after a sync, and
+/// the only way to run the hooks inside a workweave. It is safe to name as a
+/// remedy exactly because it cannot move a pin.
+#[test]
+fn materialize_leaves_a_pin_byte_identical() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let source = tmp.path().join("crate-source");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
+
+    let server = ws.join("github/acme/server");
+    std::fs::create_dir_all(server.join("src")).unwrap();
+    std::fs::write(
+        server.join("Cargo.toml"),
+        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\npinnable = \"0.1\"\n",
+    )
+    .unwrap();
+    std::fs::write(server.join("src/lib.rs"), "").unwrap();
+    git_init_with_commit(&server);
+
+    let project_dir = ws.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    git_init_with_commit(&project_dir);
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    repoweave::activate::activate_intent("app", &ctx).expect("activation should succeed");
+
+    let lock_path = project_dir.join("Cargo.lock");
+    let pinned = std::fs::read_to_string(&lock_path)
+        .unwrap()
+        .replace(r#"version = "0.1.1""#, r#"version = "0.1.0""#);
+    std::fs::write(&lock_path, &pinned).unwrap();
+    stamp_owned_digest(&project_dir, "Cargo.lock", pinned.as_bytes()).unwrap();
+
+    let output = common::rwv()
+        .args(["materialize"])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv should run");
+    let report = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "materialize should succeed:\n{report}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&lock_path).unwrap(),
+        pinned,
+        "`rwv materialize` must leave an attested lock byte-identical\n{report}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Every integration: which commands a hooked activation is allowed to run
 // ---------------------------------------------------------------------------

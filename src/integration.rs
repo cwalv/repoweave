@@ -281,7 +281,7 @@ pub trait Integration {
     /// Integrations override this to run ecosystem install commands
     /// (e.g., `npm install`, `uv sync`, `cargo fetch`) that follow membership
     /// changes. Fires whenever the workspace's set of active repos may have
-    /// changed; users can suppress with `rwv activate --no-install`.
+    /// changed; users can suppress with `rwv activate --no-materialize`.
     ///
     /// **A hook materializes; it never moves a pin.** Its mandate is to make
     /// the ecosystem state implied by current membership and the pins already
