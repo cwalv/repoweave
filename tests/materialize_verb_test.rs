@@ -63,6 +63,11 @@ impl Fixture {
 ///
 /// The project repo gitignores the lock, so the workweave's worktree arrives
 /// without one — which is what makes "the hook produced this" observable.
+///
+/// **Primary's active project is deliberately not the workweave's.** A fixture
+/// where the two agree cannot tell "left the pointer alone" from "rewrote the
+/// pointer with the value it already held", and the second is a selection this
+/// verb is not allowed to make.
 fn fixture() -> Fixture {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
@@ -107,6 +112,14 @@ fn fixture() -> Fixture {
     );
     git(&["add", "-A"], &project_dir);
     git(&["commit", "-m", "activate"], &project_dir);
+
+    // A second project, and it is the one primary selects: the pointer's value
+    // is now something a stray selection would visibly change.
+    let other_dir = ws.join("projects/other");
+    std::fs::create_dir_all(&other_dir).unwrap();
+    std::fs::write(other_dir.join("rwv.toml"), "[repositories]\n").unwrap();
+    git_init_with_commit(&other_dir);
+    std::fs::write(ws.join(".rwv-active"), "other\n").unwrap();
 
     let weaveroot = root.join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
