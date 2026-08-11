@@ -578,10 +578,17 @@ on `rwv.lock` during replay. Three layers keep the exclusion active:
    driver to `rwv.lock`.
 2. `rwv` passes `-c merge.rwv-ours.driver=true` on each `git rebase` and
    `git rebase --continue` invocation (defines the driver for that process).
-3. `verify_replay_exclusion_invariant` (called before every rebase-strategy
-   sync) plants a durable `merge.rwv-ours.driver=true` repo-local config so
-   bare `git rebase --continue` — the fallback resume path — is safe without
-   rwv's inline flags.
+3. Before each rebase-strategy sync, rwv plants a durable
+   `merge.rwv-ours.driver=true` repo-local config in the project repo, so
+   bare `git rebase --continue` — the fallback resume path — is safe
+   without rwv's inline flags.
+
+Layer 3 reaches the project repo only. A repo that adopts the same
+declaration for its own derived content gets layers 1 and 2 and no plant,
+so a hand-run merge or rebase there falls back to an ordinary textual
+conflict every time rather than in an edge case — noisy, but decided
+either way by the regeneration that follows. That asymmetry is stated in
+full in [vcs-as-seam](./vcs-as-seam.md).
 
 The check fires against the committed file
 (via `git show HEAD:.gitattributes`), not the working tree, because the
@@ -689,7 +696,7 @@ mechanism is:
 | Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
 | Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip, mid-op} |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
-| Lock replay-exclusion (rebase) | `rwv.lock merge=rwv-ours` in `.gitattributes`; `-c merge.rwv-ours.driver=true` per invocation; durable `merge.rwv-ours.driver` repo-local config planted before each sync |
+| Lock replay-exclusion (rebase) | `rwv.lock merge=rwv-ours` in `.gitattributes`; `-c merge.rwv-ours.driver=true` per invocation; durable `merge.rwv-ours.driver` repo-local config planted before each sync (project repo only) |
 
 All of these are intent-named `Vcs` trait methods; the phase machine
 contains no VCS-specific spellings.
