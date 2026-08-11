@@ -34,6 +34,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use anyhow::Context;
+
 use crate::integration::{Integration, Severity};
 use crate::integration_runner::{
     build_detection_cache, enabled_integrations, run_activate_hooks, run_activations, run_checks,
@@ -41,6 +43,7 @@ use crate::integration_runner::{
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+use crate::symlink::LinkTarget;
 use crate::workspace::{
     observe_root, project_dir, project_rel_dir, strip_projects_prefix, workspace_marker_names,
     RootObservation, WorkspaceContext, WorkspaceSession,
@@ -797,8 +800,6 @@ pub fn surface_symlinks(
     }
 
     // 3. Create new symlinks at root pointing to project_dir files.
-    //    Failures are collected as warnings so that partial symlink creation
-    //    does not prevent the caller from proceeding.
     for file in &new_generated {
         let source = project_dir.join(file);
         let link = root.join(file);
@@ -815,13 +816,12 @@ pub fn surface_symlinks(
         // Ensure parent directory exists for nested files (e.g., gita/repos.csv).
         if let Some(parent) = link.parent() {
             if !parent.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    eprintln!(
-                        "[warning] symlink: failed to create parent directory {}: {e}",
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "surfacing `{file}`: failed to create parent directory {}",
                         parent.display()
-                    );
-                    continue;
-                }
+                    )
+                })?;
             }
         }
 
@@ -831,23 +831,7 @@ pub fn surface_symlinks(
         // we need to prepend `../` for each directory level.
         let relative_target = relative_symlink_target(project.as_str(), file);
 
-        #[cfg(unix)]
-        if let Err(e) = std::os::unix::fs::symlink(&relative_target, &link) {
-            eprintln!(
-                "[warning] symlink: failed to create {} -> {}: {e}",
-                link.display(),
-                relative_target.display()
-            );
-        }
-
-        #[cfg(windows)]
-        if let Err(e) = std::os::windows::fs::symlink_file(&relative_target, &link) {
-            eprintln!(
-                "[warning] symlink: failed to create {} -> {}: {e}",
-                link.display(),
-                relative_target.display()
-            );
-        }
+        crate::symlink::create(&relative_target, &link, LinkTarget::on_disk(&source))?;
     }
 
     Ok(())
@@ -1306,6 +1290,52 @@ mod tests {
             .join(project.as_str())
             .join(Manifest::FILE_NAME);
         Manifest::from_path(&path).unwrap()
+    }
+
+    #[test]
+    fn a_link_that_cannot_be_created_refuses_instead_of_warning() {
+        // A real file at the surfacing path survives the owner-scoped removal
+        // (which unlinks symlinks only), so link creation hits EEXIST. Warning
+        // and continuing here returned Ok with `.claude` unsurfaced, and every
+        // caller reads that as a project that never declared the file.
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+        std::fs::write(root.join(".claude"), "user content").unwrap();
+
+        let err = surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair)
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(".claude"),
+            "the refusal must name the link it could not create: {msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join(".claude")).unwrap(),
+            "user content"
+        );
+    }
+
+    #[test]
+    fn a_directory_source_is_surfaced() {
+        // `.beads` and `.claude` are surfaced directories in a real weave, and
+        // Windows needs a different call for those than for a file. Nothing
+        // else here authors a directory source.
+        let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
+        let root = tmp.path();
+        let claude = project_dir(root, project.as_str()).join(".claude");
+        std::fs::create_dir_all(claude.join("agents")).unwrap();
+        std::fs::write(claude.join("agents").join("a.md"), "x").unwrap();
+        let manifest = load_manifest(root, &project);
+
+        surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap();
+
+        let link = root.join(".claude");
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(
+            link.join("agents").join("a.md").is_file(),
+            "the link must resolve as a directory"
+        );
     }
 
     #[test]

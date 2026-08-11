@@ -1,0 +1,158 @@
+//! The one place a platform symlink API is called.
+//!
+//! Unix creates a symbolic link with a single call that takes no
+//! directory-vs-file argument; Windows has two calls, and a link made with the
+//! wrong one does not resolve. Every rwv site that creates a link therefore
+//! makes a kind decision, whether or not it looks like one, and routing them
+//! all through [`create`] puts that decision in code Unix compiles, reads and
+//! tests rather than inside a `#[cfg(windows)]` arm nothing here can run.
+//!
+//! Failure returns rather than warning. rwv reads its own links back as
+//! structural facts — `classify_checkout` answers "is this a shared read-only
+//! alias" by asking the filesystem what is at the path — so a link that
+//! silently failed to appear is a workspace that misreports what it contains.
+//! The argument is in `docs/explanation/joints/symlinks-as-structure.md`.
+
+use std::path::Path;
+
+/// Which of Windows' two symlink constructors a link needs.
+///
+/// Carried on every platform, and read only on Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkTarget {
+    Directory,
+    File,
+}
+
+impl LinkTarget {
+    /// Classify by what `source` is on disk at this moment.
+    ///
+    /// A path that does not exist yet is a [`LinkTarget::File`]: the links rwv
+    /// creates ahead of their target are ecosystem lock files, written later
+    /// through the dangling link. A target that changes kind after the link is
+    /// made is out of reach of any creation-time rule.
+    pub fn on_disk(source: &Path) -> LinkTarget {
+        if source.is_dir() {
+            LinkTarget::Directory
+        } else {
+            LinkTarget::File
+        }
+    }
+}
+
+/// What an operator does when Windows refuses to create a symbolic link.
+///
+/// Developer Mode is a machine-wide policy an administrator sets once, not a
+/// privilege a process can ask for, so this offers only what a person can act
+/// on and never suggests rwv could grant itself the capability.
+pub const WINDOWS_PERMISSION_REMEDY: &str =
+    "Windows creates symbolic links only for an elevated process, or on a machine with Developer \
+     Mode enabled: enable Developer Mode (Settings > System > For developers; one-time, requires \
+     an administrator) or re-run rwv from an elevated prompt";
+
+/// Create a symbolic link at `link` pointing at `target`.
+pub fn create(target: &Path, link: &Path, kind: LinkTarget) -> anyhow::Result<()> {
+    platform_symlink(target, link, kind).map_err(|e| {
+        let mut refusal = format!(
+            "failed to create symlink {} -> {}: {e}",
+            link.display(),
+            target.display()
+        );
+        if cfg!(windows) {
+            refusal.push_str("; ");
+            refusal.push_str(WINDOWS_PERMISSION_REMEDY);
+        }
+        anyhow::Error::msg(refusal)
+    })
+}
+
+/// Rust's `symlink_file` and `symlink_dir` both pass
+/// `SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE`, which is the opt-in that
+/// makes Developer Mode apply, so the happy path needs no privilege code here.
+#[cfg(windows)]
+fn platform_symlink(target: &Path, link: &Path, kind: LinkTarget) -> std::io::Result<()> {
+    match kind {
+        LinkTarget::Directory => std::os::windows::fs::symlink_dir(target, link),
+        LinkTarget::File => std::os::windows::fs::symlink_file(target, link),
+    }
+}
+
+#[cfg(unix)]
+fn platform_symlink(target: &Path, link: &Path, _kind: LinkTarget) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_source_yields_a_directory_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("claude");
+        std::fs::create_dir(&dir).unwrap();
+        assert_eq!(LinkTarget::on_disk(&dir), LinkTarget::Directory);
+    }
+
+    #[test]
+    fn a_file_source_yields_a_file_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("Cargo.toml");
+        std::fs::write(&file, "").unwrap();
+        assert_eq!(LinkTarget::on_disk(&file), LinkTarget::File);
+    }
+
+    #[test]
+    fn an_absent_source_yields_a_file_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            LinkTarget::on_disk(&tmp.path().join("Cargo.lock")),
+            LinkTarget::File,
+            "surfacing creates links ahead of lock files that do not exist yet"
+        );
+    }
+
+    #[test]
+    fn a_symlink_to_a_directory_yields_a_directory_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("canonical");
+        std::fs::create_dir(&dir).unwrap();
+        let alias = tmp.path().join("alias");
+        create(&dir, &alias, LinkTarget::Directory).unwrap();
+        assert_eq!(
+            LinkTarget::on_disk(&alias),
+            LinkTarget::Directory,
+            "a nested workweave classifies a parent's alias, which resolves to a directory"
+        );
+    }
+
+    #[test]
+    fn an_occupied_link_path_returns_the_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("occupied");
+        std::fs::write(&link, "user content").unwrap();
+        let err = create(Path::new("target"), &link, LinkTarget::File).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("occupied") && msg.contains("target"),
+            "the refusal must name both paths: {msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link).unwrap(),
+            "user content",
+            "a refused link must leave what was there alone"
+        );
+    }
+
+    #[test]
+    fn the_windows_remedy_names_both_actions_and_claims_neither_for_rwv() {
+        let remedy = WINDOWS_PERMISSION_REMEDY.to_lowercase();
+        assert!(remedy.contains("developer mode"));
+        assert!(remedy.contains("elevated"));
+        assert!(
+            remedy.contains("administrator"),
+            "enabling Developer Mode is an administrator action, and saying so is what \
+             stops a reader hunting for a per-user setting"
+        );
+    }
+}

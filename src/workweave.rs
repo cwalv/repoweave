@@ -31,6 +31,7 @@
 use crate::cli::consent::DiscardUnmergedConsent;
 use crate::git::git_command;
 use crate::manifest::{project_repo_key, LockFile, Manifest, ProjectName, Role, WorkweaveName};
+use crate::symlink::LinkTarget;
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
     ResolvedRevisionId, Vcs,
@@ -1520,12 +1521,8 @@ pub fn create_workweave(
             // the one canonical store, never at the parent workweave's own
             // symlink (which would form a symlink→symlink chain that breaks
             // if the parent is deleted).
-            #[cfg(unix)]
-            {
-                let canonical = primary_root.join(repo_path.as_path());
-                result = std::os::unix::fs::symlink(&canonical, &worktree_dest)
-                    .map_err(anyhow::Error::from);
-            }
+            let canonical = primary_root.join(repo_path.as_path());
+            result = crate::symlink::create(&canonical, &worktree_dest, LinkTarget::Directory);
         } else if result.is_ok() {
             // Record the repo for the post-rollback prune pass BEFORE the
             // birth: a post-checkout hook can reject `git worktree add` after
@@ -1810,8 +1807,7 @@ pub fn create_workweave(
                 if let Some(parent) = dest.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                #[cfg(unix)]
-                std::os::unix::fs::symlink(&source, &dest)?;
+                crate::symlink::create(&source, &dest, LinkTarget::on_disk(&source))?;
             }
         }
     }
