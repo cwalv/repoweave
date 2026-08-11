@@ -47,11 +47,19 @@ jobs:
         run: ./scripts/ci-local.sh
 
   windows-check:
-    # Release artifacts include windows-msvc, but the test suite is
-    # Unix-only (symlinks, permission bits, signals). Compile the
-    # production surface on Windows so a cfg gap surfaces here instead
-    # of at release-tag time.
-    name: Windows production-surface check
+    # Release artifacts include windows-msvc. This job establishes that
+    # everything in the crate COMPILES there — production and test code
+    # alike — so a `#[cfg]` arm that exists only on unix fails here rather
+    # than at release-tag time. A block gated `#[cfg(unix)]` with no windows
+    # arm is not a compile error anywhere; it vanishes and the caller reports
+    # success, so compiling the test surface is what keeps the tests that
+    # cover such a block from silently ceasing to exist.
+    #
+    # It does NOT establish that anything PASSES on Windows: nothing in this
+    # repository has ever been executed there. Tests skipped `#[cfg(unix)]`
+    # for a stated reason are absent from this job too — compiling them is not
+    # running them, and a skipped test compiles trivially.
+    name: Windows compile check
     runs-on: windows-latest
 
     steps:
@@ -60,5 +68,5 @@ jobs:
       - name: Install Rust (pinned by rust-toolchain.toml)
         run: rustup show
 
-      - name: Check lib and bins compile on Windows
-        run: cargo check --locked --lib --bins
+      - name: Check the whole crate compiles on Windows
+        run: cargo check --locked --all-targets
