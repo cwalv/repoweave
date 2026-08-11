@@ -1930,10 +1930,6 @@ pub trait Vcs: Send + Sync {
 
     /// Clone a remote URL into `dest`, naming the remote `remote_name`
     /// instead of the VCS default (`origin` for git).
-    ///
-    /// Used to express the `fork` role convention: the source URL is the
-    /// upstream-of-record, not a push target, so it should not be aliased to
-    /// `origin`.
     fn clone_repo_with_remote_name(
         &self,
         url: &str,
@@ -1944,22 +1940,19 @@ pub trait Vcs: Send + Sync {
     /// Clone `url` into `dest`, naming the remote according to the
     /// convention this VCS uses for the given [`Role`].
     ///
-    /// Pushing remote-naming policy into the VCS layer keeps git-specific
-    /// vocabulary (`upstream` vs `origin`) out of the manifest types. For
-    /// git: `Role::Fork` clones to `upstream`
-    /// (so a stray `git push` does not target the source-of-record); all
-    /// other roles clone to `origin`. Other VCS impls choose their own
+    /// Pushing remote-naming policy into the VCS layer keeps VCS-specific
+    /// vocabulary out of the manifest types. For git: every role, `Role::Fork`
+    /// included, clones to `origin`. Other VCS impls choose their own
     /// conventions.
     fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError>;
 
     /// Resolve `branch` on the remote associated with `role` in `repo`.
     ///
     /// For git: builds the qualified ref
-    /// `"upstream/{branch}"` for `Role::Fork`, `"origin/{branch}"` for all
-    /// other roles, and resolves it via [`resolve_revision`]. There is no
-    /// bare-branch fallback — a missing role-conventional remote yields
-    /// [`VcsError::RevisionNotFound`] so callers don't silently advance to
-    /// the local branch tip.
+    /// `"origin/{branch}"` regardless of `role`, and resolves it via
+    /// [`resolve_revision`]. There is no bare-branch fallback — a missing
+    /// `origin` remote yields [`VcsError::RevisionNotFound`] so callers
+    /// don't silently advance to the local branch tip.
     ///
     /// [`resolve_revision`]: Vcs::resolve_revision
     fn resolve_branch_on_remote(
@@ -2447,8 +2440,8 @@ pub trait Vcs: Send + Sync {
     fn cancel_in_flight_op(&self, repo: &Path);
 
     /// Return `true` when `branch` in `repo` has a counterpart on the
-    /// role-conventional remote (e.g. `refs/remotes/origin/<branch>` for
-    /// `Role::Primary` in git).
+    /// role-conventional remote (`refs/remotes/origin/<branch>` for git,
+    /// regardless of role).
     ///
     /// Used by `prune_dropped_repo` to refuse pruning a clone that has
     /// local-only branches: a branch with no remote counterpart is

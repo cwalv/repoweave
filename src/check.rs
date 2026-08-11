@@ -3,7 +3,7 @@
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
 
-use crate::git::git_command;
+use crate::git::{git_command, GIT_DEFAULT_REMOTE_NAME, RWV_MERGE_DRIVER_PREFIX};
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
@@ -3053,7 +3053,7 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
             }
 
             let manifest_url = entry.url.to_string();
-            let actual_url = match vcs.remote_url(&repo_abs, "origin") {
+            let actual_url = match vcs.remote_url(&repo_abs, GIT_DEFAULT_REMOTE_NAME) {
                 Ok(Some(u)) => u,
                 Ok(None) => continue, // no `origin` remote — not this check's concern
                 Err(_) => continue,   // can't read remote — skip silently
@@ -3123,15 +3123,6 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
 // ---------------------------------------------------------------------------
 // Phantom merge-driver scanning
 // ---------------------------------------------------------------------------
-
-/// The namespace prefix that makes a merge-driver name rwv's to account for.
-///
-/// Only rwv writes `merge=rwv-…` and only rwv defines `merge.rwv-….driver`
-/// (the pairing argued for in `vcs.rs`'s replay-exclusion preamble), so a name
-/// inside this prefix that rwv does not define is one nothing else will define
-/// either. Names outside it belong to the repo and are none of doctor's
-/// business.
-const RWV_MERGE_DRIVER_PREFIX: &str = "rwv-";
 
 /// `true` when `name` is a merge driver rwv can define.
 ///

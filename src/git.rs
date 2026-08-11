@@ -37,6 +37,13 @@ pub(crate) fn git_command() -> Command {
     cmd
 }
 
+/// Remote name every [`Role`] clones to, resolves against, and pushes to.
+/// [`Vcs::clone_with_role`] and [`Vcs::resolve_branch_on_remote`] do not
+/// vary this by role; other production sites that need the same remote
+/// name (`push.rs`, `init.rs`, `add_remove.rs`, `check.rs`) read it from
+/// here rather than minting their own literal.
+pub const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
+
 // ---------------------------------------------------------------------------
 // Replay-exclusion (rwv.lock) — merge-driver constants
 // ---------------------------------------------------------------------------
@@ -98,6 +105,14 @@ pub const RWV_MERGE_DRIVER_NAME_DESC: &str = "keep ours during replay (rwv repla
 /// a targeted "run rwv doctor --fix" bail when it finds the legacy line
 /// committed in `.gitattributes`.
 pub const LEGACY_RWV_MERGE_DRIVER_NAME: &str = "ours";
+
+/// Namespace prefix every driver name rwv defines falls under (today, just
+/// [`RWV_MERGE_DRIVER_NAME`]). Only rwv writes `merge=rwv-…` and only rwv
+/// defines `merge.rwv-….driver`, so a `.gitattributes` line naming a driver
+/// under this prefix that rwv does not define is one nothing else will
+/// define either — `check::phantom_merge_drivers_in` uses the prefix to
+/// find such lines.
+pub const RWV_MERGE_DRIVER_PREFIX: &str = "rwv-";
 
 /// Build the `.gitattributes` line that assigns the rwv driver to `path`.
 ///
@@ -834,7 +849,7 @@ impl Vcs for GitVcs {
 
     fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError> {
         let _ = role; // role label kept for signal value; all clones use `origin`
-        self.clone_repo_with_remote_name(url, dest, "origin")
+        self.clone_repo_with_remote_name(url, dest, GIT_DEFAULT_REMOTE_NAME)
     }
 
     fn resolve_branch_on_remote(
@@ -2073,7 +2088,7 @@ impl Vcs for GitVcs {
             &[
                 "clone",
                 "--origin",
-                "origin",
+                GIT_DEFAULT_REMOTE_NAME,
                 "--no-checkout",
                 url,
                 dest_str,
@@ -2216,7 +2231,7 @@ impl Vcs for GitVcs {
         if force {
             args.push("--force");
         }
-        args.push("origin");
+        args.push(GIT_DEFAULT_REMOTE_NAME);
         args.push(r.name().as_str());
         Self::run(&args, repo)?;
         Ok(())
@@ -3061,6 +3076,28 @@ mod branch_model_tests {
     }
 
     #[test]
+    fn clone_with_role_names_the_remote_origin_whatever_the_role() {
+        // `Role::Fork` used to clone to `upstream`, so a stray push
+        // wouldn't target the source-of-record; that convention is
+        // dropped and every role now clones to `origin`. Asserted
+        // per-role rather than once, so a future impl that reintroduces
+        // a role-specific remote name fails here.
+        let (tmp, _clone, bare) = clone_of_bare_origin();
+
+        for role in Role::ALL.iter().copied() {
+            let dest = tmp.path().join(format!("{role:?}-clone"));
+            GitVcs
+                .clone_with_role(bare.to_str().unwrap(), &dest, role)
+                .unwrap();
+            assert_eq!(
+                git(&dest, &["remote"]),
+                "origin",
+                "{role:?} should have cloned to a single `origin` remote"
+            );
+        }
+    }
+
+    #[test]
     fn push_ref_publishes_to_origin_whatever_the_role() {
         // Every role pushes to `origin`; the parameter is kept for signal
         // value. Asserted per-role rather than once, so a future impl that
@@ -3256,5 +3293,22 @@ mod derived_content_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod merge_driver_vocabulary_tests {
+    //! `check::phantom_merge_drivers_in` filters `.gitattributes` driver
+    //! names through [`RWV_MERGE_DRIVER_PREFIX`] before checking them
+    //! against [`RWV_MERGE_DRIVER_NAME`]. Nothing but this test ties the
+    //! two together — a rename of one that drops the other out of the
+    //! prefix would compile cleanly and doctor's phantom-driver scan
+    //! would silently stop matching the live driver name.
+
+    use super::*;
+
+    #[test]
+    fn the_driver_name_falls_under_its_own_scan_prefix() {
+        assert!(RWV_MERGE_DRIVER_NAME.starts_with(RWV_MERGE_DRIVER_PREFIX));
     }
 }

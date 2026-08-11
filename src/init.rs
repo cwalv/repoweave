@@ -24,7 +24,7 @@
 //! Running `rwv init` in a non-empty, non-workspace directory is refused with
 //! a clear actionable error.
 
-use crate::git::git_command;
+use crate::git::{git_command, GIT_DEFAULT_REMOTE_NAME};
 use crate::manifest::{LockFile, Manifest, RepoUrl};
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::project_vcs;
@@ -174,7 +174,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 
         let url_str = url.to_string();
         let status = git_command()
-            .args(["remote", "add", "origin", &url_str])
+            .args(["remote", "add", GIT_DEFAULT_REMOTE_NAME, &url_str])
             .current_dir(&project_dir)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

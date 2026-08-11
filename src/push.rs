@@ -5,6 +5,7 @@
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
 
+use crate::git::GIT_DEFAULT_REMOTE_NAME;
 use crate::manifest::{LockFile, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
@@ -772,7 +773,7 @@ fn push_one(
 /// Display the remote name for a role — all roles push to `origin`.
 fn remote_label(role: Role) -> &'static str {
     let _ = role;
-    "origin"
+    GIT_DEFAULT_REMOTE_NAME
 }
 
 /// Abbreviate a SHA to 7 chars (matches lock-commit-message convention).
