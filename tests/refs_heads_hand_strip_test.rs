@@ -18,7 +18,10 @@
 use std::path::{Path, PathBuf};
 
 const SEAM_FILE: &str = "git.rs";
-const PATTERNS: &[&str] = &["trim_start_matches(\"refs/heads/\"", "strip_prefix(\"refs/heads/\""];
+const PATTERNS: &[&str] = &[
+    "trim_start_matches(\"refs/heads/\"",
+    "strip_prefix(\"refs/heads/\"",
+];
 
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
