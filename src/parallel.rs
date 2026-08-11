@@ -526,6 +526,54 @@ mod tests {
         let _r = Reporter::parallel(String::new(), &lock);
     }
 
+    /// Env vars carrying the fixture's script to [`fixture_child`]: what to
+    /// write to its own stdout/stderr and what code to exit with.
+    const FIXTURE_STDOUT: &str = "RWV_PARALLEL_TEST_FIXTURE_STDOUT";
+    const FIXTURE_STDERR: &str = "RWV_PARALLEL_TEST_FIXTURE_STDERR";
+    const FIXTURE_EXIT_CODE: &str = "RWV_PARALLEL_TEST_FIXTURE_EXIT_CODE";
+
+    /// Not a test: the child half of the `run_subprocess_with_reporter`
+    /// tests below. It runs as a normal (instant, inert) test in an
+    /// ordinary suite run, and only when a parent spawns
+    /// `current_exe()` with `FIXTURE_EXIT_CODE` set does it write the
+    /// requested bytes to its own stdout/stderr and exit with the
+    /// requested code — a portable stand-in for `sh -c 'printf ...; exit
+    /// N'`, since the test binary itself exists on every platform cargo
+    /// builds one for. Mirrors the `strace_probe_child_*` pattern in
+    /// `tests/ref_registry_test.rs`.
+    #[test]
+    fn fixture_child() {
+        let Ok(code) = std::env::var(FIXTURE_EXIT_CODE) else {
+            return;
+        };
+        if let Ok(s) = std::env::var(FIXTURE_STDOUT) {
+            print!("{s}");
+            std::io::stdout().flush().unwrap();
+        }
+        if let Ok(s) = std::env::var(FIXTURE_STDERR) {
+            eprint!("{s}");
+            std::io::stderr().flush().unwrap();
+        }
+        std::process::exit(code.parse().expect("valid exit code"));
+    }
+
+    /// A `Command` that re-invokes this test binary selecting only
+    /// [`fixture_child`]. Callers set `FIXTURE_STDOUT`/`FIXTURE_STDERR`/
+    /// `FIXTURE_EXIT_CODE` on the returned `Command` before spawning it.
+    /// `--nocapture` is load-bearing: without it, libtest's own capture
+    /// hook swallows `fixture_child`'s `print!`/`eprint!` calls before
+    /// they reach the real stdout/stderr this fixture exists to write to.
+    fn fixture_command() -> Command {
+        let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
+        cmd.args([
+            "--exact",
+            "parallel::tests::fixture_child",
+            "--test-threads=1",
+            "--nocapture",
+        ]);
+        cmd
+    }
+
     /// Under `Reporter::Serial`, `run_subprocess_with_reporter` mirrors
     /// `Command::output()`: failing subprocess returns a non-zero
     /// status AND captured stderr. This is the path verbs take under
@@ -533,11 +581,9 @@ mod tests {
     /// keep their captured stderr for the summary.
     #[test]
     fn run_subprocess_with_reporter_serial_captures_stderr_on_failure() {
-        // POSIX `false` reliably exits non-zero. We pair it with a
-        // shell so we can also write to stderr; that way we exercise
-        // both the status and the capture path together.
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "printf 'boom\\n' >&2; exit 7"]);
+        let mut cmd = fixture_command();
+        cmd.env(FIXTURE_STDERR, "boom\n");
+        cmd.env(FIXTURE_EXIT_CODE, "7");
         let reporter = Reporter::serial();
         let outcome =
             run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
@@ -562,8 +608,9 @@ mod tests {
     fn run_subprocess_with_reporter_parallel_returns_empty_capture() {
         let lock = Mutex::new(());
         let reporter = Reporter::parallel("ut".into(), &lock);
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "printf 'line1\\nline2\\n' >&2; exit 3"]);
+        let mut cmd = fixture_command();
+        cmd.env(FIXTURE_STDERR, "line1\nline2\n");
+        cmd.env(FIXTURE_EXIT_CODE, "3");
         let outcome =
             run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
         assert!(!outcome.status.success());
@@ -585,11 +632,10 @@ mod tests {
     fn run_subprocess_multi_line_under_parallel_drains_both_streams() {
         let lock = Mutex::new(());
         let reporter = Reporter::parallel("ut".into(), &lock);
-        let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            "printf 'o1\\no2\\no3\\no4\\n'; printf 'e1\\ne2\\ne3\\ne4\\n' >&2",
-        ]);
+        let mut cmd = fixture_command();
+        cmd.env(FIXTURE_STDOUT, "o1\no2\no3\no4\n");
+        cmd.env(FIXTURE_STDERR, "e1\ne2\ne3\ne4\n");
+        cmd.env(FIXTURE_EXIT_CODE, "0");
         let outcome =
             run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
         assert!(outcome.status.success());
