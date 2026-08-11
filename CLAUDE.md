@@ -272,7 +272,10 @@ The four the survey found, for the taxonomy:
   it would look at the token at all. Roughly eighty bare `<document>.md §N`
   citations sat unexamined behind that one character.
 - **one spelling** — the tracker-ID matcher recognises the retired `fo-` prefix
-  and not the one that replaced it, so live IDs sit green.
+  and not the one that replaced it. The live IDs that sat green behind it came
+  out by hand; the successor prefix is this repo's own vocabulary namespace, so
+  the clause above states the gate's one prefix rather than the gate growing to
+  meet the rule.
 - **one region of the file** — the citation gate stops scanning at the first
   `#[cfg(test)]` module. That exclusion is deliberate, but nothing re-examines
   it: a non-resolving citation below that line is invisible for as long as it
