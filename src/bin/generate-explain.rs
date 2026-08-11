@@ -1825,14 +1825,23 @@ fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
 /// document named without a file extension. Reading a green gate as "this tree
 /// has no section pointers" is still wrong.
 ///
-/// One further limit: inline test-module content is dropped
-/// (`before_test_module`), as the env-input gate also drops it. That is a
-/// scope difference from `check_no_tracker_ids` and
-/// `check_no_consumer_vocabulary`, which scan whole files: those two ban text
-/// that reaches a user wherever it sits, while this one asks whether a reader
-/// can follow a reference, and a test comment describing the fixture tree it
-/// builds in a temp directory is not citing a document.
+/// # Inline test modules are in scope, and this file alone is not
+///
+/// A `#[cfg(test)]` comment is still a comment someone lands on, and it asks
+/// the reader the same question. Stopping at the test boundary left four
+/// non-resolving citations standing in `src/git.rs`, `src/sync.rs` and
+/// `src/vcs.rs`, three of them naming a document this repository has never
+/// contained.
+///
+/// This file keeps the exclusion, and the reason does not generalise to any
+/// other: its fixtures *are* comment text, held in string literals that
+/// `comment_blocks` cannot tell from comments. A seeded-failure test for a
+/// comment gate has to contain a comment this gate reports, so scanning them
+/// makes every anti-vacuity pin a finding against itself — sixteen, measured.
+/// The exemption is keyed through `file!()` rather than spelled, so renaming
+/// the gate carries it rather than silently widening the scope.
 fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String>) -> Vec<String> {
+    let own_fixtures = Path::new(file!()).file_name();
     let mut errors = Vec::new();
     for path in files {
         let Ok(content) = fs::read_to_string(path) else {
@@ -1840,7 +1849,12 @@ fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String
         };
         let rel = path.strip_prefix(root).unwrap_or(path).display();
         let dir = path.parent().unwrap_or(root);
-        for block in comment_blocks(before_test_module(&content)) {
+        let scanned = if path.file_name() == own_fixtures {
+            before_test_module(&content)
+        } else {
+            content.as_str()
+        };
+        for block in comment_blocks(scanned) {
             let joined = block.text();
             let block_tokens = doc_path_tokens(&joined);
             if block_tokens.is_empty() {
@@ -4054,30 +4068,81 @@ mod tests {
         );
     }
 
-    /// **Pinning test for the test-module boundary in `before_test_module`.**
+    /// **Pinning test for the inline-test-module scope.**
     ///
-    /// `#[cfg(test)]` puts a comment outside the rule whatever the module is
-    /// called. Matching the name `tests` literally left `src/git.rs` — whose
-    /// test modules are `branch_model_tests` and `derived_content_tests` —
-    /// scanned end to end, one file in scope on different terms from every
-    /// other, decided by what someone named a module. The same citation is
-    /// asserted above the boundary as well: a boundary that swallowed the
-    /// whole file would pass the first half on its own.
+    /// A `#[cfg(test)]` comment asks its reader to follow a reference exactly
+    /// as any other comment does, whatever the module is called. Excluding
+    /// them is what let three citations of a document this repository does not
+    /// contain sit green in `src/git.rs`, `src/sync.rs` and `src/vcs.rs`.
+    ///
+    /// The resolving half is asserted in the same module: a scope that
+    /// reported everything below the attribute would pass the first half on
+    /// its own.
     #[test]
-    fn a_citation_inside_a_differently_named_test_module_is_out_of_scope() {
-        let below = citation_errors(
+    fn a_citation_inside_a_test_module_is_in_scope_under_any_module_name() {
+        let errors = citation_errors(
             "pub fn f() {}\n\
              #[cfg(test)]\n\
              mod derived_content_tests {\n\
              \x20   // The driver is the no-op side-pick (regenerable-regions.md D2).\n\
+             \x20   // Tier-0 lives in docs/explanation/joints/clone-topology.md.\n\
              \x20   fn t() {}\n\
              }\n",
         );
+        let combined = errors.join("\n");
         assert!(
-            below.is_empty(),
-            "a comment inside a test module is outside the rule, got:\n{}",
-            below.join("\n")
+            combined.contains("`regenerable-regions.md`"),
+            "a test module does not put a citation outside the rule, got:\n{combined}"
         );
+        assert!(
+            !combined.contains("clone-topology.md"),
+            "a resolving citation in the same module must stay silent, got:\n{combined}"
+        );
+    }
+
+    /// **Pinning test for the one exemption: this gate's own fixture corpus.**
+    ///
+    /// The fixtures below are comment text inside string literals, which
+    /// `comment_blocks` reads as comments — so the gate reports its own
+    /// seeded-failure tests unless its own file stops at the test boundary.
+    /// The production half of the same file is asserted in scope: an exemption
+    /// that swallowed the whole file would silence roughly half this gate's
+    /// live citations along with the fixtures.
+    #[test]
+    fn this_gates_own_fixtures_are_exempt_and_its_production_comments_are_not() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let dir = root.join("src/bin");
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(Path::new(file!()).file_name().expect("a file name"));
+        fs::write(
+            &file,
+            "// A fixture writes regenerable-regions.md; the gate reports it on demand.\n\
+             pub fn f() {}\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+             \x20   // The driver is the no-op side-pick (regenerable-regions.md D2).\n\
+             \x20   fn t() {}\n\
+             }\n",
+        )
+        .unwrap();
+        let errors = check_doc_citations(root, &[file], &HashSet::new());
+        assert_eq!(
+            errors.len(),
+            1,
+            "exactly the production citation, not the fixture, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors[0].contains("generate-explain.rs:1"),
+            "the reported site is the production comment, got:\n{}",
+            errors[0]
+        );
+    }
+
+    /// A citation is reported above a test boundary as well as below it.
+    #[test]
+    fn a_citation_in_production_code_is_reported() {
         let above = citation_errors(
             "// The driver is the no-op side-pick (regenerable-regions.md D2).\n\
              pub fn f() {}\n",

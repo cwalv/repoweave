@@ -6434,8 +6434,8 @@ mod tests {
 
     #[test]
     fn prune_dropped_repo_refuses_a_workweave_checkout_that_is_itself_the_store() {
-        // Inverted topology (joints/clone-topology.md I1): the workweave holds
-        // a standalone clone. The absent primary-side slot used to be read as
+        // Inverted topology: the workweave holds a standalone clone rather
+        // than a linked worktree. The absent primary-side slot used to be read as
         // "the store is gone, so this must be a linked worktree, delete it" —
         // but the objects under this path exist nowhere else in the weave, and
         // with no canonical to compare against, nothing has looked at them.
@@ -7308,7 +7308,6 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // `apply_strategy` states a derived-content policy
-    // (regenerable-regions.md D3)
     //
     // These drive `apply_strategy` directly, and the fixture asserts the repo
     // carries NO durable `merge.rwv-ours` definition. Both are load-bearing,
