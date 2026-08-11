@@ -270,8 +270,9 @@ epoch, minted by `OpId::new_now()` (`:100`).
 
 ### 6.1 `Vcs`
 
-`pub trait Vcs` (`src/vcs.rs:1762`) is the whole VCS surface: 76 methods, no
-supertraits, no associated types, object-safe. One implementor exists —
+`pub trait Vcs` (`src/vcs.rs:1762`) is the whole VCS surface: every VCS
+operation is a method on it, wide and flat — no supertraits, no associated
+types, object-safe. One implementor exists —
 `GitVcs` (`src/git.rs:330`), a unit struct, `impl` at `src/git.rs:731`. Callers
 reach it two ways: `vcs_for(VcsType)` (`src/vcs.rs:280`) returning
 `Box<dyn Vcs>` for the manifest-driven paths, and direct use of the unit value
