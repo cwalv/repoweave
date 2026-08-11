@@ -252,8 +252,6 @@ pub fn activate_with_options(
         ),
     };
 
-    let incoming = ProjectName::new(project)?;
-
     activate_at(
         ctx.primary_path(),
         project,
@@ -265,7 +263,7 @@ pub fn activate_with_options(
     // Project SELECTION, after activation rather than inside it. An activate
     // hook that errored bails above, so a partially-activated workspace
     // still does not record success.
-    primary.select_project(&incoming)
+    primary.select_project(&ProjectName::new(project)?)
 }
 
 /// Run every enabled integration's `deactivate` against `project_dir`.
