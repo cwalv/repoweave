@@ -52,21 +52,30 @@ pub const WINDOWS_PERMISSION_REMEDY: &str =
 
 /// Create a symbolic link at `link` pointing at `target`.
 pub fn create(target: &Path, link: &Path, kind: LinkTarget) -> anyhow::Result<()> {
-    platform_symlink(target, link, kind).map_err(|e| {
-        let mut refusal = format!(
-            "failed to create symlink {} -> {}: {e}",
-            link.display(),
-            target.display()
-        );
-        if e.kind() == std::io::ErrorKind::AlreadyExists {
-            refusal.push_str("; ");
-            refusal.push_str(&occupied_path_remedy(link));
-        } else if cfg!(windows) {
-            refusal.push_str("; ");
-            refusal.push_str(WINDOWS_PERMISSION_REMEDY);
-        }
-        anyhow::Error::msg(refusal)
-    })
+    platform_symlink(target, link, kind)
+        .map_err(|e| anyhow::Error::msg(refusal(&e, target, link, cfg!(windows))))
+}
+
+/// The sentence an operator reads when a link could not be created.
+///
+/// `on_windows` names the platform the refusal is *for*, not the one this is
+/// compiled on. A permission failure only happens where these tests never run,
+/// so taking the platform as an argument is what lets a Linux run read the
+/// text a Windows operator would get.
+fn refusal(error: &std::io::Error, target: &Path, link: &Path, on_windows: bool) -> String {
+    let mut message = format!(
+        "failed to create symlink {} -> {}: {error}",
+        link.display(),
+        target.display()
+    );
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        message.push_str("; ");
+        message.push_str(&occupied_path_remedy(link));
+    } else if on_windows {
+        message.push_str("; ");
+        message.push_str(WINDOWS_PERMISSION_REMEDY);
+    }
+    message
 }
 
 /// What an operator does when something already sits where a link belongs.
@@ -158,6 +167,66 @@ mod tests {
             "user content",
             "a refused link must leave what was there alone"
         );
+    }
+
+    fn denied() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::PermissionDenied)
+    }
+
+    fn exists() -> std::io::Error {
+        std::io::Error::from(std::io::ErrorKind::AlreadyExists)
+    }
+
+    #[test]
+    fn a_windows_permission_failure_carries_the_remedy() {
+        let message = refusal(&denied(), Path::new("t"), Path::new("l"), true);
+        assert!(
+            message.contains(WINDOWS_PERMISSION_REMEDY),
+            "a Windows operator must be told what to do: {message}"
+        );
+    }
+
+    #[test]
+    fn a_unix_permission_failure_carries_no_windows_remedy() {
+        let message = refusal(&denied(), Path::new("t"), Path::new("l"), false);
+        assert!(
+            !message.contains("Developer Mode"),
+            "without this the test above passes on a remedy pasted onto every \
+             failure, which is not what it claims: {message}"
+        );
+    }
+
+    #[test]
+    fn an_occupied_path_reads_the_same_on_either_platform() {
+        for on_windows in [true, false] {
+            let message = refusal(&exists(), Path::new("t"), Path::new("l"), on_windows);
+            assert!(
+                message.contains(&occupied_path_remedy(Path::new("l"))),
+                "on_windows={on_windows}: {message}"
+            );
+            assert!(
+                !message.contains("Developer Mode"),
+                "an occupied path is not a privilege problem, and offering \
+                 Developer Mode for it sends the operator somewhere useless: \
+                 {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn create_refuses_through_the_shared_sentence() {
+        // The helper above is only evidence if the real error path is the same
+        // path. Both calls hit one occupied link, so the two errors agree and
+        // the strings may be compared whole.
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("occupied");
+        std::fs::write(&link, "user content").unwrap();
+        let target = Path::new("target");
+
+        let raw = platform_symlink(target, &link, LinkTarget::File).unwrap_err();
+        let err = create(target, &link, LinkTarget::File).unwrap_err();
+
+        assert_eq!(err.to_string(), refusal(&raw, target, &link, cfg!(windows)));
     }
 
     #[test]
