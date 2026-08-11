@@ -79,6 +79,13 @@ does not govern for a symlinked reference is the linked-workspace
 creation ceremony (`git worktree add`); that step is replaced by a
 `symlink(<weave>/<repo_path>, <workweave>/<repo_path>)`.
 
+That symlink is load-bearing rather than incidental: it is the only record
+that the checkout is an alias, so what may be written at that path is
+constrained on every platform. [Symlinks as
+structure](./symlinks-as-structure.md) states those constraints and why a
+copy, a hardlink, or a missing link is a correctness failure rather than a
+degraded workspace.
+
 ### I3 — Branches are owned by exactly one workspace
 
 For **worktree-materialized** repos, a repo's checked-out branch is owned

@@ -18,6 +18,7 @@ If you are new, start with the lens that matches your situation (linked below); 
 
 - [Pyramid of stability](./joints/pyramid-of-stability.md)
 - [Clone topology](./joints/clone-topology.md)
+- [Symlinks as structure](./joints/symlinks-as-structure.md)
 - [Workweave hierarchy](./joints/workweave-hierarchy.md)
 - [Lock-as-derived](./joints/lock-as-derived.md)
 - [Sync semantics](./joints/sync-semantics.md)
