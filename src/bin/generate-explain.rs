@@ -2094,8 +2094,7 @@ const CONSUMER_VOCABULARY: &[&str] = &["bead", "choreograph", "subagent", "sling
 
 /// True if `word` occurs in `haystack` (already lowercased) bounded on both
 /// sides by a non-alphanumeric character or a string edge — i.e. as a whole
-/// word, not as a substring of a longer identifier. Same technique
-/// `check_no_foreign_vocabulary` uses for `"rig"`.
+/// word, not as a substring of a longer identifier.
 fn contains_word(haystack: &str, word: &str) -> bool {
     let b = haystack.as_bytes();
     haystack.match_indices(word).any(|(i, _)| {
@@ -2188,13 +2187,7 @@ fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
         let flat = content.replace('\n', " ").to_ascii_lowercase();
         for term in FOREIGN_VOCABULARY {
             let hit = if *term == "rig" {
-                let b = flat.as_bytes();
-                flat.match_indices("rig").any(|(i, _)| {
-                    let before_ok = i == 0 || !b[i - 1].is_ascii_alphanumeric();
-                    let after = i + 3;
-                    let after_ok = after >= b.len() || !b[after].is_ascii_alphanumeric();
-                    before_ok && after_ok
-                })
+                contains_word(&flat, "rig")
             } else {
                 flat.contains(term)
             };
@@ -3450,6 +3443,84 @@ mod tests {
                 .any(|e| e.contains("tests/some_test.rs")
                     && e.contains("consumer vocabulary `bead`")),
             "expected a `bead` hit under tests/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `rig` is in `FOREIGN_VOCABULARY` and no entry in that list has a live
+    /// hit anywhere in this repository's own `docs/` — so a check that finds
+    /// nothing is indistinguishable from one that never ran until something
+    /// plants a hit and asserts on it.
+    #[test]
+    fn foreign_vocabulary_check_fails_on_seeded_rig_hit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = tmp.path().join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(docs.join("deploy.md"), "Ship it through the rig.\n").unwrap();
+        let errors = check_no_foreign_vocabulary(tmp.path());
+        assert!(
+            errors.iter().any(|e| e.contains("contains `rig`")),
+            "expected a `rig` hit, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `origin`, `right` and `trigger` all contain the letters `rig` and must
+    /// not fire — the doc comment on `FOREIGN_VOCABULARY` names this hazard
+    /// for the `rig` entry specifically.
+    #[test]
+    fn foreign_vocabulary_check_ignores_rig_look_alikes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = tmp.path().join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(
+            docs.join("deploy.md"),
+            "The origin repo, the right approach, and what triggers a rebuild.\n",
+        )
+        .unwrap();
+        let errors = check_no_foreign_vocabulary(tmp.path());
+        assert!(
+            errors.is_empty(),
+            "origin/right/trigger contain the letters `rig` but not the word, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Multi-word entries take a different path through the check than `rig`
+    /// does and had no test at all before this.
+    #[test]
+    fn foreign_vocabulary_check_fails_on_seeded_multiword_hit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = tmp.path().join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(docs.join("deploy.md"), "Deployed from the Gas City rig.\n").unwrap();
+        let errors = check_no_foreign_vocabulary(tmp.path());
+        assert!(
+            errors.iter().any(|e| e.contains("contains `gas city`")),
+            "expected a `gas city` hit, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Multi-word entries match with a plain substring test and carry no word
+    /// boundary, unlike `rig` — `"gas city"` fires here even though the text
+    /// uses "biogas" and "cityscape" as separate words, neither of which is
+    /// the phrase the entry names.
+    #[test]
+    fn foreign_vocabulary_check_multiword_entry_has_no_word_boundary() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = tmp.path().join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(
+            docs.join("deploy.md"),
+            "The biogas cityscape cooled overnight.\n",
+        )
+        .unwrap();
+        let errors = check_no_foreign_vocabulary(tmp.path());
+        assert!(
+            errors.iter().any(|e| e.contains("contains `gas city`")),
+            "expected the unbounded substring match to fire across \"biogas cityscape\", \
+             got:\n{}",
             errors.join("\n")
         );
     }
