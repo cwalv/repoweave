@@ -1483,8 +1483,8 @@ mod tests {
 
     /// Fixture for the two-class rule: the root presents `web-app`, which
     /// declares two shared names; `other-app` declares one of them plus one
-    /// named for itself. `AGENTS.md` — shared, and declared only by the
-    /// presented project — is the name a repair scoped to `other-app` can
+    /// named for itself. The other shared name — declared only by the
+    /// presented project — is the one a repair scoped to `other-app` can
     /// reach only through the previously-active union.
     fn make_two_project_workspace() -> (tempfile::TempDir, ProjectName, ProjectName) {
         let (tmp, presented) = make_surfacing_workspace(&[".claude", "AGENTS.md"]);
@@ -1539,10 +1539,10 @@ mod tests {
     fn repair_for_another_project_does_not_unlink_the_presented_project() {
         // The other half of the same stomp: the removal candidates for a
         // non-presented project must not reach the presented project's
-        // surfacing, which the previously-active union made them do.
-        // `AGENTS.md` is the case that isolates removal from re-pointing —
-        // `other-app` does not declare it, so a repair that unlinks it never
-        // puts anything back.
+        // surfacing, which the previously-active union made them do. The
+        // shared name `other-app` does not declare is the case that isolates
+        // removal from re-pointing — a repair that unlinks it never puts
+        // anything back.
         let (tmp, _presented, other) = make_two_project_workspace();
         let root = tmp.path();
 

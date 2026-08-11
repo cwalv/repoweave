@@ -530,8 +530,6 @@ pub enum WorkweaveAction {
 
 #[derive(Subcommand)]
 pub enum SetupAction {
-    /// Generate AGENTS.md at the workspace root
-    AgentsMd,
     /// Register rwv prime as a Claude Code hook (SessionStart + PreCompact)
     Claude {
         /// Remove all rwv hooks from Claude Code settings

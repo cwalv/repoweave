@@ -27,10 +27,6 @@ a workspace.
 There is no `--json` mode; prime is the markdown-orientation channel by
 design.
 
-The same `render_context` output is written to `AGENTS.md` by
-`rwv setup agents-md` for non-Claude agents (Cursor, Copilot, etc.) that
-read AGENTS.md.
-
 ## Invocation
 
 ```
@@ -82,12 +78,6 @@ Register `rwv prime` as Claude Code SessionStart + PreCompact hooks:
 
 ```
 rwv setup claude
-```
-
-Generate AGENTS.md with the same content for non-Claude agents:
-
-```
-rwv setup agents-md
 ```
 
 ## Common errors

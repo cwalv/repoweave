@@ -18,4 +18,4 @@
 
 registry:resolve          # utility verb (print workspace path); no --json output and no behavioral complexity warranting an explain page — one-liner in cli.md is sufficient coverage
 registry:completions      # shell-completion scaffolding; output is shell script, not user-facing prose — no explain page needed
-registry:setup            # umbrella verb; its subcommands (setup claude, setup agents-md) are documented in cli.md — no separate explain page needed
+registry:setup            # umbrella verb; its subcommand (setup claude) is documented in cli.md — no separate explain page needed

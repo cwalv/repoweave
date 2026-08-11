@@ -1059,10 +1059,6 @@ pub fn run() -> anyhow::Result<()> {
             explain::explain(command.as_deref())?;
         }
         Some(Commands::Setup { action }) => match action {
-            SetupAction::AgentsMd => {
-                let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
-                setup::agents_md(&ctx)?;
-            }
             SetupAction::Claude { uninstall } => {
                 if uninstall {
                     setup::claude_uninstall()?;

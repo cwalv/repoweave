@@ -63,7 +63,7 @@ pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
 /// Two distinct paths are exposed; choose deliberately:
 /// - [`primary_path`] — the primary weave directory. Use for state owned by
 ///   the workspace as a whole (`.rwv-active`, `projects/` enumeration,
-///   `.workweaves/` listing, AGENTS.md).
+///   `.workweaves/` listing, `static-files` surfacing targets).
 /// - [`active_path`] — the directory the checkout points to: the primary
 ///   path when in a primary, the workweave directory when in a workweave.
 ///   Use for per-workspace state (project worktrees and their `rwv.lock` /
@@ -1034,7 +1034,7 @@ impl WorkspaceContext {
     /// Use this for state owned by the workspace as a whole — the
     /// `.rwv-active` file, the `projects/` directory used to enumerate
     /// projects, the `.workweaves/` directory used to enumerate workweaves,
-    /// and workspace-level config files like `AGENTS.md`. These all live
+    /// and the files `static-files` surfaces to the root. These all live
     /// under the primary regardless of where CWD currently is.
     pub fn primary_path(&self) -> &Path {
         &self.primary_root

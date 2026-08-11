@@ -26,10 +26,9 @@ This lens describes the recommended workflow pattern; the parts that are *curren
 rwv prime                          # emit the advert
 rwv prime --no-suppress            # always emit (default suppresses outside a weave)
 rwv setup claude                   # register prime as a Claude Code SessionStart hook
-rwv setup agents-md                # generate AGENTS.md for Cursor/Copilot/etc.
 ```
 
-`rwv setup claude` and `rwv setup agents-md` are per-harness setup verbs. They're not deeply scalable to a dozen harnesses, but the shape is right for the current population.
+`rwv setup claude` is a per-harness setup verb. It's not deeply scalable to a dozen harnesses, but the shape is right for the current population.
 
 ### JIT reflection — `rwv explain`
 

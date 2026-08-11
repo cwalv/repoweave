@@ -107,7 +107,6 @@ cd ../.workweaves/web-app--payments
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv explain [<verb>]` | Print a markdown reflection bundle for `<verb>` (purpose, invocation, output, JSON Schema, exit codes, examples). Omit `<verb>` to list explainable verbs |
 | `rwv setup claude` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact) |
-| `rwv setup agents-md` | Generate `AGENTS.md` at the workspace root for Cursor, Copilot, and other agents |
 | `rwv completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
 ### Shell completions
@@ -130,13 +129,7 @@ repoweave can inject workspace context into AI coding agents so they understand 
 rwv setup claude
 ```
 
-**Cursor, Copilot, and other agents** that read `AGENTS.md`:
-
-```bash
-rwv setup agents-md
-```
-
-Both commands are idempotent and safe to re-run.
+Idempotent and safe to re-run.
 
 ### Run agents in parallel
 

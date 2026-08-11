@@ -18,12 +18,6 @@ rwv prime
 rwv setup claude
 ```
 
-For Cursor / Copilot / AGENTS.md-aware tools:
-
-```bash
-rwv setup agents-md
-```
-
 ## Discover the verbs (JIT reflection)
 
 The agent's harness should not scrape `rwv --help`. The reflection endpoint is `rwv explain`:

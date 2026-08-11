@@ -417,10 +417,6 @@ The rendered bundles are checked in at `docs/reference/explain/` for offline bro
 
 Register `rwv prime` as a Claude Code hook (`SessionStart` + `PreCompact`). `--uninstall` removes all rwv hooks.
 
-### `rwv setup agents-md`
-
-Generate `AGENTS.md` at the workspace root for Cursor, Copilot, and other AGENTS.md-aware tools.
-
 ### `rwv completions <shell>`
 
 Generate shell completions (bash, zsh, fish, etc.). Source the output in your shell rc file.
