@@ -326,6 +326,10 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
 ///
 /// Pinned because the honest failure is the whole point: `--fix`
 /// must not report success when the file it names is still missing.
+///
+/// The refusal arrives from link creation, which reaches the orphan before
+/// the generator does. What is pinned is that it arrives at all, with the
+/// path and the repair in it — not which site minted it.
 #[test]
 fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
     require_cargo!();
@@ -340,8 +344,12 @@ fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
         "precondition for this arm: the canonical lock stays missing"
     );
     assert!(
-        fix_output.contains("a real file occupies the surfacing path"),
+        fix_output.contains("does not overwrite what is already at"),
         "the failure must name why the generation could not land.\noutput:\n{fix_output}"
+    );
+    assert!(
+        fix_output.contains("remove it and re-run"),
+        "the failure must name the repair, not just the obstruction.\noutput:\n{fix_output}"
     );
     assert!(
         fix_output.contains(&f.ww_surfaced_lock().display().to_string()),

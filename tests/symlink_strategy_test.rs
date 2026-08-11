@@ -174,7 +174,7 @@ fn hardlinks_are_confined_to_the_atomic_publish() {
 fn a_copied_checkout_is_indistinguishable_from_a_worktree() {
     use repoweave::workweave::{classify_checkout, CheckoutKind};
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let canonical = tmp.path().join("canonical");
     std::fs::create_dir_all(canonical.join(".git")).unwrap();
 

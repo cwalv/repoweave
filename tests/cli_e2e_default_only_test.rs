@@ -658,11 +658,18 @@ mod cargo {
         );
         std::fs::write(&int_file, hand_authored).unwrap();
 
-        // Symlink at workspace root.
+        // Surfacing links are relative, and the owner-scoped removal that
+        // precedes re-surfacing recognises only that spelling. An absolute
+        // target here models a shape rwv has never written and one that no
+        // repair can replace.
         let symlink_path = ws.join("Cargo.toml");
         if !symlink_path.exists() {
             #[cfg(unix)]
-            std::os::unix::fs::symlink(&int_file, &symlink_path).unwrap();
+            std::os::unix::fs::symlink(
+                Path::new("projects/cargo-cutover-project/Cargo.toml"),
+                &symlink_path,
+            )
+            .unwrap();
         }
 
         rwv()
@@ -1032,7 +1039,8 @@ mod go_work {
         std::fs::write(&int_file, seeded).unwrap();
 
         let ws_link = ws.join("go.work");
-        std::os::unix::fs::symlink(&int_file, &ws_link).unwrap();
+        std::os::unix::fs::symlink(Path::new("projects/go-symlink-project/go.work"), &ws_link)
+            .unwrap();
         assert!(
             ws_link.is_symlink(),
             "test setup: ws/go.work must be a symlink"

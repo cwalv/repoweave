@@ -1294,17 +1294,17 @@ mod tests {
 
     #[test]
     fn a_link_that_cannot_be_created_refuses_instead_of_warning() {
-        // A real file at the surfacing path survives the owner-scoped removal
-        // (which unlinks symlinks only), so link creation hits EEXIST. Warning
-        // and continuing here returned Ok with `.claude` unsurfaced, and every
-        // caller reads that as a project that never declared the file.
+        // A real file at the surfacing path survives the owner-scoped removal,
+        // which unlinks symlinks only, so link creation hits EEXIST. An Ok
+        // return with `.claude` unsurfaced reads to every consumer as a
+        // project that never declared the file.
         let (tmp, project) = make_surfacing_workspace(&[".claude"]);
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
         std::fs::write(root.join(".claude"), "user content").unwrap();
 
-        let err = surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair)
-            .unwrap_err();
+        let err =
+            surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains(".claude"),
@@ -1319,8 +1319,8 @@ mod tests {
     #[test]
     fn a_directory_source_is_surfaced() {
         // `.beads` and `.claude` are surfaced directories in a real weave, and
-        // Windows needs a different call for those than for a file. Nothing
-        // else here authors a directory source.
+        // Windows creates a link to a directory with a different call than a
+        // link to a file.
         let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
         let root = tmp.path();
         let claude = project_dir(root, project.as_str()).join(".claude");

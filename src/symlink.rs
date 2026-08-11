@@ -58,12 +58,28 @@ pub fn create(target: &Path, link: &Path, kind: LinkTarget) -> anyhow::Result<()
             link.display(),
             target.display()
         );
-        if cfg!(windows) {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            refusal.push_str("; ");
+            refusal.push_str(&occupied_path_remedy(link));
+        } else if cfg!(windows) {
             refusal.push_str("; ");
             refusal.push_str(WINDOWS_PERMISSION_REMEDY);
         }
         anyhow::Error::msg(refusal)
     })
+}
+
+/// What an operator does when something already sits where a link belongs.
+///
+/// rwv never overwrites what it did not put there, so removing it is the one
+/// thing that moves the state forward, and the sentence has to name which
+/// path it means. Says nothing about what the occupant is: `EEXIST` does not
+/// distinguish a file from a directory or a foreign link.
+pub fn occupied_path_remedy(link: &Path) -> String {
+    format!(
+        "rwv does not overwrite what is already at {} — remove it and re-run",
+        link.display()
+    )
 }
 
 /// Rust's `symlink_file` and `symlink_dir` both pass
