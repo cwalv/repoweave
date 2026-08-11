@@ -1113,9 +1113,10 @@ impl OwnedRef {
     /// dangling receipt (benign) rather than an unreceipted ref
     /// (permanently disowned under R2).
     ///
-    /// Its callers are exactly the two registry producers in
-    /// [`crate::workweave_index`]: the one that persists a new receipt and
-    /// the one that re-derives a stored one.
+    /// Its only callers are the registry producers in
+    /// [`crate::workweave_index`] — the paths that persist a new receipt and
+    /// that re-derive a stored one. Nothing outside the receipt store mints
+    /// one, which is what makes holding an `OwnedRef` mean a receipt exists.
     pub(crate) fn from_receipt(
         store: PathBuf,
         name: RawRefName,
@@ -1234,9 +1235,9 @@ impl AttachedRef {
     ///
     /// The comparison the L1 publish gate needs — "is the checkout on the
     /// branch a projection names" — without ever exposing the witness's
-    /// name as a string. Both `push.rs` call sites go through
-    /// this: the project gate against `RemoteDefaultBranch::local_counterpart`,
-    /// the member gate against `TrackingRef::local_counterpart`.
+    /// name as a string. Every gate that asks whether a checkout sits on the
+    /// branch some projection names goes through this, against whichever
+    /// `local_counterpart` that projection yields.
     pub fn is_named(&self, name: &LocalRefName) -> bool {
         self.name.as_str() == name.as_str()
     }

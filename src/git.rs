@@ -128,8 +128,9 @@ pub fn legacy_rwv_replay_exclusion_needle(path_str: &str) -> String {
 ///
 /// Worktrees share `.git/config` with the canonical repo, so a single plant
 /// covers every workweave checkout — `git config` resolves the right file
-/// itself. Called from `sync::verify_replay_exclusion_invariant` (self-heals
-/// before every rebase-strategy sync) and from `rwv doctor --fix`.
+/// itself. Every path that brings a project repo under rwv's management or
+/// repairs one plants it, so the definition is in place before any replay in
+/// that repo can stop.
 pub fn plant_rwv_merge_driver_config(repo: &Path) -> Result<(), VcsError> {
     let driver_status = git_command()
         .args(["config", RWV_MERGE_DRIVER_CONFIG_KEY, "true"])

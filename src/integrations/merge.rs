@@ -106,7 +106,7 @@ pub enum Ownership {
 
 /// The cross-format owned-value type.
 ///
-/// Only the shapes used by the six hybrid integrations are represented; this
+/// Only the shapes the hybrid integrations use are represented; this
 /// is intentional, not a TODO. The `Object` variant merges into existing
 /// content (sub-key ownership); leaf variants replace.
 #[derive(Debug, Clone, PartialEq)]

@@ -7,9 +7,10 @@
 //!
 //! ## Single resolution point
 //!
-//! rwv acquires the origin dir exactly once per invocation — the top of
-//! `main` calls [`acquire_origin_dir`], and every downstream handler
-//! receives an already-resolved [`WorkspaceContext`]. There must be no
+//! rwv acquires the origin dir at most once per invocation — the single
+//! resolution point in dispatch calls [`acquire_origin_dir`] when no `-C`
+//! supplies an origin instead, and every downstream handler receives an
+//! already-resolved [`WorkspaceContext`]. There must be no
 //! other `std::env::current_dir()` calls anywhere in the CLI code path:
 //! resolution is a pure function of `(argv, origin_dir)`, and any handler
 //! that consulted process-wide ambient state independently would break
@@ -41,10 +42,10 @@ use std::path::{Path, PathBuf};
 /// [`WorkspaceContext::resolve`]; handlers must receive an already-resolved
 /// context and must not consult the process cwd on their own.
 ///
-/// The distinction between *acquire* and *resolve* is load-bearing: a
-/// future `-C <path>` / `-w <name>` flag will inject a different origin
-/// dir into the same resolver, and the rest of the code path must not
-/// need to change to accommodate that.
+/// The distinction between *acquire* and *resolve* is load-bearing: `-C
+/// <path>` and `-w <name>` inject a different origin dir into the same
+/// resolver, and nothing downstream of the resolver distinguishes those
+/// origins from the process cwd.
 pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
     std::env::current_dir().context("failed to read current directory")
 }
