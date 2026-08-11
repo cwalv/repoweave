@@ -1134,38 +1134,6 @@ fn collect_rs_files_inner(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Strip the `#[cfg(test)]` test module from Rust source content.
-///
-/// Finds the last occurrence of the two-line sequence `#[cfg(test)]\n`
-/// followed by `mod tests` (with optional whitespace) and returns only the
-/// content before that point. This cleanly excludes test-only env reads
-/// (e.g. `std::env::set_var` / `remove_var` scaffolding in tests) without
-/// requiring a full Rust parser.
-///
-/// If no test module marker is found the full content is returned unchanged.
-fn strip_test_module(content: &str) -> &str {
-    // Find `#[cfg(test)]` followed immediately by a newline and then `mod tests`.
-    // We look for the pattern as a substring so we handle any indentation.
-    let marker = "#[cfg(test)]";
-    let mut search = content;
-    let mut last_pos = None;
-    while let Some(pos) = search.find(marker) {
-        let abs_pos = content.len() - search.len() + pos;
-        // After the marker, skip to the next line and check for `mod tests`.
-        let after = &content[abs_pos + marker.len()..];
-        let after_trimmed = after.trim_start_matches([' ', '\t', '\r', '\n']);
-        if after_trimmed.starts_with("mod tests") {
-            last_pos = Some(abs_pos);
-        }
-        // Advance past this occurrence.
-        search = &search[pos + marker.len()..];
-    }
-    match last_pos {
-        Some(p) => &content[..p],
-        None => content,
-    }
-}
-
 /// Scan `src_dir` for `std::env::var` and `std::env::var_os` reads in
 /// non-test production code, and check each against the allowlist.
 ///
@@ -1174,10 +1142,12 @@ fn strip_test_module(content: &str) -> &str {
 /// Covers literal string arguments to std::env::var and std::env::var_os.
 /// Reads whose argument is a variable or expression (not a string literal)
 /// are not matched — such a pattern would itself be a policy violation and
-/// would require a separate audit. Test modules (identified by the
-/// `#[cfg(test)]\nmod tests` sentinel) are excluded before scanning.
-/// Comment lines (leading `//`) are excluded to avoid false positives from
-/// doc examples and inline annotations.
+/// would require a separate audit. Inline test modules are dropped by
+/// [`before_test_module`], under whatever name they carry: `#[cfg(test)]` is
+/// what puts a region outside this gate, not what someone called the module,
+/// and `src/git.rs` names two of its own `branch_model_tests` and
+/// `derived_content_tests`. Comment lines (leading `//`) are excluded to avoid
+/// false positives from doc examples and inline annotations.
 ///
 /// Returns error messages (one per unlisted read); empty means clean.
 fn check_env_input_reads(src_dir: &Path, allowlist: &HashSet<String>) -> Vec<String> {
@@ -1196,9 +1166,7 @@ fn check_env_input_reads(src_dir: &Path, allowlist: &HashSet<String>) -> Vec<Str
             }
         };
 
-        // Exclude test module content (everything from #[cfg(test)] mod tests
-        // to the end of the file).
-        let production_content = strip_test_module(&content);
+        let production_content = before_test_module(&content);
 
         // Scan line by line, skipping comment lines (// and ///) so that doc
         // examples and annotations don't produce false positives.
@@ -1697,20 +1665,22 @@ fn is_bare_pointer(block_text: &str, tokens: &[&str]) -> bool {
         .all(|w| POINTER_FILLER.contains(&w))
 }
 
-/// Content up to the first `#[cfg(test)]` that is followed by a line break and
-/// a module declaration.
+/// Content up to the **first** `#[cfg(test)]` that is followed by a line break
+/// and an inline module body — the region every gate here treats as test-only.
 ///
-/// The module's name is not part of the boundary: `mod branch_model_tests` ends
-/// the scanned region exactly as `mod tests` does. A scope that recognised one
-/// name decided whether a comment was in scope by what someone called a module,
-/// which is the defect this gate exists to catch, one level up.
+/// Two of those words are deviations from the obvious matcher, and dropping
+/// either silently returns a large span of test content to every caller:
 ///
-/// Not `strip_test_module`, which this gate cannot use. That one takes the
-/// *last* marker and accepts the module on the same line, so a doc comment
-/// mentioning `#[cfg(test)] mod tests` in prose counts as the boundary — this
-/// file has several, and the last of them sits well below its own test module.
-/// Requiring the line break admits only the real attribute; taking the first
-/// admits only the real module.
+/// - **first**, not last. A comment writing the attribute in prose is a later
+///   occurrence than the real one, and this file carries several such
+///   mentions, hundreds of lines below its own test module.
+/// - a **line break** after the attribute. It is what separates the real
+///   attribute from a prose mention, which is written inline.
+///
+/// The module's *name* is not part of the boundary: `mod branch_model_tests`
+/// ends the region exactly as `mod tests` does. A boundary that recognised one
+/// name decided scope by what someone called a module, which is the defect
+/// these gates exist to catch, one level up.
 fn before_test_module(content: &str) -> &str {
     let marker = "#[cfg(test)]";
     let mut from = 0;
@@ -1718,7 +1688,7 @@ fn before_test_module(content: &str) -> &str {
         let at = from + pos;
         let after = content[at + marker.len()..].trim_start_matches([' ', '\t', '\r']);
         if after.starts_with('\n')
-            && declares_module(after.trim_start_matches([' ', '\t', '\r', '\n']))
+            && opens_module_body(after.trim_start_matches([' ', '\t', '\r', '\n']))
         {
             return &content[..at];
         }
@@ -1727,13 +1697,33 @@ fn before_test_module(content: &str) -> &str {
     content
 }
 
-/// True if `text` opens a module declaration, under any name and any visibility.
-fn declares_module(text: &str) -> bool {
+/// True if `text` opens an inline module body, under any name and any
+/// visibility.
+///
+/// The brace is what separates a region from a declaration. `src/vcs.rs` opens
+/// with `#[cfg(test)] pub(crate) mod testing;`, which gates a whole other file
+/// rather than starting a test region — read as a boundary it puts every line
+/// of that file below it outside all five gates that call
+/// [`before_test_module`].
+fn opens_module_body(text: &str) -> bool {
     let mut words = text.split_whitespace().skip_while(|w| w.starts_with("pub"));
-    words.next() == Some("mod")
-        && words
-            .next()
-            .is_some_and(|name| name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'))
+    if words.next() != Some("mod") {
+        return false;
+    }
+    let Some(word) = words.next() else {
+        return false;
+    };
+    if !word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        return false;
+    }
+    match word
+        .trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        .chars()
+        .next()
+    {
+        Some(c) => c == '{',
+        None => words.next().is_some_and(|w| w.starts_with('{')),
+    }
 }
 
 /// True if `line` is the inline escape-hatch annotation, with a reason.
@@ -3339,7 +3329,51 @@ mod tests {
         let errors = check_env_input_reads(&src, &allow);
         assert!(
             errors.is_empty(),
-            "env reads inside #[cfg(test)] mod tests should be excluded, got:\n{}",
+            "env reads inside a test module should be excluded, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// The two shapes that leaked test-module content into this gate, each
+    /// carrying an ordinary-quoted env read that must stay silent.
+    ///
+    /// Both were live in this repository and neither failed, which is luck
+    /// rather than scope: every fixture inside the leaked windows writes its
+    /// env reads with escaped quotes, and the gate's needle is the literal
+    /// unescaped form. These two write them the ordinary way.
+    #[test]
+    fn env_input_check_excludes_reads_in_the_windows_that_used_to_leak() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        // A prose mention of the attribute below the real declaration.
+        fs::write(
+            src.join("prose.rs"),
+            "pub fn f() {}\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+             \x20   fn t() { let _ = std::env::var(\"TEST_ONLY_VAR\"); }\n\
+             \x20   /// Cuts at #[cfg(test)] mod tests, which is this line.\n\
+             \x20   fn u() {}\n\
+             }\n",
+        )
+        .unwrap();
+        // A test module under a name other than `tests`.
+        fs::write(
+            src.join("named.rs"),
+            "pub fn f() {}\n\
+             #[cfg(test)]\n\
+             mod derived_content_tests {\n\
+             \x20   fn t() { let _ = std::env::var_os(\"OTHER_TEST_VAR\"); }\n\
+             }\n",
+        )
+        .unwrap();
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_env_input_reads(&src, &allow);
+        assert!(
+            errors.is_empty(),
+            "test-module env reads are out of scope under every module name, \
+             below any prose mention, got:\n{}",
             errors.join("\n")
         );
     }
@@ -3642,29 +3676,100 @@ mod tests {
         );
     }
 
-    /// strip_test_module removes content from #[cfg(test)] mod tests onward.
+    /// The boundary drops test content and keeps production code.
     #[test]
-    fn strip_test_module_removes_test_content() {
+    fn before_test_module_removes_test_content() {
         let content = "fn prod() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n";
-        let stripped = strip_test_module(content);
+        let kept = before_test_module(content);
         assert!(
-            stripped.contains("fn prod()"),
+            kept.contains("fn prod()"),
             "production code must be preserved"
         );
-        assert!(
-            !stripped.contains("fn t()"),
-            "test content must be stripped"
+        assert!(!kept.contains("fn t()"), "test content must be dropped");
+    }
+
+    /// The boundary is a no-op when there is no test module.
+    #[test]
+    fn before_test_module_no_op_without_test_module() {
+        let content = "fn prod() {}\n";
+        assert_eq!(
+            before_test_module(content),
+            content,
+            "content without test module must be unchanged"
         );
     }
 
-    /// strip_test_module is a no-op when there is no test module.
+    /// A file with two test modules ends at the **first**, not the last.
+    ///
+    /// `src/git.rs` is that file — `branch_model_tests` then
+    /// `derived_content_tests`. Taking the last marker leaves the whole of the
+    /// first module inside every scanning gate.
     #[test]
-    fn strip_test_module_no_op_without_test_module() {
-        let content = "fn prod() {}\n";
-        let stripped = strip_test_module(content);
+    fn the_boundary_is_the_first_test_module_not_the_last() {
+        let content = "fn prod() {}\n\
+                       #[cfg(test)]\n\
+                       mod branch_model_tests {\n\
+                       \x20   fn first() {}\n\
+                       }\n\
+                       #[cfg(test)]\n\
+                       mod derived_content_tests {\n\
+                       \x20   fn second() {}\n\
+                       }\n";
         assert_eq!(
-            stripped, content,
-            "content without test module must be unchanged"
+            before_test_module(content),
+            "fn prod() {}\n",
+            "the first test module ends the region"
+        );
+    }
+
+    /// A comment writing the attribute inline is prose, not a boundary.
+    ///
+    /// This file carries several such mentions, and the lowest of them sits
+    /// hundreds of lines below the real declaration — so accepting the module
+    /// on the same line as the attribute returns that whole span to the
+    /// env-input gate's scope.
+    #[test]
+    fn a_prose_mention_of_the_attribute_is_not_a_boundary() {
+        let content = "/// The sentinel is `#[cfg(test)] mod tests {` on one line.\n\
+                       fn prod() {}\n\
+                       #[cfg(test)]\n\
+                       mod tests {\n\
+                       \x20   fn t() {}\n\
+                       }\n";
+        let kept = before_test_module(content);
+        assert!(
+            kept.contains("fn prod()"),
+            "a prose mention above the code must not cut it off, got:\n{kept}"
+        );
+        assert!(
+            !kept.contains("fn t()"),
+            "the real declaration below it is still the boundary, got:\n{kept}"
+        );
+    }
+
+    /// `#[cfg(test)] mod <name>;` gates a whole other file and opens no region.
+    ///
+    /// `src/vcs.rs` declares `pub(crate) mod testing;` that way in its first
+    /// twenty lines, so reading it as a boundary puts nearly the whole file
+    /// outside every gate that scopes through here.
+    #[test]
+    fn a_test_only_file_module_declaration_is_not_a_boundary() {
+        let content = "use std::io;\n\
+                       #[cfg(test)]\n\
+                       pub(crate) mod testing;\n\
+                       fn prod() {}\n\
+                       #[cfg(test)]\n\
+                       mod tests {\n\
+                       \x20   fn t() {}\n\
+                       }\n";
+        let kept = before_test_module(content);
+        assert!(
+            kept.contains("fn prod()"),
+            "a file-module declaration must not end the region, got:\n{kept}"
+        );
+        assert!(
+            !kept.contains("fn t()"),
+            "the inline module below it is the boundary, got:\n{kept}"
         );
     }
 
