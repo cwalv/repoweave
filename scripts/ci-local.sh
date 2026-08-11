@@ -23,6 +23,9 @@ cargo test --release
 header "cargo clippy --all-targets -- -D warnings"
 cargo clippy --all-targets -- -D warnings
 
+header "cargo doc --no-deps (rustdoc warnings deny)"
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
 header "cargo fmt --all -- --check"
 cargo fmt --all -- --check
 
