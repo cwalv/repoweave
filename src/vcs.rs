@@ -372,6 +372,22 @@ pub enum VcsError {
         /// Short label naming the in-flight operation.
         operation: String,
     },
+    /// A VCS hook refused an operation the VCS had otherwise completed.
+    ///
+    /// For git this is a `post-checkout` hook rejecting `worktree add`: the
+    /// worktree and its registration are already written when the hook runs,
+    /// so the destination is registered even though the command failed.
+    /// `stderr` is the hook author's text, not the VCS's — git's own output
+    /// names no hook, which is why this cannot be recognised by reading it.
+    ///
+    /// **The evidence is weaker than the name.** What the producer observes
+    /// is that the destination got registered, which says only that the
+    /// command died *after* git wrote the admin entry. A hook refusing is one
+    /// way to reach that point; a checkout that dies partway through for a
+    /// reason of its own — a full disk, a permission error under `dest`, an
+    /// interrupt — is another, and arrives here wearing this name. Widen the
+    /// evidence before relying on this variant to mean a hook specifically.
+    HookRejected { repo: PathBuf, stderr: String },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -395,6 +411,7 @@ impl VcsError {
             Self::RebaseConflict { .. } => "rebase-conflict",
             Self::StaleRefWitness { .. } => "stale-ref-witness",
             Self::MidOperation { .. } => "mid-operation",
+            Self::HookRejected { .. } => "hook-rejected",
             Self::Io { .. } => "io",
             Self::CommandFailed { .. } => "command-failed",
         }
@@ -441,6 +458,10 @@ pub enum VcsErrorOutput {
         repo: PathBuf,
         operation: String,
     },
+    HookRejected {
+        repo: PathBuf,
+        stderr: String,
+    },
     Io {
         ctx: String,
         /// Display form of the underlying `io::Error`. The native source is
@@ -486,6 +507,10 @@ impl From<&VcsError> for VcsErrorOutput {
             VcsError::MidOperation { repo, operation } => Self::MidOperation {
                 repo: repo.clone(),
                 operation: operation.clone(),
+            },
+            VcsError::HookRejected { repo, stderr } => Self::HookRejected {
+                repo: repo.clone(),
+                stderr: stderr.clone(),
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -534,6 +559,12 @@ impl fmt::Display for VcsError {
                 f,
                 "{} is {operation}; finish or cancel it before rwv moves HEAD",
                 repo.display()
+            ),
+            Self::HookRejected { repo, stderr } => write!(
+                f,
+                "a hook in {} rejected the operation: {}",
+                repo.display(),
+                stderr.trim()
             ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(

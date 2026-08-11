@@ -470,6 +470,47 @@ impl GitVcs {
 }
 
 impl GitVcs {
+    /// Re-mint a failed `worktree add` as [`VcsError::HookRejected`] when git
+    /// left `dest` registered as a worktree.
+    ///
+    /// git names no hook in its own output: on a `post-checkout` rejection it
+    /// writes its progress line and whatever the hook printed, so the only
+    /// occurrences of "hook" available to match are the hook author's wording
+    /// (absent whenever the hook says "denied by policy") and the destination
+    /// path itself (present for any repo under a `hooks/` directory, on
+    /// failures no hook was involved in). The registration is git's own
+    /// signal instead: it is written before the hook runs, and every failure
+    /// that precedes checkout aborts before it exists.
+    ///
+    /// The question it answers is "did git get past writing the admin entry",
+    /// which a refusing hook satisfies and so does any later failure of the
+    /// checkout itself. Necessary, not sufficient — see
+    /// [`VcsError::HookRejected`].
+    ///
+    /// This runs inside the failing add, so the registration is observed
+    /// before any rwv-side rollback can prune it.
+    fn classify_worktree_add_failure(&self, e: VcsError, store: &Path, dest: &Path) -> VcsError {
+        let VcsError::CommandFailed { stderr, .. } = &e else {
+            return e;
+        };
+        let Ok(dest) = dest.canonicalize() else {
+            return e;
+        };
+        let registered = self.list_worktrees(store).is_ok_and(|worktrees| {
+            worktrees
+                .iter()
+                .any(|w| w.canonicalize().is_ok_and(|w| w == dest))
+        });
+        if registered {
+            VcsError::HookRejected {
+                repo: store.to_path_buf(),
+                stderr: stderr.clone(),
+            }
+        } else {
+            e
+        }
+    }
+
     /// Resolve `rev` to its canonical 40-hex SHA in `repo`.
     ///
     /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Private
@@ -2049,7 +2090,8 @@ impl Vcs for GitVcs {
             // retried with -b, destroying a ref on nothing but a name match
             // — a DESTROY needs a receipt and a warrant (R2, R3), and this
             // call holds neither, so it cannot be reached from here.
-            Self::run(&["worktree", "add", dest_str, branch], &store)?;
+            Self::run(&["worktree", "add", dest_str, branch], &store)
+                .map_err(|e| self.classify_worktree_add_failure(e, &store, dest))?;
             return Ok(false);
         }
         // AUTHOR. If this fails after git has already written the ref (a
@@ -2058,7 +2100,8 @@ impl Vcs for GitVcs {
         // call, so what remains is a recorded ref with no worktree, which
         // doctor can reconcile. Deleting it here would be an unwarranted
         // DESTROY, which is the failure mode this path exists to remove.
-        Self::run(&["worktree", "add", "-b", branch, dest_str, start], &store)?;
+        Self::run(&["worktree", "add", "-b", branch, dest_str, start], &store)
+            .map_err(|e| self.classify_worktree_add_failure(e, &store, dest))?;
         Ok(true)
     }
 
@@ -2522,6 +2565,74 @@ mod branch_model_tests {
             GitVcs.head_revision(&dest).unwrap(),
             unique,
             "the commit that was already on the adopted branch survives"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Birth: a hook refusing the add is not a generic command failure
+    // -----------------------------------------------------------------------
+
+    /// Plant a `post-checkout` hook that refuses and prints nothing.
+    ///
+    /// Silence is the point: git contributes no mention of a hook to its own
+    /// output, so a hook that also says nothing leaves the word absent from
+    /// every byte an operator or a matcher could read.
+    #[cfg(unix)]
+    fn plant_silent_refusing_hook(repo: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        let hooks = repo.join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("post-checkout");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_refusing_hook_is_reported_as_a_hook_rejection() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        let (_dest_home, dest) = worktree_dest();
+        plant_silent_refusing_hook(store.path());
+
+        let err = GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .expect_err("the hook refused, so the add failed");
+
+        let VcsError::HookRejected { stderr, .. } = &err else {
+            panic!("a refusing hook must classify as HookRejected, got: {err:?}");
+        };
+        assert!(
+            !stderr.contains("hook"),
+            "git's output must not contain the word, or this test cannot tell a \
+             typed classification from a text match: {stderr:?}"
+        );
+    }
+
+    /// The classification cannot be reading text: this fixture puts "hook" in
+    /// the destination path — which git echoes into the stderr of the failure
+    /// — while no hook exists at all.
+    #[test]
+    fn an_unrelated_failure_under_a_hook_shaped_path_is_not_a_hook_rejection() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let dest = home.path().join("hooks").join("wt");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("occupant"), "in the way").unwrap();
+
+        let err = GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .expect_err("the destination is occupied, so the add failed");
+
+        assert!(
+            err.to_string().contains("hook"),
+            "fixture must put the word in the error text, or it proves nothing: {err}"
+        );
+        assert!(
+            matches!(err, VcsError::CommandFailed { .. }),
+            "an occupied destination is not a hook rejection however the path is \
+             spelled, got: {err:?}"
         );
     }
 

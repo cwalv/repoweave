@@ -729,6 +729,28 @@ Schema:
         {
           "type": "object",
           "required": [
+            "kind",
+            "repo",
+            "stderr"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "hook-rejected"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "ctx",
             "kind",
             "message"

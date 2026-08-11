@@ -34,7 +34,7 @@ use crate::manifest::{project_repo_key, LockFile, Manifest, ProjectName, Role, W
 use crate::symlink::LinkTarget;
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
-    ResolvedRevisionId, Vcs,
+    ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
     parse_weave_dir_name, project_dir, project_rel_dir, project_rel_path, read_active_project,
@@ -1020,6 +1020,19 @@ pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
     resolved_worktree_parent(vcs, checkout, checkout)
 }
 
+/// Whether a hook refused the operation this error reports.
+///
+/// The birth path converts its [`VcsError`] to `anyhow::Error` before a caller
+/// sees it, so the variant is reached by downcast. anyhow sees through
+/// `context` layers; an intermediate that reformats the error into a fresh
+/// message does not, and would silently answer `false` here.
+fn is_hook_rejection(e: &anyhow::Error) -> bool {
+    matches!(
+        e.downcast_ref::<VcsError>(),
+        Some(VcsError::HookRejected { .. })
+    )
+}
+
 /// Materialize a worktree at `dest` on this workweave's ephemeral ref in the
 /// store behind `source_repo`, writing the ownership receipt first.
 ///
@@ -1592,11 +1605,7 @@ pub fn create_workweave(
                 }
             }
             Err(e) => {
-                // R25: when git worktree add fails due to a git hook (post-checkout
-                // or similar), git's stderr mentions "hook". Name the hook and
-                // point at git hook config so the operator knows where to look.
-                let err_str = e.to_string();
-                let hook_hint = if err_str.contains("hook") {
+                let hook_hint = if is_hook_rejection(&e) {
                     "\n  note: a git hook in this repo rejected the worktree creation; \
                      check the repo's .git/hooks/ directory or core.hooksPath config"
                 } else {
@@ -1687,8 +1696,7 @@ pub fn create_workweave(
                 rollback.record_worktree(project_dir.clone(), project_wt_dest.clone());
             }
             Err(e) => {
-                // R25: if a git hook rejected the worktree add, name it.
-                let hook_hint = if e.to_string().contains("hook") {
+                let hook_hint = if is_hook_rejection(&e) {
                     "; a git hook in the project repo rejected the worktree creation — \
                      check .git/hooks/ or core.hooksPath config"
                 } else {
@@ -3819,6 +3827,52 @@ mod tests {
     #[test]
     fn derive_name_replaces_slashes() {
         assert_eq!(derive_workweave_name(Some("a/b/c"), None), "a-b-c");
+    }
+
+    // -----------------------------------------------------------------------
+    // is_hook_rejection — classification by variant, never by text
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_hook_rejection_is_recognised_through_the_anyhow_conversion() {
+        let e = anyhow::Error::from(VcsError::HookRejected {
+            repo: PathBuf::from("/store"),
+            stderr: "denied by policy".to_owned(),
+        });
+        assert!(is_hook_rejection(&e));
+    }
+
+    #[test]
+    fn a_hook_rejection_survives_added_context() {
+        let e = anyhow::Error::from(VcsError::HookRejected {
+            repo: PathBuf::from("/store"),
+            stderr: "denied by policy".to_owned(),
+        })
+        .context("could not create workweave");
+        assert!(
+            is_hook_rejection(&e),
+            "a caller that adds context must not lose the classification"
+        );
+    }
+
+    /// Everything a text matcher keys on is present here and no hook was
+    /// involved: the word appears in the repo path, in the args, and in
+    /// git's stderr.
+    #[test]
+    fn a_command_failure_that_merely_says_hook_is_not_a_hook_rejection() {
+        let e = anyhow::Error::from(VcsError::CommandFailed {
+            args: vec!["worktree".to_owned(), "add".to_owned()],
+            repo: PathBuf::from("/srv/webhook-service"),
+            stderr: "fatal: '/srv/webhook-service/hooks/wt' already exists".to_owned(),
+        });
+        assert!(
+            e.to_string().contains("hook"),
+            "fixture must say the word, or it does not test what it claims: {e}"
+        );
+        assert!(
+            !is_hook_rejection(&e),
+            "classification must read the variant, not the message"
+        );
     }
 
     // -----------------------------------------------------------------------

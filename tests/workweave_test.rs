@@ -3054,8 +3054,11 @@ fn create_workweave_succeeds_when_all_repos_have_commits() {
 
 /// Plant a failing `post-checkout` hook in `repo`.
 ///
-/// `git worktree add` runs `post-checkout` after materializing the new tree;
-/// a non-zero exit causes the add to fail with output containing "hook".
+/// `git worktree add` runs `post-checkout` after materializing the new tree,
+/// and a non-zero exit fails the add — but git names no hook in its output,
+/// and this hook prints nothing, so the failure text says only that the add
+/// did not finish. What marks it as a rejection is that git had already
+/// registered the worktree before running the hook.
 /// The returned hook path is the installed executable so the test can remove
 /// or modify it later if needed.
 #[cfg(unix)]
