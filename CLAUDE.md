@@ -136,6 +136,14 @@ Three gates in `src/bin/generate-explain.rs`:
   cites; and a bare filename accompanied **in the same comment block** by a
   resolving path is followable as it stands (which is what a markdown link
   already gives the reader).
+
+  Inline `#[cfg(test)]` modules are in scope — a comment inside one asks its
+  reader the same question any other does. This gate's own file is the
+  exception and stops at its test boundary, because its fixtures are comment
+  text held in string literals, which the scanner cannot tell from comments;
+  scanning them turns every seeded-failure test into a finding against itself.
+  So **a green gate means no unfollowable citation outside that one file**,
+  and the sixteen fixtures behind that boundary are read by nothing.
 - `check_no_internals_on_operator_surfaces` scans generated operator surfaces
   — `docs/reference/explain/**` and `docs/reference/schemas/*.json` — for
   `docs/internals/` paths. The generator is an audience boundary; what it
@@ -148,11 +156,12 @@ gate. Written against a path that resolves, or against a document named with
 no file extension, nothing fires.
 
 **A green gate therefore does not mean the tree has no section pointers.** It
-also does not mean `docs/` is clean: `check_doc_citations` reads `src/` only,
-and it stops at an inline `#[cfg(test)] mod tests`. When you sweep by hand,
-match on the *shape* — a document name followed by a section token — in every
-spelling. The sweep before this gate matched `§` and left `D2`, `D4` and
-`D1–D3` standing in four files.
+also does not mean `docs/` is clean: `check_doc_citations` reads `src/` only.
+Inline `#[cfg(test)]` modules are in scope; the one place it stops at the test
+boundary is its own file, whose fixtures are comment text it cannot tell from
+comments. When you sweep by hand, match on the *shape* — a document name
+followed by a section token — in every spelling. The sweep before this gate
+matched `§` and left `D2`, `D4` and `D1–D3` standing in four files.
 
 ## Comments do not name symbols that no longer exist
 
@@ -276,10 +285,14 @@ The four the survey found, for the taxonomy:
   out by hand; the successor prefix is this repo's own vocabulary namespace, so
   the clause above states the gate's one prefix rather than the gate growing to
   meet the rule.
-- **one region of the file** — the citation gate stops scanning at the first
-  `#[cfg(test)]` module. That exclusion is deliberate, but nothing re-examines
-  it: a non-resolving citation below that line is invisible for as long as it
-  sits there, and one is.
+- **one region of the file** — the citation gate stopped scanning at the first
+  `#[cfg(test)]` module. The exclusion was deliberate and nothing re-examined
+  it, so a non-resolving citation below that line stayed invisible for as long
+  as it sat there: four did, three of them naming a document this repository
+  has never contained. Those came out by hand and the gate now reads test
+  modules — except in its own file, whose fixtures are comment text it cannot
+  tell from comments. The exclusion is one file wide instead of every file,
+  and nothing re-examines that one either.
 
 Four habits, in the order they pay off:
 
