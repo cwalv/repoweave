@@ -71,11 +71,14 @@ not a feature).
 Two shapes stay banned, string literals and generated surfaces included,
 because they encode no route a reader can take:
 
-- **a tracker ID** — `fo-…`, `#1234`, `PROJ-56`. Banned everywhere,
-  `tests/` included: `check_no_tracker_ids` in `src/bin/generate-explain.rs`
-  enforces it. A test may name the regression it pins in its own words; the
-  ID itself is not the way to do that — that provenance is what the commit
-  that added the test already carries.
+- **a tracker ID** — an identifier that means nothing except as a lookup in a
+  tracker the reader does not have. `fo-…` is one prefix; the ban is on the
+  thing, not on a list of spellings. Banned everywhere, `tests/` included. A
+  test may name the regression it pins in its own words; the ID itself is not
+  the way to do that — that provenance is what the commit that added the test
+  already carries. `check_no_tracker_ids` in `src/bin/generate-explain.rs`
+  mechanises one prefix of this and deliberately not the rest; the next
+  section says which, and why it stops there.
 - **a comment whose entire content is a reference** — `// See
   docs/explanation/joints/clone-topology.md.`. Banned in `src/` and `docs/`.
   Delete it and write the sentence it was standing in for. A resolving
@@ -105,8 +108,26 @@ rewrite would have removed. Expect to reach for it close to never.
 
 ### What is mechanised, and what is not
 
-Two gates in `src/bin/generate-explain.rs`:
+Three gates in `src/bin/generate-explain.rs`:
 
+- `check_no_tracker_ids` enforces the tracker-ID clause for **one prefix**:
+  the literal `fo-`, not preceded by an alphanumeric, followed by four to
+  eight lowercase letters or digits and an optional `.N` sub-ID. Nothing
+  shorter, longer, capitalised, or differently prefixed. It reads `docs/`
+  and `tests/` as well as `src/`, which the citation gate does not.
+
+  That prefix is the retired one. The prefix the tracker issues now is
+  `rwv-`, which is also this repo's own vocabulary namespace — some 480
+  occurrences in `src/` alone, led by `rwv-active`, `rwv-workweave`,
+  `rwv-op`, and `rwv-ours`, the merge driver written into `.gitattributes`
+  and into `merge.rwv-ours.*` config keys, at 51 sites by itself. A general
+  `PREFIX-slug` matcher reads every one of those as a tracker ID, and a
+  matcher that reports correct code gets turned off. So this gate holds the
+  one prefix it can hold without a suppression mechanism, and a second one
+  is written in by hand by someone who has measured what it collides with
+  first. The narrowness is a measurement, not an oversight — but **a green
+  gate means no `fo-`-shaped ID, not no tracker ID.** Every other prefix is
+  yours to catch while you read.
 - `check_doc_citations` enforces the two-base resolution rule and the
   bare-pointer clause over comments in `src/`, for tokens whose last
   component ends in a document extension. A filename with no `/` counts, for

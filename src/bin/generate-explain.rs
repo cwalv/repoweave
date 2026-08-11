@@ -3576,6 +3576,72 @@ mod tests {
         );
     }
 
+    /// `docs/**.md` is in scope, so a tracker ID in published prose is
+    /// reported like one in code.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
+    #[test]
+    fn tracker_id_check_reaches_docs_md() {
+        let planted_id = format!("{}-{}", "fo", "ab12cd.3");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = tmp.path().join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(
+            docs.join("guide.md"),
+            format!("The refusal this describes was fixed per {planted_id}.\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("docs/guide.md") && e.contains(&planted_id)),
+            "expected a tracker-ID hit under docs/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// The matcher holds `fo-` and nothing else, which is the boundary the
+    /// tracker-ID clause states: rwv's own `rwv-`-prefixed vocabulary is not
+    /// a tracker prefix here, an embedded `fo-` is not a word, and a slug
+    /// outside four-to-eight lowercase-or-digit characters is not a slug.
+    ///
+    /// The planted control carries the whole weight of this test: asserting
+    /// only that the negatives stay silent would pass equally if the gate
+    /// stopped reporting anything at all. Widening the matcher to a second
+    /// prefix without amending that clause reddens the count.
+    #[test]
+    fn tracker_id_check_holds_the_fo_prefix_and_nothing_else() {
+        let control = format!("{}-{}", "fo", "ab12cd");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            format!(
+                "// The rwv-ours driver is planted as merge.rwv-ours.driver, and\n\
+                 // .rwv-active names the marker rwv-workweave reads.\n\
+                 // An info-abc12 token embeds the prefix inside a word.\n\
+                 // Bounds: fo-abc, fo-abcdefghij and fo-ABC12 are not IDs.\n\
+                 // Only this one is: {control}\n\
+                 pub fn f() {{}}\n"
+            ),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert_eq!(
+            errors.len(),
+            1,
+            "only the planted control may be reported, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors[0].contains(&control),
+            "the single hit must be the planted control, got:\n{}",
+            errors[0]
+        );
+    }
+
     /// strip_test_module removes content from #[cfg(test)] mod tests onward.
     #[test]
     fn strip_test_module_removes_test_content() {
