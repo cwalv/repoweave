@@ -500,6 +500,11 @@ const ALLOWLIST: &[Allowed] = &[
     },
 ];
 
+// Not built on tests/common/src_scan.rs: that scanner skips every
+// #[cfg(test)]-gated item alike, but scan() below must keep reading inside
+// one that is not a module (a real hook, like go_work.rs's test-only PATH
+// override) and stop only at a #[cfg(test)] mod (a fixture) — a distinction
+// the shared scanner does not draw.
 fn src_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
