@@ -3787,6 +3787,73 @@ mod tests {
         );
     }
 
+    /// **Non-vacuity pin for the scope helper, against the real `src/` tree.**
+    ///
+    /// Every gate here seeds its failure into a temp fixture, and a fixture has
+    /// no `#[cfg(test)]` at its head, so a fixture is always scanned whole. A
+    /// seeded-failure test therefore proves a gate *can* report; it cannot see
+    /// a scope helper handing that gate fifteen lines of a 3390-line file.
+    /// `src/vcs.rs` was in exactly that state for five gates at once, under a
+    /// suite where every one of them was green.
+    ///
+    /// The structural check below is spelled out rather than calling
+    /// `opens_module_body`. Reusing that helper would assert the
+    /// implementation against itself and pass for every implementation of it,
+    /// including the one this test exists to reject.
+    #[test]
+    fn every_src_file_is_scoped_at_a_real_test_module_or_not_at_all() {
+        let files = src_rs_files(&repo_root());
+        assert!(
+            !files.is_empty(),
+            "no source files walked — this test would assert on nothing"
+        );
+
+        let mut truncated = 0usize;
+        let mut wrong = Vec::new();
+        for path in &files {
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
+            let kept = before_test_module(&content).len();
+            if kept == content.len() {
+                continue;
+            }
+            truncated += 1;
+
+            let cut = &content[kept..];
+            let opens_a_body = cut
+                .strip_prefix("#[cfg(test)]")
+                .and_then(|rest| rest.trim_start().split_once("mod "))
+                .is_some_and(|(visibility, after_mod)| {
+                    visibility.split_whitespace().all(|w| w.starts_with("pub"))
+                        && after_mod
+                            .trim_start()
+                            .trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                            .trim_start()
+                            .starts_with('{')
+                });
+            if !opens_a_body {
+                wrong.push(format!(
+                    "{}:{}: cut at `{}`",
+                    path.display(),
+                    content[..kept].lines().count() + 1,
+                    cut.lines().take(2).collect::<Vec<_>>().join(" / ")
+                ));
+            }
+        }
+
+        assert!(
+            truncated > 0,
+            "no file was scoped at all — the helper stopped finding boundaries, \
+             so the check below never ran"
+        );
+        assert!(
+            wrong.is_empty(),
+            "scoped somewhere that is not an inline test module:\n{}",
+            wrong.join("\n")
+        );
+    }
+
     // ── envelope-output coverage check unit tests ─────────────────────────────
 
     /// A plugin-protocol page that documents all envelope vars passes the check.
