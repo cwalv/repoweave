@@ -696,11 +696,11 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 }
 
 /// Surface the owner-scoped symlink set for `project` into `root` (the
-/// **step-2 surfacing primitive**, factored out of [`activate_at`]).
+/// **step-2 surfacing primitive**, factored out of `activate_at`).
 ///
 /// This is the re-runnable framework primitive that:
 ///  1. Computes the `generated_files() ∪ managed_files()` union
-///     ([`compute_owned_set`]).
+///     (`compute_owned_set`).
 ///  2. Removes stale owner-scoped symlinks (union of the new set with the
 ///     previously-active project's set, each verified to resolve to
 ///     `projects/<some-project>/<rel>`).
@@ -977,7 +977,7 @@ pub fn member_incompatibilities(
 /// resolves to `projects/<project>/<file>`.
 ///
 /// It reads the same `generated_files() ∪ managed_files()` union that drives
-/// symlink creation ([`compute_owned_set`]) — it lives in the
+/// symlink creation (`compute_owned_set`) — it lives in the
 /// framework and is byte-identical across all integrations, so it is NOT
 /// duplicated into per-integration `verify()` bodies (those own Axis-2 content
 /// drift). Any divergence between an integration's declared surfacing set and

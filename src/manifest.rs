@@ -587,7 +587,7 @@ impl fmt::Display for Role {
 
 /// The `--role` value did not name a [`Role`].
 ///
-/// Carries the offending value so callers can name it; [`Display`] lists the
+/// Carries the offending value so callers can name it; [`fmt::Display`] lists the
 /// accepted spellings from [`Role::ALL`] rather than restating them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoleParseError(pub String);

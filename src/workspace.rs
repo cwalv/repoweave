@@ -88,7 +88,7 @@ pub struct WorkspaceContext {
     ///
     /// Recorded for diagnostics — `rwv` bare status surfaces the
     /// divergence, and command implementations use it to build the
-    /// "you're in projects/<X>/ but <Y> is active" error message now
+    /// "you're in projects/\<X\>/ but \<Y\> is active" error message now
     /// that the CWD override has been removed.
     cwd_project_hint: Option<ProjectName>,
     /// Which chain step chose the active project, when one was chosen.
@@ -845,7 +845,7 @@ impl WorkspaceContext {
     /// `{root}/projects/{name}/...`, or `None` when CWD is not inside any
     /// project directory.
     ///
-    /// Use to (a) surface a "you are in projects/<X>/ but <Y> is active"
+    /// Use to (a) surface a "you are in projects/\<X\>/ but \<Y\> is active"
     /// warning in `rwv` bare status, and (b) construct a helpful error
     /// when action verbs are run from a project directory whose name
     /// disagrees with `.rwv-active`. Do *not* use it as a project
@@ -995,7 +995,7 @@ impl WorkspaceContext {
     ///
     /// Distinguishes three cases:
     /// - No active project set (no `.rwv-active`, no `--project`): delegates
-    ///   to [`require_active_project`] for the standard "no active project"
+    ///   to [`Self::require_active_project`] for the standard "no active project"
     ///   error message.
     /// - Active project named **and** directory exists: returns `Ok(name)`.
     /// - Active project named **but** directory is missing on disk (dangling
@@ -1003,7 +1003,7 @@ impl WorkspaceContext {
     ///
     /// All action verbs (`lock`, `add`, `remove`, `sync`, `sync-to`, `push`,
     /// `fetch`, `update`, `status`) must call this instead of
-    /// [`require_active_project`] so that a stale `.rwv-active` file does not
+    /// [`Self::require_active_project`] so that a stale `.rwv-active` file does not
     /// silently proceed into confusing downstream errors.
     pub fn require_active_project_on_disk(&self) -> anyhow::Result<&ProjectName> {
         let name = self.require_active_project()?;
@@ -1354,7 +1354,7 @@ impl WorkweaveMarker {
         Ok(())
     }
 
-    /// Migrate a legacy marker in `dir` — one [`observe_marker`] classifies
+    /// Migrate a legacy marker in `dir` — one `observe_marker` classifies
     /// [`MarkerDefect::Legacy`], i.e. not valid JSON — by backfilling
     /// `parent` to `primary` where `parent:` is missing, then rewriting
     /// through [`Self::write`] (which produces JSON).

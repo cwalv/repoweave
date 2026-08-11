@@ -257,7 +257,7 @@ pub enum CheckViolation {
 
     /// A clone-topology violation: one of the manifest repos is on disk in a
     /// shape that breaks tier-0 invariants from
-    /// [`docs/explanation/joints/clone-topology.md`].
+    /// `docs/explanation/joints/clone-topology.md`.
     ///
     /// All four sub-kinds are silent for every higher-tier `rwv doctor`
     /// check (those operate on revisions and content; this one operates on
@@ -336,7 +336,7 @@ pub enum CheckViolation {
     /// A `.rwv-op-lease` file whose recorded owner workspace has no matching
     /// `.rwv-op` with the same op id — the **structural dead-lease** case.
     ///
-    /// Unlike [`StaleOpState`], this **is** auto-fixable: the classification
+    /// Unlike [`CheckViolation::StaleOpState`], this **is** auto-fixable: the classification
     /// is by *structural comparison* — the lease pointer resolves to no
     /// paired owner record (either because the owner file is gone or because
     /// it now belongs to a different op id). No wall-clock input; no timeout;
@@ -480,7 +480,7 @@ pub enum CheckViolation {
     /// `LiveEdits`. This variant surfaces the true root cause instead.
     ///
     /// Repair: `rwv fetch` (in-place, no SOURCE) re-materializes the canonical
-    /// (same as [`DanglingReference`]), then re-run `rwv doctor` to verify.
+    /// (same as [`CheckViolation::DanglingReference`]), then re-run `rwv doctor` to verify.
     /// No auto-fix — doctor never clones (network stays behind explicit verbs).
     MissingCanonicalClone {
         /// Workweave name (always `Some`; this finding only fires for
@@ -1261,7 +1261,7 @@ pub enum BranchDisciplineKind {
     /// reported.
     ///
     /// What keeps that sound is that the heuristic yields a `bool` and
-    /// nothing else — see [`looks_like_a_pre_flat_ref`]. No name is taken
+    /// nothing else — see `looks_like_a_pre_flat_ref`. No name is taken
     /// apart, no workweave is named, and the only route to a DESTROY runs
     /// through an `OwnedRef`, which only a persisted receipt produces. A
     /// false positive costs one line of output and can cost nothing more.
@@ -2154,7 +2154,7 @@ pub struct LegacyWorkweaveMarkerFile {
 /// shape — with or without `parent:` present. A directory whose marker fails
 /// to parse at all, or whose legacy marker has no `primary:` of its own to
 /// report, is not included — both are
-/// [`crate::workspace::legacy_marker_primary`]'s call, the single parse of
+/// `crate::workspace::legacy_marker_primary`'s call, the single parse of
 /// `.rwv-workweave` behind this scan.
 pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveMarkerFile> {
     let mut found = Vec::new();
@@ -3155,7 +3155,7 @@ fn rwv_defines_merge_driver(name: &str) -> bool {
 /// A `<path> merge=<driver>` line is inert unless some config git can see
 /// defines `merge.<driver>.driver`; git falls back to an ordinary textual
 /// 3-way merge and says nothing about it. Under the `rwv-` prefix that
-/// fallback is permanent (see [`RWV_MERGE_DRIVER_PREFIX`]), so the line is a
+/// fallback is permanent (see `RWV_MERGE_DRIVER_PREFIX`), so the line is a
 /// declaration that reads as working and never will. Naming it is the point
 /// of this scan.
 ///
@@ -3266,7 +3266,7 @@ fn split_attribute_line(line: &str) -> Option<(&str, &str)> {
 
 /// Scan every `(workspace, repo)` pair under this weave's view and report
 /// clone-topology violations of the I1/I2 invariants from
-/// [`docs/explanation/joints/clone-topology.md`].
+/// `docs/explanation/joints/clone-topology.md`.
 ///
 /// For each manifest repo `R`, the scanner gathers:
 ///   - the canonical slot at `<ws_root>/R` (call its canonical-store CAN);
@@ -4669,8 +4669,8 @@ pub struct StateHygieneOpStateTarget {
 /// **Classification policy:**
 ///
 /// - **stale-worktree-registration**: produced by
-///   [`Vcs::list_stale_worktree_registrations`]. `--fix` (in `run_check`)
-///   runs [`Vcs::worktree_prune`]; this scanner only reports.
+///   [`crate::vcs::Vcs::list_stale_worktree_registrations`]. `--fix` (in `run_check`)
+///   runs [`crate::vcs::Vcs::worktree_prune`]; this scanner only reports.
 /// - **stale-op-state**: an in-tree `.rwv-op` file (any one). Reported
 ///   with its `started_at` field intact. **Never auto-fixed** — another
 ///   terminal may be mid-conflict-resolution and rwv has no daemon to
@@ -4914,7 +4914,7 @@ fn branch_discipline_in_scope(
 ///
 /// The receipt is retracted after a successful delete: leaving it would make
 /// the registry claim a ref that no longer exists, which is the dangling
-/// state [`scan_dangling_receipts`] exists to clear. Retracting the receipt
+/// state `scan_dangling_receipts` exists to clear. Retracting the receipt
 /// of a ref this call just destroyed is bookkeeping, not reclamation policy
 /// — whether receipts are reclaimed in bulk stays open.
 ///
@@ -5501,7 +5501,7 @@ pub fn fix_detached_canonicals(
 /// authorizes nothing — no warrant can be built against an absent ref — so
 /// dropping it destroys no capability and no work.
 ///
-/// The absence check lives in [`scan_dangling_receipts`] and nowhere else,
+/// The absence check lives in `scan_dangling_receipts` and nowhere else,
 /// which is why this runs it here rather than reusing an earlier scan's
 /// output. A second copy of the check in this function would be a safety
 /// property no test can reach: the scan runs microseconds earlier in the
@@ -5544,7 +5544,7 @@ pub fn fix_dangling_receipts(
 }
 
 /// Apply the `rwv doctor --fix` retraction for ownership receipts naming a
-/// pre-flat ref — the residue [`scan_pre_flat_receipts`] classifies.
+/// pre-flat ref — the residue `scan_pre_flat_receipts` classifies.
 ///
 /// Safe by construction, and for a different reason than
 /// [`fix_dangling_receipts`]: there the receipt authorizes nothing because
@@ -5568,7 +5568,7 @@ pub fn fix_dangling_receipts(
 ///
 /// The classification lives in the scan and nowhere else, the way
 /// [`fix_dangling_receipts`] keeps the absence check in
-/// [`scan_dangling_receipts`]: a second copy of the liveness guard here
+/// `scan_dangling_receipts`: a second copy of the liveness guard here
 /// would be a safety property no fixture could open a window against, and an
 /// unreachable guard is one that silently stops holding.
 ///
@@ -5614,11 +5614,11 @@ pub fn fix_pre_flat_receipts(
 /// The accepted `--fix` paths are deliberately narrow:
 ///
 /// - [`CheckViolation::StaleWorktreeRegistration`] →
-///   [`Vcs::worktree_prune`] in the registering repo. Information-
+///   [`crate::vcs::Vcs::worktree_prune`] in the registering repo. Information-
 ///   preserving by construction (the only state being dropped is a
 ///   pointer to a directory that already does not exist).
 /// - [`CheckViolation::OrphanedSavepoint`] with
-///   [`OrphanedSavepointKind::Redundant`] → [`Vcs::drop_savepoint`].
+///   [`OrphanedSavepointKind::Redundant`] → [`crate::vcs::Vcs::drop_savepoint`].
 ///   The ref tip is reachable from the current branch, so dropping the
 ///   ref does not unanchor any commits.
 /// - [`CheckViolation::DeadOpLease`] → [`crate::op_state::fix_dead_lease`]
@@ -7880,8 +7880,8 @@ fn collect_doctor_issues(
 /// the report is rendered, so a repaired workspace reports healthy.
 ///
 /// Both of its inputs are collected elsewhere and shared with
-/// [`run_check_json`]: [`collect_doctor_violations`] for the core findings and
-/// [`collect_doctor_issues`] for the integrations'. The only thing this
+/// [`run_check_json`]: `collect_doctor_violations` for the core findings and
+/// `collect_doctor_issues` for the integrations'. The only thing this
 /// function raises itself is a `--fix` arm's own failure, which `--json` has no
 /// `--fix` to produce.
 ///

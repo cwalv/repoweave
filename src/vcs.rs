@@ -2168,8 +2168,9 @@ pub trait Vcs: Send + Sync {
     /// `Ok(vec![])` is the normal outcome and carries no suspicion — it is
     /// what a replay with nothing to resolve returns.
     ///
-    /// For git: intersects `git diff --name-only
-    /// <base>...<source>` with `git diff --name-only <landed> <source>`, then
+    /// For git: intersects
+    /// `git diff --name-only <base>...<source>` with `git diff --name-only`
+    /// \<landed\> `<source>`, then
     /// asks `git check-attr merge` which survivors carry the rwv resolution.
     /// Delegating the pattern evaluation to git is what keeps a `!merge`
     /// carve-out inside a declared subtree honored here without a second

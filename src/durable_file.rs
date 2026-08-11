@@ -4,7 +4,7 @@
 //! Both entry points write the full content into a sibling temp, fsync it,
 //! then publish it in one step and fsync the containing directory. They
 //! differ only in what publishing means when something is already at the
-//! target path: [`create_new`] refuses, [`replace`] overwrites.
+//! target path: `create_new` refuses, `replace` overwrites.
 //!
 //! ## Why the fsyncs are here
 //!

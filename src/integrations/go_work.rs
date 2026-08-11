@@ -14,12 +14,12 @@
 //! requirement across the modules it adds, whatever the file said, and `go work
 //! init` stamps a fresh file with the version of whichever `go` ran it. So the
 //! directive is snapshotted before the `use` loop and restored after it by
-//! [`restore_go_directive`] — otherwise the same `rwv add` would rewrite an
+//! `restore_go_directive` — otherwise the same `rwv add` would rewrite an
 //! operator's pin on a machine with `go` installed and preserve it on one
 //! without.
 //!
 //! **FALLBACK** (no `go` on PATH, or forced in tests): use
-//! [`GoWorkDoc::merge_activate`] / [`strip_deactivate`].  Edits the `use (…)`
+//! [`merge_activate`] / [`strip_deactivate`].  Edits the `use (…)`
 //! region (Author) and the leading `go <version>` line (DefaultOnly — sets the
 //! default from config or `max_go_version` but never overwrites an existing
 //! go-line).  All other directives survive byte-for-byte.
@@ -274,7 +274,7 @@ impl Integration for GoWork {
     /// files.
     ///
     /// A hard predicate in the sense
-    /// [`Integration::member_incompatibility`](crate::integration::Integration::member_incompatibility)
+    /// [`Integration::member_incompatibility`]
     /// requires: it reads the members' `go.mod` files and the managed `go.work`
     /// and nothing else, and the consequence needs no interpretation — the go
     /// toolchain refuses to build a workspace whose go.work asks for less than

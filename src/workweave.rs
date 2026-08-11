@@ -3033,7 +3033,7 @@ fn list_workweave_dirs_for_project(
 ///
 /// **Scanning-based, not registry-backed.** Consumers that need to see every
 /// workweave regardless of registry state — doctor's per-workweave drift
-/// scans, [`adopt_children_of`] (child re-pointing by parent path) — use this.
+/// scans, `adopt_children_of` (child re-pointing by parent path) — use this.
 /// The user-facing `rwv workweave list` uses [`list_workweaves`] instead so
 /// unregistered on-disk directories are not silently visible in `list` output;
 /// doctor's `unregistered-workweave` finding is the one channel that surfaces
@@ -3207,7 +3207,7 @@ pub struct WorkweaveLogOutput {
 ///     the parent gained in the meantime.
 ///
 /// All VCS specifics are delegated to the [`Vcs`] impl for each repo's
-/// `vcs_type` via [`vcs_for`]; this function stays VCS-agnostic.
+/// `vcs_type` via `vcs_for`; this function stays VCS-agnostic.
 ///
 /// `cwd` must be inside a workweave. `diff` selects diff mode; `json` selects
 /// machine output.

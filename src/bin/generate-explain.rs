@@ -313,7 +313,7 @@ fn verbs() -> Vec<Verb> {
 ///
 /// Intentionally left untouched:
 /// - `$schema` JSON Schema standard URLs (http(s)://json-schema.org/…)
-/// - Example repo URLs (https://github.com/…)
+/// - Example repo URLs (`https://github.com/`…)
 /// - Anchors (#…)
 ///
 /// Applied to the raw JSON string *before* embedding it in the assembled

@@ -27,6 +27,7 @@ pub struct Cli {
     /// command line resolve against this directory. Repeating this flag is
     /// an error. If you meant to address a workweave by name, use
     /// -w/--workweave instead.
+    #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'C',
         long = "cwd",
@@ -43,6 +44,7 @@ pub struct Cli {
     /// -C <path> when outside the ecosystem entirely; compose with -w to select
     /// a specific workweave within the located workspace. Repeating this flag
     /// is an error. If you meant to address by path, use -C instead.
+    #[allow(rustdoc::invalid_html_tags)]
     #[arg(
         short = 'w',
         long = "workweave",
@@ -264,6 +266,7 @@ pub enum Commands {
         /// hard-resetting the project repo to source's tip. Pre-sync state is preserved
         /// in refs/rwv/pre-op/<id> and recoverable via `rwv abort`. Refused when the
         /// project repo has uncommitted changes (unrecoverable loss).
+        #[allow(rustdoc::invalid_html_tags)]
         #[arg(long, conflicts_with = "do_continue")]
         discard_local_commits: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
@@ -315,6 +318,7 @@ pub enum Commands {
         /// hard-resetting the project repo to target's tip. Pre-sync state is preserved
         /// in refs/rwv/pre-op/<id> and recoverable via `rwv abort`. Refused when the
         /// project repo has uncommitted changes (unrecoverable loss).
+        #[allow(rustdoc::invalid_html_tags)]
         #[arg(long, conflicts_with = "do_continue")]
         discard_local_commits: bool,
         /// Land work then delete the workweave on success (requires clean worktree and

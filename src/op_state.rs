@@ -56,7 +56,7 @@
 //!
 //! For `sync` / `sync-to`, the owner record and every touched-workspace lease
 //! are acquired **atomically at guard time** via [`acquire_op`]: each file is
-//! published with [`crate::durable_file::create_new`], and on `AlreadyExists`
+//! published with `crate::durable_file::create_new`, and on `AlreadyExists`
 //! anywhere the acquisition unwinds any partial state it created and returns
 //! the standard in-flight refusal. This closes the guard→mark TOCTOU window
 //! that a plain [`check_no_op_in_progress`] would leave: two concurrent ops
@@ -378,7 +378,7 @@ pub enum Override {
 /// illegal *both-populated* state unrepresentable (see [`PhaseTips`]). The
 /// persisted `.rwv-op` JSON keeps the historical flat shape — two independent
 /// top-level keys `advanced_tips` / `converged_tips` — via a serde shim
-/// ([`WireOwnerRecord`]), so on-disk op-state round-trips unchanged.
+/// (`WireOwnerRecord`), so on-disk op-state round-trips unchanged.
 /// `overrides` records named overrides supplied at invocation for audit
 /// fidelity on `--continue`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

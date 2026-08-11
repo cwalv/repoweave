@@ -72,7 +72,7 @@ pub trait Registry {
 
     /// If `raw` belongs to this registry, return the parsed [`RepoUrl`] variant.
     ///
-    /// Each registry publishes the patterns it recognises; [`RepoUrl::from_str`]
+    /// Each registry publishes the patterns it recognises; `RepoUrl::from_str`
     /// walks the registry list and returns the first match. Implementations
     /// return `None` for inputs they don't recognise.
     fn matches(&self, raw: &str) -> Option<RepoUrl>;

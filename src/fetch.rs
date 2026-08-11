@@ -241,8 +241,8 @@ pub fn run_fetch(
 /// manifest, and clones any repo whose canonical clone directory is missing.
 ///
 /// A clone that is already present is realigned rather than skipped: when the
-/// lock covers it, [`fetch_one`] resolves the locked revision in that clone's
-/// own object store and [`realign_present_clone`] advances the checkout to it
+/// lock covers it, `fetch_one` resolves the locked revision in that clone's
+/// own object store and `realign_present_clone` advances the checkout to it
 /// — fast-forwarding the tracking branch's local counterpart, or refusing
 /// unless `detach_checkouts` carries a consent. When the lock has no entry for
 /// the repo, or there is no lock, the clone is left alone and the lock records

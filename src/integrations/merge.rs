@@ -1773,7 +1773,7 @@ fn classify_verify(
 /// - `user_held_suffix`: the integration-specific cut-over instruction appended
 ///   to the USER-HELD message (e.g. how to add the marker for that format).
 /// - `drift_detail`: the integration-specific sentence describing what drifted
-///   (e.g. "on-disk [workspace] content differs from rwv.toml config.").
+///   (e.g. "on-disk \[workspace\] content differs from rwv.toml config.").
 ///
 /// Returns a single-issue `Vec` for MISSING/USER-HELD/DRIFT and an empty `Vec`
 /// for CLEAN — matching the pre-lift behavior exactly (each state produced one

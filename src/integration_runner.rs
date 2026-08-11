@@ -2,7 +2,7 @@
 //! deactivation lifecycles.
 //!
 //! The shared enablement-check and error-capture logic lives in
-//! [`for_each_enabled`], which each runner delegates to. Per-integration
+//! `for_each_enabled`, which each runner delegates to. Per-integration
 //! context construction is handled by [`IntegrationContextBase::build_context`].
 //! Errors from individual integrations are captured as `Issue`s rather than
 //! aborting — one integration failing should not prevent others from running.
@@ -147,7 +147,7 @@ impl<'a> IntegrationContextBase<'a> {
 ///
 /// The single statement of what "enabled" means for a run. Drivers whose
 /// per-integration work reduces to `Vec<Issue>` go through
-/// [`for_each_enabled`]; a caller that needs anything else out of each
+/// `for_each_enabled`; a caller that needs anything else out of each
 /// integration iterates this rather than re-deriving the lookup and the gate.
 pub fn enabled_integrations<'a>(
     integrations: &'a [&'a dyn Integration],

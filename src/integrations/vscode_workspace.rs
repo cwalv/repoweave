@@ -9,7 +9,7 @@
 //! computation there yields a strictly narrower set, and a plain replace would
 //! ship that narrowing back to primary as a silent loss.
 //!
-//! [`expected_generated_set`] is where that is resolved, and both `activate`
+//! `expected_generated_set` is where that is resolved, and both `activate`
 //! and `verify` go through it — regeneration and drift detection cannot
 //! disagree about what the region should hold.
 
@@ -550,7 +550,7 @@ impl Integration for VscodeWorkspace {
     ///   this container would write.
     /// - **CLEAN**: marker present and both halves match.
     ///
-    /// The exclude half is checked through the same [`expected_generated_set`]
+    /// The exclude half is checked through the same `expected_generated_set`
     /// that `activate` writes from, which is what makes it checkable at all: the
     /// set is a function of this container's disk view, and comparing a
     /// primary-authored file against a workweave's narrower scan would report

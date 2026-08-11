@@ -58,7 +58,7 @@
 //! refs.
 //!
 //! Durability is part of the contract, not an implementation detail; see
-//! [`write`] and [`RefRegistry::record_created`].
+//! [`write()`] and [`RefRegistry::record_created`].
 //!
 //! ## Advisory, validated before use
 //!
@@ -326,7 +326,7 @@ pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::
 /// the index file with an empty `workweaves` map if it did not exist.
 ///
 /// The recorded entries are preserved. `container` must be absolute; it is
-/// recorded in [`canonical_recorded_path`] form, like the placements under it,
+/// recorded in `canonical_recorded_path` form, like the placements under it,
 /// and that recorded form is returned.
 ///
 /// Canonicalizing here rather than in each caller is what keeps the rule true:

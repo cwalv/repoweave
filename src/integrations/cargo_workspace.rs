@@ -458,7 +458,7 @@ impl CargoWorkspace {
     /// Enumerate cargo-workspace members for the READ-ONLY scan path
     /// (version-skew + patch-shadowing).
     ///
-    /// Distinct from [`partition`] (activation-time): the scan path must
+    /// Distinct from `Self::partition` (activation-time): the scan path must
     /// include repos whose root declares `[workspace]` (grok-build shape),
     /// because that is where `[workspace.dependencies]` typically lives.
     /// Activation still hard-errors on those repos (they cannot be members
