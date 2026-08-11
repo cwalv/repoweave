@@ -1584,20 +1584,6 @@ impl Vcs for GitVcs {
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
 
-    fn list_local_branches(&self, repo: &Path) -> Result<Vec<RefName>, VcsError> {
-        let output = Self::run(
-            &["for-each-ref", "--format=%(refname)", "refs/heads/"],
-            repo,
-        )?;
-        let branches = output
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(|l| RefName::new(l.to_owned()))
-            .collect();
-        Ok(branches)
-    }
-
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path) {
         let src_path = src_repo.to_string_lossy().into_owned();
         // Errors are swallowed by design — for sibling worktrees that

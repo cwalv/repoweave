@@ -2480,16 +2480,6 @@ pub trait Vcs: Send + Sync {
         role: Role,
     ) -> Result<usize, VcsError>;
 
-    /// List every local branch in `repo`.
-    ///
-    /// For git: enumerates
-    /// `refs/heads/` via `git for-each-ref`. Differs from
-    /// [`list_branch_names_with_prefix`] in that it returns every branch
-    /// regardless of name.
-    ///
-    /// [`list_branch_names_with_prefix`]: Vcs::list_branch_names_with_prefix
-    fn list_local_branches(&self, repo: &Path) -> Result<Vec<RefName>, VcsError>;
-
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
     ///

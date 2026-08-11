@@ -498,10 +498,6 @@ impl Vcs for FakeVcs {
         unsupported("count_commits_ahead_of_remote")
     }
 
-    fn list_local_branches(&self, _repo: &Path) -> Result<Vec<RefName>, VcsError> {
-        unsupported("list_local_branches")
-    }
-
     fn fetch_objects_from(&self, _dst_repo: &Path, _src_repo: &Path) {
         unsupported("fetch_objects_from")
     }

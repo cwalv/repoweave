@@ -3497,7 +3497,7 @@ pub fn scan_clone_topology(
 // `docs/explanation/joints/shared-refs-drift.md`.
 //
 // VCS seam: the scanner consumes the `Vcs` trait — `observe_head`,
-// `head_attachment`, `list_local_branches`, `head_revision`,
+// `head_attachment`, `list_local_branch_names`, `head_revision`,
 // `resolve_revision`, and `is_ancestor` — without any git-specific code.
 // See `docs/explanation/joints/vcs-as-seam.md`.
 

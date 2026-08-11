@@ -944,7 +944,7 @@ between production and consumption — is Q15, §9, still open.)
 Below, the remaining `RefName` sites in the trait, and the type each gets.
 Four of the six are **not yet converted** — the implementation reached the
 branch model's own surface and stopped at the edges, which is honest to
-record. The fifth row is the one that has since closed:
+record. Two rows have since closed:
 
 | Site | Type today | Under the split |
 |---|---|---|
@@ -953,7 +953,7 @@ record. The fifth row is the one that has since closed:
 | `default_branch` | **deleted from `GitVcs` and from the trait** `[V]` | `Option<RemoteDefaultBranch>` — see below. Resolved not by retyping the method but by removing it, so the fabricating shape cannot be reintroduced by a future implementor. `Vcs::remote_default_branch` (`vcs.rs:3037`, impl `git.rs:2122-2137`) is now the only producer, and `rwv push`'s gate (`push.rs:179`), doctor's canonical pass (`check.rs:3736`), and two of `rwv add`'s three `version:` writes (`add_remove.rs:295-296`, `:394`) all read it. The third, `rwv add --new`, has no origin to read and resolves from `head_attachment` instead (`:693-703`) `[V]` — §6.2 |
 | `branch_has_remote_counterpart` (`vcs.rs:2298`) | still `&RefName` `[V]` | `&RawRefName` — the prune predicate inspects observed names |
 | `count_commits_ahead_of_remote` (`vcs.rs:2318`) | still `&RefName` `[V]` | `&RawRefName` — same predicate |
-| `list_local_branches` (`vcs.rs:2333`) | still `Vec<RefName>` `[V]` | `Vec<RawRefName>` — **shipped as a sibling rather than a conversion**: `list_local_branch_names` (`vcs.rs:3056`, impl `git.rs:2156-2170`) returns `Vec<RawRefName>` and is what the branch model's listing path uses |
+| `list_local_branches` | **deleted from `GitVcs` and from the trait** `[V]` | `Vec<RawRefName>` — resolved the same way as `default_branch`: not by retyping the qualified listing but by removing it, so a caller cannot reach a qualified name to hand-strip. `list_local_branch_names` (`vcs.rs:3205`, impl `git.rs:2259-2275`) is now the only local-branch listing, and its production caller, `prune_dropped_repo` (`sync.rs:1425`), takes the `RawRefName`s it returns and wraps each bare into a `RefName` — no `refs/heads/` prefix left to strip. Pinned by `tests/refs_heads_hand_strip_test.rs`, which fails if any file outside `git.rs` hand-strips that prefix |
 
 **`RemoteDefaultBranch`** is the remote's own declaration of its primary
 branch — the target of `refs/remotes/origin/HEAD`. It is none of §2's four

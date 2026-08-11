@@ -1422,15 +1422,11 @@ fn prune_dropped_repo(
             // time (the lock entry is gone); Role::Owned selects the
             // canonical-clone remote convention (`origin` for git)
             // which matches what every non-fork lock entry was cloned with.
-            let any_local_only = match vcs.list_local_branches(&dest) {
+            let any_local_only = match vcs.list_local_branch_names(&dest) {
                 Ok(names) => {
                     let mut any = false;
                     for branch in &names {
-                        // Strip the refs/heads/ prefix that for-each-ref
-                        // emits; trait methods take bare branch names.
-                        let short = RefName::new(
-                            branch.as_str().trim_start_matches("refs/heads/").to_owned(),
-                        );
+                        let short = RefName::new(branch.as_str().to_owned());
                         let has_counterpart = vcs
                             .branch_has_remote_counterpart(&dest, &short, Role::Owned)
                             .unwrap_or(false);
