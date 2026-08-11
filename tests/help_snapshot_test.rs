@@ -73,7 +73,14 @@ Global options:
 
 /// When `rwv-*` executables are present on PATH the "External commands"
 /// section appears after the core usage block.
+///
+/// Unix-only, and alone in this file: the fixture is a `#!/bin/sh` script made
+/// discoverable by its mode bit. Windows has no executable bit — `which`
+/// selects on PATHEXT — so the fixture would have to be `rwv-myplugin.exe` and
+/// the listed verb would read `myplugin.exe`. Every other test here snapshots
+/// help text and is platform-neutral.
 #[test]
+#[cfg(unix)]
 fn rwv_help_external_commands_section_with_fixture_plugin() {
     use std::fs;
     use std::io::Write;

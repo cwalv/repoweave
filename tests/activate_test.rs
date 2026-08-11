@@ -628,7 +628,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // via `integrations:`) to get a *real* nested owned path
     // (`gita/repos.csv`), so the descent-into-subdirectory leg is exercised
     // with an actually-owned name.
-    use std::os::unix::fs::symlink;
+    use repoweave::symlink::{create as symlink_to, LinkTarget};
 
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
@@ -669,13 +669,13 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // what we don't own.
     let user_relative_target = std::path::PathBuf::from("../projects/web-app/gita/extras.txt");
     let user_nested_link = ws.join("gita/extras.txt");
-    symlink(&user_relative_target, &user_nested_link).unwrap();
+    symlink_to(&user_relative_target, &user_nested_link, LinkTarget::File).unwrap();
 
     // And plant a symlink inside `github/` — it must NOT be removed
     // because the sweep refuses to descend into registry dirs.
     let registry_target = std::path::PathBuf::from("../projects/web-app/gita/repos.csv");
     let registry_link = ws.join("github/squat.csv");
-    symlink(&registry_target, &registry_link).unwrap();
+    symlink_to(&registry_target, &registry_link, LinkTarget::File).unwrap();
 
     // Re-activate: this runs `remove_activation_symlinks` before re-creating
     // links, exercising the sweep on the gita subdirectory.

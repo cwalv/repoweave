@@ -1039,8 +1039,12 @@ mod go_work {
         std::fs::write(&int_file, seeded).unwrap();
 
         let ws_link = ws.join("go.work");
-        std::os::unix::fs::symlink(Path::new("projects/go-symlink-project/go.work"), &ws_link)
-            .unwrap();
+        repoweave::symlink::create(
+            Path::new("projects/go-symlink-project/go.work"),
+            &ws_link,
+            repoweave::symlink::LinkTarget::File,
+        )
+        .unwrap();
         assert!(
             ws_link.is_symlink(),
             "test setup: ws/go.work must be a symlink"

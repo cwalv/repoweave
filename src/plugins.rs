@@ -361,8 +361,8 @@ pub fn dispatch_external(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn build_command_sets_program_and_args() {
@@ -476,8 +476,17 @@ mod tests {
     // Test helpers for discovery tests
     // -------------------------------------------------------------------------
 
+    // The fixtures below are `#!/bin/sh` scripts made executable with a mode
+    // bit, and the subject under test is which of them `which` will dispatch.
+    // Windows has no executable bit: `which` selects on PATHEXT there, so a
+    // discoverable plugin is `rwv-foo.exe`, and `strip_prefix("rwv-")` would
+    // name the verb `foo.exe`. What these assert is therefore not merely
+    // spelled Unix-ly, it is undefined on Windows until that naming is
+    // decided.
     /// Create an executable file at `dir/name`. Returns the file path.
+    #[cfg(unix)]
     fn make_executable(dir: &std::path::Path, name: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
         let p = dir.join(name);
         fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
         fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
@@ -485,13 +494,16 @@ mod tests {
     }
 
     /// Create a non-executable file at `dir/name` (mode 0o644).
+    #[cfg(unix)]
     fn make_non_executable(dir: &std::path::Path, name: &str) {
+        use std::os::unix::fs::PermissionsExt;
         let p = dir.join(name);
         fs::write(&p, "data\n").unwrap();
         fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
     }
 
     /// Build an OsString PATH from a list of directories.
+    #[cfg(unix)]
     fn join_paths(dirs: &[&std::path::Path]) -> OsString {
         std::env::join_paths(dirs).expect("join paths")
     }
@@ -509,6 +521,7 @@ mod tests {
 
     /// A single fixture dir with two executable `rwv-*` files.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_finds_executables_in_single_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -527,6 +540,7 @@ mod tests {
 
     /// Non-executable `rwv-*` files must NOT appear in results.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_skips_non_executable_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -540,6 +554,7 @@ mod tests {
 
     /// Non-existent PATH dir is silently skipped.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_nonexistent_path_dir_silently_skipped() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -553,6 +568,7 @@ mod tests {
 
     /// Files not named `rwv-*` are not returned.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_ignores_non_rwv_executables() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -571,6 +587,7 @@ mod tests {
     /// position of the winner in the vec depends on path lexicography. We
     /// key on the `shadowed` flag, not position.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_duplicate_shadowed_by_path_order() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("dir1");
@@ -602,6 +619,7 @@ mod tests {
     /// Same name in THREE PATH dirs: only the first (PATH-order winner) is
     /// unshadowed; the other two carry shadowed_by pointing at the winner.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_triple_duplicate_all_after_first_shadowed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("a");
@@ -639,6 +657,7 @@ mod tests {
 
     /// Symlinked executable `rwv-*` is included.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_symlinked_plugin_is_found() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let bin_dir = tmp.path().join("real");
@@ -660,6 +679,7 @@ mod tests {
 
     /// Output is sorted by name across multiple dirs.
     #[test]
+    #[cfg(unix)]
     fn discover_plugins_result_sorted_by_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -685,6 +705,7 @@ mod tests {
 
     /// With a fixture plugin, the help section lists the name.
     #[test]
+    #[cfg(unix)]
     fn help_section_lists_plugin_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -705,6 +726,7 @@ mod tests {
 
     /// Shadowed duplicates are NOT listed in the help section (only unique names).
     #[test]
+    #[cfg(unix)]
     fn help_section_omits_shadowed_duplicates() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("d1");

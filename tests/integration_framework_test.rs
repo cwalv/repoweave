@@ -1363,7 +1363,7 @@ mod fo_cnpjy_3 {
 
     #[test]
     fn owner_scoped_removal_preserves_unowned_symlinks() {
-        use std::os::unix::fs::symlink;
+        use repoweave::symlink::{create as symlink_to, LinkTarget};
 
         let tmp = common::tempdir().unwrap();
         let ws = tmp.path().to_path_buf();
@@ -1393,7 +1393,7 @@ mod fo_cnpjy_3 {
         std::fs::write(project_dir.join("user-config.json"), "{}\n").unwrap();
         let user_target = PathBuf::from("projects/p/user-config.json");
         let user_link = ws.join("user-config.json");
-        symlink(&user_target, &user_link).unwrap();
+        symlink_to(&user_target, &user_link, LinkTarget::File).unwrap();
 
         // Re-activate (context mode). The owner-scoped removal predicate
         // must NOT touch user-config.json — it is not in any active

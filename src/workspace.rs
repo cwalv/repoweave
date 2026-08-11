@@ -3121,7 +3121,12 @@ mod tests {
         let real_home = base.join("real_home");
         std::fs::create_dir_all(&real_home).unwrap();
         let link_home = base.join("link_home");
-        std::os::unix::fs::symlink(&real_home, &link_home).unwrap();
+        crate::symlink::create(
+            &real_home,
+            &link_home,
+            crate::symlink::LinkTarget::Directory,
+        )
+        .unwrap();
 
         // 2. Create a directory inside the real home (reached via symlink).
         let subdir = link_home.join("subdir");
@@ -3198,7 +3203,12 @@ mod tests {
 
         // Symlinked alias of home.
         let link_home = base.join("link_home");
-        std::os::unix::fs::symlink(&real_home, &link_home).unwrap();
+        crate::symlink::create(
+            &real_home,
+            &link_home,
+            crate::symlink::LinkTarget::Directory,
+        )
+        .unwrap();
 
         // Workspace inside home (accessible via symlink path).
         let ws_via_link = link_home.join("ws");

@@ -1394,7 +1394,15 @@ mod tests {
         // Place a symlink that points somewhere wrong (the owner would have
         // produced `projects/web-app/.claude`). Construct the bad state
         // directly rather than surface-then-delete.
-        std::os::unix::fs::symlink("projects/other/.claude", root.join(".claude")).unwrap();
+        // Nothing follows this link — `verify_surfacing` reads it with
+        // `symlink_metadata` and `read_link` — so the kind is immaterial here
+        // and takes the absent-target rule.
+        crate::symlink::create(
+            Path::new("projects/other/.claude"),
+            &root.join(".claude"),
+            LinkTarget::File,
+        )
+        .unwrap();
 
         let issues = verify_surfacing(root, &project, &manifest, false);
         assert_eq!(issues.len(), 1);
@@ -1619,8 +1627,12 @@ mod tests {
         // presented project declares reaches it, so only a root scan sees it.
         let (tmp, presented, _other) = make_two_project_workspace();
         let root = tmp.path();
-        std::os::unix::fs::symlink("projects/other-app/Cargo.toml", root.join("Cargo.toml"))
-            .unwrap();
+        crate::symlink::create(
+            Path::new("projects/other-app/Cargo.toml"),
+            &root.join("Cargo.toml"),
+            LinkTarget::File,
+        )
+        .unwrap();
 
         let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented), false);
         assert_eq!(
@@ -1663,8 +1675,12 @@ mod tests {
     fn re_surfacing_the_presented_project_reclaims_a_foreign_shared_name() {
         let (tmp, presented, _other) = make_two_project_workspace();
         let root = tmp.path();
-        std::os::unix::fs::symlink("projects/other-app/Cargo.toml", root.join("Cargo.toml"))
-            .unwrap();
+        crate::symlink::create(
+            Path::new("projects/other-app/Cargo.toml"),
+            &root.join("Cargo.toml"),
+            LinkTarget::File,
+        )
+        .unwrap();
 
         surface_symlinks(
             root,

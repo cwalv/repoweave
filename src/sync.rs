@@ -6670,7 +6670,7 @@ mod tests {
         let canonical = tmp.path().join("canonical");
         std::fs::create_dir_all(&canonical).unwrap();
         let link = tmp.path().join("alias");
-        std::os::unix::fs::symlink(&canonical, &link).unwrap();
+        crate::symlink::create(&canonical, &link, crate::symlink::LinkTarget::Directory).unwrap();
         // The alias resolves to a real dir (so `exists()` is true), but it is a
         // symlink, so it must be excluded — proving the predicate keys on
         // alias-ness, not on existence.
@@ -6699,7 +6699,12 @@ mod tests {
     fn checkout_is_syncable_false_for_a_dangling_symlink() {
         let tmp = tempfile::tempdir().unwrap();
         let link = tmp.path().join("dangling");
-        std::os::unix::fs::symlink(tmp.path().join("missing-target"), &link).unwrap();
+        crate::symlink::create(
+            &tmp.path().join("missing-target"),
+            &link,
+            crate::symlink::LinkTarget::File,
+        )
+        .unwrap();
         // A dangling symlink: `exists()` (which follows the link) is false, but
         // `classify_checkout` (which does not follow) still flags it as an
         // alias. Either way it is excluded — and must never be materialized as

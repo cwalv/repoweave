@@ -1021,7 +1021,7 @@ fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
     let real = tmp.path().join("real");
     std::fs::create_dir_all(&real).unwrap();
     let link = tmp.path().join("link");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
+    repoweave::symlink::create(&real, &link, repoweave::symlink::LinkTarget::Directory).unwrap();
 
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(&real);
     let ww_alias = link.join("ww");

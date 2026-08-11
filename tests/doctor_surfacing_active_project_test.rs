@@ -144,7 +144,12 @@ fn doctor_flags_and_reclaims_a_shared_name_surfaced_out_of_another_project() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path());
     activate(&root, "alpha");
-    std::os::unix::fs::symlink("projects/beta/Cargo.toml", root.join("Cargo.toml")).unwrap();
+    repoweave::symlink::create(
+        std::path::Path::new("projects/beta/Cargo.toml"),
+        &root.join("Cargo.toml"),
+        repoweave::symlink::LinkTarget::File,
+    )
+    .unwrap();
 
     let report = doctor(&root, &[]);
     assert!(

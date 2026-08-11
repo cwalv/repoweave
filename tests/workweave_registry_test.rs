@@ -122,7 +122,7 @@ fn a_symlinked_container_is_recorded_canonicalized() {
     let real = tmp.path().join("real-container");
     std::fs::create_dir_all(&real).unwrap();
     let link = tmp.path().join("link-container");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
+    repoweave::symlink::create(&real, &link, repoweave::symlink::LinkTarget::Directory).unwrap();
 
     rwv()
         .args([
@@ -160,7 +160,7 @@ fn set_container_records_a_symlinked_path_canonicalized() {
     let real = tmp.path().join("real-container");
     std::fs::create_dir_all(&real).unwrap();
     let link = tmp.path().join("link-container");
-    std::os::unix::fs::symlink(&real, &link).unwrap();
+    repoweave::symlink::create(&real, &link, repoweave::symlink::LinkTarget::Directory).unwrap();
 
     rwv()
         .args(["workweave", "web-app", "set-container"])

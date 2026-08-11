@@ -69,10 +69,12 @@ fn go_free_bin() -> PathBuf {
 
         let git = which("git").expect("git must be on PATH to run these tests");
         let link = dir.join("git");
-        match std::os::unix::fs::symlink(&git, &link) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => panic!("linking git into {}: {e}", dir.display()),
+        // The directory is a `static` reused across runs, so the link
+        // usually already exists. `symlink::create` folds the io error into a
+        // message, so the pre-existing case is tested for rather than caught.
+        if link.symlink_metadata().is_err() {
+            repoweave::symlink::create(&git, &link, repoweave::symlink::LinkTarget::File)
+                .unwrap_or_else(|e| panic!("linking git into {}: {e}", dir.display()));
         }
         dir
     })
@@ -104,9 +106,10 @@ fn go_is_installed() -> bool {
 /// target. An absolute one is not recognised as owner-scoped by the surfacing
 /// layer, which then refuses to replace it and warns.
 fn surface(ws: &Path, project_name: &str, file: &str) {
-    std::os::unix::fs::symlink(
-        Path::new("projects").join(project_name).join(file),
-        ws.join(file),
+    repoweave::symlink::create(
+        &Path::new("projects").join(project_name).join(file),
+        &ws.join(file),
+        repoweave::symlink::LinkTarget::File,
     )
     .unwrap();
 }

@@ -12,6 +12,16 @@
 //!   - `rwv explain <non-core>` refuses with the external-command pointer.
 //!   - Adversarial: verb name containing `--`, args containing `--`, empty
 //!     `rwv-` name.
+//!
+//! SKIPPED ON WINDOWS. Every fixture here is a `#!/bin/sh` script made
+//! executable with a mode bit, and the subject is which of them `which` will
+//! dispatch off PATH. Windows has no executable bit — `which` selects on
+//! PATHEXT — so a discoverable plugin there is `rwv-foo.exe` and
+//! `strip_prefix("rwv-")` names the verb `foo.exe`. These assertions are not
+//! merely spelled Unix-ly; what they assert is undefined on Windows until
+//! that naming is decided. Deciding it is a product question, not a test fix.
+
+#![cfg(unix)]
 
 use predicates::prelude::*;
 use std::fs;
