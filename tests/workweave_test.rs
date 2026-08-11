@@ -393,8 +393,10 @@ copy = [".env"]
     assert_eq!(content, "SECRET=hunter2\n");
 }
 
+/// The link source here is a directory, which is the only place the suite
+/// exercises a directory-kind link: the Unix call takes no kind, so nothing
+/// else can tell the two apart.
 #[test]
-#[cfg(unix)]
 fn create_workweave_processes_link_entries() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
@@ -3086,6 +3088,13 @@ fn assert_no_branches_with_prefix(repo: &Path, prefix: &str) {
 /// This is the end-to-end test of the R25 rollback contract: the operator
 /// should be able to fix the hook, rerun `rwv workweave create`, and succeed
 /// without any manual `git worktree prune` or `git branch -D` steps.
+///
+/// Not gated because its subject is Unix — the rollback contract is portable.
+/// Gated because whether Git for Windows executes a `#!/bin/sh` post-checkout
+/// hook is unestablished, and this test needs the hook to FIRE. If it does not,
+/// the create succeeds and every residue assertion below passes against a
+/// rollback that never ran. The `.failure()` assertion on the create is what
+/// makes the rest non-vacuous, and it is exactly what would stop holding.
 #[test]
 #[cfg(unix)]
 fn hook_rejected_create_leaves_no_registration_and_no_branch() {
@@ -3133,6 +3142,13 @@ fn hook_rejected_create_leaves_no_registration_and_no_branch() {
 /// not only prune the worktree registration.
 ///
 /// This exercises the "earlier repos' state cleaned up too" requirement.
+///
+/// Not gated because its subject is Unix — the rollback contract is portable.
+/// Gated because whether Git for Windows executes a `#!/bin/sh` post-checkout
+/// hook is unestablished, and this test needs the hook to FIRE. If it does not,
+/// the create succeeds and every residue assertion below passes against a
+/// rollback that never ran. The `.failure()` assertion on the create is what
+/// makes the rest non-vacuous, and it is exactly what would stop holding.
 #[test]
 #[cfg(unix)]
 fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
@@ -3220,6 +3236,15 @@ role = "owned"
 ///
 /// NOTE: `CreateRollbackGuard` is private; the test drives `create_workweave`
 /// via the public API and inspects the returned error string.
+///
+/// Not gated because its subject is Unix — the rollback contract is portable.
+/// Gated because whether Git for Windows executes a `#!/bin/sh` post-checkout
+/// hook is unestablished, and this test needs the hook to FIRE. If it does not,
+/// the create succeeds and every residue assertion below passes against a
+/// rollback that never ran. The `.failure()` assertion on the create is what
+/// makes the rest non-vacuous, and it is exactly what would stop holding.
+/// It also drops a directory's write permission to force the cleanup failure,
+/// which a Windows read-only attribute does not do — that half needs an ACL.
 #[test]
 #[cfg(unix)]
 fn cleanup_failure_preserves_original_error_with_manual_note() {

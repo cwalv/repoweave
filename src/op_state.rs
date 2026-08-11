@@ -1639,6 +1639,13 @@ mod tests {
     /// reader can ever catch a partial write. An in-place rewrite (the pre-fix
     /// `std::fs::write`) would keep the inode — and would be observable
     /// half-written.
+    ///
+    /// Not gated because its subject is Unix — replace-by-rename is the invariant
+    /// the whole owned-file discipline rests on, and it holds on any platform.
+    /// Gated because the INSTRUMENT is unverified: this proves the replacement by
+    /// watching the inode change, and whether NTFS gives a renamed-over file a new
+    /// file index is not something this repository can check. Ported on the
+    /// assumption that it does, it would go red against correct code.
     #[test]
     #[cfg(unix)]
     fn write_owner_replaces_by_rename_not_in_place() {

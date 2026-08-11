@@ -1672,6 +1672,13 @@ mod tests {
     /// inode changes and no reader can ever have seen a partial one. An
     /// in-place rewrite would keep the inode — and would be observable
     /// half-written.
+    ///
+    /// Not gated because its subject is Unix — replace-by-rename is the invariant
+    /// the whole owned-file discipline rests on, and it holds on any platform.
+    /// Gated because the INSTRUMENT is unverified: this proves the replacement by
+    /// watching the inode change, and whether NTFS gives a renamed-over file a new
+    /// file index is not something this repository can check. Ported on the
+    /// assumption that it does, it would go red against correct code.
     #[test]
     #[cfg(unix)]
     fn an_index_write_replaces_the_file_by_rename() {
