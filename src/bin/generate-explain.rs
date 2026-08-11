@@ -3854,6 +3854,55 @@ mod tests {
         );
     }
 
+    /// **Pinning test for the `tests/` exemption, which is a debt and not a
+    /// principle.**
+    ///
+    /// A prohibition resting on a cleanup nobody has done decays quietly,
+    /// because widening the scope by one line looks like tidying and
+    /// narrowing it looks like nothing at all. This runs the gate end to end
+    /// rather than inspecting the collector it happens to call, so rewiring
+    /// either one fails here and moving the boundary stays a decision someone
+    /// writes down.
+    ///
+    /// The same citation is planted under `src/` and under `tests/`, and the
+    /// `src/` half is what makes the other half mean anything: a gate that
+    /// reported nothing at all would satisfy a bare "nothing under `tests/`"
+    /// on its own. It is the disagreement that is the evidence.
+    #[test]
+    fn the_citation_gate_reads_src_only_and_tests_is_an_exemption_with_a_cost() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        let cites = "// The tier-0 invariants are recorded in clone-topology.md.\n\
+                     pub fn f() {}\n";
+        fs::write(root.join("src/lib.rs"), cites).unwrap();
+        fs::write(root.join("tests/some_test.rs"), cites).unwrap();
+
+        let findings = run_doc_citation_check(root);
+
+        assert!(
+            findings.iter().any(|f| f.starts_with("src/lib.rs:")),
+            "the gate reported nothing under src/, so its silence under tests/ \
+             says nothing:\n{}",
+            findings.join("\n")
+        );
+        let leaked: Vec<_> = findings
+            .iter()
+            .filter(|f| f.starts_with("tests/"))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "`tests/` is outside this gate until its citations are cleared; \
+             widening the scope is a decision, not a tidy-up:\n{leaked:#?}"
+        );
+
+        assert!(
+            !collect_rs_files(&repo_root().join("tests")).is_empty(),
+            "`tests/` holds no .rs files — the exemption above exempts nothing"
+        );
+    }
+
     // ── envelope-output coverage check unit tests ─────────────────────────────
 
     /// A plugin-protocol page that documents all envelope vars passes the check.
