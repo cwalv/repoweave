@@ -84,9 +84,36 @@ because they encode no route a reader can take:
   Delete it and write the sentence it was standing in for. A resolving
   trailing pointer is fine after the comment has said the thing.
 
-`tests/` is exempt from the bare-reference shape only: `check_doc_citations`
-reads `src/` only, and a test describing the fixture tree it builds in a
-temp directory is not citing a document.
+`tests/` is outside `check_doc_citations`, which reads `src/` only. That is a
+debt, not a principle, and the difference matters because the two read the
+same from a green gate.
+
+The reason it is not a principle: a test comment describing the fixture tree
+it builds in a temp directory really is not citing a document, but that
+describes a *minority* of the tree. Measured over `tests/`, a widened gate
+reports 64 unfollowable references, and they are three different jobs rather
+than one backlog:
+
+- **13** are fixture paths — a filename the test itself writes into a temp
+  tree. The gate would be wrong to report these, and they are the group the
+  sentence above is true of.
+- **32** name a document this repository really has, spelled so it does not
+  resolve; eighteen are `branch-model.md`, which is
+  `docs/internals/branch-model.md`. Mechanical — write the path that resolves.
+- **19** name nothing here at all. Someone has to recover what the comment
+  meant before it can be rewritten, which makes this the expensive group
+  despite being the smallest.
+
+So the sentence this clause used to carry was not false. It was outnumbered
+four to one, which is worse than false: it read as a principle and was a
+sampling error.
+
+Enabling the gate means clearing the 51 first, and about 30 of them carry a
+section pointer too — cutting across the second and third groups alike — so
+those need the comment rewritten rather than the path corrected. Until that
+happens the exemption stands on the size of that cleanup and nothing else.
+**Re-measure before repeating these numbers**: they describe a tree that
+moves, not a property of `tests/`.
 
 **When letter and spirit disagree, spirit wins and the letter is a bug — file
 it.** A rewrite of the rulebook that leaves a specific clause misfiring is
