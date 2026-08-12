@@ -893,41 +893,19 @@ pub(crate) fn ensure_ignored_in_dir(dir: &Path, filename: &str) -> anyhow::Resul
 /// Returns `None` when `dir` itself is not the root of a git-managed
 /// checkout — no upward walk is attempted.
 fn git_info_dir(dir: &Path) -> Option<PathBuf> {
-    let git_entry = dir.join(".git");
-    if git_entry.is_dir() {
-        let info = git_entry.join("info");
-        std::fs::create_dir_all(&info).ok()?;
-        return Some(info);
-    }
-    if git_entry.is_file() {
-        let content = std::fs::read_to_string(&git_entry).ok()?;
-        // Format: `gitdir: <path>` (possibly relative).
-        let stripped = content.trim().strip_prefix("gitdir:")?.trim();
-        let gitdir = PathBuf::from(stripped);
-        let gitdir = if gitdir.is_absolute() {
-            gitdir
-        } else {
-            dir.join(gitdir)
-        };
-        // For linked worktrees the `info/` we want to touch is the
-        // COMMON info dir, not the worktree-specific one.
-        let common = gitdir.join("commondir");
-        let common_target = if common.exists() {
-            let s = std::fs::read_to_string(&common).ok()?;
-            let rel = PathBuf::from(s.trim());
-            if rel.is_absolute() {
-                rel
-            } else {
-                gitdir.join(rel)
-            }
-        } else {
-            gitdir
-        };
-        let info = common_target.join("info");
-        std::fs::create_dir_all(&info).ok()?;
-        return Some(info);
-    }
-    None
+    let store = match crate::git::git_dir_link(dir)? {
+        crate::git::GitDirLink::Owned(git_dir) => git_dir,
+        // A linked worktree has an `info/` of its own, but the exclude file
+        // worth writing is the one every worktree of the store shares. Absent
+        // a `commondir` the git dir is a store in its own right
+        // (`--separate-git-dir`) and already is the shared one.
+        crate::git::GitDirLink::Linked(git_dir) => {
+            crate::git::commondir_target(&git_dir).unwrap_or(git_dir)
+        }
+    };
+    let info = store.join("info");
+    std::fs::create_dir_all(&info).ok()?;
+    Some(info)
 }
 
 /// Append `filename` to the ignore file at `target` if it is not already present.

@@ -352,6 +352,26 @@ impl Vcs for FakeVcs {
         unsupported("is_tracked")
     }
 
+    fn stage_paths(&self, _repo: &Path, _paths: &[&str]) -> Result<(), VcsError> {
+        unsupported("stage_paths")
+    }
+
+    fn has_staged_changes(&self, _repo: &Path) -> Result<bool, VcsError> {
+        unsupported("has_staged_changes")
+    }
+
+    fn staged_paths(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("staged_paths")
+    }
+
+    fn commit(&self, _repo: &Path, _message: &str) -> Result<(), VcsError> {
+        unsupported("commit")
+    }
+
+    fn add_remote(&self, _repo: &Path, _name: &str, _url: &str) -> Result<(), VcsError> {
+        unsupported("add_remote")
+    }
+
     fn tag_at_head(&self, _repo: &Path) -> Result<Option<RefName>, VcsError> {
         unsupported("tag_at_head")
     }

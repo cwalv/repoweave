@@ -2711,6 +2711,7 @@ fn guard_and_mark<'a>(
             }
         }
         if let Err(e) = regenerate_lock_phase3(
+            project_vcs.as_ref(),
             cwd_ctx,
             &cwd_project_dir,
             &cwd_project,
@@ -4236,6 +4237,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     })?;
 
     if let Err(e) = regenerate_lock_phase3(
+        ctx.project_vcs.as_ref(),
         &ctx.cwd_ctx,
         &ctx.cwd_project_dir,
         &cwd_project,
@@ -4956,6 +4958,7 @@ fn apply_project_strategy(
 /// Phase 3: regenerate `rwv.lock` from the current manifest tips. Commit it
 /// if it differs from what's currently in the project repo.
 fn regenerate_lock_phase3(
+    vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     cwd_project_dir: &Path,
     cwd_project: &Project,
@@ -4978,7 +4981,7 @@ fn regenerate_lock_phase3(
     crate::lock::write_lock(&new_lock, &lock_path)?;
 
     let message = auto_relock_commit_message(source_workspace_name);
-    if commit_lock_file_with_message(cwd_project_dir, &message)? {
+    if commit_lock_file_with_message(vcs, cwd_project_dir, &message)? {
         eprintln!("  (project): re-locked after sync from {source_workspace_name}");
     }
     Ok(())

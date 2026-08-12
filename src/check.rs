@@ -3,7 +3,7 @@
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
 
-use crate::git::{git_command, GIT_DEFAULT_REMOTE_NAME, RWV_MERGE_DRIVER_PREFIX};
+use crate::git::{GIT_DEFAULT_REMOTE_NAME, RWV_MERGE_DRIVER_PREFIX};
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
@@ -2308,96 +2308,43 @@ pub(crate) enum CommitOutcome {
 /// forms of the fix (auto and hand-run) sit on adjacent commits with
 /// consistent framing.
 pub(crate) fn commit_replay_exclusion_migration(
+    vcs: &dyn crate::vcs::Vcs,
     project_dir: &Path,
 ) -> anyhow::Result<CommitOutcome> {
-    use crate::git::git_command;
+    const ATTRIBUTES_FILE: &str = ".gitattributes";
 
-    // Check for unrelated staged content BEFORE we touch the index.
-    // `git status --porcelain` porcelain-v1 lines are `XY path` where X is
-    // the index status and Y is the worktree status. A staged unrelated
-    // file has X != ' ' and path != ".gitattributes". Untracked files
-    // (`??`) don't count — they've never been staged.
-    let status_out = git_command()
-        .args(["status", "--porcelain", "--untracked-files=no"])
-        .current_dir(project_dir)
-        .output()
-        .with_context(|| {
-            format!(
-                "failed to run git status --porcelain in {}",
-                project_dir.display()
-            )
-        })?;
-    if !status_out.status.success() {
-        let stderr = String::from_utf8_lossy(&status_out.stderr);
-        anyhow::bail!("git status failed: {}", stderr.trim());
-    }
-    let status_str = String::from_utf8_lossy(&status_out.stdout);
-    let has_other_staged = status_str.lines().any(|line| {
-        // Porcelain v1: 2-char status column, one space, then path.
-        let bytes = line.as_bytes();
-        if bytes.len() < 3 {
-            return false;
-        }
-        let index_status = bytes[0];
-        if index_status == b' ' || index_status == b'?' {
-            return false;
-        }
-        // The path begins at byte 3. A rename appears as `R  old -> new`;
-        // detecting only the "new" name after `-> ` is enough for the
-        // bundling check since renames touching non-.gitattributes count
-        // as unrelated staged work regardless of the old name.
-        let path_part = line.get(3..).unwrap_or("").trim();
-        let path = match path_part.split_once(" -> ") {
-            Some((_, new_name)) => new_name,
-            None => path_part,
-        };
-        path != ".gitattributes"
-    });
-    if has_other_staged {
+    // Read what is already staged BEFORE touching the index, so unrelated
+    // work is never swept into an rwv-authored commit.
+    let already_staged = vcs
+        .staged_paths(project_dir)
+        .with_context(|| format!("failed to read staged paths in {}", project_dir.display()))?;
+    if already_staged.iter().any(|p| p != ATTRIBUTES_FILE) {
         return Ok(CommitOutcome::SkippedUnrelatedStaged);
     }
 
-    // Stage the migration.
-    let add_out = git_command()
-        .args(["add", ".gitattributes"])
-        .current_dir(project_dir)
-        .output()
-        .with_context(|| format!("failed to run git add in {}", project_dir.display()))?;
-    if !add_out.status.success() {
-        let stderr = String::from_utf8_lossy(&add_out.stderr);
-        anyhow::bail!("git add .gitattributes failed: {}", stderr.trim());
-    }
-
-    // `git diff --cached --quiet` exits 0 when nothing is staged.
-    let nothing_staged = git_command()
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(project_dir)
-        .output()
+    vcs.stage_paths(project_dir, &[ATTRIBUTES_FILE])
         .with_context(|| {
             format!(
-                "failed to check staged changes in {}",
+                "failed to stage {ATTRIBUTES_FILE} in {}",
                 project_dir.display()
             )
-        })?
-        .status
-        .success();
-    if nothing_staged {
+        })?;
+
+    let staged = vcs.has_staged_changes(project_dir).with_context(|| {
+        format!(
+            "failed to check staged changes in {}",
+            project_dir.display()
+        )
+    })?;
+    if !staged {
         return Ok(CommitOutcome::NothingToCommit);
     }
 
-    let commit_out = git_command()
-        .args([
-            "commit",
-            "-m",
-            "chore: migrate rwv.lock merge=ours → merge=rwv-ours (rwv doctor --fix)",
-        ])
-        .current_dir(project_dir)
-        .output()
-        .with_context(|| format!("failed to run git commit in {}", project_dir.display()))?;
-    if !commit_out.status.success() {
-        let stderr = String::from_utf8_lossy(&commit_out.stderr);
-        anyhow::bail!("git commit failed: {}", stderr.trim());
-    }
+    vcs.commit(
+        project_dir,
+        "chore: migrate rwv.lock merge=ours → merge=rwv-ours (rwv doctor --fix)",
+    )
+    .with_context(|| format!("failed to commit in {}", project_dir.display()))?;
     Ok(CommitOutcome::Committed)
 }
 
@@ -3314,10 +3261,10 @@ pub fn scan_clone_topology(
 
         // Expected canonical store path: `<canonical_slot>/.git`. Compare via
         // canonicalize to absorb any trailing-slash / symlink differences.
-        let expected_store_canon = canonical_slot
-            .join(".git")
+        let expected_store = crate::git::store_path_in(&canonical_slot);
+        let expected_store_canon = expected_store
             .canonicalize()
-            .unwrap_or_else(|_| canonical_slot.join(".git"));
+            .unwrap_or_else(|_| expected_store.clone());
 
         let canonical_store_canon: Option<PathBuf> = canonical_store_raw
             .as_ref()
@@ -3380,10 +3327,10 @@ pub fn scan_clone_topology(
             let ww_store_canon = ww_store_raw
                 .canonicalize()
                 .unwrap_or_else(|_| ww_store_raw.clone());
-            let ww_self_store_canon = ww_checkout
-                .join(".git")
+            let ww_self_store = crate::git::store_path_in(&ww_checkout);
+            let ww_self_store_canon = ww_self_store
                 .canonicalize()
-                .unwrap_or_else(|_| ww_checkout.join(".git"));
+                .unwrap_or_else(|_| ww_self_store.clone());
 
             // Capture a representative for the disconnected-weave-clone
             // diagnosis below. Prefer a store that disagrees with the
@@ -3435,7 +3382,7 @@ pub fn scan_clone_topology(
                     workspace_path: ww_checkout.clone(),
                     repo: repo.clone(),
                     sub_kind: CloneTopologyKind::WrongParentWorktree {
-                        expected_store_path: canonical_slot.join(".git"),
+                        expected_store_path: expected_store.clone(),
                         actual_store_path: ww_store_raw.clone(),
                     },
                 });
@@ -6788,30 +6735,12 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
 /// Returns `(index_drift, working_tree_drift)`. Either side may be `None`
 /// independently — e.g., index dirty but working tree clean.
 pub fn classify_drift(repo: &Path) -> (Option<IndexDriftKind>, Option<WorkingTreeDriftKind>) {
-    // `git status --porcelain` (without `-z`) emits one record per dirty
-    // entry; an empty stdout means both the index and the working tree
-    // match HEAD, which is the overwhelmingly common case in a healthy
-    // workspace. We only need the empty/non-empty signal here; the
-    // detail-level classification still goes through the per-kind helpers
-    // below when drift is detected.
-    let status_out = git_command()
-        .args(["status", "--porcelain"])
-        .current_dir(repo)
-        .stderr(std::process::Stdio::null())
-        .output();
-    let porcelain = match status_out {
-        Ok(out) if out.status.success() => out.stdout,
-        // Treat any error reading status as "potentially dirty" and fall
-        // through to the per-kind classifiers — they're already defensive
-        // about transient git failures.
-        _ => {
-            return (
-                classify_index_drift(repo),
-                classify_working_tree_drift(repo),
-            )
-        }
-    };
-    if porcelain.is_empty() {
+    // One dirty/clean read covers both classifiers, which is the whole point
+    // of this helper: in a healthy workspace almost every repo is clean and
+    // answers with a single subprocess. A read that fails is not evidence of
+    // cleanliness, so it falls through to the per-kind classifiers, which are
+    // already defensive about transient git failures.
+    if crate::git::repo_is_dirty(repo) == Some(false) {
         return (None, None);
     }
     (
@@ -6831,43 +6760,10 @@ pub fn classify_drift(repo: &Path) -> (Option<IndexDriftKind>, Option<WorkingTre
 /// [`classify_drift`] — it short-circuits both this check and
 /// [`classify_working_tree_drift`] with a single `git status` invocation.
 pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
-    // Exit-0 means index matches HEAD tree — no drift.
-    let clean = git_command()
-        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true); // assume clean if git unavailable
-    if clean {
-        return None;
-    }
-
-    // Index differs from HEAD. Determine the current index tree SHA.
-    let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
-        Ok(out) if out.status.success() => String::from_utf8(out.stdout)
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
-        _ => return Some(IndexDriftKind::LiveStaged), // conservative
-    };
-
-    // Safety check: is the index tree the tree of some recent ancestor commit?
-    // Bounded to 200 ancestors to keep performance acceptable on deep histories.
-    let ancestor_trees = match git_command()
-        .args(["log", "--format=%T", "-200", "HEAD"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
-        _ => return Some(IndexDriftKind::LiveStaged),
-    };
-
-    if ancestor_trees.lines().any(|t| t.trim() == index_tree) {
-        Some(IndexDriftKind::SafeToFix)
-    } else {
-        Some(IndexDriftKind::LiveStaged)
+    match crate::git::index_tree_state(repo) {
+        crate::git::IndexTreeState::MatchesHead => None,
+        crate::git::IndexTreeState::RecentAncestorTree => Some(IndexDriftKind::SafeToFix),
+        crate::git::IndexTreeState::Unrecognized => Some(IndexDriftKind::LiveStaged),
     }
 }
 
@@ -6876,16 +6772,8 @@ pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
 /// Only call after confirming `classify_index_drift` returns `SafeToFix`.
 /// Uses bare `git reset` (equivalent to `git reset --mixed HEAD`).
 pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
-    let out = git_command()
-        .arg("reset")
-        .current_dir(repo)
-        .output()
-        .context("failed to run git reset")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!("git reset failed in {}: {}", repo.display(), stderr.trim());
-    }
-    Ok(())
+    crate::git::reset_index(repo)
+        .with_context(|| format!("failed to reset the index in {}", repo.display()))
 }
 
 // ---------------------------------------------------------------------------
@@ -6907,52 +6795,30 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
 /// is a file, not a directory) **and** the canonical directory is absent.
 /// Returns `None` when:
 /// - `.git` is a directory (this is the canonical clone itself — not a worktree)
-/// - the `gitdir:` target exists on disk (canonical is present; normal case)
+/// - the `gitdir:` target's clone exists on disk (normal case)
 /// - the `gitdir:` line cannot be parsed (defensive: caller should not skip
 ///   drift classification for unknowns)
+///
+/// The store is resolved from `commondir` when git's record of it survives,
+/// and from the `<store>/worktrees/<name>` layout when it does not. That
+/// second arm is not a shortcut: the `commondir` file lives inside the
+/// canonical clone, so it is gone in precisely the situation this function
+/// exists to detect, and a resolution that only reads the filesystem answers
+/// `None` exactly when a finding is due.
 pub fn worktree_canonical_clone_missing(repo: &Path) -> Option<PathBuf> {
-    let dot_git = repo.join(".git");
-
-    // If .git is a directory this is the canonical clone, not a linked worktree.
-    // Nothing to detect here.
-    if dot_git.is_dir() {
-        return None;
-    }
-
-    // Read the .git file. If it does not exist or is not readable, fall through
-    // to the normal drift classifiers (defensive: don't suppress findings for
-    // repos we cannot inspect).
-    let content = std::fs::read_to_string(&dot_git).ok()?;
-
-    // Extract the `gitdir:` value (absolute path to the worktrees admin dir
-    // inside the canonical .git).
-    let gitdir_path = content
-        .lines()
-        .find_map(|l| l.strip_prefix("gitdir:"))?
-        .trim();
-    if gitdir_path.is_empty() {
-        return None;
-    }
-
-    // The gitdir path looks like: <canonical>/.git/worktrees/<name>
-    // Walk up two levels to reach the canonical .git dir, then one more to
-    // reach the canonical clone directory.
-    //
-    //   gitdir_path  =  /ws/primary/github/repo/.git/worktrees/ww--name
-    //   git_dir      =  /ws/primary/github/repo/.git/worktrees/ww--name/../..
-    //                =  /ws/primary/github/repo/.git
-    //   canonical    =  /ws/primary/github/repo
-    //
-    // We go up exactly three levels: `<name>` → `worktrees` → `.git` →
-    // canonical clone dir, so the reported path names the repo directory
-    // (consistent with DanglingReference's repair target).
-    let gitdir = std::path::Path::new(gitdir_path);
-    let canonical = gitdir.parent()?.parent()?.parent()?;
-
-    if !canonical.exists() {
-        Some(canonical.to_path_buf())
-    } else {
+    let git_dir = match crate::git::git_dir_link(repo)? {
+        crate::git::GitDirLink::Owned(_) => return None,
+        crate::git::GitDirLink::Linked(git_dir) => git_dir,
+    };
+    let store = crate::git::commondir_target(&git_dir)
+        .or_else(|| crate::git::store_above_worktree_dir(&git_dir))?;
+    // The reported path names the repo directory rather than its store, so it
+    // matches DanglingReference's repair target.
+    let canonical = store.parent()?;
+    if canonical.exists() {
         None
+    } else {
+        Some(canonical.to_path_buf())
     }
 }
 
@@ -6975,97 +6841,18 @@ pub fn worktree_canonical_clone_missing(repo: &Path) -> Option<PathBuf> {
 /// the clean-worktree case with a single `git status` invocation that
 /// covers both this check and [`classify_index_drift`].
 pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> {
-    // Exit-0 means working tree matches HEAD — no drift.
-    let clean = git_command()
-        .args(["diff-index", "--exit-code", "HEAD"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true);
-    if clean {
-        return None;
-    }
-
-    // Use --name-status to distinguish two cases:
-    //   D = file exists in HEAD but is absent from the working tree — content is
-    //       in HEAD and by definition reachable; always safe to restore.
-    //   M = file differs between HEAD and working tree — must verify the on-disk
-    //       blob is reachable before treating it as safely fixable.
-    let status_out = match git_command()
-        .args(["diff-index", "--name-status", "HEAD"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => out,
-        // Conservative fallback for unknown git failures: return LiveEdits to
-        // prevent accidental auto-fix of content we cannot inspect. The
-        // canonical-clone-missing case is pre-classified upstream (before this
-        // function is called) via `worktree_canonical_clone_missing`, so this
-        // arm should not fire for that root cause in practice.
-        _ => return Some(WorkingTreeDriftKind::LiveEdits),
-    };
-    let mut modified_files: Vec<String> = Vec::new();
-    let mut has_entries = false;
-    for line in String::from_utf8_lossy(&status_out.stdout).lines() {
-        if line.is_empty() {
-            continue;
+    // A probe that cannot answer classifies as `LiveEdits`, which is what
+    // stops an auto-fix from overwriting content nothing inspected. The
+    // canonical-clone-missing case is pre-classified upstream via
+    // `worktree_canonical_clone_missing`, so that root cause does not reach
+    // here in practice.
+    match crate::git::working_tree_state(repo) {
+        crate::git::WorkingTreeState::MatchesHead => None,
+        crate::git::WorkingTreeState::RestorableFromHead(_) => {
+            Some(WorkingTreeDriftKind::SafeToFix)
         }
-        has_entries = true;
-        let mut parts = line.splitn(2, '\t');
-        let status = parts.next().unwrap_or("").trim();
-        let path = parts.next().unwrap_or("").trim();
-        match status {
-            "D" => {
-                // Deleted from working tree; restore from HEAD → safely fixable.
-            }
-            "M" | "T" => {
-                modified_files.push(path.to_owned());
-            }
-            _ => return Some(WorkingTreeDriftKind::LiveEdits),
-        }
+        crate::git::WorkingTreeState::Unrecognized => Some(WorkingTreeDriftKind::LiveEdits),
     }
-    if !has_entries {
-        return None;
-    }
-    if modified_files.is_empty() {
-        // Only D (deleted-from-WT) entries — always safely restorable.
-        return Some(WorkingTreeDriftKind::SafeToFix);
-    }
-
-    // Gather all reachable object SHAs from the last 200 commits.
-    let objects_out = match git_command()
-        .args(["rev-list", "--objects", "-n", "200", "HEAD"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => out,
-        _ => return Some(WorkingTreeDriftKind::LiveEdits),
-    };
-    let reachable: std::collections::HashSet<String> = String::from_utf8(objects_out.stdout)
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
-        .collect();
-
-    // For each M file, verify its on-disk blob is reachable.
-    for file in &modified_files {
-        let hash_out = match git_command()
-            .args(["hash-object", file])
-            .current_dir(repo)
-            .output()
-        {
-            Ok(out) if out.status.success() => out,
-            _ => return Some(WorkingTreeDriftKind::LiveEdits),
-        };
-        let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
-        if !reachable.contains(&blob_sha) {
-            return Some(WorkingTreeDriftKind::LiveEdits);
-        }
-    }
-
-    Some(WorkingTreeDriftKind::SafeToFix)
 }
 
 /// Restore working-tree files to match HEAD.
@@ -7074,36 +6861,10 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
 /// Restores each tracked file that differs from HEAD using
 /// `git checkout HEAD -- <files>`, leaving unstaged files and the index alone.
 pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
-    let modified_out = git_command()
-        .args(["diff-index", "--name-only", "HEAD"])
-        .current_dir(repo)
-        .output()
-        .context("failed to run git diff-index")?;
-    let files: Vec<String> = String::from_utf8_lossy(&modified_out.stdout)
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_owned())
-        .collect();
-    if files.is_empty() {
-        return Ok(());
-    }
-
-    let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
-    args.extend(files);
-    let out = git_command()
-        .args(&args)
-        .current_dir(repo)
-        .output()
-        .context("failed to run git checkout")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!(
-            "git checkout HEAD -- <files> failed in {}: {}",
-            repo.display(),
-            stderr.trim()
-        );
-    }
-    Ok(())
+    let files = crate::git::paths_differing_from_head(repo)
+        .with_context(|| format!("failed to list drifted paths in {}", repo.display()))?;
+    crate::git::restore_paths_from_head(repo, &files)
+        .with_context(|| format!("failed to restore drifted paths in {}", repo.display()))
 }
 
 /// Execute `rwv doctor --locked` for the current workspace context.
@@ -7398,7 +7159,7 @@ fn apply_workspace_repairs(
                     // that stops at the working tree is not yet in effect. A
                     // repo with unrelated staged work is left uncommitted —
                     // user work is never bundled with an rwv-authored fix.
-                    match commit_replay_exclusion_migration(&project_repo) {
+                    match commit_replay_exclusion_migration(vcs, &project_repo) {
                         Ok(CommitOutcome::Committed) => println!(
                             "[fixed] core: migrated `rwv.lock merge=ours` → \
                              `rwv.lock merge=rwv-ours` in {}/.gitattributes (committed)",

@@ -7,7 +7,6 @@
 //! `rwv update` advances and re-snapshots.
 
 use crate::cli::consent::DetachConsent;
-use crate::git::git_command;
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
@@ -501,9 +500,7 @@ fn advance_one(
     if use_reporter {
         reporter.out(&format!("rwv update: fetching {}", repo_path.as_str()));
     }
-    let mut cmd = git_command();
-    cmd.args(["fetch", "--all", "--tags", "--prune"])
-        .current_dir(repo_dir);
+    let mut cmd = crate::git::fetch_all_prune_command(repo_dir);
     let outcome = match run_subprocess_with_reporter(&mut cmd, reporter) {
         Ok(o) => o,
         Err(e) => {

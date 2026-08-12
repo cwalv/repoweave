@@ -29,12 +29,27 @@ const GIT_ENV_VARS: &[&str] = &[
 /// these vars from the surrounding process (a `pre-push` hook, another git
 /// invocation, etc.) makes subprocess `git` operate on the wrong repo
 /// regardless of the `current_dir` we set.
-pub(crate) fn git_command() -> Command {
+///
+/// Private to this module, which is what keeps git's argv here: a frame
+/// elsewhere cannot assemble one, so `error[E0603]` answers "did anyone spell
+/// a git command outside the seam" without a text scan having to.
+fn git_command() -> Command {
     let mut cmd = Command::new("git");
     for var in GIT_ENV_VARS {
         cmd.env_remove(var);
     }
     cmd
+}
+
+/// [`git_command`] for a `#[cfg(test)]` module that drives a real repo to set
+/// up a fixture.
+///
+/// The same allowance the seam already makes for [`git_vcs`]: a test may build
+/// git directly, and production may not. Compiled out of the shipped binary,
+/// so widening it cannot widen production's reach.
+#[cfg(test)]
+pub(crate) fn git_command_in_test() -> Command {
+    git_command()
 }
 
 /// Remote name every [`Role`] clones to, resolves against, and pushes to.
@@ -402,6 +417,100 @@ pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
 /// a backend it could not be handed a different one of.
 struct GitVcs;
 
+// ---------------------------------------------------------------------------
+// On-disk layout
+// ---------------------------------------------------------------------------
+//
+// Everything below reads git's own directory convention. It lives here so that
+// no other module has to spell `.git`, and so the derivations that follow a
+// gitlink exist once rather than once per caller.
+
+/// Entry git places at the root of a checkout — a directory in a canonical
+/// store, a file holding a gitlink in a linked worktree.
+pub const GIT_DIR_ENTRY_NAME: &str = ".git";
+
+/// Where a checkout rooted at `dir` keeps its store.
+///
+/// A construction, not a probe: the answer is the same whether or not `dir` is
+/// a repo at all. Callers comparing an observed store against where one
+/// *should* sit want this; callers asking whether a repo lives there want
+/// `has_git_dir`, and callers wanting the store git actually resolves want
+/// [`Vcs::resolve_canonical_store`].
+pub fn store_path_in(dir: &Path) -> PathBuf {
+    dir.join(GIT_DIR_ENTRY_NAME)
+}
+
+/// The git directory a checkout's `.git` entry names, and whether the checkout
+/// owns it.
+pub enum GitDirLink {
+    /// `.git` is a directory: this checkout is a store in its own right.
+    Owned(PathBuf),
+    /// `.git` is a file holding `gitdir:`: this checkout's store is elsewhere.
+    Linked(PathBuf),
+}
+
+/// Resolve the `.git` entry at `dir` to the git directory it names.
+///
+/// Purely lexical past reading the entry itself — the named directory is not
+/// required to exist. That is what lets a caller ask about a worktree whose
+/// store has been deleted out of band, which is a question only answerable
+/// before the answer is checked against the filesystem.
+///
+/// `None` when `dir` has no `.git` entry, or the entry is a file that does not
+/// carry a `gitdir:` line. No upward walk: `dir` is checked directly.
+pub fn git_dir_link(dir: &Path) -> Option<GitDirLink> {
+    let entry = store_path_in(dir);
+    if entry.is_dir() {
+        return Some(GitDirLink::Owned(entry));
+    }
+    if !entry.is_file() {
+        return None;
+    }
+    let content = std::fs::read_to_string(&entry).ok()?;
+    let target = content
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir:"))?
+        .trim();
+    if target.is_empty() {
+        return None;
+    }
+    let target = PathBuf::from(target);
+    Some(GitDirLink::Linked(if target.is_absolute() {
+        target
+    } else {
+        dir.join(target)
+    }))
+}
+
+/// The git directory `git_dir` shares with every other worktree of the same
+/// store, read from the `commondir` file git writes beside a per-worktree dir.
+///
+/// `None` when there is no readable `commondir`, which is two different
+/// situations a caller must tell apart itself: `git_dir` is a store in its own
+/// right (`--separate-git-dir` writes no `commondir`), or the store it belongs
+/// to is gone and took the file with it.
+pub fn commondir_target(git_dir: &Path) -> Option<PathBuf> {
+    let commondir = git_dir.join("commondir");
+    let content = std::fs::read_to_string(&commondir).ok()?;
+    let target = PathBuf::from(content.trim());
+    Some(if target.is_absolute() {
+        target
+    } else {
+        git_dir.join(target)
+    })
+}
+
+/// The store directory above a per-worktree git dir, assuming the layout `git
+/// worktree add` writes: `<store>/worktrees/<name>` → `<store>`.
+///
+/// Lexical, and an assumption rather than a reading — [`commondir_target`] is
+/// what git actually records, and this is what remains when that file cannot
+/// be read. The result need not exist, which is the point: a caller
+/// diagnosing a *deleted* store has nothing else left to go on.
+pub fn store_above_worktree_dir(git_dir: &Path) -> Option<PathBuf> {
+    Some(git_dir.parent()?.parent()?.to_path_buf())
+}
+
 /// True when `checkout` is a linked worktree rather than a canonical store.
 ///
 /// The test is git's own on-disk convention: a linked worktree's `.git` is a
@@ -410,7 +519,7 @@ struct GitVcs;
 /// "is a main working tree", so a caller that has to tell them apart is asking
 /// a question about git's layout and nothing else.
 pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
-    let dot_git = checkout.join(".git");
+    let dot_git = store_path_in(checkout);
     dot_git.exists() && dot_git.is_file()
 }
 
@@ -421,7 +530,241 @@ pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
 /// here", which only git's layout can be asked; [`Vcs::is_repo`] is the
 /// backend-neutral question and costs a process.
 pub(crate) fn has_git_dir(dir: &Path) -> bool {
-    dir.join(".git").exists()
+    store_path_in(dir).exists()
+}
+
+// ---------------------------------------------------------------------------
+// Drift probes — index and working tree against HEAD
+// ---------------------------------------------------------------------------
+//
+// Two callers each: the `refresh_*_if_safe` methods below, which act on the
+// answer, and `check`'s drift classifiers, which name it for the operator.
+// Both used to carry their own copy of these argv.
+
+/// Commits scanned when deciding whether content already exists in history.
+///
+/// A bound on cost, not a correctness parameter: content older than this reads
+/// as unrecognized, and every caller treats unrecognized as "do not overwrite".
+const RECENT_HISTORY_COMMITS: usize = 200;
+
+/// Where the index tree sits relative to HEAD and to recent history.
+pub enum IndexTreeState {
+    MatchesHead,
+    /// The index tree is the tree of a commit within the scanned window, so
+    /// resetting the index to HEAD cannot lose content no commit holds.
+    RecentAncestorTree,
+    /// Staged content no scanned commit carries — or a probe that failed,
+    /// which is indistinguishable from here and means the same thing to a
+    /// caller deciding whether to overwrite.
+    Unrecognized,
+}
+
+/// Where the working tree sits relative to HEAD.
+pub enum WorkingTreeState {
+    MatchesHead,
+    /// Every changed path is either absent from the working tree (HEAD holds
+    /// the content) or carries a blob recent history still reaches. Carries
+    /// the changed paths, in the order git reported them.
+    RestorableFromHead(Vec<String>),
+    /// A path carries content no scanned commit holds, or a probe failed.
+    Unrecognized,
+}
+
+/// True when the index matches HEAD's tree.
+///
+/// An unreadable answer reads as "matches": every caller uses this to decide
+/// whether to look closer, and guessing "dirty" on a broken probe would send
+/// them on to probes that are equally broken.
+fn index_matches_head(repo: &Path) -> bool {
+    git_command()
+        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true)
+}
+
+/// Classify the index against HEAD and recent history.
+pub fn index_tree_state(repo: &Path) -> IndexTreeState {
+    if index_matches_head(repo) {
+        return IndexTreeState::MatchesHead;
+    }
+    let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
+        Ok(out) if out.status.success() => String::from_utf8(out.stdout)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+        _ => return IndexTreeState::Unrecognized,
+    };
+    let ancestor_trees = match git_command()
+        .args([
+            "log",
+            "--format=%T",
+            &format!("-{RECENT_HISTORY_COMMITS}"),
+            "HEAD",
+        ])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
+        _ => return IndexTreeState::Unrecognized,
+    };
+    if ancestor_trees.lines().any(|t| t.trim() == index_tree) {
+        IndexTreeState::RecentAncestorTree
+    } else {
+        IndexTreeState::Unrecognized
+    }
+}
+
+/// Reset the index to HEAD, leaving the working tree and HEAD untouched.
+pub fn reset_index(repo: &Path) -> Result<(), VcsError> {
+    GitVcs::run(&["reset"], repo).map(|_| ())
+}
+
+/// Classify the working tree against HEAD and recent history.
+pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
+    let clean = git_command()
+        .args(["diff-index", "--exit-code", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true);
+    if clean {
+        return WorkingTreeState::MatchesHead;
+    }
+
+    let status_out = match git_command()
+        .args(["diff-index", "--name-status", "HEAD"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => out,
+        _ => return WorkingTreeState::Unrecognized,
+    };
+    let mut changed: Vec<String> = Vec::new();
+    let mut modified: Vec<String> = Vec::new();
+    for line in String::from_utf8_lossy(&status_out.stdout).lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(2, '\t');
+        let status = parts.next().unwrap_or("").trim();
+        let path = parts.next().unwrap_or("").trim();
+        match status {
+            // Absent from the working tree: HEAD holds the content, so
+            // restoring it cannot lose anything.
+            "D" => changed.push(path.to_owned()),
+            "M" | "T" => {
+                changed.push(path.to_owned());
+                modified.push(path.to_owned());
+            }
+            _ => return WorkingTreeState::Unrecognized,
+        }
+    }
+    if changed.is_empty() {
+        return WorkingTreeState::MatchesHead;
+    }
+    if modified.is_empty() {
+        return WorkingTreeState::RestorableFromHead(changed);
+    }
+
+    let objects_out = match git_command()
+        .args([
+            "rev-list",
+            "--objects",
+            "-n",
+            &RECENT_HISTORY_COMMITS.to_string(),
+            "HEAD",
+        ])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => out,
+        _ => return WorkingTreeState::Unrecognized,
+    };
+    let reachable: std::collections::HashSet<String> = String::from_utf8(objects_out.stdout)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
+        .collect();
+
+    for file in &modified {
+        let hash_out = match git_command()
+            .args(["hash-object", file])
+            .current_dir(repo)
+            .output()
+        {
+            Ok(out) if out.status.success() => out,
+            _ => return WorkingTreeState::Unrecognized,
+        };
+        let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
+        if !reachable.contains(&blob_sha) {
+            return WorkingTreeState::Unrecognized;
+        }
+    }
+
+    WorkingTreeState::RestorableFromHead(changed)
+}
+
+/// Every tracked path whose working-tree content differs from HEAD.
+pub fn paths_differing_from_head(repo: &Path) -> Result<Vec<String>, VcsError> {
+    let out = GitVcs::run(&["diff-index", "--name-only", "HEAD"], repo)?;
+    Ok(out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// Overwrite `paths` in the working tree with HEAD's content, leaving the
+/// index and untracked files alone.
+pub fn restore_paths_from_head(repo: &Path, paths: &[String]) -> Result<(), VcsError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args: Vec<&str> = vec!["checkout", "HEAD", "--"];
+    args.extend(paths.iter().map(String::as_str));
+    GitVcs::run(&args, repo).map(|_| ())
+}
+
+/// True when the repo has any index or working-tree change against HEAD.
+///
+/// `None` when the probe itself failed — the caller cannot read that as clean.
+pub fn repo_is_dirty(repo: &Path) -> Option<bool> {
+    GitVcs.has_uncommitted_changes(repo).ok()
+}
+
+/// Check out every submodule `worktree_path` declares, recursively.
+///
+/// Does **not** inject `protocol.file.allow=always`. Git's restrictive default
+/// (`user`) is the mitigation for hostile-`.gitmodules` attacks — a
+/// third-party repo's `.gitmodules` naming `file://` paths on the operator's
+/// host — and workweaves materialize third-party reference repos. This runs
+/// with the operator's own config posture; a weave that genuinely uses
+/// `file://` submodules already has config allowing it.
+pub fn init_submodules(worktree_path: &Path) -> Result<(), VcsError> {
+    GitVcs::run(
+        &["submodule", "update", "--init", "--recursive"],
+        worktree_path,
+    )
+    .map(|_| ())
+}
+
+/// A `git fetch` that refreshes every remote and drops remote-tracking refs
+/// the remote no longer has.
+///
+/// Handed back unspawned because `update` streams git's stderr through its
+/// reporter while it runs; the argv is this module's, the process is theirs.
+pub fn fetch_all_prune_command(repo: &Path) -> Command {
+    let mut cmd = git_command();
+    cmd.args(["fetch", "--all", "--tags", "--prune"])
+        .current_dir(repo);
+    cmd
 }
 
 /// The only way to obtain a git backend from outside this module.
@@ -1015,6 +1358,77 @@ impl Vcs for GitVcs {
 
     fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
         Self::dirty_file_names_inner(repo, true)
+    }
+    fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {
+        let mut args: Vec<&str> = vec!["add", "--"];
+        args.extend_from_slice(paths);
+        Self::run(&args, repo).map(|_| ())
+    }
+    fn has_staged_changes(&self, repo: &Path) -> Result<bool, VcsError> {
+        // Exit 0 means no difference between index and HEAD, so a non-zero
+        // exit is the positive answer and not a failure to report.
+        let status = git_command()
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(repo)
+            .status()
+            .map_err(|e| VcsError::Io {
+                ctx: "failed to spawn git diff --cached --quiet".to_owned(),
+                source: e,
+            })?;
+        Ok(!status.success())
+    }
+    fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        // Read without `run`'s global trim: it would strip the leading space
+        // off a first line like " M foo", turning an unstaged modification
+        // into an apparently staged one.
+        let out = git_command()
+            .args(["status", "--porcelain", "--untracked-files=no"])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: "failed to spawn git status --porcelain".to_owned(),
+                source: e,
+            })?;
+        if !out.status.success() {
+            return Err(VcsError::CommandFailed {
+                args: ["status", "--porcelain", "--untracked-files=no"]
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect(),
+                repo: repo.to_path_buf(),
+                stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+            });
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut staged = Vec::new();
+        for line in text.lines() {
+            let bytes = line.as_bytes();
+            if bytes.len() < 3 {
+                continue;
+            }
+            // Porcelain v1: index column, worktree column, space, path.
+            let index_status = bytes[0];
+            if index_status == b' ' || index_status == b'?' {
+                continue;
+            }
+            let path_part = line.get(3..).unwrap_or("").trim();
+            // A rename reads `R  old -> new`; the post-rename name is the one
+            // that ends up in the commit.
+            let path = match path_part.split_once(" -> ") {
+                Some((_, new_name)) => new_name,
+                None => path_part,
+            };
+            if !path.is_empty() {
+                staged.push(path.to_owned());
+            }
+        }
+        Ok(staged)
+    }
+    fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
+        Self::run(&["commit", "-m", message], repo).map(|_| ())
+    }
+    fn add_remote(&self, repo: &Path, name: &str, url: &str) -> Result<(), VcsError> {
+        Self::run(&["remote", "add", name, url], repo).map(|_| ())
     }
 
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
@@ -1672,132 +2086,15 @@ impl Vcs for GitVcs {
     }
 
     fn refresh_index_to_head_if_safe(&self, repo: &Path) {
-        // Quick exit: index already matches HEAD.
-        let clean = git_command()
-            .args(["diff-index", "--cached", "--exit-code", "HEAD"])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(true); // assume clean on error; never touch if unsure
-        if clean {
-            return;
+        if matches!(index_tree_state(repo), IndexTreeState::RecentAncestorTree) {
+            let _ = reset_index(repo);
         }
-
-        // Get the current index tree SHA.
-        let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
-            Ok(out) if out.status.success() => String::from_utf8(out.stdout)
-                .unwrap_or_default()
-                .trim()
-                .to_owned(),
-            _ => return, // can't verify — leave index alone
-        };
-
-        // Safety check: is the index tree the tree of some recent ancestor commit?
-        // Bounded to last 200 commits to keep doctor fast on large histories.
-        let ancestor_trees = match git_command()
-            .args(["log", "--format=%T", "-200", "HEAD"])
-            .current_dir(repo)
-            .output()
-        {
-            Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
-            _ => return,
-        };
-
-        if !ancestor_trees.lines().any(|t| t.trim() == index_tree) {
-            return; // live staged content — do not clobber
-        }
-
-        // Safe: realign index to HEAD.
-        let _ = git_command().arg("reset").current_dir(repo).output();
     }
 
     fn refresh_working_tree_to_head_if_safe(&self, repo: &Path) {
-        // Quick exit: working tree already matches HEAD.
-        let clean = git_command()
-            .args(["diff-index", "--exit-code", "HEAD"])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(true);
-        if clean {
-            return;
+        if let WorkingTreeState::RestorableFromHead(paths) = working_tree_state(repo) {
+            let _ = restore_paths_from_head(repo, &paths);
         }
-
-        // Use --name-status: D = deleted from WT (always safe); M = modified (check blob).
-        let status_out = match git_command()
-            .args(["diff-index", "--name-status", "HEAD"])
-            .current_dir(repo)
-            .output()
-        {
-            Ok(out) if out.status.success() => out,
-            _ => return,
-        };
-        let mut all_files: Vec<String> = Vec::new(); // all entries to restore
-        let mut modified_files: Vec<String> = Vec::new(); // M entries needing blob check
-        let mut has_entries = false;
-        for line in String::from_utf8_lossy(&status_out.stdout).lines() {
-            if line.is_empty() {
-                continue;
-            }
-            has_entries = true;
-            let mut parts = line.splitn(2, '\t');
-            let status = parts.next().unwrap_or("").trim();
-            let path = parts.next().unwrap_or("").trim();
-            match status {
-                "D" => {
-                    all_files.push(path.to_owned());
-                }
-                "M" | "T" => {
-                    all_files.push(path.to_owned());
-                    modified_files.push(path.to_owned());
-                }
-                _ => return, // unknown status — leave working tree alone
-            }
-        }
-        if !has_entries || all_files.is_empty() {
-            return;
-        }
-
-        // For M files, verify the on-disk blob is reachable before touching anything.
-        if !modified_files.is_empty() {
-            let objects_out = match git_command()
-                .args(["rev-list", "--objects", "-n", "200", "HEAD"])
-                .current_dir(repo)
-                .output()
-            {
-                Ok(out) if out.status.success() => out,
-                _ => return,
-            };
-            let reachable: std::collections::HashSet<String> =
-                String::from_utf8(objects_out.stdout)
-                    .unwrap_or_default()
-                    .lines()
-                    .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
-                    .collect();
-            for file in &modified_files {
-                let hash_out = match git_command()
-                    .args(["hash-object", file])
-                    .current_dir(repo)
-                    .output()
-                {
-                    Ok(out) if out.status.success() => out,
-                    _ => return,
-                };
-                let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
-                if !reachable.contains(&blob_sha) {
-                    return; // live edits — do not clobber
-                }
-            }
-        }
-
-        // Safe: restore all files from HEAD.
-        let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
-        args.extend(all_files);
-        let _ = git_command().args(&args).current_dir(repo).output();
     }
 
     fn remote_url(&self, repo: &Path, remote: &str) -> Result<Option<String>, VcsError> {

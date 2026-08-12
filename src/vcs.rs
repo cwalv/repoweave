@@ -2063,6 +2063,51 @@ pub trait Vcs: Send + Sync {
     /// `git ls-files --error-unmatch <path>`.
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 
+    /// Mark `paths` (relative to `repo`) for inclusion in the next commit.
+    ///
+    /// Every path must exist and be committable; callers derive the list from
+    /// a status read, which reports neither absent nor ignored files.
+    ///
+    /// For git: runs
+    /// `git add -- <paths>`.
+    fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError>;
+
+    /// Return `true` when something is marked for the next commit.
+    ///
+    /// The question a caller asks before committing, so an empty commit is
+    /// refused rather than created.
+    ///
+    /// For git: runs
+    /// `git diff --cached --quiet` and reads its exit status.
+    fn has_staged_changes(&self, repo: &Path) -> Result<bool, VcsError>;
+
+    /// Return every path marked for the next commit.
+    ///
+    /// A caller that must refuse to bundle unrelated work compares this
+    /// against the paths it means to commit. Paths never staged — untracked
+    /// files among them — are absent.
+    ///
+    /// For git: parses
+    /// `git status --porcelain --untracked-files=no`, keeping entries whose
+    /// index column is set, and reports the post-rename name.
+    fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Record everything staged as a new commit with `message`.
+    ///
+    /// Fails when nothing is staged; call [`Vcs::has_staged_changes`] first.
+    ///
+    /// For git: runs
+    /// `git commit -m <message>`.
+    fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError>;
+
+    /// Register `url` under `name` as a remote of `repo`.
+    ///
+    /// Fails when a remote of that name already exists.
+    ///
+    /// For git: runs
+    /// `git remote add <name> <url>`.
+    fn add_remote(&self, repo: &Path, name: &str, url: &str) -> Result<(), VcsError>;
+
     /// Return the tag name pointing at HEAD, if any.
     ///
     /// When multiple tags point at HEAD the implementation may return any one

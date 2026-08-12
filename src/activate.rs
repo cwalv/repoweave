@@ -541,7 +541,9 @@ fn remove_activation_symlinks_in(
             }
         } else if meta.file_type().is_dir() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if workspace_marker_names().iter().any(|m| m == name) || name == ".git" {
+                if workspace_marker_names().iter().any(|m| m == name)
+                    || name == crate::git::GIT_DIR_ENTRY_NAME
+                {
                     continue;
                 }
             }

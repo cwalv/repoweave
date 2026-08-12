@@ -255,10 +255,15 @@ const ALLOWLIST: &[Allowed] = &[
             What remains is four sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
             performing. \
-            (1) refresh_working_tree_to_head_if_safe: \
-            restores files from HEAD only after verifying every on-disk \
-            blob is reachable from recent history — live edits are never \
-            clobbered (relocated from sync.rs). \
+            (1) restore_paths_from_head: the one write both restore \
+            paths share. Its callers each establish the same precondition \
+            before reaching it — refresh_working_tree_to_head_if_safe acts \
+            only on a WorkingTreeState::RestorableFromHead, and check's \
+            restore_working_tree_to_head is the doctor --fix path, called \
+            only after classify_working_tree_drift has proved the same \
+            thing. That state is reached only when every on-disk blob is \
+            reachable from recent history, so live edits are never \
+            clobbered. \
             (2) set_detached_head: the branch-model ATTACH/MOVE primitive \
             for a HEAD that names no branch. No -f, so git's own refusal to \
             overwrite modified paths still applies. Reachable only through \
@@ -335,14 +340,6 @@ const ALLOWLIST: &[Allowed] = &[
             restore; information-preserving rail (design § 5) — abort is \
             itself undoable via this ref and the \
             ref is never deleted by abort cleanup. None touch user refs.",
-    },
-    Allowed {
-        file: "check.rs",
-        pattern: "\"checkout\"",
-        count: 1,
-        justification: "restore_working_tree_to_head: doctor --fix path, \
-            called only after classify_working_tree_drift proves every \
-            on-disk blob is committed content.",
     },
     Allowed {
         file: "workspace.rs",

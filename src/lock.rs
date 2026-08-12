@@ -187,10 +187,11 @@ pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<
 /// git repo or worktree) and the workspace-root-as-single-repo model
 /// (where `project_dir` is a sub-directory inside a larger git repo).
 pub(crate) fn commit_lock_file_with_message(
+    vcs: &dyn Vcs,
     project_dir: &Path,
     message: &str,
 ) -> anyhow::Result<bool> {
-    stage_and_commit(project_dir, &[LockFile::FILE_NAME], message)
+    stage_and_commit(vcs, project_dir, &[LockFile::FILE_NAME], message)
 }
 
 /// Stage `paths` (relative to `project_dir`) and commit from `project_dir`.
@@ -199,44 +200,24 @@ pub(crate) fn commit_lock_file_with_message(
 /// commit was made. Every path must exist and be committable — callers
 /// derive the list from `git status`, which reports neither absent nor
 /// ignored files.
-fn stage_and_commit(project_dir: &Path, paths: &[&str], message: &str) -> anyhow::Result<bool> {
-    use crate::git::git_command;
+fn stage_and_commit(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    paths: &[&str],
+    message: &str,
+) -> anyhow::Result<bool> {
+    vcs.stage_paths(project_dir, paths)
+        .context("failed to stage paths for the lock commit")?;
 
-    let add_out = git_command()
-        .args(["add", "--"])
-        .args(paths)
-        .current_dir(project_dir)
-        .output()
-        .context("failed to run git add")?;
-
-    if !add_out.status.success() {
-        let stderr = String::from_utf8_lossy(&add_out.stderr);
-        anyhow::bail!("git add failed: {}", stderr.trim());
-    }
-
-    // `git diff --cached --quiet` exits 0 when nothing is staged.
-    let nothing_staged = git_command()
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(project_dir)
-        .output()
+    if !vcs
+        .has_staged_changes(project_dir)
         .context("failed to check staged changes")?
-        .status
-        .success();
-
-    if nothing_staged {
+    {
         return Ok(false);
     }
 
-    let commit_out = git_command()
-        .args(["commit", "-m", message])
-        .current_dir(project_dir)
-        .output()
-        .context("failed to run git commit")?;
-
-    if !commit_out.status.success() {
-        let stderr = String::from_utf8_lossy(&commit_out.stderr);
-        anyhow::bail!("git commit failed: {}", stderr.trim());
-    }
+    vcs.commit(project_dir, message)
+        .context("failed to commit the lock")?;
 
     Ok(true)
 }
@@ -293,7 +274,7 @@ fn commit_lock_file(
     paths.extend(authored_paths);
 
     let message = build_commit_message(new_lock, old_lock);
-    if stage_and_commit(project_dir, &paths, &message)? {
+    if stage_and_commit(vcs, project_dir, &paths, &message)? {
         eprintln!("Committed {}", paths.join(", "));
     } else {
         eprintln!("Lock unchanged, nothing to commit.");

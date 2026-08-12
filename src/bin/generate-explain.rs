@@ -1220,11 +1220,29 @@ fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
 ///    from a manifest entry.
 /// 2. **Spawning git from scratch.** `Command::new("git")` bypasses both the
 ///    trait and `git_command`'s environment scrubbing.
+/// 3. **Building a path out of git's on-disk layout.** `dir.join(".git")`
+///    needs no git type and spawns no process, so neither of the above sees
+///    it. A caller that constructs a store path has decided where git keeps
+///    one, which is `src/git.rs`'s to decide — `store_path_in` is the
+///    construction and `git_dir_link` the resolution.
 ///
-/// Test modules are out of scope for both: a `#[cfg(test)]` module is free to
-/// build a concrete git backend, which is what `git_vcs` is `pub` for. The
-/// boundary is [`before_test_module`] — the first `#[cfg(test)]` that actually
-/// opens a module, under any name — not `mod tests` by name.
+/// Rule 2 is belt to the compiler's braces: `git_command` is private to
+/// `src/git.rs`, so assembling git argv elsewhere is `error[E0603]` before
+/// this runs. Rule 3 has no such backstop, because a `&str` that happens to
+/// spell git's directory is not a type anything can make private.
+///
+/// **Residue for rule 3**: the needles read a literal used as a *path
+/// component* — `join`, `push`, or an equality test against a name. A
+/// `.git` reached some other way (`format!("{root}/.git")`, a `PathBuf` built
+/// component-wise, a constant defined elsewhere) is invisible. The exclusions
+/// are deliberate and measured, not incidental: `strip_suffix(".git")` and
+/// `trim_end_matches(".git")` trim a *clone URL* at four production sites,
+/// which asks the filesystem nothing.
+///
+/// Test modules are out of scope for all three: a `#[cfg(test)]` module is
+/// free to build a concrete git backend, which is what `git_vcs` is `pub` for.
+/// The boundary is [`before_test_module`] — the first `#[cfg(test)]` that
+/// actually opens a module, under any name — not `mod tests` by name.
 ///
 /// Returns error messages (one per bypass); empty means clean.
 fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
@@ -1233,6 +1251,7 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
     // that defines it.
     let spawn = Regex::new(r#"Command::new\("git"\)"#).unwrap();
     let mint = Regex::new(r"git_vcs\(").unwrap();
+    let layout = Regex::new(r#"(join|push)\("\.git["/]|[=!]= *"\.git"|"\.git" *[=!]="#).unwrap();
 
     let mut errors: Vec<String> = Vec::new();
 
@@ -1269,6 +1288,15 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
                     "vcs-seam: src/{rel}:{} mints a git backend; take a `&dyn Vcs` \
                      parameter instead, or resolve it in src/vcs.rs beside a named \
                      reason it cannot come from a manifest entry",
+                    n + 1
+                ));
+            }
+            if layout.is_match(line) {
+                errors.push(format!(
+                    "vcs-seam: src/{rel}:{} builds a path out of git's on-disk \
+                     layout; call `git::store_path_in` for where a store sits, \
+                     `git::git_dir_link` to follow a checkout to its git dir, or \
+                     name the entry with `git::GIT_DIR_ENTRY_NAME`",
                     n + 1
                 ));
             }
@@ -3272,6 +3300,68 @@ mod tests {
             errors[0].contains("mints a git backend"),
             "error should name the bypass, got:\n{}",
             errors[0]
+        );
+    }
+
+    /// Every shape rule 3 claims to see, planted in one file.
+    ///
+    /// Seeded in four places rather than one: a needle set this wide is
+    /// exactly where one alternation quietly stops matching while the others
+    /// carry the test, and a single plant could not tell that apart from a
+    /// working check.
+    #[test]
+    fn vcs_seam_check_fails_on_each_on_disk_layout_shape() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("verb.rs"),
+            "pub fn a(d: &Path) -> PathBuf { d.join(\".git\") }\n\
+             pub fn b(d: &Path) -> PathBuf { d.join(\".git/worktrees\") }\n\
+             pub fn c(d: &mut PathBuf) { d.push(\".git\"); }\n\
+             pub fn e(n: &str) -> bool { n == \".git\" }\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert_eq!(
+            errors.len(),
+            4,
+            "every seeded shape must be reported, got:\n{}",
+            errors.join("\n")
+        );
+        for (i, line) in (1..=4).zip(&errors) {
+            assert!(
+                line.contains(&format!("verb.rs:{i}")) && line.contains("git's on-disk layout"),
+                "error should name the line and the bypass, got:\n{line}"
+            );
+        }
+    }
+
+    /// Trimming `.git` off a clone URL is not a path construction.
+    ///
+    /// The four production sites that do this ask the filesystem nothing.
+    /// A needle that reported them would be turned off, so this pins that it
+    /// does not — and pins the working-tree files whose names merely start
+    /// the same way.
+    #[test]
+    fn vcs_seam_check_ignores_url_suffixes_and_working_tree_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("verb.rs"),
+            "pub fn a(u: &str) -> &str { u.strip_suffix(\".git\").unwrap_or(u) }\n\
+             pub fn b(u: &str) -> &str { u.trim_end_matches(\".git\") }\n\
+             pub fn c(d: &Path) -> PathBuf { d.join(\".gitignore\") }\n\
+             pub fn e(d: &Path) -> PathBuf { d.join(\".gitmodules\") }\n\
+             pub fn f(d: &Path) -> PathBuf { d.join(\".gitattributes\") }\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert!(
+            errors.is_empty(),
+            "URL trimming and working-tree files are not layout knowledge, got:\n{}",
+            errors.join("\n")
         );
     }
 

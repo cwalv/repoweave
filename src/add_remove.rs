@@ -1,7 +1,7 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
 use crate::activate::{activate_intent, activate_workweave_intent};
-use crate::git::{git_command, GIT_DEFAULT_REMOTE_NAME};
+use crate::git::GIT_DEFAULT_REMOTE_NAME;
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
@@ -352,25 +352,20 @@ fn run_add_from_local_path(
     manifest_path: &Path,
 ) -> anyhow::Result<()> {
     // Read the origin URL from the existing clone.
-    let output = git_command()
-        .args(["remote", "get-url", GIT_DEFAULT_REMOTE_NAME])
-        .current_dir(clone_dir)
-        .output()
-        .with_context(|| format!("failed to run git in {}", clone_dir.display()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "could not determine origin URL for '{}': {}",
-            clone_dir.display(),
-            stderr.trim()
-        );
-    }
-
-    let raw_url = String::from_utf8(output.stdout)
-        .context("git remote get-url origin produced non-UTF-8 output")?
-        .trim()
-        .to_string();
+    let raw_url = vcs
+        .remote_url(clone_dir, GIT_DEFAULT_REMOTE_NAME)
+        .with_context(|| {
+            format!(
+                "could not determine the {GIT_DEFAULT_REMOTE_NAME} URL for '{}'",
+                clone_dir.display()
+            )
+        })?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "'{}' has no {GIT_DEFAULT_REMOTE_NAME} remote to read a URL from",
+                clone_dir.display()
+            )
+        })?;
 
     // Normalise bare absolute paths to file:// URLs so manifests are
     // consistent regardless of how the clone was created.

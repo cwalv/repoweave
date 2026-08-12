@@ -29,7 +29,6 @@
 //!   adoption is a doctor act with the operator's consent.
 
 use crate::cli::consent::DiscardUnmergedConsent;
-use crate::git::git_command;
 use crate::manifest::{project_repo_key, LockFile, Manifest, ProjectName, Role, WorkweaveName};
 use crate::symlink::LinkTarget;
 use crate::vcs::{
@@ -889,24 +888,12 @@ fn init_submodules_in_worktree(worktree_path: &Path) -> anyhow::Result<()> {
     if !worktree_path.join(".gitmodules").exists() {
         return Ok(());
     }
-    // SECURITY: do NOT inject `protocol.file.allow=always` here. Git's
-    // restrictive default (`user`) is the mitigation for hostile-.gitmodules
-    // attacks (CVE-2022-39253 class: a third-party repo's `.gitmodules`
-    // referencing `file://` paths on the operator's host), and workweaves
-    // materialize third-party reference repos. Production submodule init runs
-    // with the operator's own git config posture — if a weave genuinely uses
-    // `file://` submodules, the operator's config already allows it. Tests
-    // that need `file://` remotes set the env on their own spawned commands.
-    let output = git_command()
-        .args(["submodule", "update", "--init", "--recursive"])
-        .current_dir(worktree_path)
-        .output()
-        .context("failed to spawn git submodule update")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("git submodule update --init --recursive failed: {stderr}");
-    }
-    Ok(())
+    crate::git::init_submodules(worktree_path).with_context(|| {
+        format!(
+            "failed to check out submodules in {}",
+            worktree_path.display()
+        )
+    })
 }
 
 /// Scan `.gitmodules` in `worktree_path` and return the submodule `path =`
@@ -3612,7 +3599,7 @@ mod tests {
 
     /// Run git in `dir`, panicking on failure.
     fn git(dir: &Path, args: &[&str]) -> String {
-        let out = crate::git::git_command()
+        let out = crate::git::git_command_in_test()
             .args(args)
             .current_dir(dir)
             .output()
