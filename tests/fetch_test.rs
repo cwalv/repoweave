@@ -602,7 +602,11 @@ fn setup_bootstrap_source(tmp: &Path) -> (PathBuf, String) {
     };
 
     run(
-        &["clone", &project_bare.to_string_lossy(), &work.to_string_lossy()],
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
         tmp,
     );
     run(&["config", "user.email", "test@test.com"], &work);
