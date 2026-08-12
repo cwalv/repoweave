@@ -21,15 +21,15 @@ serde_json = { version = "1", features = ["preserve_order"] }
 which = { version = "7", features = ["regex"] }
 clap_complete = "4"
 schemars = "0.8"
-# Added for fo-9kweo (repo-subset filters). `regex` powers `re:` selectors;
-# `globset` powers `glob:` selectors. Both are widely-used pattern crates
-# (ripgrep / cargo-ecosystem); `globset` is path-tuned and smaller than
-# pulling in `glob` for the same job.
+# `regex` powers repo-subset filters' `re:` selectors; `globset` powers
+# their `glob:` selectors. Both are widely-used pattern crates (ripgrep /
+# cargo-ecosystem); `globset` is path-tuned and smaller than pulling in
+# `glob` for the same job.
 regex = "1.12.3"
 globset = "0.4.18"
 dirs = "6.0.0"
-# Added for fo-cnpjy.2 (shared merge helper). Format-preserving TOML parser:
-# preserves comments, key order, and decorations, which is required for the
+# Format-preserving TOML parser for the shared merge helper: preserves
+# comments, key order, and decorations, which is required for the
 # hybrid-merge contract on cargo/uv (Cargo.toml, pyproject.toml). serde + toml
 # round-trips would clobber user-authored profile blocks, lint policy, etc.
 toml_edit = "0.22"
@@ -41,16 +41,16 @@ toml_edit = "0.22"
 # `toml_edit` version already resolved here, so this adds an API, not a second
 # TOML parser.
 toml = "0.8"
-# Added for fo-cnpjy.12 (gita hardening). `csv` provides RFC-4180-compliant
-# quoting so repo paths containing commas, quotes, or newlines are emitted as
-# valid CSV rather than corrupting the output.
+# For gita hardening: `csv` provides RFC-4180-compliant quoting so repo
+# paths containing commas, quotes, or newlines are emitted as valid CSV
+# rather than corrupting the output.
 csv = "1"
-# Added for fo-t9x0l1.4 (recorded-digest verify of fully-owned generated
-# files). rwv cannot recompute ecosystem lockfile content (cargo/uv/npm own
-# the generation and it depends on registry state), so verify() compares
-# on-disk content against a SHA-256 digest recorded when rwv last accepted a
-# generation. `sha2` is the canonical RustCrypto implementation; pure
-# compute, no I/O or network.
+# For recorded-digest verify of fully-owned generated files: rwv cannot
+# recompute ecosystem lockfile content (cargo/uv/npm own the generation and
+# it depends on registry state), so verify() compares on-disk content
+# against a SHA-256 digest recorded when rwv last accepted a generation.
+# `sha2` is the canonical RustCrypto implementation; pure compute, no I/O or
+# network.
 sha2 = "0.10"
 # Reads pnpm-workspace.yaml's `packages:` key — a foreign, user-authored file
 # whose shape rwv does not control, unlike rwv's own YAML. Chosen over the
