@@ -44,7 +44,7 @@ fn setup_weave(root: &Path) {
     .unwrap();
     std::fs::write(
         root.join(GO_MEMBER).join("go.mod"),
-        "module example.com/golib\n\ngo 1.22\n",
+        "module example.com/golib\n\ngo 1.20\n",
     )
     .unwrap();
     std::fs::write(root.join(GO_MEMBER).join("lib.go"), "package golib\n").unwrap();
