@@ -2863,15 +2863,15 @@ mod tests {
         docs
     }
 
-    /// The valid tree passes without errors.
+    /// The fixture `make_tree` builds is well-formed and produces no findings.
     #[test]
-    fn valid_tree_is_clean() {
+    fn a_well_formed_fixture_tree_produces_no_findings() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         let errors = check_assembled_docs(&docs);
         assert!(
             errors.is_empty(),
-            "expected no errors in valid tree, got:\n{}",
+            "expected no errors in the well-formed fixture tree, got:\n{}",
             errors.join("\n")
         );
     }
