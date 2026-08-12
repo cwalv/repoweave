@@ -32,8 +32,9 @@
 //!
 //! **Residue** — what these do *not* cover:
 //!
-//!   - A collector whose name does not start with `scan_` (and is not
-//!     `find_violations`) is invisible to the reachability walk.
+//!   - A collector whose violations parameter or return type is not spelled
+//!     `&mut Vec<CheckViolation>` / `Vec<CheckViolation>` literally — behind
+//!     a type alias or a wrapper — is invisible to the reachability walk.
 //!   - Sub-kind coverage is only as complete as [`corpus`]. `case_token`
 //!     matches exhaustively, so a new variant or sub-kind fails to compile
 //!     until a sample is added — but a sub-kind carrying a *field* whose value
@@ -259,14 +260,42 @@ fn signature_of(body: &str) -> String {
     sig.join("\n")
 }
 
+/// A signature split right after the parameter list's closing paren, found
+/// by depth rather than by the first `)` — a parameter's own type can carry
+/// parens (a tuple, a fn item) that would end the list early.
+fn split_at_param_list_close(sig: &str) -> (String, String) {
+    let mut depth = 0i32;
+    for (i, c) in sig.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (sig[..=i].to_string(), sig[i + 1..].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    (sig.to_string(), String::new())
+}
+
+/// Whether a signature's shape says its function mints `CheckViolation`s: a
+/// `&mut Vec<CheckViolation>` parameter, or a `Vec<CheckViolation>` return
+/// with no such parameter. A function that already holds one as an owned
+/// parameter is transforming it, not minting it — `apply_finding_repairs`
+/// takes `Vec<CheckViolation>` and hands one back repaired.
+fn produces_violations(sig: &str) -> bool {
+    let (params, ret) = split_at_param_list_close(sig);
+    params.contains("&mut Vec<CheckViolation>")
+        || (ret.contains("Vec<CheckViolation>") && !params.contains("Vec<CheckViolation>"))
+}
+
 /// Names of the functions that produce `CheckViolation`s directly — those
-/// taking one out by `&mut Vec` or handing one back.
+/// taking one out by `&mut Vec<CheckViolation>` or handing a fresh one back.
 fn collectors(fns: &[(String, String)]) -> Vec<String> {
     fns.iter()
-        .filter(|(name, body)| {
-            (name.starts_with("scan_") || name == "find_violations")
-                && signature_of(body).contains("CheckViolation")
-        })
+        .filter(|(_, body)| produces_violations(&signature_of(body)))
         .map(|(name, _)| name.clone())
         .collect()
 }
@@ -351,6 +380,42 @@ fn collect_doctor_violations() {
         ],
         "both shapes of an unreachable scan must be reported, and the scan the \
          pipeline does call must not be"
+    );
+}
+
+#[test]
+fn the_reachability_check_catches_a_producer_not_named_scan() {
+    // The nested tuple in `marker`'s type puts a second `(`/`)` pair inside
+    // the parameter list, ahead of its real closing paren — the shape that
+    // needs the split tracked by depth rather than found at the first `)`.
+    let seeded = "\
+fn gather_orphaned_receipts(
+    ws_root: &Path,
+    marker: &(String, String),
+) -> Vec<CheckViolation> {
+}
+fn detect_something(out: &mut Vec<CheckViolation>) {
+}
+fn scan_the_pipeline_calls(out: &mut Vec<CheckViolation>) {
+}
+fn run_check() {
+    gather_orphaned_receipts(ws_root, marker);
+    detect_something(&mut v);
+}
+fn collect_doctor_violations() {
+    scan_the_pipeline_calls(&mut v);
+}
+";
+    let mut orphans = unreachable_collectors(seeded, PIPELINE);
+    orphans.sort();
+    assert_eq!(
+        orphans,
+        vec![
+            "detect_something".to_string(),
+            "gather_orphaned_receipts".to_string(),
+        ],
+        "a producer's signature marks it whether or not its name starts with \
+         `scan_`"
     );
 }
 
