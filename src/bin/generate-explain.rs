@@ -2278,6 +2278,116 @@ fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
     errors
 }
 
+/// Check that `docs/SUMMARY.md` and `docs/explanation/index.md` list the same
+/// set of joints pages.
+///
+/// `docs/SUMMARY.md` is the mdBook sidebar source of truth; it contains lines
+/// of the form `- [Title](./explanation/joints/<stem>.md)`.
+/// `docs/explanation/index.md` is the human-browsable landing page; it
+/// contains lines of the form `- [Title](./joints/<stem>.md)`.
+///
+/// The two lists must agree exactly, because a reader browsing the explanation
+/// landing page and a reader navigating the sidebar must see the same joints.
+/// Neither file is generated, so agreement is convention-by-check rather than
+/// convention-by-construction. This gate closes the class of omission:
+/// adding a page to SUMMARY.md without a matching index entry (or vice versa)
+/// will cause this check to fail rather than to silently lie to readers.
+///
+/// Returns one error message per discrepancy; empty means clean.
+fn check_explanation_joints_index_agreement(root: &Path) -> anyhow::Result<Vec<String>> {
+    // Parse docs/SUMMARY.md: collect every stem under ./explanation/joints/.
+    let summary_path = root.join("docs/SUMMARY.md");
+    let summary = fs::read_to_string(&summary_path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read docs/SUMMARY.md at {}: {e}",
+            summary_path.display()
+        )
+    })?;
+    let summary_stems = collect_joints_stems_from_summary(&summary);
+
+    // Parse docs/explanation/index.md: collect every stem under ./joints/.
+    let index_path = root.join("docs/explanation/index.md");
+    let index = fs::read_to_string(&index_path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read docs/explanation/index.md at {}: {e}",
+            index_path.display()
+        )
+    })?;
+    let index_stems = collect_joints_stems_from_index(&index);
+
+    let mut errors: Vec<String> = Vec::new();
+
+    // Pages in SUMMARY.md but absent from index.md.
+    for stem in &summary_stems {
+        if !index_stems.contains(stem) {
+            errors.push(format!(
+                "explanation-joints: `{stem}.md` is listed in docs/SUMMARY.md \
+                 under explanation/joints/ but is absent from docs/explanation/index.md — \
+                 add `- [<Title>](./joints/{stem}.md)` to that file"
+            ));
+        }
+    }
+
+    // Pages in index.md but absent from SUMMARY.md.
+    for stem in &index_stems {
+        if !summary_stems.contains(stem) {
+            errors.push(format!(
+                "explanation-joints: `{stem}.md` is listed in docs/explanation/index.md \
+                 but is absent from docs/SUMMARY.md under explanation/joints/ — \
+                 add it to SUMMARY.md or remove it from index.md"
+            ));
+        }
+    }
+
+    Ok(errors)
+}
+
+/// Extract joint page stems from `docs/SUMMARY.md`.
+///
+/// Matches lines containing `./explanation/joints/<stem>.md` (the path form
+/// SUMMARY.md uses for the explanation section).
+fn collect_joints_stems_from_summary(content: &str) -> HashSet<String> {
+    let mut stems = HashSet::new();
+    for line in content.lines() {
+        // Match the path fragment `./explanation/joints/<stem>.md` anywhere on the line.
+        if let Some(start) = line.find("./explanation/joints/") {
+            let after_prefix = &line[start + "./explanation/joints/".len()..];
+            // The stem ends at the next `)` or end of token; strip the `.md)` suffix.
+            if let Some(end) = after_prefix.find(')') {
+                let filename = &after_prefix[..end];
+                if let Some(stem) = filename.strip_suffix(".md") {
+                    if !stem.is_empty() {
+                        stems.insert(stem.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    stems
+}
+
+/// Extract joint page stems from `docs/explanation/index.md`.
+///
+/// Matches lines containing `./joints/<stem>.md` (the relative path form the
+/// index page uses — relative to `docs/explanation/`).
+fn collect_joints_stems_from_index(content: &str) -> HashSet<String> {
+    let mut stems = HashSet::new();
+    for line in content.lines() {
+        if let Some(start) = line.find("./joints/") {
+            let after_prefix = &line[start + "./joints/".len()..];
+            if let Some(end) = after_prefix.find(')') {
+                let filename = &after_prefix[..end];
+                if let Some(stem) = filename.strip_suffix(".md") {
+                    if !stem.is_empty() {
+                        stems.insert(stem.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    stems
+}
+
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at the crate root, which is the repoweave dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2621,6 +2731,22 @@ fn main() -> anyhow::Result<()> {
              Fix: state the rule inline, or point at a published page under \
              `docs/reference/` listed in `docs/SUMMARY.md`. `docs/internals/` \
              is not rendered."
+        );
+    }
+
+    // --- explanation joints index-agreement gate -------------------------
+    // docs/SUMMARY.md (sidebar source of truth) and docs/explanation/index.md
+    // (human-browsable landing page) must list the same set of joints pages.
+    // A page added to one without the other lies to readers who arrive through
+    // the other path. Neither file is generated, so agreement is
+    // convention-by-check.
+    let joints_errors = check_explanation_joints_index_agreement(&root)?;
+    if !joints_errors.is_empty() {
+        let msg = joints_errors.join("\n");
+        anyhow::bail!(
+            "explanation joints index-agreement check failed:\n{msg}\n\n\
+             Fix: add or remove the entry so docs/SUMMARY.md and \
+             docs/explanation/index.md list the same joints pages."
         );
     }
 
@@ -4772,6 +4898,109 @@ mod tests {
         assert!(
             qualified_doc_refs("`sync::relock` and `crate::git::GitVcs` and `plain`").is_empty(),
             "module paths, longer paths and bare names are not membership claims"
+        );
+    }
+
+    // ── explanation joints index-agreement unit tests ─────────────────────────
+
+    /// Both files list the same pages → no errors.
+    #[test]
+    fn joints_agreement_passes_when_sets_match() {
+        let summary = "\
+- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n\
+- [Clone topology](./explanation/joints/clone-topology.md)\n";
+        let index = "\
+- [Pyramid of stability](./joints/pyramid-of-stability.md)\n\
+- [Clone topology](./joints/clone-topology.md)\n";
+        let summary_stems = collect_joints_stems_from_summary(summary);
+        let index_stems = collect_joints_stems_from_index(index);
+        assert_eq!(
+            summary_stems, index_stems,
+            "identical sets must agree: summary={summary_stems:?} index={index_stems:?}"
+        );
+    }
+
+    /// A page in SUMMARY.md but missing from index.md is detected.
+    #[test]
+    fn joints_agreement_detects_summary_only_page() {
+        let summary = "\
+- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n\
+- [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)\n";
+        let index = "\
+- [Pyramid of stability](./joints/pyramid-of-stability.md)\n";
+        let summary_stems = collect_joints_stems_from_summary(summary);
+        let index_stems = collect_joints_stems_from_index(index);
+        assert!(
+            summary_stems.contains("workweave-lifecycle"),
+            "workweave-lifecycle must be in summary set"
+        );
+        assert!(
+            !index_stems.contains("workweave-lifecycle"),
+            "workweave-lifecycle must not be in index set"
+        );
+    }
+
+    /// A page in index.md but missing from SUMMARY.md is detected.
+    #[test]
+    fn joints_agreement_detects_index_only_page() {
+        let summary = "\
+- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n";
+        let index = "\
+- [Pyramid of stability](./joints/pyramid-of-stability.md)\n\
+- [Clone topology](./joints/clone-topology.md)\n";
+        let summary_stems = collect_joints_stems_from_summary(summary);
+        let index_stems = collect_joints_stems_from_index(index);
+        assert!(
+            index_stems.contains("clone-topology"),
+            "clone-topology must be in index set"
+        );
+        assert!(
+            !summary_stems.contains("clone-topology"),
+            "clone-topology must not be in summary set"
+        );
+    }
+
+    /// Non-joints lines in SUMMARY.md are not extracted.
+    #[test]
+    fn joints_stem_extractor_ignores_non_joints_lines() {
+        let summary = "\
+- [Introduction](./explanation/index.md)\n\
+- [Workspace lens](./explanation/lenses/workspace.md)\n\
+- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n";
+        let stems = collect_joints_stems_from_summary(summary);
+        assert_eq!(
+            stems.len(),
+            1,
+            "only the joints line should be extracted, got: {stems:?}"
+        );
+        assert!(stems.contains("pyramid-of-stability"));
+    }
+
+    /// Non-joints lines in index.md (lenses section) are not extracted.
+    #[test]
+    fn index_stem_extractor_ignores_non_joints_lines() {
+        let index = "\
+- [Workspace lens](./lenses/workspace.md)\n\
+- [Pyramid of stability](./joints/pyramid-of-stability.md)\n";
+        let stems = collect_joints_stems_from_index(index);
+        assert_eq!(
+            stems.len(),
+            1,
+            "only the joints line should be extracted, got: {stems:?}"
+        );
+        assert!(stems.contains("pyramid-of-stability"));
+    }
+
+    /// Empty content produces an empty stem set (no panic, no spurious entries).
+    #[test]
+    fn joints_stem_extractors_handle_empty_content() {
+        assert!(
+            collect_joints_stems_from_summary("").is_empty(),
+            "empty SUMMARY.md should yield no stems"
+        );
+        assert!(
+            collect_joints_stems_from_index("").is_empty(),
+            "empty index.md should yield no stems"
         );
     }
 }
