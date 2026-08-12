@@ -198,7 +198,7 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
         .expect("git init protocol");
     std::fs::write(
         protocol_dir.join("go.mod"),
-        "module github.com/chatly/protocol\n\ngo 1.21\n",
+        "module github.com/chatly/protocol\n\ngo 1.20\n",
     )
     .unwrap();
 
@@ -209,11 +209,16 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
     std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
     // Pre-seed go.work with a go-line ABOVE the max across members
-    // (1.24 > 1.21), already carrying the ownership marker so activate()
+    // (1.21 > 1.20), already carrying the ownership marker so activate()
     // takes the normal (non-user-held) path.
+    //
+    // 1.21 is the ceiling, not a free choice: `go work use` runs against this
+    // file, and a go-line above the installed toolchain makes that command
+    // download a toolchain. 1.21 is the oldest go release with that machinery,
+    // so nothing able to switch can be asked to.
     std::fs::write(
         project_dir.join("go.work"),
-        "go 1.24\n\n// managed by repoweave\nuse (\n\t./github/chatly/protocol\n)\n",
+        "go 1.21\n\n// managed by repoweave\nuse (\n\t./github/chatly/protocol\n)\n",
     )
     .unwrap();
 
@@ -225,11 +230,11 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
 
     let go_work_content = std::fs::read_to_string(root.join("go.work")).unwrap();
     assert!(
-        go_work_content.contains("go 1.24"),
+        go_work_content.contains("go 1.21"),
         "existing go-line must survive on the primary path, got:\n{go_work_content}"
     );
     assert!(
-        !go_work_content.contains("go 1.21"),
+        !go_work_content.contains("go 1.20"),
         "must not downgrade the go-line to the member max, got:\n{go_work_content}"
     );
 }
