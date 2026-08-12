@@ -380,13 +380,19 @@ pub enum VcsError {
     /// `stderr` is the hook author's text, not the VCS's — git's own output
     /// names no hook, which is why this cannot be recognised by reading it.
     ///
-    /// **The evidence is weaker than the name.** What the producer observes
-    /// is that the destination got registered, which says only that the
-    /// command died *after* git wrote the admin entry. A hook refusing is one
-    /// way to reach that point; a checkout that dies partway through for a
-    /// reason of its own — a full disk, a permission error under `dest`, an
-    /// interrupt — is another, and arrives here wearing this name. Widen the
-    /// evidence before relying on this variant to mean a hook specifically.
+    /// **The evidence is weaker than the name.** What the producer observes is
+    /// that the add registered the destination and then failed, which says the
+    /// command died *after* git wrote the admin entry rather than that a hook
+    /// is what killed it. The registration must be one this call created: an
+    /// add onto a destination that was already a registered worktree fails on
+    /// the taken path with no hook involved, and reading only the after-state
+    /// reports that as a rejection. That case is excluded and tested.
+    ///
+    /// What is not excluded is a checkout that dies of its own accord after
+    /// git writes the entry. Nothing here has reproduced one — it is an
+    /// unmeasured gap in the discriminator, not an observed behaviour — so
+    /// widen the evidence before relying on this variant to mean a hook
+    /// specifically.
     HookRejected { repo: PathBuf, stderr: String },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },

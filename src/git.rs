@@ -482,26 +482,42 @@ impl GitVcs {
     /// signal instead: it is written before the hook runs, and every failure
     /// that precedes checkout aborts before it exists.
     ///
-    /// The question it answers is "did git get past writing the admin entry",
-    /// which a refusing hook satisfies and so does any later failure of the
-    /// checkout itself. Necessary, not sufficient — see
-    /// [`VcsError::HookRejected`].
+    /// `registered_before` is what keeps the question about *this* call. A
+    /// destination that was already a registered worktree fails the add on the
+    /// taken path without any hook running, and its registration is the
+    /// previous call's; reading only the after-state calls that a rejection.
+    ///
+    /// What remains is "did this call get past writing the admin entry", which
+    /// a refusing hook satisfies and so would a checkout that dies after that
+    /// point. Necessary, not sufficient — see [`VcsError::HookRejected`].
     ///
     /// This runs inside the failing add, so the registration is observed
     /// before any rwv-side rollback can prune it.
-    fn classify_worktree_add_failure(&self, e: VcsError, store: &Path, dest: &Path) -> VcsError {
-        let VcsError::CommandFailed { stderr, .. } = &e else {
-            return e;
-        };
+    fn is_registered_worktree(&self, store: &Path, dest: &Path) -> bool {
         let Ok(dest) = dest.canonicalize() else {
-            return e;
+            return false;
         };
-        let registered = self.list_worktrees(store).is_ok_and(|worktrees| {
+        self.list_worktrees(store).is_ok_and(|worktrees| {
             worktrees
                 .iter()
                 .any(|w| w.canonicalize().is_ok_and(|w| w == dest))
-        });
-        if registered {
+        })
+    }
+
+    fn classify_worktree_add_failure(
+        &self,
+        e: VcsError,
+        store: &Path,
+        dest: &Path,
+        registered_before: bool,
+    ) -> VcsError {
+        let VcsError::CommandFailed { stderr, .. } = &e else {
+            return e;
+        };
+        if registered_before {
+            return e;
+        }
+        if self.is_registered_worktree(store, dest) {
             VcsError::HookRejected {
                 repo: store.to_path_buf(),
                 stderr: stderr.clone(),
@@ -2078,6 +2094,7 @@ impl Vcs for GitVcs {
         })?;
         let start = start_point.as_str();
         let branch = name.as_str();
+        let registered_before = self.is_registered_worktree(&store, dest);
 
         // Classify BEFORE acting, by asking whether the ref is there. Two
         // reasons it cannot be done by matching stderr afterwards: git says
@@ -2090,8 +2107,9 @@ impl Vcs for GitVcs {
             // retried with -b, destroying a ref on nothing but a name match
             // — a DESTROY needs a receipt and a warrant (R2, R3), and this
             // call holds neither, so it cannot be reached from here.
-            Self::run(&["worktree", "add", dest_str, branch], &store)
-                .map_err(|e| self.classify_worktree_add_failure(e, &store, dest))?;
+            Self::run(&["worktree", "add", dest_str, branch], &store).map_err(|e| {
+                self.classify_worktree_add_failure(e, &store, dest, registered_before)
+            })?;
             return Ok(false);
         }
         // AUTHOR. If this fails after git has already written the ref (a
@@ -2101,7 +2119,7 @@ impl Vcs for GitVcs {
         // doctor can reconcile. Deleting it here would be an unwarranted
         // DESTROY, which is the failure mode this path exists to remove.
         Self::run(&["worktree", "add", "-b", branch, dest_str, start], &store)
-            .map_err(|e| self.classify_worktree_add_failure(e, &store, dest))?;
+            .map_err(|e| self.classify_worktree_add_failure(e, &store, dest, registered_before))?;
         Ok(true)
     }
 
@@ -2606,6 +2624,31 @@ mod branch_model_tests {
             !stderr.contains("hook"),
             "git's output must not contain the word, or this test cannot tell a \
              typed classification from a text match: {stderr:?}"
+        );
+    }
+
+    /// A destination that is *already a registered worktree* is the case where
+    /// registration-present is available without any hook having run: the
+    /// registration is the previous call's, and this add fails on the taken
+    /// path.
+    #[test]
+    fn an_add_onto_an_already_registered_worktree_is_not_a_hook_rejection() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        let (_dest_home, dest) = worktree_dest();
+
+        GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .expect("first add succeeds and registers dest");
+
+        let err = GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww2", &start), &dest)
+            .expect_err("the destination is taken, so the second add failed");
+
+        assert!(
+            matches!(err, VcsError::CommandFailed { .. }),
+            "no hook ran; a registration this call did not create must not read \
+             as a rejection, got: {err:?}"
         );
     }
 
