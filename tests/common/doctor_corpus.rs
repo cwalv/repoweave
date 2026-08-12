@@ -82,6 +82,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             "merge-driver-config-unreadable".into()
         }
         CheckViolation::HeadUnreadable { .. } => "head-unreadable".into(),
+        CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable".into(),
         CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry".into(),
         CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
@@ -265,6 +266,10 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::HeadUnreadable {
             repo: repo(),
             error: "not a git repository".into(),
+        },
+        CheckViolation::ProjectsDirUnreadable {
+            path: path("/ws/projects"),
+            error: "permission denied".into(),
         },
         CheckViolation::UnresolvableLockEntry {
             project: project(),

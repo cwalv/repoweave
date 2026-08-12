@@ -125,6 +125,12 @@ pub enum CheckViolation {
     /// suppressing it would leave the repo looking healthy.
     HeadUnreadable { repo: RepoPath, error: String },
 
+    /// The `projects/` directory exists but `rwv doctor` could not list it —
+    /// a permissions problem, most plausibly. Every project under it is
+    /// invisible to this scan, which without this finding reads the same as
+    /// a workspace that genuinely has none.
+    ProjectsDirUnreadable { path: PathBuf, error: String },
+
     /// An `rwv.lock` entry naming a revision the local clone cannot resolve —
     /// a lock written against history this clone has never fetched.
     UnresolvableLockEntry {
@@ -583,6 +589,7 @@ impl CheckViolation {
             | CheckViolation::ReplayExclusionUnreadable { .. }
             | CheckViolation::MergeDriverConfigUnreadable { .. }
             | CheckViolation::HeadUnreadable { .. }
+            | CheckViolation::ProjectsDirUnreadable { .. }
             | CheckViolation::UnresolvableLockEntry { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
@@ -1400,6 +1407,10 @@ pub enum ViolationOutput {
         absolute_path: String,
         error: String,
     },
+    ProjectsDirUnreadable {
+        path: String,
+        error: String,
+    },
     UnresolvableLockEntry {
         path: String,
         absolute_path: String,
@@ -1744,6 +1755,10 @@ impl ViolationOutput {
             CheckViolation::HeadUnreadable { repo, error } => Self::HeadUnreadable {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
+                error,
+            },
+            CheckViolation::ProjectsDirUnreadable { path, error } => Self::ProjectsDirUnreadable {
+                path: path.to_string_lossy().into_owned(),
                 error,
             },
             CheckViolation::UnresolvableLockEntry { project, repo } => {
@@ -5953,6 +5968,14 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     crate::integration::Severity::Error,
                     format!("{repo}: HEAD unreadable ({error})"),
                 ),
+                CheckViolation::ProjectsDirUnreadable { path, error } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "{}: projects directory unreadable ({error}); every project under it \
+                         is invisible to this scan",
+                        path.display()
+                    ),
+                ),
                 CheckViolation::UnresolvableLockEntry { project, repo } => (
                     crate::integration::Severity::Error,
                     format!(
@@ -7784,9 +7807,9 @@ pub fn build_doctor_json(
 /// Everything `rwv doctor` reads off disk before any scan runs: the workspace
 /// session, the loaded manifests, and each on-disk repo's HEAD.
 ///
-/// `head_read_failures` and `lock_resolve_failures` are raised as findings by
-/// [`collect_doctor_violations`] rather than here, so both renderers see them
-/// on the same terms as every other scan.
+/// `head_read_failures`, `lock_resolve_failures` and `projects_dir_read_error`
+/// are raised as findings by [`collect_doctor_violations`] rather than here,
+/// so both renderers see them on the same terms as every other scan.
 struct DoctorWorld {
     workspace_dir: PathBuf,
     session: crate::workspace::WorkspaceSession,
@@ -7797,6 +7820,12 @@ struct DoctorWorld {
     unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)>,
     head_read_failures: Vec<(RepoPath, String)>,
     lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)>,
+    /// `Some((path, error))` when `projects/` exists but could not be listed.
+    /// `discover_project_paths` swallows exactly this error and returns an
+    /// empty list, which is indistinguishable downstream from a workspace
+    /// that genuinely has no projects — this is the probe that tells the two
+    /// apart before that swallowing happens.
+    projects_dir_read_error: Option<(PathBuf, String)>,
 }
 
 impl DoctorWorld {
@@ -7836,6 +7865,16 @@ fn load_doctor_world(
             Err(e) => head_read_failures.push((repo_path.clone(), e.to_string())),
         }
     }
+
+    let projects_dir_path = projects_dir(&workspace_dir);
+    let projects_dir_read_error = match std::fs::read_dir(&projects_dir_path) {
+        Ok(_) => None,
+        // A workspace with no `projects/` at all yet (before the first `rwv
+        // add`) is a different, unremarkable state — only a directory that
+        // exists and refuses to be listed is the finding.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => Some((projects_dir_path, e.to_string())),
+    };
 
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
@@ -7919,6 +7958,7 @@ fn load_doctor_world(
         unparseable_projects,
         head_read_failures,
         lock_resolve_failures,
+        projects_dir_read_error,
     })
 }
 
@@ -8310,6 +8350,12 @@ fn collect_doctor_violations(
         violations.push(CheckViolation::UnresolvableLockEntry {
             project: project.clone(),
             repo: repo.clone(),
+        });
+    }
+    if let Some((path, error)) = &world.projects_dir_read_error {
+        violations.push(CheckViolation::ProjectsDirUnreadable {
+            path: path.clone(),
+            error: error.clone(),
         });
     }
 

@@ -174,6 +174,19 @@ keeps the repo from looking clean.
 **What to do:** the `error` field carries what git said. A directory that is
 not a git repo, a corrupt `.git`, and a permissions problem all land here.
 
+### `projects-dir-unreadable`
+
+**Error. Report-only.** The `projects/` directory exists but could not be
+listed — a permissions problem, most plausibly. Every project under it is
+invisible to this scan, and without this finding that reads exactly like a
+workspace that genuinely has none: a broken registry and an empty one would
+otherwise print the same "clean" result. A `projects/` that does not exist
+yet (before the first `rwv add`) is a different, unremarkable state and does
+not raise this.
+
+**What to do:** the `error` field carries what the filesystem said. Fix the
+permissions (or whatever is blocking the listing) and re-run `rwv doctor`.
+
 ### `missing-replay-exclusion`
 
 **Warning. Auto-fixable.** A project repo's `.gitattributes` lacks the
