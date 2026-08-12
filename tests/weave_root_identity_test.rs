@@ -56,6 +56,20 @@ fn git(args: &[&str], dir: &Path) {
     assert!(status.success(), "git {args:?} in {} failed", dir.display());
 }
 
+fn git_out(args: &[&str], dir: &Path) -> String {
+    let out = common::git()
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git should be available");
+    assert!(
+        out.status.success(),
+        "git {args:?} in {} failed",
+        dir.display()
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
     git(&["init", "--initial-branch=main"], path);
@@ -70,6 +84,13 @@ fn init_repo_with_commit(path: &Path) {
 ///
 /// Workweaves land in `{tmp}/.workweaves/` (the default container is a
 /// sibling of the weave root).
+///
+/// The member repo carries no `origin` — the manifest URL names its own
+/// directory — and the project directory is a plain directory, not a git
+/// repo. `rwv update`'s fetch has nothing to resolve against, and `rwv
+/// doctor --fix`'s merge-driver plant on the project repo errors out on a
+/// directory that is not one. A test that needs either verb wants
+/// `make_workspace_with_remote_and_project_repo` instead.
 fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     let ws = tmp.join("ws");
     let repo_path = ws.join("github/org/repo");
@@ -87,6 +108,58 @@ fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     .unwrap();
 
     ws
+}
+
+/// A workspace like [`make_workspace`], but built so the full verb surface
+/// can run against it.
+///
+/// The member repo is a clone of a separate upstream rather than a
+/// self-contained directory, so it carries a real `origin` with something to
+/// fetch. The project directory is itself a committed git repo, so
+/// `create_workweave` forks a worktree of it rather than copying it, which is
+/// what lets `rwv doctor --fix` plant its merge driver instead of erroring on
+/// a directory that is not a repository at all.
+///
+/// Returns `(workspace_root, upstream_repo)`. The upstream is returned
+/// separately from `workspace_root/github/org/repo` (the clone) so a caller
+/// can push new commits there for `rwv update` to fetch — pushing into the
+/// clone itself would just move its own checked-out branch, not exercise a
+/// fetch.
+fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (PathBuf, PathBuf) {
+    let upstream = tmp.join("upstream/github/org/repo");
+    init_repo_with_commit(&upstream);
+
+    let ws = tmp.join("ws");
+    let repo_path = ws.join("github/org/repo");
+    std::fs::create_dir_all(repo_path.parent().unwrap()).unwrap();
+    git(
+        &[
+            "clone",
+            &upstream.display().to_string(),
+            &repo_path.display().to_string(),
+        ],
+        tmp,
+    );
+    git(&["config", "user.email", "test@test.com"], &repo_path);
+    git(&["config", "user.name", "Test"], &repo_path);
+
+    let project_dir = ws.join("projects").join(project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        format!(
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            upstream.display()
+        ),
+    )
+    .unwrap();
+    git(&["init", "--initial-branch=main"], &project_dir);
+    git(&["config", "user.email", "test@test.com"], &project_dir);
+    git(&["config", "user.name", "Test"], &project_dir);
+    git(&["add", "-A"], &project_dir);
+    git(&["commit", "-m", "add manifest"], &project_dir);
+
+    (ws, upstream)
 }
 
 fn create_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
@@ -331,33 +404,39 @@ fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
 /// container kind off its own resolved checkout. Both halves are observable
 /// here: a wrong gate answer removes the symlink, a wrong kind changes what
 /// the integration set declares.
+///
+/// Pushes a real commit to the upstream and checks it landed in the
+/// workweave's checkout: a self-referential `origin` would let `rwv update`
+/// exit 0 on a fetch that resolved nothing new, which would pass this test
+/// even if the run never advanced anything at all.
 #[test]
 fn update_still_surfaces_inside_a_pointerless_workweave() {
     let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "demo");
-
-    // `make_workspace` builds the member in place, so it has no `origin` and
-    // nothing for `rwv update`'s advance loop to resolve `main` against. The
-    // manifest URL already names this directory; making it the remote too is
-    // what lets the run reach the surfacing step this test is about.
-    let member = ws.join("github/org/repo");
-    git(
-        &[
-            "remote",
-            "add",
-            "origin",
-            &format!("file://{}", member.display()),
-        ],
-        &member,
-    );
+    let (ws, upstream) = make_workspace_with_remote_and_project_repo(tmp.path(), "demo");
 
     let ww = create_workweave(&ws, "demo", "w1");
+
+    std::fs::write(upstream.join("NEW"), "new content\n").unwrap();
+    git(&["add", "NEW"], &upstream);
+    git(&["commit", "-m", "new upstream commit"], &upstream);
+    let upstream_head = git_out(&["rev-parse", "HEAD"], &upstream);
 
     let surfaced = ww.join("demo.code-workspace");
     let _ = std::fs::remove_file(&surfaced);
 
     rwv().args(["update"]).current_dir(&ww).assert().success();
 
+    let clone = ww.join("github/org/repo");
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &clone),
+        upstream_head,
+        "`rwv update` must fast-forward the workweave's checkout to the \
+         upstream tip"
+    );
+    assert!(
+        clone.join("NEW").exists(),
+        "the fetched commit's content must be checked out, not just referenced"
+    );
     assert!(
         !has_pointer(&ww),
         "`rwv update` inside a workweave must not leave a `.rwv-active` behind"
@@ -382,18 +461,11 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
 #[test]
 fn doctor_fix_repairs_surfacing_inside_a_pointerless_workweave() {
     let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "demo");
-
     // The project dir has to be a git repo before the fork, so the workweave
     // gets a worktree of it rather than a plain directory — `doctor --fix`
     // plants a merge driver in the project repo and errors out on anything
     // else, which would mask the arm under test.
-    let project_dir = ws.join("projects/demo");
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "test@test.com"], &project_dir);
-    git(&["config", "user.name", "Test"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "manifest"], &project_dir);
+    let (ws, _upstream) = make_workspace_with_remote_and_project_repo(tmp.path(), "demo");
 
     let ww = create_workweave(&ws, "demo", "w1");
 
