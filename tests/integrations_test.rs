@@ -7817,6 +7817,106 @@ mod activate_hooks {
         );
     }
 
+    /// `cargo_workspace.rs`'s post-hook guard: cargo can report success and
+    /// still leave the surfacing path holding a real file with the canonical
+    /// lock still missing, if whatever it wrote replaced the dangling
+    /// symlink `surface_symlinks` put there rather than writing through it.
+    ///
+    /// `activate_at` always runs `surface_symlinks` with
+    /// `skip_missing_sources = false` immediately before any hook fires (see
+    /// `activate_intent_at`'s doc comment) — on a first-ever activation the
+    /// hook is always handed a freshly-created dangling symlink at this
+    /// path. Real `cargo generate-lockfile` currently writes through it
+    /// rather than replacing it (see
+    /// `doctor_fix_in_a_workweave_generates_the_missing_cargo_lock`), but
+    /// nothing in cargo's interface guarantees that, which is what the
+    /// guard's own comment says. This shim reproduces the failure shape
+    /// directly — deleting the symlink and writing a real file in its place
+    /// before exiting 0 — to prove the check downstream of that state is
+    /// still live, independent of whether today's cargo happens to trigger
+    /// it on this host.
+    #[cfg(unix)]
+    #[test]
+    fn cargo_activate_hook_names_the_orphan_when_cargo_replaces_the_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = common::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(ws.join("projects/app")).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+
+        let repo = ws.join("github/acme/server");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        git_init_with_commit(&repo);
+
+        std::fs::write(
+            ws.join("projects/app/rwv.toml"),
+            "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
+             url = \"https://github.com/acme/server.git\"\nversion = \"main\"\n\
+             role = \"owned\"\n",
+        )
+        .unwrap();
+        std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+        // A `cargo` that reports success but replaces whatever
+        // `surface_symlinks` just put at the surfacing path with a real
+        // file — reproducing the exact state the post-hook guard checks
+        // for, regardless of whether real cargo does this today.
+        let fake_cargo = bin.join("cargo");
+        std::fs::write(
+            &fake_cargo,
+            "#!/bin/sh\nrm -f Cargo.lock\nprintf '# fake lock\\n' > Cargo.lock\nexit 0\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let out = common::rwv()
+            .args(["doctor", "--fix"])
+            .current_dir(&ws)
+            .env("PATH", &path)
+            .output()
+            .expect("rwv should run");
+        let report = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        assert!(
+            !ws.join("projects/app/Cargo.lock").exists(),
+            "precondition for this arm: the canonical lock stays missing:\n{report}"
+        );
+        assert!(
+            ws.join("Cargo.lock")
+                .symlink_metadata()
+                .map(|m| m.file_type().is_file())
+                .unwrap_or(false),
+            "precondition: the surfacing path should now be a real file, not the symlink \
+             surface_symlinks created (symlink_metadata does not follow, so is_file() here \
+             is already false for a symlink):\n{report}"
+        );
+        assert!(
+            report.contains("wrote") && report.contains("but the canonical"),
+            "the orphan guard should name what cargo wrote and that the canonical is still \
+             missing:\n{report}"
+        );
+        assert!(
+            report.contains("remove") && report.contains("re-run"),
+            "the guard should name the repair:\n{report}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // uv-workspace: `uv sync`
     // -----------------------------------------------------------------------
