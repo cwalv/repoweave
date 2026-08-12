@@ -1297,6 +1297,28 @@
         {
           "type": "object",
           "required": [
+            "error",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "projects-dir-unreadable"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "absolute_path",
             "kind",
             "path",
