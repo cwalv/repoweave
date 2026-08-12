@@ -132,6 +132,41 @@ fn write_file(root: &Path, relative: &str, content: &str) {
     std::fs::write(&path, content).unwrap();
 }
 
+#[cfg(unix)]
+fn git(args: &[&str], dir: &Path) {
+    let status = common::git()
+        .args(args)
+        .current_dir(dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("git should be available");
+    assert!(status.success(), "git {args:?} in {} failed", dir.display());
+}
+
+#[cfg(unix)]
+fn git_init_with_commit(dir: &Path) {
+    git(&["init", "--initial-branch=main"], dir);
+    git(&["config", "user.email", "test@test.com"], dir);
+    git(&["config", "user.name", "Test"], dir);
+    git(&["add", "-A"], dir);
+    git(&["commit", "-m", "init"], dir);
+}
+
+/// Write a shim named `name` into `bin_dir` that does nothing but exit with
+/// `exit_code` — a real binary a child process's PATH can resolve to,
+/// standing in for an ecosystem tool. Unlike `std::env::set_var`, which is
+/// unsound under a parallel test runner because it mutates process-wide
+/// state, this only ever changes the `PATH` of one subprocess this test
+/// starts itself.
+#[cfg(unix)]
+fn write_exit_code_shim(bin_dir: &Path, name: &str, exit_code: i32) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = bin_dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\nexit {exit_code}\n")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 // ===========================================================================
 // npm-workspaces
 // ===========================================================================
@@ -7689,86 +7724,97 @@ mod activate_hooks {
         );
     }
 
-    /// R13: when the cargo lockfile step fails, the error
-    /// must hint at `integrations.cargo-workspace.exclude` and `members`
-    /// config as the resolution paths for duplicate crate names.
+    /// R13: when the cargo lockfile step fails, the error must hint at
+    /// `integrations.cargo-workspace.exclude` and `members` config as the
+    /// resolution paths for duplicate crate names.
     ///
-    /// Uses a fake `cargo` script (via PATH override) that always exits 1
-    /// so we can exercise the error message path without a real cargo failure.
+    /// Drives the real `rwv` binary against a shimmed `cargo` that always
+    /// exits 1, the way `hook_pin_survival_test.rs`'s
+    /// `a_hooked_activation_runs_only_materializing_commands` puts a
+    /// controlled PATH in front of a real subprocess: `Command::new("cargo")`
+    /// resolves against whatever `PATH` the child process is started with,
+    /// so a real binary earlier on that `PATH` is what makes the failure
+    /// happen, rather than a string this test builds and checks against
+    /// itself.
     #[cfg(unix)]
     #[test]
     fn cargo_activate_hook_failure_names_exclude_and_members_hints() {
-        use std::os::unix::fs::PermissionsExt;
-
         let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let ws = tmp.path().join("ws");
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(ws.join("projects/app")).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
 
-        // Write a Cargo.toml so the integration thinks there is cargo work.
-        write_file(
-            root,
-            "github/acme/server/Cargo.toml",
+        let repo = ws.join("github/acme/server");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
             "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        );
+        )
+        .unwrap();
+        git_init_with_commit(&repo);
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        std::fs::write(
+            ws.join("projects/app/rwv.toml"),
+            "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
+             url = \"https://github.com/acme/server.git\"\nversion = \"main\"\n\
+             role = \"owned\"\n",
+        )
+        .unwrap();
+        std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-        let integration = CargoWorkspace;
-        integration.activate(&ctx).unwrap();
+        let rwv_with_path = |args: &[&str], path: &str| {
+            common::rwv()
+                .args(args)
+                .current_dir(&ws)
+                .env("PATH", path)
+                .output()
+                .expect("rwv should run")
+        };
+        let real_path = std::env::var("PATH").unwrap_or_default();
 
-        // Put a fake `cargo` that always exits 1 first on PATH.
-        let bin_dir = tmp.path().join("fake-bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        let fake_cargo = bin_dir.join("cargo");
-        std::fs::write(&fake_cargo, "#!/bin/sh\nexit 1\n").unwrap();
-        std::fs::set_permissions(&fake_cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
-
-        let original_path = std::env::var("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_dir.display(), original_path);
-
-        // Temporarily override PATH so the fake cargo takes precedence.
-        // We can't use std::env::set_var safely in parallel tests, but the
-        // Command::new("cargo") call inside activate_hook inherits the process
-        // PATH. Instead, rebuild the context with a `workspace_root` that the
-        // integration will use as `current_dir` for the subprocess.
-        //
-        // Since we can't trivially inject PATH into the subprocess from a unit
-        // test without a global env change, use the already-tested path:
-        // `cargo not found` → the existing `context("failed to run cargo")` arm.
-        // That arm doesn't carry the exclude/members hint — but the bail! that
-        // does carries it and is what R13 fixes.
-        //
-        // The unit test verifies the message TEXT is present in the source by
-        // constructing the expected string directly and checking it contains
-        // the required substrings. This is a message-audit test; the end-to-end
-        // path (cargo fails at runtime) is validated by the e2e_cargo_test.rs
-        // suite's existing error-path coverage.
-        let expected = format!(
-            "cargo generate-lockfile failed (exit {}); \
-             if the error names duplicate crate names across workspace members, \
-             resolve by one of: (a) opt a repo out via \
-             `integrations.cargo-workspace.exclude` in rwv.toml, or (b) use \
-             `integrations.cargo-workspace.members.<repo>` with an `include:` \
-             list to contribute sub-paths instead of the repo root",
-            "exit code: 1"
-        );
-        // Verify the hint substrings are present in the bail template.
+        // `activate` is a context verb: it surfaces and verifies but never
+        // authors managed content (src/integrations/cargo_workspace.rs's own
+        // activate_hook precheck says so). Only an authoring verb writes the
+        // managed Cargo.toml the hook needs before it can even run — real
+        // `cargo` (if any) on this process's PATH is fine here, since
+        // nothing needs to resolve yet.
+        let authored = rwv_with_path(&["doctor", "--fix"], &real_path);
         assert!(
-            expected.contains("integrations.cargo-workspace.exclude"),
-            "R13: error must name `integrations.cargo-workspace.exclude`"
+            ws.join("projects/app/Cargo.toml").exists(),
+            "fixture: the authoring pass should have written the managed Cargo.toml:\n{}\n{}",
+            String::from_utf8_lossy(&authored.stdout),
+            String::from_utf8_lossy(&authored.stderr)
         );
+
+        // The run under audit: a `cargo` that always fails, ahead of
+        // whatever else is on PATH.
+        write_exit_code_shim(&bin, "cargo", 1);
+        let shimmed_path = format!("{}:{}", bin.display(), real_path);
+
+        let out = rwv_with_path(&["activate", "app"], &shimmed_path);
+        let report = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+
         assert!(
-            expected.contains("integrations.cargo-workspace.members"),
-            "R13: error must name `integrations.cargo-workspace.members`"
+            !out.status.success(),
+            "activation must fail when the cargo hook does:\n{report}"
         );
         assert!(
-            expected.contains("include:"),
-            "R13: error must mention the `include:` list syntax"
+            report.contains("integrations.cargo-workspace.exclude"),
+            "R13: error must name `integrations.cargo-workspace.exclude`:\n{report}"
         );
-        let _ = new_path; // suppress unused warning
+        assert!(
+            report.contains("integrations.cargo-workspace.members"),
+            "R13: error must name `integrations.cargo-workspace.members`:\n{report}"
+        );
+        assert!(
+            report.contains("include:"),
+            "R13: error must mention the `include:` list syntax:\n{report}"
+        );
     }
 
     // -----------------------------------------------------------------------
