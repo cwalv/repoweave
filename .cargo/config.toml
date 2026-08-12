@@ -1,0 +1,13 @@
+# `go work` downloads a toolchain whenever a go.work or go.mod demands a version
+# above the installed `go`. Test fixtures are pinned at or below 1.21 so nothing
+# asks; this makes that hermeticity a property of the suite rather than a
+# convention, and collapses a fixture that breaks it into one self-describing
+# error instead of a silent download on some runners and a proxy failure on
+# others. Cargo applies this only to processes it spawns, so an installed `rwv`
+# keeps the operator's own toolchain behaviour.
+#
+# `force` is load-bearing: without it cargo defers to an inherited GOTOOLCHAIN,
+# so a shell that exports one would silently opt the whole suite back out — the
+# guarantee has to hold on a developer's box and not only on a bare runner.
+[env]
+GOTOOLCHAIN = { value = "local", force = true }
