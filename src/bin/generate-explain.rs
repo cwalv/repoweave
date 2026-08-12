@@ -1429,8 +1429,27 @@ fn src_docs_and_tests_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// Scan `src/`, `docs/` and `tests/` for tracker IDs in comments, error
-/// strings, and published prose.
+/// `.md` files directly in `root`, not recursing into subdirectories —
+/// `CLAUDE.md`, `README.md`, and any sibling, `docs/` and `tests/` each have
+/// their own collector already.
+fn root_level_md_files(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return out;
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// Scan `src/`, `docs/`, `tests/` and root-level `.md` files for tracker IDs
+/// in comments, error strings, and published prose.
 ///
 /// Code is ground truth and architecture docs carry rationale; a tracker ID
 /// in any of these surfaces points a reader at something they cannot open,
@@ -1439,10 +1458,13 @@ fn src_docs_and_tests_files(root: &Path) -> Vec<PathBuf> {
 /// `anyhow::bail!` text. `tests/` gets no carve-out: a test comment may name
 /// the regression it pins in its own words, but not by an ID a standalone
 /// cloner cannot look up — that provenance is what the commit that added the
-/// test already carries.
+/// test already carries. Root-level files (`CLAUDE.md` foremost) get no
+/// carve-out either: `CLAUDE.md` is the file stating this ban, and the reader
+/// most likely to imitate a tracker ID is one who just read it there.
 fn check_no_tracker_ids(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    let files = src_docs_and_tests_files(root);
+    let mut files = src_docs_and_tests_files(root);
+    files.extend(root_level_md_files(root));
     if files.is_empty() {
         return vec![format!(
             "tracker-ID check: no source/doc/test files found under {}",
@@ -3836,6 +3858,29 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("tests/some_test.rs") && e.contains(&planted_id)),
             "expected a tracker-ID hit under tests/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A root-level `.md` file — `CLAUDE.md` above all, the file that states
+    /// the tracker-ID ban — carries no exemption from it either.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
+    #[test]
+    fn tracker_id_check_reaches_root_level_md() {
+        let planted_id = format!("{}-{}", "fo", "ab12cd.3");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            tmp.path().join("CLAUDE.md"),
+            format!("Banned everywhere, per {planted_id}.\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("CLAUDE.md") && e.contains(&planted_id)),
+            "expected a tracker-ID hit in root-level CLAUDE.md, got:\n{}",
             errors.join("\n")
         );
     }
