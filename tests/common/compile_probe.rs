@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 /// `target/<profile>/deps`, where the compiled library and its
 /// dependencies' metadata live.
@@ -23,13 +24,62 @@ fn deps_dir() -> PathBuf {
         .join("deps")
 }
 
-/// The freshest `librepoweave-*.rlib` in the deps directory.
+/// Why [`select_rlib`] could not settle on a path.
+#[derive(Debug)]
+pub(crate) enum RlibSelectionError {
+    /// `read_dir` produced no name matching `librepoweave-*.rlib` at all.
+    NoNamesMatched,
+    /// One or more names matched, but the stat on every one of them failed.
+    AllStatsFailed { names: Vec<PathBuf> },
+}
+
+/// A chosen rlib, plus any matched name whose stat failed and was excluded
+/// from the choice rather than silently dropped.
+#[derive(Debug)]
+pub(crate) struct RlibSelection {
+    pub(crate) path: PathBuf,
+    pub(crate) skipped: Vec<PathBuf>,
+}
+
+/// Pick the newest-by-mtime path in `matched` for which `stat` succeeds.
 ///
-/// Stale artifacts from earlier builds accumulate there, so pick by
-/// modification time rather than by first match.
+/// `stat` is a seam: production passes real `metadata().modified()` calls,
+/// which race a concurrent rebuild that unlinks and relinks the same name;
+/// tests pass a closure that fails on chosen names instead, so that failure
+/// path is exercised without racing an actual rebuild.
+///
+/// Newest-by-mtime is a heuristic, not a guarantee: `cargo build --release`
+/// and `cargo test --release` unify features differently and can leave two
+/// differently-built `librepoweave-*.rlib` files on disk at once, and this
+/// picks whichever is newer with no way to know which one actually built
+/// the running test binary.
+pub(crate) fn select_rlib(
+    matched: Vec<PathBuf>,
+    stat: impl Fn(&Path) -> Option<SystemTime>,
+) -> Result<RlibSelection, RlibSelectionError> {
+    if matched.is_empty() {
+        return Err(RlibSelectionError::NoNamesMatched);
+    }
+    let mut stated = Vec::with_capacity(matched.len());
+    let mut skipped = Vec::new();
+    for path in matched {
+        match stat(&path) {
+            Some(modified) => stated.push((modified, path)),
+            None => skipped.push(path),
+        }
+    }
+    if stated.is_empty() {
+        return Err(RlibSelectionError::AllStatsFailed { names: skipped });
+    }
+    stated.sort_by_key(|(modified, _)| *modified);
+    let (_, path) = stated.pop().expect("checked non-empty above");
+    Ok(RlibSelection { path, skipped })
+}
+
+/// The freshest `librepoweave-*.rlib` in the deps directory.
 fn repoweave_rlib() -> PathBuf {
     let deps = deps_dir();
-    let mut candidates: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&deps)
+    let matched: Vec<PathBuf> = std::fs::read_dir(&deps)
         .unwrap_or_else(|e| panic!("read {}: {e}", deps.display()))
         .flatten()
         .map(|e| e.path())
@@ -38,24 +88,50 @@ fn repoweave_rlib() -> PathBuf {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("librepoweave-") && n.ends_with(".rlib"))
         })
-        .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
         .collect();
-    candidates.sort_by_key(|(modified, _)| *modified);
-    candidates.pop().map(|(_, p)| p).unwrap_or_else(|| {
-        // Cargo does not promise the rlib is on disk when a test that needs it
-        // runs, and an absent one fails every probe in the file at once —
-        // including the control, which is otherwise the signal that the
-        // harness itself is sound. Say which of the two happened, because the
-        // suite cannot.
-        panic!(
+
+    match select_rlib(matched, |p| p.metadata().ok()?.modified().ok()) {
+        Ok(RlibSelection { path, skipped }) => {
+            if !skipped.is_empty() {
+                // A passing test's stderr is captured and discarded by
+                // cargo, so this is silent on the common path and surfaces
+                // only alongside a failure that needs explaining.
+                eprintln!(
+                    "compile_probe: stat failed for {} of the matched \
+                     librepoweave-*.rlib name(s) in {}; picked {} from the \
+                     rest. A concurrent release build sharing this target \
+                     directory is the likely cause: {skipped:?}",
+                    skipped.len(),
+                    deps.display(),
+                    path.display(),
+                );
+            }
+            path
+        }
+        Err(RlibSelectionError::NoNamesMatched) => panic!(
             "no librepoweave-*.rlib in {}\n\
              This is a missing build artifact, not a failed type-level \
              invariant: every probe in this file, control included, fails \
-             the same way when the rlib is absent. Re-run the suite; if it \
-             persists, `cargo build --release --lib` first.",
+             the same way when the rlib is absent. Either the release lib \
+             has never been built here, or a concurrent release build \
+             sharing this target directory unlinked it between its delete \
+             and rename steps — both leave zero matching names in a \
+             directory listing. Re-run the suite; if it persists, \
+             `cargo build --release --lib` first.",
             deps.display()
-        )
-    })
+        ),
+        Err(RlibSelectionError::AllStatsFailed { names }) => panic!(
+            "found {} librepoweave-*.rlib name(s) in {} but a stat failed \
+             for every one of them: {names:?}\n\
+             A stat failing right after a directory listing enumerated the \
+             name means something else removed or replaced the file in \
+             between — most likely a concurrent release build sharing this \
+             target directory, not a missing artifact. Re-run the suite; \
+             if it persists, `cargo build --release --lib` first.",
+            names.len(),
+            deps.display()
+        ),
+    }
 }
 
 /// Compile `snippet` as a library against the built `repoweave`, returning
