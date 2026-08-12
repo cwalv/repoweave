@@ -1367,15 +1367,15 @@ impl Vcs for GitVcs {
     fn has_staged_changes(&self, repo: &Path) -> Result<bool, VcsError> {
         // Exit 0 means no difference between index and HEAD, so a non-zero
         // exit is the positive answer and not a failure to report.
-        let status = git_command()
+        let out = git_command()
             .args(["diff", "--cached", "--quiet"])
             .current_dir(repo)
-            .status()
+            .output()
             .map_err(|e| VcsError::Io {
                 ctx: "failed to spawn git diff --cached --quiet".to_owned(),
                 source: e,
             })?;
-        Ok(!status.success())
+        Ok(!out.status.success())
     }
     fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
         // Read without `run`'s global trim: it would strip the leading space
