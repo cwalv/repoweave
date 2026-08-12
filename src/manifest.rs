@@ -1147,6 +1147,83 @@ pub struct LockConfig {
 // Manifest — the parsed `rwv.toml`
 // ---------------------------------------------------------------------------
 
+/// The accepted top-level keys of an `rwv.toml` manifest.
+///
+/// Listed once so that [`nearest_manifest_key`] and serde's
+/// `deny_unknown_fields` error both name the same set. When a new top-level
+/// table is added to [`Manifest`], add its TOML key here too.
+pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] =
+    &["repositories", "integrations", "workweave", "lock"];
+
+/// Return the element of [`MANIFEST_TOP_LEVEL_KEYS`] closest (by edit
+/// distance) to `unknown`, or `None` when no element is within the threshold.
+///
+/// The threshold is `max(1, unknown.len() / 2)` to catch common typos
+/// including transpositions, missing/extra characters, and single-character
+/// substitutions.  This is intentionally simple — no external dependency,
+/// no Unicode normalization; ASCII comparison is sufficient for TOML table
+/// names.
+fn nearest_manifest_key(unknown: &str) -> Option<&'static str> {
+    /// Optimal String Alignment (OSA) distance — like Levenshtein but also
+    /// counts adjacent transpositions as a single edit.  Strictly speaking
+    /// OSA is not a true metric (the triangle inequality does not hold), but
+    /// for short, human-typed keys the practical difference from full
+    /// Damerau-Levenshtein is negligible and OSA is much simpler to
+    /// implement without an external dependency.
+    fn osa_distance(a: &str, b: &str) -> usize {
+        let a = a.as_bytes();
+        let b = b.as_bytes();
+        if a.is_empty() {
+            return b.len();
+        }
+        if b.is_empty() {
+            return a.len();
+        }
+        // d[i][j] = OSA distance between a[..i] and b[..j].
+        // We keep three rows: two-back (`prev2`), one-back (`prev`), current.
+        let width = b.len() + 1;
+        let mut prev2 = vec![0usize; width];
+        let mut prev: Vec<usize> = (0..width).collect();
+        let mut curr = vec![0usize; width];
+
+        for (i, &ca) in a.iter().enumerate() {
+            curr[0] = i + 1;
+            for (j, &cb) in b.iter().enumerate() {
+                let cost = if ca == cb { 0 } else { 1 };
+                curr[j + 1] = (prev[j + 1] + 1) // deletion
+                    .min(curr[j] + 1) // insertion
+                    .min(prev[j] + cost); // substitution
+                                          // Transposition: a[i-1]==b[j] && a[i]==b[j-1]
+                if i > 0 && j > 0 && ca == b[j - 1] && a[i - 1] == cb {
+                    curr[j + 1] = curr[j + 1].min(prev2[j - 1] + cost);
+                }
+            }
+            // Rotate rows
+            std::mem::swap(&mut prev2, &mut prev);
+            std::mem::swap(&mut prev, &mut curr);
+        }
+        prev[b.len()]
+    }
+
+    // Threshold: accept matches within half the unknown key's length.
+    // Min threshold is 1 so even a 1-char unknown gets a match on a known key
+    // that differs by one edit.
+    let threshold = (unknown.len() / 2).max(1);
+    MANIFEST_TOP_LEVEL_KEYS
+        .iter()
+        .copied()
+        .filter_map(|key| {
+            let d = osa_distance(unknown, key);
+            if d <= threshold {
+                Some((d, key))
+            } else {
+                None
+            }
+        })
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, key)| key)
+}
+
 /// A parsed `rwv.toml` file — the source of truth for a project's repos.
 ///
 /// ## Accessor contract
@@ -1166,7 +1243,14 @@ pub struct LockConfig {
 ///
 /// The `repositories` field is `pub(crate)`; external callers must use the
 /// accessor methods above.
+///
+/// `deny_unknown_fields` because every top-level key is a policy table
+/// (e.g. `[lock]`): a misspelling accepted as "absent" would leave an
+/// operator believing a guarantee they do not have. The error names the
+/// offending key and its line; [`Manifest::from_toml_str`] appends the
+/// nearest accepted spelling so the operator can fix it immediately.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub(crate) repositories: BTreeMap<RepoPath, RepoEntry>,
     #[serde(default)]
@@ -1175,6 +1259,20 @@ pub struct Manifest {
     pub workweave: Option<WorkweaveConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lock: Option<LockConfig>,
+}
+
+/// Extract the offending key from a TOML `deny_unknown_fields` error message.
+///
+/// The toml crate formats these as:
+/// `unknown field \`KEY\`, expected one of ...`
+/// We pull out `KEY` so [`Manifest::from_toml_str`] can look up the
+/// nearest valid spelling.
+fn extract_unknown_key(msg: &str) -> Option<&str> {
+    // Pattern: unknown field `KEY`, expected …
+    let after = msg.find("unknown field `")?;
+    let start = after + "unknown field `".len();
+    let end = msg[start..].find('`')? + start;
+    Some(&msg[start..end])
 }
 
 impl Manifest {
@@ -1328,11 +1426,36 @@ impl Manifest {
     ///
     /// A rejected `role` value carries [`Role::legacy_spelling_hint`] through
     /// [`RoleParseError`], located at the offending line by the TOML parser.
+    /// An unknown top-level key carries the offending key name, its line, and
+    /// the nearest accepted spelling — the same quality of refusal
+    /// [`LockConfig`] gives for a misspelled inner key.
     /// Any failure carries [`Self::unparseable_hint`] as its context, with the
     /// parser's own error kept as the source — the remedy is the same however
     /// the file broke, but only the parser can say where.
     pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
-        toml::from_str(content).map_err(|e| anyhow::Error::new(e).context(Self::unparseable_hint()))
+        toml::from_str(content).map_err(|e| {
+            let msg = e.to_string();
+            // When the error is an unknown top-level field, append a
+            // "did you mean?" hint.  The TOML error already names the key and
+            // its line; we add the nearest accepted spelling so the operator
+            // can fix it in one read.
+            let suggestion = extract_unknown_key(&msg)
+                .and_then(nearest_manifest_key)
+                .map(|nearest| format!("; did you mean `{nearest}`?"))
+                .unwrap_or_default();
+            let annotated = if suggestion.is_empty() {
+                anyhow::Error::new(e)
+            } else {
+                // Wrap with the suggestion so it appears in the error chain
+                // alongside the TOML location.
+                anyhow::Error::new(e).context(format!(
+                    "unknown top-level key in {}{}",
+                    Self::FILE_NAME,
+                    suggestion
+                ))
+            };
+            annotated.context(Self::unparseable_hint())
+        })
     }
 
     /// Serialize to TOML and write to `path`.
@@ -3100,5 +3223,156 @@ copy = [".env"]
     fn is_empty_multi_repo() {
         let m: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
         assert!(!m.is_empty());
+    }
+
+    // ========================================================================
+    // Manifest deny_unknown_fields — top-level key rejection
+    // ========================================================================
+
+    /// A misspelled top-level table is rejected with the offending key name,
+    /// its line, and the nearest accepted spelling.  The canonical example:
+    /// `[lokc]` instead of `[lock]`.
+    ///
+    /// Rendered `{err:#}` because that is what surfaces this error to an
+    /// operator; `{err}` would read only [`Manifest::unparseable_hint`].
+    #[test]
+    fn misspelled_lock_table_is_refused_with_key_line_and_suggestion() {
+        let text = "[repositories]\n\n[lokc]\nforgo-tag-names = true\n";
+        let err = Manifest::from_toml_str(text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("lokc"),
+            "refusal must name the offending key, got: {msg}"
+        );
+        assert!(
+            msg.contains("line 3"),
+            "refusal must locate the offending line, got: {msg}"
+        );
+        assert!(
+            msg.contains("lock"),
+            "refusal must suggest the nearest accepted spelling, got: {msg}"
+        );
+    }
+
+    /// `[integrationz]` is a one-character typo of `integrations` — refuse it
+    /// with the nearest spelling.
+    #[test]
+    fn misspelled_integrations_table_is_refused_with_suggestion() {
+        let text = "[repositories]\n\n[integrationz]\nenabled = true\n";
+        let err = Manifest::from_toml_str(text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("integrationz"),
+            "refusal must name the offending key, got: {msg}"
+        );
+        assert!(
+            msg.contains("integrations"),
+            "refusal must suggest the nearest accepted spelling, got: {msg}"
+        );
+    }
+
+    /// `[workweve]` is a one-character typo of `workweave` — refuse with
+    /// the nearest spelling.
+    #[test]
+    fn misspelled_workweave_table_is_refused_with_suggestion() {
+        let text = "[repositories]\n\n[workweve]\nlink = []\n";
+        let err = Manifest::from_toml_str(text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("workweve"),
+            "refusal must name the offending key, got: {msg}"
+        );
+        assert!(
+            msg.contains("workweave"),
+            "refusal must suggest the nearest accepted spelling, got: {msg}"
+        );
+    }
+
+    /// A correct manifest parses without error regardless of which top-level
+    /// tables are present.
+    #[test]
+    fn correct_manifest_with_all_sections_parses() {
+        let text = r#"
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[integrations.cargo]
+enabled = true
+
+[workweave]
+link = ["target/"]
+
+[lock]
+forgo-tag-names = true
+"#;
+        let m = Manifest::from_toml_str(text).unwrap();
+        assert_eq!(m.len(), 1);
+        assert!(m.forgo_tag_names());
+        assert!(m.workweave.is_some());
+        assert_eq!(m.integrations.len(), 1);
+    }
+
+    /// Top-level strictness must not leak into `[integrations]`: each
+    /// integration's private keys are deliberately open and must keep parsing.
+    /// This pins the invariant that `deny_unknown_fields` on `Manifest` applies
+    /// only to the top level, not to `IntegrationConfig`'s transparent map.
+    #[test]
+    fn integration_private_keys_are_unaffected_by_top_level_strictness() {
+        let text = r#"
+[repositories."github/acme/server"]
+type = "git"
+url = "https://github.com/acme/server.git"
+version = "main"
+role = "owned"
+
+[integrations.cargo-workspace]
+enabled = true
+patch = "derived"
+workspace-package = true
+some-private-key = "value"
+another-custom-setting = 42
+"#;
+        let m = Manifest::from_toml_str(text).expect(
+            "integration private keys must parse successfully; \
+             top-level deny_unknown_fields must not leak into IntegrationConfig",
+        );
+        assert_eq!(m.integrations.len(), 1);
+        let cw = m.integrations.get("cargo-workspace").unwrap();
+        assert_eq!(cw.enabled(), Some(true));
+    }
+
+    // ========================================================================
+    // nearest_manifest_key — unit tests for the edit-distance helper
+    // ========================================================================
+
+    #[test]
+    fn nearest_key_exact_match_returns_itself() {
+        assert_eq!(nearest_manifest_key("lock"), Some("lock"));
+        assert_eq!(nearest_manifest_key("repositories"), Some("repositories"));
+        assert_eq!(nearest_manifest_key("integrations"), Some("integrations"));
+        assert_eq!(nearest_manifest_key("workweave"), Some("workweave"));
+    }
+
+    #[test]
+    fn nearest_key_transposition_lokc_to_lock() {
+        // `lokc` is a transposition of `lock` — OSA counts this as 1 op.
+        assert_eq!(nearest_manifest_key("lokc"), Some("lock"));
+    }
+
+    #[test]
+    fn nearest_key_one_char_typo() {
+        assert_eq!(nearest_manifest_key("loxk"), Some("lock"));
+        assert_eq!(nearest_manifest_key("integrationz"), Some("integrations"));
+        assert_eq!(nearest_manifest_key("workweve"), Some("workweave"));
+    }
+
+    #[test]
+    fn nearest_key_completely_unrelated_returns_none() {
+        // A key with no resemblance to any accepted spelling should not match.
+        assert_eq!(nearest_manifest_key("xyzzy"), None);
+        assert_eq!(nearest_manifest_key("metadata"), None);
     }
 }
