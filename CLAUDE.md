@@ -142,9 +142,10 @@ Three gates in `src/bin/generate-explain.rs`:
   eight lowercase letters or digits and an optional `.N` sub-ID. Nothing
   shorter, longer, capitalised, or differently prefixed. It reads `docs/`
   and `tests/` as well as `src/`, which the citation gate does not, and it
-  also reads every `.md` and `.rs` file directly at the repo root —
-  `CLAUDE.md` and `build.rs` included, so neither the file stating this ban
-  nor the one root-level source file goes unchecked.
+  also reads every `.md`, `.rs` and `.toml` file directly at the repo root —
+  `CLAUDE.md`, `build.rs` and `Cargo.toml` included, so neither the file
+  stating this ban, the one root-level source file, nor the dependency
+  manifest goes unchecked.
 
   That prefix is the retired one. The prefix the tracker issues now is
   `rwv-`, which is also this repo's own vocabulary namespace — some 480
