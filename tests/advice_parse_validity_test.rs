@@ -34,6 +34,16 @@
 //!    appearing in assertion strings that explicitly say must NOT contain that
 //!    form).
 //!
+//! # Resolved placeholders
+//!
+//! Skip rule B is right that a dynamic verb has no single parse target — but
+//! `op_state::resume_command`'s `{verb}` ranges over `OpVerb`, a closed
+//! two-variant enum, not an arbitrary string. `resolved_placeholder_candidates`
+//! calls the mint directly for every variant and folds the results into the
+//! same candidate set the extracted corpus feeds `check_parse`, so a renamed
+//! verb fails this test whether the rename reached the corpus as a hardcoded
+//! string or only through the mint.
+//!
 //! # Parse verdict
 //!
 //! Clap error kinds distinguish two failure modes:
@@ -74,6 +84,7 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use repoweave::cli::{Cli, Commands};
+use repoweave::op_state::{self, OpVerb};
 
 // ---------------------------------------------------------------------------
 // Source-file walker (mirrors the pattern in destructive_ops_audit_test.rs)
@@ -272,6 +283,43 @@ fn extract_candidates() -> Vec<Candidate> {
 }
 
 // ---------------------------------------------------------------------------
+// Resolved placeholders — verb mints over a closed enum
+// ---------------------------------------------------------------------------
+
+/// Every `OpVerb`, with a match that stops compiling when a variant is
+/// added — what keeps the expansion below from silently falling behind
+/// `OpVerb`'s own domain.
+fn all_op_verbs() -> Vec<OpVerb> {
+    let all = vec![OpVerb::Sync, OpVerb::SyncTo];
+    for verb in &all {
+        match verb {
+            OpVerb::Sync | OpVerb::SyncTo => {}
+        }
+    }
+    all
+}
+
+/// Candidates synthesized by calling `op_state::resume_command` for every
+/// `OpVerb` variant, standing in for the source line the extractor cannot
+/// use (its verb is the placeholder `{verb}`, dropped by skip rule B).
+fn resolved_placeholder_candidates() -> Vec<Candidate> {
+    all_op_verbs()
+        .into_iter()
+        .map(|verb| {
+            let raw = op_state::resume_command(verb);
+            let normalized = normalize(&raw).unwrap_or_else(|| {
+                panic!("resume_command({verb:?}) = {raw:?} was skipped by normalization")
+            });
+            Candidate {
+                normalized,
+                file: "op_state.rs::resume_command".to_string(),
+                line: 0,
+            }
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Parse-validity verdict
 // ---------------------------------------------------------------------------
 
@@ -352,10 +400,10 @@ fn advice_invocations_all_parse() {
     // Both verbs are the bare form because no advice string hardcodes a
     // `--continue` invocation any more: every resume hint interpolates
     // `op_state::resume_command`, whose own literal names a placeholder verb
-    // and is dropped by skip rule B. The resume text therefore reaches no
-    // parse check at all — `OpVerb`'s Display strings are all that stand
-    // behind it. `rwv sync-to --retire` carries the hyphenated-verb-plus-long-
-    // flag shape the `--continue` canary used to.
+    // and is dropped by skip rule B. `rwv sync-to --retire` carries the
+    // hyphenated-verb-plus-long-flag shape the `--continue` canary used to;
+    // the resume text itself is checked separately, below, via
+    // `resolved_placeholder_candidates`.
     let canaries: &[&str] = &[
         "rwv doctor --fix",
         "rwv sync-to --retire",
@@ -375,9 +423,15 @@ fn advice_invocations_all_parse() {
         );
     }
 
+    // Resolved placeholders join the extracted set here, after the canary
+    // check above (which measures extraction, not this expansion) but before
+    // the parse-validity loop below (which both must pass alike).
+    let mut checked = candidates;
+    checked.extend(resolved_placeholder_candidates());
+
     // Check every candidate; collect bad-verb failures.
     let mut failures: Vec<String> = Vec::new();
-    for c in &candidates {
+    for c in &checked {
         if matches!(check_parse(&c.normalized), ParseVerdict::BadVerb) {
             failures.push(format!(
                 "{}:{} — {:?} does not name a valid CLI verb",
@@ -392,7 +446,7 @@ fn advice_invocations_all_parse() {
          To suppress a false positive: add `// rwv-advice: not-an-invocation` \
          on the preceding line in src/.",
         failures.len(),
-        candidates.len(),
+        checked.len(),
         failures.join("\n  ")
     );
 }

@@ -148,7 +148,7 @@ impl fmt::Display for OpId {
 /// arguments the record already holds. The verb comes from the op's `verb`
 /// field ([`OpVerb`]) so the string is derived from op-state, not from a guess
 /// made where the message is written.
-pub(crate) fn resume_command(verb: OpVerb) -> String {
+pub fn resume_command(verb: OpVerb) -> String {
     format!("rwv {verb} --continue")
 }
 
