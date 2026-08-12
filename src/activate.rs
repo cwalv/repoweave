@@ -978,8 +978,11 @@ pub fn member_incompatibilities(
 ///
 /// `skip_missing_sources` mirrors the create path: when `true` (workweave
 /// surfacing), a file whose source does not yet exist on disk is NOT expected
-/// to be surfaced, so its missing symlink is not flagged — this keeps the
-/// check symmetric with what [`surface_symlinks`] actually creates.
+/// to be surfaced, so an absent symlink is not flagged — this keeps the check
+/// symmetric with what [`surface_symlinks`] actually creates. A symlink
+/// already sitting at that path is a different fact: the create path never
+/// leaves one there in this state, so its presence — however it resolves —
+/// is flagged regardless.
 ///
 /// The expectations are likewise symmetric with what a repair may create: a
 /// project the root does not present is expected to surface its
@@ -1023,11 +1026,7 @@ pub fn verify_surfacing(
             continue;
         }
         let source = project_dir.join(file);
-        // Mirror the create path: a file whose source is absent in a workweave
-        // is intentionally not surfaced, so don't flag its missing symlink.
-        if skip_missing_sources && !source.exists() {
-            continue;
-        }
+        let source_missing = skip_missing_sources && !source.exists();
 
         let link = root.join(file);
         let expected_target = relative_symlink_target(project.as_str(), file);
@@ -1035,7 +1034,12 @@ pub fn verify_surfacing(
         let link_meta = match link.symlink_metadata() {
             Ok(m) => m,
             Err(_) => {
-                // Nothing at the surfacing location at all.
+                // Mirror the create path: a file whose source is absent in a
+                // workweave is intentionally not surfaced, so an absent
+                // symlink is not flagged.
+                if source_missing {
+                    continue;
+                }
                 issues.push(Issue {
                     integration: integration.clone(),
                     severity: Severity::Warning,
@@ -1071,7 +1075,23 @@ pub fn verify_surfacing(
 
         match std::fs::read_link(&link) {
             Ok(actual) if actual == expected_target => {
-                // Surfaced correctly.
+                if source_missing {
+                    // The create path never leaves a symlink here once the
+                    // source is gone (`source_missing` skips creation
+                    // entirely) — one resolving correctly anyway is a
+                    // leftover from before the source was removed.
+                    issues.push(Issue {
+                        integration: integration.clone(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "surfacing: `{file}` is surfaced but its source no longer exists \
+                             at `{}` (stale symlink; safe to --fix)",
+                            source.display()
+                        ),
+                        kind: IssueKind::Surfacing,
+                        safe_to_fix: true,
+                    });
+                }
             }
             Ok(actual) => {
                 issues.push(Issue {
@@ -1497,6 +1517,63 @@ mod tests {
         // skip_missing_sources = false → the missing symlink IS flagged
         // (primary semantics create dangling symlinks for lockfiles etc.).
         assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
+    }
+
+    #[test]
+    fn verify_flags_stale_symlink_when_source_missing_in_workweave_mode() {
+        // The incident this pins: a symlink surfaced while the source existed
+        // (or left by a repair scoped elsewhere), the source is gone now, and
+        // skip_missing_sources means the create path would never leave a link
+        // here — so a link's mere presence is stale, whether or not it still
+        // resolves to the expected target.
+        let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        crate::symlink::create(
+            Path::new("projects/web-app/.claude"),
+            &root.join(".claude"),
+            LinkTarget::File,
+        )
+        .unwrap();
+
+        let issues = verify_surfacing(root, &project, &manifest, true);
+        assert_eq!(issues.len(), 1, "expected one stale-symlink issue: {issues:?}");
+        assert!(issues[0].safe_to_fix);
+        assert!(
+            issues[0].message.contains(".claude") && issues[0].message.contains("no longer exists"),
+            "message should name the file and say the source is gone: {}",
+            issues[0].message
+        );
+    }
+
+    #[test]
+    fn fix_removes_stale_symlink_without_recreating_it_in_workweave_mode() {
+        // End-to-end of the --fix primitive for the same state: the stale
+        // link is removed, and (unlike the missing-symlink case) nothing
+        // replaces it, because the source is still absent.
+        let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        crate::symlink::create(
+            Path::new("projects/web-app/.claude"),
+            &root.join(".claude"),
+            LinkTarget::File,
+        )
+        .unwrap();
+        assert_eq!(verify_surfacing(root, &project, &manifest, true).len(), 1);
+
+        surface_symlinks(root, &project, &manifest, true, SurfacingMode::Repair).unwrap();
+
+        assert!(
+            root.join(".claude").symlink_metadata().is_err(),
+            "the stale symlink should be removed, not recreated (source still missing)"
+        );
+        assert!(
+            verify_surfacing(root, &project, &manifest, true).is_empty(),
+            "after --fix, doctor should report nothing"
+        );
     }
 
     // -----------------------------------------------------------------------
