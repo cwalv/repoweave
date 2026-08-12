@@ -84,36 +84,16 @@ because they encode no route a reader can take:
   Delete it and write the sentence it was standing in for. A resolving
   trailing pointer is fine after the comment has said the thing.
 
-`tests/` is outside `check_doc_citations`, which reads `src/` only. That is a
-debt, not a principle, and the difference matters because the two read the
-same from a green gate.
-
-The reason it is not a principle: a test comment describing the fixture tree
-it builds in a temp directory really is not citing a document, but that
-describes a *minority* of the tree. Measured over `tests/`, a widened gate
-reports 64 unfollowable references, and they are three different jobs rather
-than one backlog:
-
-- **13** are fixture paths — a filename the test itself writes into a temp
-  tree. The gate would be wrong to report these, and they are the group the
-  sentence above is true of.
-- **32** name a document this repository really has, spelled so it does not
-  resolve; eighteen are `branch-model.md`, which is
-  `docs/internals/branch-model.md`. Mechanical — write the path that resolves.
-- **19** name nothing here at all. Someone has to recover what the comment
-  meant before it can be rewritten, which makes this the expensive group
-  despite being the smallest.
-
-So the sentence this clause used to carry was not false. It was outnumbered
-four to one, which is worse than false: it read as a principle and was a
-sampling error.
-
-Enabling the gate means clearing the 51 first, and about 30 of them carry a
-section pointer too — cutting across the second and third groups alike — so
-those need the comment rewritten rather than the path corrected. Until that
-happens the exemption stands on the size of that cleanup and nothing else.
-**Re-measure before repeating these numbers**: they describe a tree that
-moves, not a property of `tests/`.
+`check_doc_citations` reads `tests/` as well as `src/`. The reason `tests/`
+was once exempt outright — "a test describing the fixture tree it builds in a
+temp directory is not citing a document" — is still true, but only for that
+one shape: a citation naming a real document under a wrong or missing path is
+exactly as much a dead end when a test writes it as when `src/` does. So the
+rule reads both trees, and the fixture-path case is carved out by the same
+operated-filename exemption `src/` already had (see "What is mechanised, and
+what is not" below), widened to also look at what `tests/*.rs` code writes as
+fixture content, matched by basename so a comment naming a bare filename and a
+fixture writing it under a directory are read as the same fact.
 
 **When letter and spirit disagree, spirit wins and the letter is a bug — file
 it.** A rewrite of the rulebook that leaves a specific clause misfiring is
@@ -141,7 +121,7 @@ Three gates in `src/bin/generate-explain.rs`:
   the literal `fo-`, not preceded by an alphanumeric, followed by four to
   eight lowercase letters or digits and an optional `.N` sub-ID. Nothing
   shorter, longer, capitalised, or differently prefixed. It reads `docs/`
-  and `tests/` as well as `src/`, which the citation gate does not, and it
+  as well as `src/` and `tests/`, which the citation gate does not, and it
   also reads every `.md`, `.rs` and `.toml` file directly at the repo root —
   `CLAUDE.md`, `build.rs` and `Cargo.toml` included, so neither the file
   stating this ban, the one root-level source file, nor the dependency
@@ -160,13 +140,15 @@ Three gates in `src/bin/generate-explain.rs`:
   gate means no `fo-`-shaped ID, not no tracker ID.** Every other prefix is
   yours to catch while you read.
 - `check_doc_citations` enforces the two-base resolution rule and the
-  bare-pointer clause over comments in `src/`, for tokens whose last
-  component ends in a document extension. A filename with no `/` counts, for
-  `.md`. Two exemptions: a filename this repository's own non-test code
-  operates on is an artifact the program handles, not a document the comment
-  cites; and a bare filename accompanied **in the same comment block** by a
-  resolving path is followable as it stands (which is what a markdown link
-  already gives the reader).
+  bare-pointer clause over comments in `src/` and `tests/`, for tokens whose
+  last component ends in a document extension. A filename with no `/`
+  counts, for `.md`. Two exemptions: a filename this repository's own
+  non-test code operates on, or a `tests/*.rs` file writes as fixture
+  content, is an artifact the program handles, not a document the comment
+  cites — matched by basename, so a slashed fixture path (`notes/shared.md`)
+  is exempt on the same terms as a bare one; and a bare filename accompanied
+  **in the same comment block** by a resolving path is followable as it
+  stands (which is what a markdown link already gives the reader).
 
   Inline `#[cfg(test)]` modules are in scope — a comment inside one asks its
   reader the same question any other does. This gate's own file is the
@@ -187,8 +169,9 @@ gate. Written against a path that resolves, or against a document named with
 no file extension, nothing fires.
 
 **A green gate therefore does not mean the tree has no section pointers.** It
-also does not mean `docs/` is clean: `check_doc_citations` reads `src/` only.
-Inline `#[cfg(test)]` modules are in scope; the one place it stops at the test
+also does not mean `docs/` is clean: `check_doc_citations` reads `src/` and
+`tests/`, never `docs/` itself. Inline `#[cfg(test)]` modules are in scope;
+the one place it stops at the test
 boundary is its own file, whose fixtures are comment text it cannot tell from
 comments. When you sweep by hand, match on the *shape* — a document name
 followed by a section token — in every spelling. The sweep before this gate

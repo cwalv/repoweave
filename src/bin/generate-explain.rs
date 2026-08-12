@@ -1847,10 +1847,61 @@ fn is_local_ref_hatch(line: &str) -> bool {
 /// The limit worth naming: an author can defeat the bare-filename clause by
 /// making the program handle that filename somewhere. That is a real hole and
 /// a small one — it takes a code change, not a comment, and a program that
-/// genuinely operates on the file is the case being exempted.
+/// genuinely operates on the file is the case being exempted. The basename
+/// match `check_doc_citations` runs against this set widens the hole
+/// slightly further: a slashed citation naming a real document could go
+/// unreported if some unrelated operated file happens to share its
+/// basename. Measured as small in practice — the fixture names
+/// `tests_code_doc_filenames` exempts today are generic (a shared notes
+/// file, per-workweave feature notes) and none collides with a real
+/// document's basename under `docs`.
 fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
     let mut names = HashSet::new();
     for path in src_rs_files(root) {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in before_test_module(&content).lines() {
+            for token in doc_path_tokens(code_on_line(line)) {
+                names.insert(token_filename(token).to_owned());
+            }
+        }
+    }
+    names
+}
+
+/// `src_code_doc_filenames`'s counterpart for `tests/`: every document
+/// filename a test builds as fixture content — the last component of each
+/// path-shaped token a `tests/*.rs` file writes as a string literal, outside
+/// a comment.
+///
+/// This is what makes a fixture path exempt rather than allowlisted: a test
+/// that writes a file into a temp tree and a comment nearby that names the
+/// same file are naming the same fact, the way
+/// `src_code_doc_filenames` already treats `include_str!(...)` and the
+/// comment describing it. `before_test_module` is applied for the same
+/// reason it is on the `src/` side — a `tests/*.rs` file rarely carries a
+/// `#[cfg(test)] mod tests { ... }` block of its own (the whole file is
+/// already test-only), so this is a no-op there, but a file that does
+/// nest one keeps its fixture-vouching-for-itself guard.
+///
+/// The residue this does not tell apart: any non-comment occurrence counts,
+/// including a string that only mentions a filename in prose rather than
+/// operating on it — an audit justification quoting a document by name reads
+/// exactly like a fixture writing that name to disk. That is a wider hole
+/// than `src_code_doc_filenames`'s, and it is not hypothetical:
+/// `tests/destructive_ops_audit_test.rs` used to carry a bare mention of
+/// `docs/internals/branch-model.md`'s filename inside `justification` string
+/// literals, which silently exempted every OTHER bare mention of that same
+/// filename in `tests/`, unresolvable or not, because `operated` is one set
+/// shared across the whole scan rather than kept per file. Cleared by
+/// rewriting those strings rather than by narrowing this function, because
+/// the narrower fix (matching only arguments to a known write call) would
+/// need to parse Rust rather than scan text, and would need to be redone the
+/// next time a fixture is built a new way.
+fn tests_code_doc_filenames(root: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for path in collect_rs_files(&root.join("tests")) {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
@@ -1897,13 +1948,19 @@ fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
 ///   `DOC_PATH_EXTENSIONS` suffix still counts; the narrowing is for the
 ///   filename-alone case, where prose naming an incidental `notes.txt` is far
 ///   likelier than a citation;
-/// - a filename the code itself operates on (`src_code_doc_filenames`) is
-///   exempt, and a bare filename is also satisfied by a resolving path to the
-///   same filename **in the same comment block** — which is what a markdown
-///   link written `[name](path)` already gives the reader, and what the
-///   paragraph above does for its own example. Block-level, not file-level: a
-///   resolving path elsewhere in the file is not something a reader of this
-///   comment has.
+/// - a filename the code itself operates on (`src_code_doc_filenames`,
+///   `tests_code_doc_filenames`) is exempt **by basename**, slashed token or
+///   bare: a comment naming a file by its bare name and a fixture writing
+///   that same name under a directory are naming the same fact, so the
+///   exemption checks `token_filename`, not the token's own shape. A bare
+///   filename is also
+///   satisfied by a resolving path to the same filename **in the same
+///   comment block** — which is what a markdown link written `[name](path)`
+///   already gives the reader, and what the paragraph above does for its own
+///   example. That second form is block-level, not file-level: a resolving
+///   path elsewhere in the file is not something a reader of this comment
+///   has, and it does not extend to slashed tokens — a fixture path already
+///   has the operated-set exemption for that.
 ///
 /// # This gate is not the whole rule
 ///
@@ -1967,10 +2024,10 @@ fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String
                     continue;
                 }
                 for token in doc_path_tokens(text) {
-                    if !token.contains('/')
-                        && (!token.ends_with(".md")
-                            || operated.contains(token)
-                            || shown_as_path.contains(token))
+                    let bare = !token.contains('/');
+                    if (bare && !token.ends_with(".md"))
+                        || operated.contains(token_filename(token))
+                        || (bare && shown_as_path.contains(token))
                     {
                         continue;
                     }
@@ -1995,12 +2052,12 @@ fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String
     errors
 }
 
-/// The `.rs` half of `src_and_docs_files` — the scope of the two gates that
-/// read comments rather than whole files.
+/// The `.rs` half of `src_and_docs_files` — the scope of `check_doc_symbol_refs`,
+/// and half the scope of `check_doc_citations` (see `run_doc_citation_check`,
+/// which adds `tests/` on top).
 ///
 /// Both rules govern comments under `src/`, so the `.md` files that shared
-/// scope also yields are filtered out; `tests/` is exempt for free, since that
-/// helper never collects it.
+/// scope also yields are filtered out.
 fn src_rs_files(root: &Path) -> Vec<PathBuf> {
     src_and_docs_files(root)
         .into_iter()
@@ -2008,8 +2065,18 @@ fn src_rs_files(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// `check_doc_citations` over `src/` and `tests/` together — the citation
+/// rule does not carve `tests/` out, unlike `check_doc_symbol_refs`, which
+/// stays on `src_rs_files` alone. `operated` is the union of what each
+/// side's own code hands the reader for free: `src/`'s `include_str!`s and
+/// the like, plus every fixture path a `tests/*.rs` file writes into a temp
+/// tree.
 fn run_doc_citation_check(root: &Path) -> Vec<String> {
-    check_doc_citations(root, &src_rs_files(root), &src_code_doc_filenames(root))
+    let mut files = src_rs_files(root);
+    files.extend(collect_rs_files(&root.join("tests")));
+    let mut operated = src_code_doc_filenames(root);
+    operated.extend(tests_code_doc_filenames(root));
+    check_doc_citations(root, &files, &operated)
 }
 
 /// Every identifier that appears in `src/` outside a comment.
@@ -4204,52 +4271,79 @@ mod tests {
         );
     }
 
-    /// **Pinning test for the `tests/` exemption, which is a debt and not a
-    /// principle.**
+    /// **Pinning test for `tests/`'s place in the citation gate: in scope for
+    /// a real citation, silent for a fixture path.**
     ///
-    /// A prohibition resting on a cleanup nobody has done decays quietly,
-    /// because widening the scope by one line looks like tidying and
-    /// narrowing it looks like nothing at all. This runs the gate end to end
-    /// rather than inspecting the collector it happens to call, so rewiring
-    /// either one fails here and moving the boundary stays a decision someone
-    /// writes down.
+    /// `tests/` used to be exempt outright. It no longer is — the gate now
+    /// reads it — but the reason it was exempt (a test describing the
+    /// fixture tree it builds in a temp directory is not citing a document)
+    /// is still true for that one shape, so the widened gate has to keep
+    /// being silent about it. This runs the gate end to end rather than
+    /// inspecting the collectors it happens to call, so rewiring any of them
+    /// fails here.
     ///
-    /// The same citation is planted under `src/` and under `tests/`, and the
-    /// `src/` half is what makes the other half mean anything: a gate that
-    /// reported nothing at all would satisfy a bare "nothing under `tests/`"
-    /// on its own. It is the disagreement that is the evidence.
+    /// Three plants, one control:
+    ///   - a genuine unresolvable citation under `src/` — the control. A gate
+    ///     that reported nothing at all would satisfy every assertion below
+    ///     for the wrong reason.
+    ///   - the same citation under `tests/` — must now be reported; this is
+    ///     the boundary this bead moves.
+    ///   - a fixture path under `tests/`, cited in a comment AND written by
+    ///     the fixture's own code in the same file — must stay silent; this
+    ///     is the exemption the gate would be WRONG to drop.
     #[test]
-    fn the_citation_gate_reads_src_only_and_tests_is_an_exemption_with_a_cost() {
+    fn the_citation_gate_now_covers_tests_but_stays_silent_on_fixture_paths() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("tests")).unwrap();
-        let cites = "// The tier-0 invariants are recorded in clone-topology.md.\n\
-                     pub fn f() {}\n";
-        fs::write(root.join("src/lib.rs"), cites).unwrap();
-        fs::write(root.join("tests/some_test.rs"), cites).unwrap();
+
+        let src_cites = "// The tier-0 invariants are recorded in clone-topology.md.\n\
+                          pub fn f() {}\n";
+        fs::write(root.join("src/lib.rs"), src_cites).unwrap();
+
+        let tests_content = "\
+            // The tier-0 invariants are recorded in clone-topology.md.\n\
+            //\n\
+            // Both workweaves edit notes/shared.md with conflicting content.\n\
+            fn fixture(dir: &std::path::Path) {\n\
+                std::fs::write(dir.join(\"notes/shared.md\"), \"x\").unwrap();\n\
+            }\n";
+        fs::write(root.join("tests/some_test.rs"), tests_content).unwrap();
 
         let findings = run_doc_citation_check(root);
 
         assert!(
             findings.iter().any(|f| f.starts_with("src/lib.rs:")),
-            "the gate reported nothing under src/, so its silence under tests/ \
+            "the gate reported nothing under src/, so its silence elsewhere \
              says nothing:\n{}",
             findings.join("\n")
         );
-        let leaked: Vec<_> = findings
+
+        let real_citation_under_tests: Vec<_> = findings
             .iter()
-            .filter(|f| f.starts_with("tests/"))
+            .filter(|f| f.starts_with("tests/") && f.contains("clone-topology.md"))
             .collect();
         assert!(
-            leaked.is_empty(),
-            "`tests/` is outside this gate until its citations are cleared; \
-             widening the scope is a decision, not a tidy-up:\n{leaked:#?}"
+            !real_citation_under_tests.is_empty(),
+            "`tests/` is in scope now — a genuine unresolvable citation there \
+             must be reported:\n{}",
+            findings.join("\n")
+        );
+
+        let fixture_path_leaked: Vec<_> = findings
+            .iter()
+            .filter(|f| f.contains("shared.md"))
+            .collect();
+        assert!(
+            fixture_path_leaked.is_empty(),
+            "a comment naming a path the fixture itself writes must not be \
+             reported — the gate would be WRONG about it:\n{fixture_path_leaked:#?}"
         );
 
         assert!(
             !collect_rs_files(&repo_root().join("tests")).is_empty(),
-            "`tests/` holds no .rs files — the exemption above exempts nothing"
+            "`tests/` holds no .rs files — the assertions above exempt nothing"
         );
     }
 
