@@ -204,7 +204,7 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let phase = ctx.current_phase()?;          // re-read from disk
         let next = run_phase(ctx, phase)?;
         match next {
-            Some(p) => op_state::advance_phase(&ctx.owner_workspace_dir, p)?,
+            Some(p) => op_state::set_phase(&ctx.owner_workspace_dir, p)?,
             None => { cleanup(ctx)?; return Ok(()) }
         }
     }
@@ -221,18 +221,21 @@ Per phase: `run_replay` (`:3576`), `run_relock` (`:4006`),
 
 ### Why the loop reads from disk
 
-`op_state::advance_phase` (`src/op_state.rs:547`) at `sync.rs:1973` is the
-**single persistence point** of the whole machine, and it is a *post*-transition
-write. The invariant, stated at `src/sync.rs:1953-1962`, is that the persisted
-phase is the phase in progress and every phase is re-runnable from the record
-alone. That gives three crash positions and one rule:
+`op_state::set_phase` (`src/op_state.rs:696`) is the **single persistence
+point** of the whole machine. The driver loop's call (`sync.rs:1957`) is a
+*post*-transition write; resume entry (`sync.rs:2806`) writes through the same
+function before re-entering a phase, so the write itself is not ordered with
+respect to the transition — the loop's use of it is. The invariant, stated at
+`src/sync.rs:1953-1962`, is that the persisted phase is the phase in progress
+and every phase is re-runnable from the record alone. That gives three crash
+positions and one rule:
 
 - inside `run_phase` — the record still names the running phase; resume
   re-enters it;
-- after `run_phase` returned but before `advance_phase` committed — the record
+- after `run_phase` returned but before `set_phase` committed — the record
   still names the just-completed phase; resume re-runs it (idempotently), then
   transitions;
-- after `advance_phase` committed — resume enters the next phase directly.
+- after `set_phase` committed — resume enters the next phase directly.
 
 `--continue` is therefore not a separate code path: `run_machine` chooses
 `load_continuing_context` (`:2727`) over `guard_and_mark` and enters the same

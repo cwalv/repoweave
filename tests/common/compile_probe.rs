@@ -41,10 +41,21 @@ fn repoweave_rlib() -> PathBuf {
         .filter_map(|p| Some((p.metadata().ok()?.modified().ok()?, p)))
         .collect();
     candidates.sort_by_key(|(modified, _)| *modified);
-    candidates
-        .pop()
-        .map(|(_, p)| p)
-        .unwrap_or_else(|| panic!("no librepoweave-*.rlib in {}", deps.display()))
+    candidates.pop().map(|(_, p)| p).unwrap_or_else(|| {
+        // Cargo does not promise the rlib is on disk when a test that needs it
+        // runs, and an absent one fails every probe in the file at once —
+        // including the control, which is otherwise the signal that the
+        // harness itself is sound. Say which of the two happened, because the
+        // suite cannot.
+        panic!(
+            "no librepoweave-*.rlib in {}\n\
+             This is a missing build artifact, not a failed type-level \
+             invariant: every probe in this file, control included, fails \
+             the same way when the rlib is absent. Re-run the suite; if it \
+             persists, `cargo build --release --lib` first.",
+            deps.display()
+        )
+    })
 }
 
 /// Compile `snippet` as a library against the built `repoweave`, returning

@@ -918,6 +918,45 @@ fn sync_failure_cause_is_structured_not_stringly() {
     );
 }
 
+/// An io cause must survive the whole way onto the `sync --json` payload,
+/// not merely into the mirror type.
+///
+/// `VcsErrorOutput` builds its `message` from the io source independently of
+/// `VcsError`'s `Display`, so the two renders can regress apart: a caller that
+/// dropped `cause`, or a mirror that stopped carrying the source, leaves the
+/// operator with rwv's own context sentence and no statement of what actually
+/// failed. The mirror is pinned alone above, and the failure envelope's `cause`
+/// is pinned with a variant that carries no source at all — neither notices
+/// this composition breaking.
+#[test]
+fn an_io_cause_reaches_the_sync_json_payload() {
+    let cause = VcsError::Io {
+        ctx: "failed to spawn git rev-parse".into(),
+        source: std::io::Error::other("permission denied"),
+    };
+    let v = serialize_outcome(
+        "github/cwalv/foo",
+        "/abs/foo",
+        &RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+            error: cause.to_string(),
+            cause: Some(cause),
+        }),
+    );
+    let wire_cause = &v["failure"]["cause"];
+    assert_eq!(
+        wire_cause["kind"], "io",
+        "an io cause must keep its discriminant on the wire: {v}"
+    );
+    let message = wire_cause["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("io cause must carry a `message` on the wire: {v}"));
+    assert!(
+        message.contains("permission denied"),
+        "the operator reading `sync --json` must be told what actually \
+         failed, not only rwv's context sentence; got: {message:?}"
+    );
+}
+
 /// VcsErrorOutput::Io carries `message` (renamed from `error`) to signal
 /// it is a free-form display string from io::Error, not a typed discriminant.
 #[test]
