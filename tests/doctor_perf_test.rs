@@ -1,25 +1,30 @@
-//! Performance regression test for `rwv doctor` at workspace scale.
+//! Regression test for the *cost* of `rwv doctor`'s per-worktree drift scan,
+//! at a workspace shape that reproduces the scan's O(workweaves x repos)
+//! access pattern: many workweaves, each materializing every manifest repo.
 //!
-//! The doctor's per-worktree drift scan is O(workweaves ×
-//! repos) and was observed not to complete in 30s against a workspace with
-//! ~81 workweaves × ~13 active manifest repos. This test reproduces that
-//! shape at a smaller-but-still-significant scale and asserts the run
-//! finishes within a generous wall-clock budget.
+//! Asserts on `git` subprocess invocation COUNT rather than elapsed time. A
+//! count is a property of the code path an input takes; it does not change
+//! with how fast or how loaded the host is, so doubling the workspace
+//! doubles the count on a saturated CI runner exactly as it does on an idle
+//! laptop. Wall-clock has no such invariance — runner speed scales the one
+//! thing it measures directly — which is why this test does not time
+//! anything it asserts on.
 //!
-//! Construction is intentionally side-effect light:
-//!   - one bare-style repo per manifest entry, initialised with a single commit
-//!   - `git worktree add` for each (workweave × repo) pair, on a distinct
-//!     ephemeral branch
-//!   - a `.rwv-workweave` marker per workweave
-//!
-//! The test exercises `repoweave::check::run_check` in-process so the time
-//! budget is unaffected by binary linkage / cargo spawn overhead.
+//! SKIPPED ON WINDOWS. The counting instrument is a `#!/bin/sh` `git` shim
+//! placed on `PATH` and made discoverable with a mode bit; Windows has
+//! neither `sh` nor the executable-bit convention `which` needs to find it
+//! there. `windows-check` still compiles this file — it is absent from that
+//! job the same way any `#[cfg(unix)]`-skipped test is, which is not a gap
+//! particular to this one.
 
-use repoweave::check;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+#![cfg(unix)]
 
 mod common;
+
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 fn git(args: &[&str], dir: &Path) {
     let out = common::git()
@@ -105,53 +110,111 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
     root
 }
 
-/// Synthetic-large-workspace perf assertion. Acceptance:
-/// `rwv doctor` completes in O(seconds), not O(>30s), against a 80+
-/// workweave workspace. The numbers used here are tuned to a CI-friendly
-/// scale that still reproduces the original O(workweaves × repos) shape;
-/// the time budget is generous so the test exists primarily as a
-/// regression gate against future O(n²) regressions in the scan loop.
-#[test]
-fn doctor_large_workspace_completes_under_budget() {
-    let n_ww: usize = 40;
-    let n_repos: usize = 5;
-    // Budget: with the fix in place, a 40×5 workload completes in well
-    // under 2s on developer hardware. The budget is set well above
-    // that — the test exists primarily as a regression gate against
-    // future O(n²) blow-ups in the scan loop (the original regression
-    // was >30s at 81×13), not as a tight benchmark. 8s flaked on shared
-    // macOS CI runners, hence the generous ceiling.
-    let budget = std::time::Duration::from_secs(30);
+/// A `PATH` entry providing a `git` that records one marker file per
+/// invocation, then execs the real binary at an absolute path baked into the
+/// shim script — so it never has to re-search `PATH` and can never recurse
+/// into itself. Each invocation's marker gets a name from `mktemp`, which
+/// hands out distinct names under concurrent callers without any locking on
+/// this side.
+struct CountingGitShim {
+    dir: tempfile::TempDir,
+    markers: PathBuf,
+}
 
-    let tmp = common::tempdir().unwrap();
-    let root = build_large_workspace(tmp.path(), n_repos, n_ww);
+impl CountingGitShim {
+    fn install(real_git: &Path) -> Self {
+        let dir = common::tempdir().unwrap();
+        let markers = dir.path().join("markers");
+        fs::create_dir_all(&markers).unwrap();
 
-    let start = Instant::now();
-    // Use scope_all=true so the perf test exercises the full weave-wide scan
-    // (the same load it was originally benchmarking).
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&root, None).unwrap();
-    // `None`: no --reattach-checkouts. `fix` is false here anyway, so the
-    // consent has nothing to gate.
-    let res = check::run_check(&ctx, false, true, None, None);
+        let script_path = dir.path().join("git");
+        let mut f = fs::File::create(&script_path).unwrap();
+        write!(
+            f,
+            "#!/bin/sh\nmktemp '{markers}/call.XXXXXX' >/dev/null\nexec '{real_git}' \"$@\"\n",
+            markers = markers.display(),
+            real_git = real_git.display(),
+        )
+        .unwrap();
+        drop(f);
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        Self { dir, markers }
+    }
+
+    fn path_entry(&self) -> &Path {
+        self.dir.path()
+    }
+
+    fn call_count(&self) -> usize {
+        fs::read_dir(&self.markers).unwrap().count()
+    }
+}
+
+/// Run `rwv doctor --all` against `root` with every `git` subprocess it
+/// spawns routed through a fresh [`CountingGitShim`], and return the call
+/// count alongside elapsed wall time (reported, not asserted on — see the
+/// module doc for why).
+fn scan_and_count_git_calls(root: &Path, real_git: &Path) -> (usize, std::time::Duration) {
+    let shim = CountingGitShim::install(real_git);
+    // The shim itself is a `#!/bin/sh` script that calls `mktemp`, so it
+    // needs a real PATH behind it — only prepended, so `Command::new("git")`
+    // still finds the shim first.
+    let outer_path = std::env::var("PATH").unwrap_or_default();
+    let shimmed_path = format!("{}:{outer_path}", shim.path_entry().display());
+
+    let start = std::time::Instant::now();
+    common::rwv()
+        .args(["-C", &root.to_string_lossy(), "doctor", "--all"])
+        .env("PATH", shimmed_path)
+        .output()
+        .expect("rwv doctor should run to completion");
     let elapsed = start.elapsed();
 
-    eprintln!("doctor_large_workspace: {n_ww} workweaves × {n_repos} repos -> {elapsed:?}");
+    (shim.call_count(), elapsed)
+}
 
-    assert!(res.is_ok(), "run_check returned an error: {:?}", res.err());
-    assert!(
-        elapsed < budget,
-        "doctor scan exceeded budget: {:?} > {:?} (n_ww={n_ww}, n_repos={n_repos})",
-        elapsed,
-        budget
+/// `rwv doctor --all`'s `git` invocation count grows linearly, not
+/// quadratically, with workspace size.
+///
+/// Measured at two scales related by a clean doubling of workweave count;
+/// their ratio stays well under the ~4x a quadratic scan would produce. The
+/// floor on the smaller scale's count is what keeps a fixture that silently
+/// failed to build (zero repos on disk) from passing the ratio check
+/// vacuously.
+#[test]
+fn doctor_scan_git_call_count_stays_linear_in_workspace_size() {
+    let n_repos: usize = 5;
+    let n1_ww: usize = 20;
+    let n2_ww: usize = 40;
+
+    let real_git = which::which("git").expect("git must be resolvable on PATH for this test");
+
+    let tmp1 = common::tempdir().unwrap();
+    let root1 = build_large_workspace(tmp1.path(), n_repos, n1_ww);
+    let tmp2 = common::tempdir().unwrap();
+    let root2 = build_large_workspace(tmp2.path(), n_repos, n2_ww);
+
+    let (count1, elapsed1) = scan_and_count_git_calls(&root1, &real_git);
+    let (count2, elapsed2) = scan_and_count_git_calls(&root2, &real_git);
+
+    eprintln!(
+        "doctor scan git calls: {n1_ww}x{n_repos} -> {count1} calls in {elapsed1:?}; \
+         {n2_ww}x{n_repos} -> {count2} calls in {elapsed2:?}"
     );
 
-    // Soft floor on the workload itself: if the scan finishes in
-    // microseconds, the synthetic-workspace construction silently broke
-    // and the test would pass vacuously.
+    let floor = n1_ww * n_repos;
     assert!(
-        elapsed > std::time::Duration::from_millis(10),
-        "scan completed implausibly fast — check that the test fixture \
-         actually built the workweaves: {:?}",
-        elapsed
+        count1 >= floor,
+        "only {count1} git calls scanning {n1_ww}x{n_repos} — fewer than one per \
+         repo-on-disk entry, which means the fixture likely didn't build as intended"
+    );
+
+    let ratio = count2 as f64 / count1 as f64;
+    assert!(
+        ratio < 3.0,
+        "git call count more than tripled ({count1} -> {count2}, ratio {ratio:.2}) when \
+         workweave count only doubled ({n1_ww} -> {n2_ww}); the scan is no longer linear \
+         in (workweaves x repos)"
     );
 }
