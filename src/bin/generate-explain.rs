@@ -2209,8 +2209,14 @@ fn check_no_consumer_vocabulary(root: &Path) -> Vec<String> {
 
 /// Vocabulary belonging to a particular deployment of rwv rather than to rwv.
 ///
-/// `rig` is matched at word boundaries because `origin`, `right` and `trigger`
-/// all contain it.
+/// Every entry is matched via `contains_word`, bounded on ascii-alphanumeric
+/// neighbours — not just `rig`, where `origin`, `right` and `trigger` all
+/// contain the letters. The multi-word entries need the same bound: ordinary
+/// prose can straddle a phrase the way "biogas cityscape" contains the raw
+/// substring "gas city" without either word of the entry appearing on its
+/// own. `contains_word` bounds only the two ends of the needle, so a needle
+/// with internal spaces, parentheses or a dot — `"city (gc)"`, `"gc.city"` —
+/// still gets a correct edge check.
 const FOREIGN_VOCABULARY: &[&str] = &[
     "rig",
     "gas city",
@@ -2240,12 +2246,7 @@ fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
         // grep once already.
         let flat = content.replace('\n', " ").to_ascii_lowercase();
         for term in FOREIGN_VOCABULARY {
-            let hit = if *term == "rig" {
-                contains_word(&flat, "rig")
-            } else {
-                flat.contains(term)
-            };
-            if hit {
+            if contains_word(&flat, term) {
                 errors.push(format!("{rel}: contains `{term}`"));
             }
         }
@@ -3788,12 +3789,11 @@ mod tests {
         );
     }
 
-    /// Multi-word entries match with a plain substring test and carry no word
-    /// boundary, unlike `rig` — `"gas city"` fires here even though the text
-    /// uses "biogas" and "cityscape" as separate words, neither of which is
-    /// the phrase the entry names.
+    /// Multi-word entries are bounded like `rig` — `"gas city"` must not fire
+    /// on "biogas cityscape", which contains the raw substring but neither
+    /// word of the entry on its own.
     #[test]
-    fn foreign_vocabulary_check_multiword_entry_has_no_word_boundary() {
+    fn foreign_vocabulary_check_multiword_entry_respects_word_boundary() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let docs = tmp.path().join("docs");
         fs::create_dir_all(&docs).unwrap();
@@ -3804,9 +3804,9 @@ mod tests {
         .unwrap();
         let errors = check_no_foreign_vocabulary(tmp.path());
         assert!(
-            errors.iter().any(|e| e.contains("contains `gas city`")),
-            "expected the unbounded substring match to fire across \"biogas cityscape\", \
-             got:\n{}",
+            errors.is_empty(),
+            "\"biogas cityscape\" straddles \"gas city\" but contains neither word of it, \
+             expected no hit, got:\n{}",
             errors.join("\n")
         );
     }
