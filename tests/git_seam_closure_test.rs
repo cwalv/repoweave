@@ -138,6 +138,21 @@ fn a_worktree_whose_canonical_was_deleted_names_the_missing_clone() {
         "the finding must name the clone directory, which is what doctor \
          offers to repair — not its store"
     );
+
+    // The classifier must not have written anything. The derivation it shares
+    // with `git_info_dir` is the resolution only — the `create_dir_all` that
+    // makes an `info/` directory stays behind in the caller that wants the
+    // side effect. Pull the whole derivation across and this classifier
+    // recreates the tree under the very directory whose absence it reports,
+    // which both suppresses its own finding on the next call and gives
+    // doctor's classifiers a write. Asserted directly rather than left to the
+    // `expect` above, which would catch it only because a recreated canonical
+    // reads as present.
+    assert!(
+        !canonical.exists(),
+        "classifying a missing canonical clone must not create it at {}",
+        canonical.display()
+    );
 }
 
 /// The canonical clone itself is not a linked worktree.

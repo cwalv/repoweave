@@ -44,9 +44,14 @@ fn git_command() -> Command {
 /// [`git_command`] for a `#[cfg(test)]` module that drives a real repo to set
 /// up a fixture.
 ///
-/// The same allowance the seam already makes for [`git_vcs`]: a test may build
-/// git directly, and production may not. Compiled out of the shipped binary,
-/// so widening it cannot widen production's reach.
+/// **A deliberate exemption, and the seam is wider by exactly this much.** A
+/// test module in any file can assemble git argv through here, so the
+/// compile-time closure above holds for production and not for tests. That is
+/// the same allowance the seam already makes for [`git_vcs`], and for the same
+/// reason: a fixture has to build the repo state the code under test reads,
+/// and routing that through the trait would test the trait against itself.
+/// It is `#[cfg(test)]` rather than `pub(crate)` so the exemption cannot reach
+/// the shipped binary — widening it cannot widen production's reach.
 #[cfg(test)]
 pub(crate) fn git_command_in_test() -> Command {
     git_command()
@@ -760,6 +765,11 @@ pub fn init_submodules(worktree_path: &Path) -> Result<(), VcsError> {
 ///
 /// Handed back unspawned because `update` streams git's stderr through its
 /// reporter while it runs; the argv is this module's, the process is theirs.
+///
+/// **Weaker containment than a trait method**, and worth knowing which way:
+/// a caller holds a `Command` and can append arguments to it, so the argv this
+/// function fixes is a prefix rather than the whole of what runs. No caller
+/// does today — `update` spawns it as handed over — and nothing prevents one.
 pub fn fetch_all_prune_command(repo: &Path) -> Command {
     let mut cmd = git_command();
     cmd.args(["fetch", "--all", "--tags", "--prune"])
