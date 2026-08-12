@@ -5,7 +5,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 mod common;
@@ -564,6 +564,133 @@ fn fetch_default_auto_activates_project() {
         active_content.contains("project"),
         ".rwv-active should reference the fetched project name"
     );
+}
+
+// ============================================================================
+// Bootstrap auto-activate vs. a pre-existing `.rwv-active` pointer
+//
+// `read_active_project` treats a present-but-empty, whitespace-only, or
+// invalid-name pointer the same as an absent one (`None`), so a bootstrap
+// fetch must auto-activate over all three the same way it does over no file
+// at all, and skip only when the pointer already names a project.
+// ============================================================================
+
+/// Set up a project source with one dependency repo and an empty workspace
+/// directory, without fetching. Returns `(workspace, source)`; a bootstrap
+/// `rwv fetch <source>` against them always derives the project name
+/// `"project"`.
+fn setup_bootstrap_source(tmp: &Path) -> (PathBuf, String) {
+    let workspace = tmp.join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let bare_repo = tmp.join("dep.git");
+    init_bare_repo_with_commit(&bare_repo);
+
+    let project_bare = tmp.join("project.git");
+    init_bare_repo(&project_bare);
+
+    let work = tmp.join("work");
+    let run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+
+    run(
+        &["clone", &project_bare.to_string_lossy(), &work.to_string_lossy()],
+        tmp,
+    );
+    run(&["config", "user.email", "test@test.com"], &work);
+    run(&["config", "user.name", "Test"], &work);
+
+    let dep_url = format!("file://{}", bare_repo.display());
+    write_manifest(&work, &[("local/team/dep", &dep_url)]);
+    run(&["add", "rwv.toml"], &work);
+    run(&["commit", "-m", "manifest"], &work);
+    run(&["push", "origin", "main"], &work);
+
+    let source = format!("file://{}", project_bare.display());
+    (workspace, source)
+}
+
+#[test]
+fn fetch_bootstrap_auto_activates_over_empty_active_pointer() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, source) = setup_bootstrap_source(tmp.path());
+    std::fs::write(workspace.join(".rwv-active"), "").unwrap();
+
+    rwv()
+        .args(["fetch", &source, "--allow-non-empty-dir"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipping auto-activate").not());
+
+    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
+    assert_eq!(active_content.trim(), "project");
+}
+
+#[test]
+fn fetch_bootstrap_auto_activates_over_whitespace_only_active_pointer() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, source) = setup_bootstrap_source(tmp.path());
+    std::fs::write(workspace.join(".rwv-active"), "  \n  \n").unwrap();
+
+    rwv()
+        .args(["fetch", &source, "--allow-non-empty-dir"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipping auto-activate").not());
+
+    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
+    assert_eq!(active_content.trim(), "project");
+}
+
+#[test]
+fn fetch_bootstrap_auto_activates_over_invalid_name_active_pointer() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, source) = setup_bootstrap_source(tmp.path());
+    // Leading `-` fails `ProjectName::new` (ambiguous against the `--` that
+    // joins project to workweave), so this is a present pointer that still
+    // reads as no active project.
+    std::fs::write(workspace.join(".rwv-active"), "-not-a-valid-name\n").unwrap();
+
+    rwv()
+        .args(["fetch", &source, "--allow-non-empty-dir"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("skipping auto-activate").not());
+
+    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
+    assert_eq!(active_content.trim(), "project");
+}
+
+#[test]
+fn fetch_bootstrap_skips_auto_activate_over_valid_active_pointer() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, source) = setup_bootstrap_source(tmp.path());
+    std::fs::write(workspace.join(".rwv-active"), "other-project\n").unwrap();
+
+    rwv()
+        .args(["fetch", &source, "--allow-non-empty-dir"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "rwv fetch: skipping auto-activate (project 'other-project' already active)",
+        ));
+
+    // The pointer is left as it was, not overwritten with the freshly
+    // bootstrapped project's name.
+    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
+    assert_eq!(active_content.trim(), "other-project");
 }
 
 // ============================================================================
