@@ -531,7 +531,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     // `{project}--{workweave}` and nothing else: the third component this
     // site used to append (the manifest `version:`) disagreed with what
     // `workweave create` appends, no consumer read either, and the model
-    // deletes it rather than picking a winner (branch-model.md §3.5).
+    // deletes it rather than picking a winner.
     // Asked as the full ref, not `--short`: `--short` answers the shortest
     // *unambiguous* name, so a tag sharing the branch's name would make this
     // read `heads/app--ww1` and the assertion would be about the wrong thing.

@@ -206,7 +206,7 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
         .expect("valid UTF-8")
         .trim()
         .to_string();
-    // Flat (branch-model.md §3.5): `{project}--{workweave}`, no third
+    // Flat: `{project}--{workweave}`, no third
     // component. The name is minted from two inputs and nothing observed
     // feeds in, so the source repo's current branch cannot appear here.
     assert_eq!(

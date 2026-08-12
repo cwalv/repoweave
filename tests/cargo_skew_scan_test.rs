@@ -11,8 +11,8 @@
 //!
 //! Both scans emit `CheckViolation`s with `Warning` severity: they surface
 //! in `rwv doctor` output (and `--json`) but never fail exit-status. Both
-//! are report-not-mandate per Finding 3 of
-//! `docs/repoweave/grok-build-export-findings.md`.
+//! are report-not-mandate — rwv cannot mandate a version or a patch entry
+//! across sovereign member repos, only observe where they disagree.
 
 use repoweave::integration::IntegrationContext;
 use repoweave::integrations::cargo_workspace::{

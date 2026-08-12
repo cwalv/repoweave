@@ -50,8 +50,8 @@ const TRACKED: &[&str] = &[
 /// TRACKED with an allowlist entry instead.
 ///
 /// `-M` is here because the branch model has one rename
-/// ([`Vcs::rename_local_ref`], `branch-model.md` §7.1 arm 1) and the
-/// uppercase form would let it rename *over* an existing branch — destroying
+/// ([`Vcs::rename_local_ref`]) and the uppercase form would let it rename
+/// *over* an existing branch — destroying
 /// that branch's ref with neither receipt nor warrant, and doing it silently,
 /// since git stops refusing. The lowercase `-m` refuses, which is what makes
 /// a leftover in the way a reported obstacle instead of a casualty.
@@ -76,7 +76,7 @@ const ALLOWLIST: &[Allowed] = &[
             before deleting it, because the two removals are different \
             operations and the preconditions that gate them do not \
             transfer. \
-            (1) PRIMARY arm — a DESTROY-STORE (branch-model.md §3.2): \
+            (1) PRIMARY arm — a DESTROY-STORE: \
             `dest` there IS the canonical store, so the delete would take \
             the object database and the worktree administration of every \
             live workweave checkout of that repo with it. Behind the \
@@ -127,8 +127,8 @@ const ALLOWLIST: &[Allowed] = &[
             dirty refusal unless --discard-uncommitted, and behind the \
             unmerged-commits refusal unless the caller holds a \
             DiscardUnmergedConsent — the token minted only from \
-            --discard-unmerged-commits at CLI dispatch (branch-model.md \
-            §4.4). Both list what is lost first. The per-ref DESTROYs inside \
+            --discard-unmerged-commits at CLI dispatch. \
+            Both list what is lost first. The per-ref DESTROYs inside \
             the same verb each additionally hold their own warrant (R3); \
             this entry covers the directory removal only.",
     },
@@ -149,7 +149,7 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "remove_dir_all",
         count: 1,
         justification: "rwv remove --delete on the canonical clone. A \
-            DESTROY-STORE (branch-model.md §3.2): it removes an entire ref \
+            DESTROY-STORE: it removes an entire ref \
             store and object database at once, so no ref-level rule can gate \
             it and none is read as permitting it. Gated by \
             refuse_claimed_store, which is R4 — refuses while any live \
@@ -181,7 +181,7 @@ const ALLOWLIST: &[Allowed] = &[
             force-delete of a ref rwv holds no receipt for is now \
             unreachable because the code that could do it does not exist. \
             destroy_local_ref: the branch-model DESTROY \
-            primitive (branch-model.md §3.2, §4.3). Reachable only through \
+            primitive. Reachable only through \
             Vcs::delete_owned_ref, which takes a persisted receipt \
             (OwnedRef — R2, ownership by record, never by name shape) AND a \
             DeletionWarrant (R3), which is an opaque struct over a private \
@@ -237,8 +237,8 @@ const ALLOWLIST: &[Allowed] = &[
             first. The branch-model form takes the ref to publish as a \
             parameter (PublishRef) instead of reading whatever branch the \
             checkout happens to be on, so the choice is made at one site in \
-            push.rs rather than inside the VCS impl (branch-model.md §4.3; \
-            Q6 decides what that site passes). Its predecessor \
+            push.rs rather than inside the VCS impl \
+            (Q6 decides what that site passes). Its predecessor \
             push_with_role — which read `current_ref` inside the impl — was \
             deleted, so there is no longer a publish path \
             that force-pushes a ref nobody chose.",
@@ -250,7 +250,7 @@ const ALLOWLIST: &[Allowed] = &[
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
-            before writing anything (branch-model.md §5), and with its last \
+            before writing anything, and with its last \
             caller gone the method went with the rest of the old surface. \
             What remains is four sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
@@ -271,7 +271,7 @@ const ALLOWLIST: &[Allowed] = &[
             --detach-checkouts and re-verifies the attachment witness \
             first, or through advance_detached_head, which is a MOVE of an \
             already-detached HEAD and refuses when the repo is mid-op \
-            (branch-model.md §3.6 — including mid-bisect). \
+            (including mid-bisect). \
             (3) attach_head_to: reattaches to an EXISTING local branch. \
             Omitting -b does NOT make git refuse an absent branch — it \
             invents one from a remote-tracking ref (checkout.guess), or \
@@ -292,7 +292,7 @@ const ALLOWLIST: &[Allowed] = &[
             existing one. `-B` therefore repositions a ref git minted \
             moments earlier with no working tree hanging off it and no \
             observer, which is what makes it a birth rather than a MOVE \
-            (branch-model.md §5, `fetch` (absent clone)). With an explicit \
+            (`fetch` (absent clone) is the other birth site). With an explicit \
             start point there is no checkout.guess and no tag lookup, and \
             the -- terminator keeps a path-shaped name out of the pathspec \
             list; the clone runs --no-checkout, so no working tree is ever \

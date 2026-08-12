@@ -1,9 +1,8 @@
-//! The branch model's create / delete / remove lifecycle
-//! (`docs/repoweave/branch-model.md` §3.5, §4.6(3)(4), §5, §5.1, §6.1, R4).
+//! The branch model's create / delete / remove lifecycle.
 //!
 //! What these tests are for, stated once:
 //!
-//!   1. **Ownership is by record, never by name shape (R2).** The shipped
+//!   1. **Ownership is by record, never by name shape.** The shipped
 //!      code decided "is this branch rwv's?" by parsing the name, so a
 //!      hand-made `my--feature/wip` was rwv's property. The tests below fix
 //!      the inverse: a branch rwv holds no receipt for survives every verb

@@ -209,7 +209,7 @@ fn glob_with_unicode_passes_through() {
 }
 
 /// The legacy `--role primary` error must name the spelling that replaced it
-/// — the migration the docs (`reference/roles.md`) describe. Mirrors the
+/// — the migration `docs/reference/roles.md` describes. Mirrors the
 /// inline test in `src/selector.rs` so external callers see it via the public
 /// API too.
 #[test]

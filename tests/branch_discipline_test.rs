@@ -9,7 +9,7 @@
 //! Three checks:
 //!
 //!   (a) workweave-branch — `shared-branch`, `foreign-ephemeral`, `detached`
-//!   (b) the `branch-model.md` §7.2 canonical-store arms —
+//!   (b) the canonical-store arms —
 //!       `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`,
 //!       `canonical-detached`
 //!   (c) stale-ephemeral-branches — `safe` (auto-fixable) / `live` (never) /
@@ -19,8 +19,8 @@
 //! `main`, ephemeral branch whose workweave still exists) must stay clean.
 //!
 //! **Ownership is by record.** Everything in (b), and the safe/live half of
-//! (c), keys on an ownership receipt (`branch-model.md` R2), not on the
-//! branch's name. So most fixtures below record a receipt explicitly — see
+//! (c), keys on an ownership receipt, not on the branch's name. So most
+//! fixtures below record a receipt explicitly — see
 //! [`record_receipt`] for how a receipt for `<p>--<a>/<b>` is adopted rather
 //! than minted. A fixture that skips the receipt is asserting the *other*
 //! half: a branch that merely looks like rwv's is the operator's, and
@@ -175,10 +175,10 @@ fn create_branch(repo: &Path, name: &str, start_point: &str) {
     git_in(repo, &["branch", name, start_point]);
 }
 
-/// Record an ownership receipt (`branch-model.md` §4.2) for the branch that
+/// Record an ownership receipt for the branch that
 /// `(project, workweave)` names, in `store`.
 ///
-/// This is how rwv's own create path claims a ref, and after R2 it is the
+/// This is how rwv's own create path claims a ref, and it is the
 /// *only* thing that makes a ref rwv's to destroy — so a fixture that wants
 /// doctor to treat a branch as rwv's has to call this.
 ///
@@ -1543,7 +1543,7 @@ fn worktree_reference_on_shared_branch_still_fires() {
 }
 
 // ===========================================================================
-// `branch-model.md` §7.1 — the migration pass and the flat-name cutover
+// The migration pass and the flat-name cutover
 // ===========================================================================
 //
 // The cutover is atomic by construction: `EphemeralRefName::mint` produces

@@ -101,10 +101,9 @@ impl Fixture {
 /// author the managed `Cargo.toml`, then create a workweave off it.
 ///
 /// The project repo gitignores `/Cargo.lock` — the default policy for an
-/// aggregated workspace (`docs/repoweave/generated-lock-commit-policy.md`),
-/// and the reason a fresh workweave never inherits one: the lock is
-/// regenerable, so it is not committed, so the workweave's worktree of the
-/// project repo does not carry it.
+/// aggregated workspace, and the reason a fresh workweave never inherits
+/// one: the lock is regenerable, so it is not committed, so the workweave's
+/// worktree of the project repo does not carry it.
 ///
 /// Install hooks are suppressed for the primary-side authoring pass, so
 /// primary has no lock either and the workweave's missing lock cannot be an

@@ -1,6 +1,5 @@
 //! `rwv doctor` reports a `.gitattributes` line that assigns an
-//! `rwv-`-prefixed merge driver rwv does not define
-//! (`docs/repoweave/regenerable-regions.md` D4).
+//! `rwv-`-prefixed merge driver rwv does not define.
 //!
 //! Both directions are pinned here, because only one of them is a finding:
 //!
@@ -10,7 +9,7 @@
 //!   nothing but rwv could ever define the name, so the silence is permanent.
 //! - **Silent, deliberately**: a derived path carrying no attribute is NOT a
 //!   finding. Which paths a repo declares derived is the repo's own business
-//!   (D1 — declaration is per-repo, opt-in). The check is asymmetric on
+//!   — declaration is per-repo, opt-in. The check is asymmetric on
 //!   purpose; `no_finding_for_a_derived_path_that_declares_nothing` is the
 //!   test that keeps it that way.
 

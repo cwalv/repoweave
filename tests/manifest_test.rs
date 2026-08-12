@@ -356,9 +356,8 @@ fn cargo_workspace_config_defaults_when_omitted() {
 }
 
 /// A `members` block with a repo key and `include` list deserializes into
-/// the correct `BTreeMap<String, MemberSpec>` shape.
-/// This is the rvtty scenario from plan §5a / `cargo-workspace-vs-repo.md`
-/// §179–212.
+/// the correct `BTreeMap<String, MemberSpec>` shape — the shape a repo like
+/// `rvtty`, whose sub-crates live under `daemon`/`client`/`common`, needs.
 #[test]
 fn cargo_workspace_config_members_spec_roundtrips() {
     let manifest_toml = r#"

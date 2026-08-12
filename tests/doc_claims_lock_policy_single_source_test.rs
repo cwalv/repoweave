@@ -11,7 +11,9 @@
 //!     regenerate the file, so leaving it uncommitted is safe, but nothing
 //!     stops an operator from committing it for a checkout that's
 //!     reproducible straight from the project repo.
-//!   - `cargo-workspace.md`, `npm-workspaces.md` and `uv-workspace.md` each
+//!   - `docs/reference/integrations/cargo-workspace.md`,
+//!     `docs/reference/integrations/npm-workspaces.md` and
+//!     `docs/reference/integrations/uv-workspace.md` each
 //!     link back to that section wherever they mention their ecosystem's
 //!     lock file, instead of asserting the lock's commit status in their
 //!     own words.
@@ -151,8 +153,8 @@ fn uv_workspace_md_defers_lock_policy_to_index() {
 }
 
 // ---------------------------------------------------------------------------
-// cargo-workspace.md's artifact table — a cell that must say something
-// names the operator's choice, not "Yes"
+// docs/reference/integrations/cargo-workspace.md's artifact table — a cell
+// that must say something names the operator's choice, not "Yes"
 // ---------------------------------------------------------------------------
 
 #[test]

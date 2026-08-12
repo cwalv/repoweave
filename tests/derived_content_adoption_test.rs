@@ -1,7 +1,7 @@
 //! Repoweave's own adoption of the derived-content merge policy, exercised as
 //! a land.
 //!
-//! `regenerable-regions.md` D1/D2: repoweave commits `.gitattributes` lines
+//! Repoweave commits `.gitattributes` lines
 //! declaring `docs/reference/{explain,schemas,prime}` derived, and a land
 //! conflict in one of those paths then resolves mechanically — after which the
 //! repo's own drift gate is what forces the regeneration commit. Until this,

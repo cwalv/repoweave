@@ -80,7 +80,7 @@ fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathB
 // ===========================================================================
 // 1. rwv lock does not run integration hooks
 //
-// Doc claim (lock-as-derived.md §"rwv lock is a pure git snapshot"):
+// Doc claim, from docs/explanation/joints/lock-as-derived.md:
 //   `rwv lock` does not run integration installs.
 //
 // We place a Cargo.toml in the manifest repo (which would trigger the
@@ -132,7 +132,7 @@ fn lock_does_not_run_integration_hooks() {
 // ===========================================================================
 // 2. rwv lock overwrites the previous lock from current HEAD
 //
-// Doc claim (lock-as-derived.md §"rwv lock is a pure git snapshot"):
+// Doc claim, from docs/explanation/joints/lock-as-derived.md:
 //   `rwv lock` does not read or honor the previous `rwv.lock`. It
 //   overwrites with whatever HEAD says.
 //
@@ -176,7 +176,7 @@ fn lock_overwrites_previous_lock_with_current_head() {
 // ===========================================================================
 // 3. rwv lock does not fetch from the network
 //
-// Doc claim (lock-as-derived.md §"rwv lock is a pure git snapshot"):
+// Doc claim, from docs/explanation/joints/lock-as-derived.md:
 //   `rwv lock` does not fetch anything from the network. After `rwv lock`,
 //   the lock entry reflects the *local* clone's HEAD, not the remote tip.
 //

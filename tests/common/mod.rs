@@ -172,11 +172,11 @@ pub fn assert_log_ordering(repo: &std::path::Path, commit_messages: &[&str]) {
 }
 
 // ---------------------------------------------------------------------------
-// "Which ref is this checkout on" (branch-model.md §4.7)
+// "Which ref is this checkout on"
 // ---------------------------------------------------------------------------
 //
-// §4.7 names this the enforcement primitive the suite was missing: the fetch
-// detach survived because the test that should have caught it asserted only
+// This is the enforcement primitive the suite was missing: a fetch detach
+// survived because the test that should have caught it asserted only
 // `rev-parse HEAD` equality, against a fixture that had pre-detached the repo.
 // A tip comparison cannot see a detach — HEAD points at the same commit either
 // way. The question has to be asked about the *ref*.
@@ -194,8 +194,8 @@ pub fn assert_log_ordering(repo: &std::path::Path, commit_messages: &[&str]) {
 //     a test that reintroduces it is asserting against a different function
 //     than the one that ships.
 //
-// The four states `current_ref`'s `Ok(None)` used to collapse (§4.5) stay
-// apart here: `Attached` and `Unborn` answer with a name, `Detached` answers
+// The four states `current_ref`'s `Ok(None)` used to collapse stay apart
+// here: `Attached` and `Unborn` answer with a name, `Detached` answers
 // `None`, and a directory that is not a repo — or a ref database that cannot
 // be read — panics rather than quietly reading as "no branch".
 
@@ -203,8 +203,8 @@ pub fn assert_log_ordering(repo: &std::path::Path, commit_messages: &[&str]) {
 /// detached.
 ///
 /// Panics when `repo` is not a repository or its ref database is unreadable:
-/// in a test those are fixture bugs, and letting them read as "detached" is
-/// exactly the conflation §4.5 removes.
+/// in a test those are fixture bugs, and letting them read as "detached"
+/// would conflate a fixture bug with a real detached HEAD.
 pub fn checkout_ref(repo: &std::path::Path) -> Option<String> {
     use repoweave::vcs::HeadAttachment;
     match repoweave::git::git_vcs().head_attachment(repo) {

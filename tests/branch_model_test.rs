@@ -1,5 +1,4 @@
-//! The branch model's observation and ref-type surface
-//! (`docs/repoweave/branch-model.md` §3.6, §4.2, §4.3, §4.5, §8.8).
+//! The branch model's observation and ref-type surface.
 //!
 //! What these tests are for, stated once so the shape is not mistaken for
 //! ceremony:

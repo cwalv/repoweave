@@ -2,8 +2,9 @@
 //!
 //! These exercise the acceptance criteria for `rwv sync` and `rwv abort`.
 //!
-//! Scenarios mirror the sync/abort how-tos in docs/how-to/ (e.g.
-//! resume-or-abort-mid-op-sync.md, recover-from-sync-conflict.md).
+//! Scenarios mirror the sync/abort how-tos in
+//! docs/how-to/resume-or-abort-mid-op-sync.md and
+//! docs/how-to/recover-from-sync-conflict.md.
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;

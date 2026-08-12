@@ -7,8 +7,7 @@
 //!
 //! Adversarial coverage:
 //! - missing member re-clone is BORN ATTACHED at the LOCKED SHA — not at
-//!   branch HEAD, and not detached (branch-model.md §5, `fetch` (absent
-//!   clone): R1's birth-target rule)
+//!   branch HEAD, and not detached
 //! - present member ALREADY at the locked SHA is not moved (mtime/HEAD
 //!   unchanged) — which is not the same as "present members are untouched":
 //!   a present member whose HEAD differs from the pin IS realigned

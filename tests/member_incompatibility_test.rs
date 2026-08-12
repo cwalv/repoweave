@@ -12,8 +12,6 @@
 //! - `rwv update` — the verb that *causes* the breach (advancing members raises
 //!   the requirement above an existing pin), reporting at the moment of
 //!   causation. Not a refusal: the update stays valid and exits zero.
-//!
-//! Design: `docs/repoweave/integration-ownership/member-incompatibility.md`.
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};

@@ -1,5 +1,4 @@
-//! The branch model's type-level invariants, pinned **by error code**
-//! (`docs/repoweave/branch-model.md` §4.7).
+//! The branch model's type-level invariants, pinned **by error code**.
 //!
 //! The types carry `compile_fail` doctests, mirroring the precedent
 //! `RawRevisionId` set. Those are the enforcement that survives a refactor
@@ -9,8 +8,8 @@
 //! ignores it, so a `compile_fail,E0599` doctest passes when the snippet
 //! fails with an unrelated E0308 — or with a typo.
 //!
-//! That gap matters here more than usual. §4.2 removes `as_str()` from
-//! three types specifically so the two shipped comparison lines in
+//! That gap matters here more than usual. The type split removes `as_str()`
+//! from three types specifically so the two shipped comparison lines in
 //! `push.rs` stop compiling, and the claim is that they fail with **E0599,
 //! no such method** rather than merely "somehow". A doctest cannot make
 //! that claim; `common::compile_probe` can. Each case below compiles a

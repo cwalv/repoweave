@@ -1,8 +1,7 @@
 //! CLI error/help UX regressions.
 //!
 //! Two problem classes, fixed uniformly in `src/cli/dispatch.rs` via pre-parse
-//! raw-arg interception (see the rwv CLI UX audit,
-//! `projects/foundations/docs/repoweave/rwv-cli-ux-audit.md`):
+//! raw-arg interception:
 //!
 //!   1. `rwv workweave <PROJECT> <WORD>` — clap consumes <PROJECT> as the
 //!      `[PROJECT]` positional, then sees <WORD> as an "unexpected argument"

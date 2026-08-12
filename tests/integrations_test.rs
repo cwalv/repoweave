@@ -2,16 +2,15 @@
 //!
 //! Each integration is tested for:
 //! 1. Auto-detection of relevant repos
-//! 2. File generation matching the spec in docs/integrations.md
+//! 2. File generation matching the spec in docs/reference/integrations/index.md
 //! 3. Reference repos excluded from generated files
 //! 4. Deactivation cleanup
 //! 5. Check warnings (e.g., missing tools)
 //!
 //! # RED-first scenarios (TDD anchor)
 //!
-//! The §6 scenarios from
-//! `projects/foundations/docs/repoweave/integration-ownership/plan.md` are
-//! realized here as RED-first tests, per [[feedback_no_workaround_assertions]].
+//! Scenarios not yet implemented are
+//! realized here as RED-first tests.
 //! Tests that assert behavior the current code does NOT yet implement are
 //! marked `#[ignore = "RED: turned green by <port spec>"]`. The port author
 //! (npm: C4, vscode: C5, cargo: C7, uv: C9, pnpm: C10, go: C11, static-files:
@@ -3425,9 +3424,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     // -----------------------------------------------------------------------
     // PatchMode::Derived (registry-dep tier)
     //
-    // Design ref: Finding 1 of
-    // projects/foundations/docs/repoweave/grok-build-export-findings.md
-    // (also mirrored in src/integrations/cargo_workspace.rs top-doc).
+    // Rationale is in src/integrations/cargo_workspace.rs's top-doc comment.
     //
     // The tests below exercise the derived-mode invariants:
     //
@@ -4058,12 +4055,6 @@ acme-lib = { path = "github/acme/lib" }
 
     // -----------------------------------------------------------------------
     // PatchSurface::CargoConfig (nesting-immune lens)
-    //
-    // Design ref: Finding 2 of
-    // projects/foundations/docs/repoweave/grok-build-export-findings.md
-    // and its 2026-07-15 probe validation (P1 symlink/logical paths,
-    // P3/P7 relative-path resolution, P4 upward discovery through nested
-    // workspaces, P5b shadowing).
     //
     // The whole point here is the nested-workspace case: cargo hard-errors
     // when it discovers a nested `[workspace]` inside another workspace

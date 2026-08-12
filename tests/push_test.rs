@@ -498,8 +498,8 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 // Negative: project repo's `origin/HEAD` is unset — no "main" fallback
 // ============================================================================
 
-/// branch-model.md §4.2/§4.6(2): `RemoteDefaultBranch`'s sole producer
-/// returns `None` when `origin/HEAD` is unset, and the gate must refuse
+/// `RemoteDefaultBranch`'s sole producer returns `None` when `origin/HEAD`
+/// is unset, and the gate must refuse
 /// rather than fabricate "main". Proves the refusal by construction: the
 /// project repo here IS on `main` (the real canonical branch `git clone`
 /// would have recorded), so the old fallback-to-"main" behaviour would
@@ -534,9 +534,9 @@ fn push_refuses_when_project_repo_origin_head_unset() {
 // Negative: project repo directory is not a VCS repo at all
 // ============================================================================
 
-/// branch-model.md §4.5/§4.6(2): a non-repo `projects/<name>/` must surface
-/// as `NotARepo`, not be misreported as a detached HEAD (the shipped bug
-/// `current_ref`'s `Ok(None)` collapse produced).
+/// A non-repo `projects/<name>/` must surface as `NotARepo`, not be
+/// misreported as a detached HEAD (the shipped bug `current_ref`'s
+/// `Ok(None)` collapse produced).
 #[test]
 fn push_refuses_when_project_repo_is_not_a_repo() {
     let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
@@ -623,7 +623,7 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
     assert_eq!(bare_feat_sha, feat_sha);
 }
 
-/// branch-model.md §4.6(2): the warning is built from two typed refs — the
+/// The warning is built from two typed refs — the
 /// checkout's `AttachedRef` witness and the manifest's declared
 /// `TrackingRef` — routed through named projections instead of a raw
 /// string compare. Assert both names appear in the *same* warning line

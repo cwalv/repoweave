@@ -1,5 +1,4 @@
-//! The ownership-receipt registry against a real store
-//! (`docs/repoweave/branch-model.md` §3.3 R2/R3, §4.2, §7.1).
+//! The ownership-receipt registry against a real store.
 //!
 //! The registry's own file-level behaviour is unit-tested in
 //! `src/workweave_index.rs`. What needs a real repo is the half of R2 that
@@ -15,10 +14,10 @@
 //!      setup that *does* yield one, so a broken harness cannot make the
 //!      negative pass.
 //!   3. **The receipt reaches the disk, not just the page cache.** The
-//!      ordering rule in §7.1 is a claim about what survives a crash, and a
-//!      `write` that returned before `fsync` would satisfy every in-process
-//!      assertion in this file while failing the only case it is for. The
-//!      last test reads the syscalls.
+//!      write-before-ref ordering is a claim about what survives a crash,
+//!      and a `write` that returned before `fsync` would satisfy every
+//!      in-process assertion in this file while failing the only case it is
+//!      for. The last test reads the syscalls.
 
 use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveName};

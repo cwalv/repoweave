@@ -629,7 +629,7 @@ fn worktree_references_reference_syncs_normally() {
         "worktree'd reference .git must be a worktree gitlink FILE"
     );
     // It is on its OWN ephemeral branch in the workweave (legacy behavior),
-    // flat per branch-model.md §3.5.
+    // flat with no segmented third component.
     let ww_ref_branch = git_out(&["symbolic-ref", "--short", "HEAD"], &ww.ref_checkout);
     assert_eq!(
         ww_ref_branch,

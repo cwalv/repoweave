@@ -1,6 +1,6 @@
 //! A stated derived-content policy, exercised through a real replay.
 //!
-//! `regenerable-regions.md` D1–D3: a repo declares which of its paths are
+//! A repo declares which of its paths are
 //! derived, in tracked metadata that travels with a clone; rwv supplies the
 //! resolution that declaration names, per operation, as a typed parameter.
 //! These tests hold both halves to their claims — that the declaration alone

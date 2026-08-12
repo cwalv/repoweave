@@ -735,8 +735,8 @@ fn resolve_branch_on_remote_missing_remote_errors() {
 // ============================================================================
 //
 // The `push_with_role` unit tests that lived here moved into `src/git.rs`'s
-// `branch_model_tests` module when `push_with_role` was deleted
-// (branch-model.md §4.3). They could not stay: `push_ref`, its replacement,
+// `branch_model_tests` module when `push_with_role` was deleted.
+// They could not stay: `push_ref`, its replacement,
 // takes a `PublishRef`, and the only constructor for one is `pub(crate)` —
 // an integration test cannot mint the value, which is the seal doing its
 // job. `repo_with_bare_remote` went with them.

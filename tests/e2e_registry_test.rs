@@ -1,5 +1,6 @@
-//! E2E integration tests that exercise the release workflow recipes from
-//! docs/releasing.md against real package registries.
+//! E2E integration tests that exercise per-ecosystem release-workflow
+//! recipes (publish a new version, update the pin, publish the dependent)
+//! against real package registries.
 //!
 //! These tests are gated behind the `RWV_E2E_REGISTRY=1` environment variable
 //! because they require network access and are slower than the other e2e tests.
@@ -49,7 +50,7 @@ macro_rules! require_tool {
 // ---------------------------------------------------------------------------
 // Test 1 — Go registry release workflow
 //
-// Recipe from docs/releasing.md ("Per-ecosystem recipes", Go section):
+// The Go release recipe this models:
 //
 //   rwv lock
 //   cd github/chatly/protocol
@@ -106,7 +107,7 @@ func main() {
     // -----------------------------------------------------------------------
     // 2. `go get` the real published module from proxy.golang.org.
     //    This is the registry analogue of `go get github.com/chatly/protocol@v1.5.0`
-    //    from the releasing.md recipe.
+    //    in the release recipe above.
     // -----------------------------------------------------------------------
     let get_output = Command::new("go")
         .args([
@@ -159,7 +160,7 @@ func main() {
 // ---------------------------------------------------------------------------
 // Test 2 — npm registry release workflow
 //
-// Recipe from docs/releasing.md ("Per-ecosystem recipes", Node section):
+// The Node release recipe this models:
 //
 //   cd github/chatly/shared-types
 //   npm version 1.3.0 && npm publish
@@ -250,7 +251,7 @@ fn npm_registry_release_workflow() {
 // ---------------------------------------------------------------------------
 // Test 3 — Cargo registry release workflow
 //
-// Recipe from docs/releasing.md ("Per-ecosystem recipes", Cargo section):
+// The Cargo release recipe this models:
 //
 //   cd github/chatly/protocol
 //   cargo publish                        ← publish to crates.io

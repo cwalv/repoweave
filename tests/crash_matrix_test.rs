@@ -2011,8 +2011,8 @@ fn cell_override_resume_fidelity_discard_local_commits() {
 /// A resumed `--discard-local-commits` rewind must build its warrant from the
 /// savepoint the op **already wrote**, never from a fresh one.
 ///
-/// The rewinding MOVE of `branch-model.md` §3.2 needs a `DiscardWarrant`, and
-/// a `DiscardWarrant` needs a `SavepointRef` — proof a savepoint exists on
+/// The rewinding MOVE needs a `DiscardWarrant`, and a `DiscardWarrant` needs
+/// a `SavepointRef` — proof a savepoint exists on
 /// disk. There are two ways to hold that proof and only one of them is
 /// correct here. Writing a savepoint at the rewind site would satisfy the
 /// type and stamp the ref at whatever HEAD is *then*; on a resume, a previous
@@ -2164,9 +2164,6 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
 // synthesises the exact on-disk state a kill at that point would leave,
 // then asserts real end states (repo tips, marker/op-state presence, exit
 // code) — never implementation echoes.
-//
-// Normative spec: projects/foundations/docs/repoweave/sync-state-space/
-//                 abort-intent-journal.md §8.
 //
 // Fixture design:
 //   Cells 1, 2, 7 use a "primary ahead, ww behind" sync scenario where

@@ -1,14 +1,13 @@
-//! E2E tests for what `rwv update` does to a checkout's ref
-//! (branch-model.md §5's two `update` rows, §5.3, §3.6).
+//! E2E tests for what `rwv update` does to a checkout's ref.
 //!
 //! Before the branch model, `rwv update` resolved the remote branch tip and
 //! ran `git checkout <sha>`, which detaches. That made "detached" the normal
-//! resting state of every member (§6 item 2), and inside a workweave it
+//! resting state of every member, and inside a workweave it
 //! detached the ephemeral branch at the *identical* SHA while reporting
 //! "advanced 1 repo(s)".
 //!
 //! The assertion shape the suite was missing is "which ref is this checkout
-//! on" (§4.7). Every test here asserts it, because a run that lands on the
+//! on". Every test here asserts it, because a run that lands on the
 //! right SHA by detaching is exactly the outcome being ruled out.
 
 use assert_cmd::Command;

@@ -1337,8 +1337,8 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         canonical_git.display()
     );
 
-    // 3. Ephemeral branch must be the FLAT {project}--{weave} name
-    // (branch-model.md §3.5). `rwv add` used to derive its own third
+    // 3. Ephemeral branch must be the FLAT {project}--{weave} name.
+    // `rwv add` used to derive its own third
     // component from the canonical's current_ref with a private truncation;
     // both are gone, and the canonical here is on `main`, so a segmented
     // name would still be observable if the derivation had survived.
@@ -1451,7 +1451,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         canonical_git.display()
     );
 
-    // Ephemeral branch: the flat {project}--{weave} (branch-model.md §3.5).
+    // Ephemeral branch: the flat {project}--{weave}, no segmented third component.
     let branch = current_branch(&workweave_repo).expect("worktree should have a branch");
     assert_eq!(
         branch, "test-project--feat",
