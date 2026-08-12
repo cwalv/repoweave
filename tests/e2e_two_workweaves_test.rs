@@ -1,15 +1,13 @@
-//! E2E coverage for n-way merging via `rwv sync` across multiple workweaves.
+//! E2E coverage for two-workweave `rwv sync` / `rwv sync-to` scenarios: n-way
+//! convergence of manifest and project repos, conflict surfacing,
+//! materialize/prune, retire, and the CLI's bare-source refusals.
 //!
-//! These tests express the contract proposed in
-//! `docs/proposals/sync-project-merging.md`. They are expected to FAIL against
-//! the current implementation, which hard-resets the project repo in Phase 1
-//! and refuses to sync once project repos have diverged.
-//!
-//! Scenario shape: a primary workspace ("main") with two sibling workweaves
-//! `ww1` and `ww2`. Both workweaves make commits in the same manifest repo
-//! and (in some tests) in the project repo. Goal: `rwv sync ww1` followed by
-//! `rwv sync primary --strategy rebase` from ww2 followed by `rwv sync ww2`
-//! lands both workweaves' contributions in main without manual git surgery.
+//! Scenario shape (the n-way tests): a primary workspace ("main") with two
+//! sibling workweaves `ww1` and `ww2`. Both workweaves make commits in the
+//! same manifest repo and (in some tests) in the project repo. Goal: `rwv
+//! sync ww1` followed by `rwv sync primary --strategy rebase` from ww2
+//! followed by `rwv sync ww2` lands both workweaves' contributions in main
+//! without manual git surgery.
 //!
 //! "Main" here is the primary workspace for setup convenience; sync semantics
 //! are CWD-driven so the assertions don't depend on which side is primary.
