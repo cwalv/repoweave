@@ -1538,7 +1538,11 @@ mod tests {
         .unwrap();
 
         let issues = verify_surfacing(root, &project, &manifest, true);
-        assert_eq!(issues.len(), 1, "expected one stale-symlink issue: {issues:?}");
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected one stale-symlink issue: {issues:?}"
+        );
         assert!(issues[0].safe_to_fix);
         assert!(
             issues[0].message.contains(".claude") && issues[0].message.contains("no longer exists"),
