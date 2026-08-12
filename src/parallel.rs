@@ -621,15 +621,20 @@ mod tests {
         );
     }
 
-    /// Multi-line subprocess output: each line is treated as a
-    /// separate emit through the reporter (`forward_stream`'s
-    /// `BufReader::lines()` contract). Spawn a child that emits four
-    /// stdout lines and four stderr lines, verify the subprocess
-    /// completes without losing lines. The end-to-end "lines reach
-    /// the user with `[prefix]`" check is exercised by
-    /// `tests/parallel_test.rs`; this test pins the wiring itself.
+    /// A child writing multiple lines to both stdout and stderr
+    /// exercises two concurrent `forward_stream` loops (one per pipe,
+    /// via `thread::scope`) instead of a single read. This pins only
+    /// that the call returns rather than hanging; it cannot pin line
+    /// content or count. Under `Reporter::Parallel`, forwarded lines
+    /// go straight to this process's real stdout/stderr from a
+    /// spawned thread, which is outside libtest's own capture (see
+    /// `forward_stream_consumes_to_eof_without_panic`), and
+    /// `stderr_capture` is empty by contract regardless of what the
+    /// child wrote (`run_subprocess_with_reporter_parallel_returns_empty_capture`).
+    /// Line arrival is pinned end-to-end, via a real child process, in
+    /// `tests/parallel_test.rs`.
     #[test]
-    fn run_subprocess_multi_line_under_parallel_drains_both_streams() {
+    fn run_subprocess_multi_line_under_parallel_completes_without_hanging() {
         let lock = Mutex::new(());
         let reporter = Reporter::parallel("ut".into(), &lock);
         let mut cmd = fixture_command();
@@ -639,7 +644,6 @@ mod tests {
         let outcome =
             run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
         assert!(outcome.status.success());
-        // Pipes drained — no deadlock on either stream.
         assert_eq!(outcome.stderr_capture, "");
     }
 
