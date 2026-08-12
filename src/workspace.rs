@@ -1331,12 +1331,14 @@ impl WorkweaveMarker {
     ///
     /// Returns `Ok(None)` if the marker file is absent.
     ///
-    /// Returns `Err` if the file is present but is not a valid JSON marker —
-    /// a YAML-format marker (written before markers were JSON) or one
-    /// missing the required `parent:` field. The error message names the
-    /// file and directs the operator to run `rwv doctor --fix` to migrate.
-    /// All three fields (`primary`, `project`, `parent`) must be present;
-    /// there is no silent backfill.
+    /// Returns `Err` if the file is present but is not a valid JSON marker.
+    /// A YAML-format marker with a `primary:` to migrate from (written before
+    /// markers were JSON, possibly also missing `parent:`) directs the
+    /// operator to `rwv doctor --fix`; one with no `primary:`, or anything
+    /// else unreadable, names what to write by hand instead — nothing
+    /// migrates a marker with no `primary:` of its own. All three fields
+    /// (`primary`, `project`, `parent`) must be present; there is no silent
+    /// backfill.
     pub fn read(dir: &Path) -> anyhow::Result<Option<Self>> {
         let path = Self::path_in(dir);
         match observe_marker(&path) {
@@ -1356,9 +1358,9 @@ impl WorkweaveMarker {
     }
 
     /// Migrate a legacy marker in `dir` — one `observe_marker` classifies
-    /// [`MarkerDefect::Legacy`], i.e. not valid JSON — by backfilling
-    /// `parent` to `primary` where `parent:` is missing, then rewriting
-    /// through [`Self::write`] (which produces JSON).
+    /// [`MarkerDefect::Legacy`], i.e. YAML with a `primary:` to migrate from
+    /// — by backfilling `parent` to `primary` where `parent:` is missing,
+    /// then rewriting through [`Self::write`] (which produces JSON).
     ///
     /// Returns `Ok(false)` if `dir` already holds a JSON marker — idempotent,
     /// so callers can retry across a race without double-writing. `Err` on
@@ -1407,10 +1409,13 @@ impl WorkweaveMarker {
 
 /// Why a `.rwv-workweave` file cannot witness the identity it claims.
 ///
-/// `Legacy` covers every marker shape this build no longer writes: YAML
-/// (markers are JSON now) and, within that YAML shape, one missing the
-/// `parent:` field that became required before the format changed.
-/// [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.
+/// `Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can
+/// repair: `primary:` present, with or without the `parent:` field that
+/// became required before the format changed (it backfills from `primary`).
+/// A YAML marker with no `primary:` of its own has nothing to backfill from,
+/// so it is `Unreadable` instead — `migrate_legacy` requires the field
+/// unconditionally, and a defect naming a repair nothing performs is worse
+/// than one that names none.
 ///
 /// `Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can
 /// carry a defect straight into a doctor finding's wire shape — the same
@@ -1530,26 +1535,39 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
         .map(str::trim)
         .filter(|project| !project.is_empty())
         .and_then(|project| ProjectName::new(project).ok());
-    let primary_hint = raw
+    let Some(primary_hint) = raw
         .as_mapping_get("primary")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+    else {
+        return unreadable(
+            format!(
+                "{} is a legacy (YAML) workweave marker with no `primary:` field, so it \
+                 cannot be migrated automatically. Write it by hand as JSON with the three \
+                 required fields: `primary`, `project`, and `parent`",
+                marker_path.display()
+            ),
+            project_hint,
+            None,
+        );
+    };
     MarkerPresence::Defective {
         defect: MarkerDefect::Legacy,
         project_hint,
-        primary_hint,
+        primary_hint: Some(primary_hint),
     }
 }
 
-/// The `primary:` value of a legacy `.rwv-workweave` marker (missing the
-/// required `parent:` field) at `dir` — what `rwv doctor --fix` would
-/// backfill, for `rwv doctor`'s legacy-marker scan, which reports on the
-/// marker rather than constructing a [`WorkweaveMarker`] from it.
+/// The `primary:` value of a legacy `.rwv-workweave` marker at `dir` — what
+/// `rwv doctor --fix` would migrate it to, for `rwv doctor`'s legacy-marker
+/// scan, which reports on the marker rather than constructing a
+/// [`WorkweaveMarker`] from it.
 ///
 /// `None` covers every case but the one it names: no marker at `dir`, a
-/// marker that reads as usable, one broken some other way
-/// ([`MarkerDefect::Unreadable`], [`MarkerDefect::DanglingPrimary`]), or a
-/// legacy marker that has no `primary:` of its own to report.
+/// marker that reads as usable, or one broken some other way
+/// ([`MarkerDefect::Unreadable`], [`MarkerDefect::DanglingPrimary`]) —
+/// [`MarkerDefect::Legacy`] always carries a `primary_hint`, since a legacy
+/// marker with no `primary:` of its own classifies `Unreadable` instead.
 pub(crate) fn legacy_marker_primary(dir: &Path) -> Option<PathBuf> {
     match observe_marker(&WorkweaveMarker::path_in(dir)) {
         MarkerPresence::Defective {
@@ -1557,6 +1575,23 @@ pub(crate) fn legacy_marker_primary(dir: &Path) -> Option<PathBuf> {
             primary_hint,
             ..
         } => primary_hint,
+        _ => None,
+    }
+}
+
+/// The truthful "cannot be migrated" detail for a `.rwv-workweave` marker at
+/// `dir` — for a doctor scan reporting on a broken marker
+/// [`WorkweaveMarker::migrate_legacy`] has no way to repair.
+///
+/// `None` covers no marker, a usable marker, and [`MarkerDefect::Legacy`]:
+/// that shape is `migrate_legacy`'s to fix, so it is
+/// [`legacy_marker_primary`]'s to report, not this one's.
+pub(crate) fn unmigratable_marker_detail(dir: &Path) -> Option<String> {
+    match observe_marker(&WorkweaveMarker::path_in(dir)) {
+        MarkerPresence::Defective {
+            defect: MarkerDefect::Unreadable { detail },
+            ..
+        } => Some(detail),
         _ => None,
     }
 }
@@ -2392,6 +2427,41 @@ mod tests {
         assert!(
             msg.contains("rwv doctor --fix"),
             "error should mention rwv doctor --fix: {msg}"
+        );
+    }
+
+    /// A legacy marker with no `primary:` of its own has nothing for
+    /// `migrate_legacy` to migrate from — unlike a missing `parent:`, which
+    /// backfills from `primary`. `read()` must say so rather than pointing
+    /// at `rwv doctor --fix`, which would leave the file untouched.
+    #[test]
+    fn workweave_marker_missing_primary_is_unmigratable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let legacy = "project: legacy-project\n";
+        std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
+
+        let result = WorkweaveMarker::read(dir);
+        assert!(
+            result.is_err(),
+            "read() should fail for a legacy marker missing primary:"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            !msg.contains("rwv doctor --fix"),
+            "nothing migrates a marker with no primary: to migrate from: {msg}"
+        );
+        for field in ["primary", "project", "parent"] {
+            assert!(
+                msg.contains(field),
+                "the message must name `{field}` as one of the three fields to write \
+                 by hand: {msg}"
+            );
+        }
+
+        assert!(
+            WorkweaveMarker::migrate_legacy(dir).is_err(),
+            "migrate_legacy must also refuse a marker with no primary: to migrate from"
         );
     }
 
@@ -3885,6 +3955,56 @@ mod tests {
                 );
             }
             other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+    }
+
+    /// A legacy marker with no `primary:` is not `Legacy` — that
+    /// classification is reserved for a shape `migrate_legacy` can actually
+    /// repair, and this one has nothing to backfill from.
+    /// `unmigratable_marker_detail` is what a doctor scan reads instead of
+    /// silently treating the broken marker as someone else's to report.
+    #[test]
+    fn observe_root_reads_a_legacy_marker_with_no_primary_as_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        std::fs::write(
+            weave_dir.join(WORKWEAVE_MARKER_FILE),
+            "project: myproject\n",
+        )
+        .unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable {
+                defect,
+                project_hint,
+                ..
+            } => {
+                assert!(
+                    matches!(defect, MarkerDefect::Unreadable { .. }),
+                    "expected Unreadable, got {defect:?}"
+                );
+                assert_eq!(
+                    project_hint.as_ref().map(ProjectName::as_str),
+                    Some("myproject"),
+                    "a marker unreadable for lack of primary: still names its project"
+                );
+            }
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+
+        assert!(
+            legacy_marker_primary(&weave_dir).is_none(),
+            "a marker with no primary: is not migrate_legacy's to report"
+        );
+        let detail =
+            unmigratable_marker_detail(&weave_dir).expect("an unreadable marker has a detail");
+        for field in ["primary", "project", "parent"] {
+            assert!(
+                detail.contains(field),
+                "the detail must name `{field}` as one of the three fields to write \
+                 by hand: {detail}"
+            );
         }
     }
 

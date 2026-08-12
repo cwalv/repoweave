@@ -681,7 +681,7 @@
       }
     },
     "MarkerDefect": {
-      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every marker shape this build no longer writes: YAML (markers are JSON now) and, within that YAML shape, one missing the `parent:` field that became required before the format changed. [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
+      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can repair: `primary:` present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker with no `primary:` of its own has nothing to backfill from, so it is `Unreadable` instead — `migrate_legacy` requires the field unconditionally, and a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
       "oneOf": [
         {
           "type": "string",
@@ -2265,6 +2265,28 @@
                 },
                 "project": {
                   "description": "Project whose index is committed.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A `.rwv-workweave` marker that parses as neither current JSON nor a `migrate_legacy`-repairable legacy shape — most often YAML with no `primary:` for `migrate_legacy` to backfill from. Every marker rwv has ever written carries all three fields, so this is hand-corruption or a truncated write rather than a shape upgrading produces. Report-only: there is no value here to guess a repair from.",
+          "type": "object",
+          "required": [
+            "unreadable-marker"
+          ],
+          "properties": {
+            "unreadable-marker": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "description": "Why the marker cannot be read, and what to write in its place.",
                   "type": "string"
                 }
               }

@@ -113,6 +113,7 @@ pub fn case_token(v: &CheckViolation) -> String {
                     "unregistered-workweave"
                 }
                 WorkweaveTreeIntegrityKind::TrackedIndex { .. } => "tracked-index",
+                WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => "unreadable-marker",
             };
             format!("workweave-tree-integrity/{tail}")
         }
@@ -362,6 +363,16 @@ pub fn corpus() -> Vec<CheckViolation> {
             sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
                 project: "proj".into(),
                 index_path: path("/ws/projects/proj/.rwv-workweave-index"),
+            },
+        },
+        CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: path("/ws/.workweaves/proj--feat-a"),
+            sub_kind: WorkweaveTreeIntegrityKind::UnreadableMarker {
+                detail: "/ws/.workweaves/proj--feat-a/.rwv-workweave is a legacy (YAML) \
+                         workweave marker with no `primary:` field, so it cannot be migrated \
+                         automatically. Write it by hand as JSON with the three required \
+                         fields: `primary`, `project`, and `parent`"
+                    .into(),
             },
         },
         CheckViolation::Provenance {

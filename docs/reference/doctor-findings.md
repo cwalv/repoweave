@@ -410,6 +410,17 @@ paths to every clone and every workweave checkout.
 add it to `.gitignore`. `--fix` cannot untrack a file without touching commit
 history, so this stays yours.
 
+#### `unreadable-marker`
+
+**Warning. Report-only.** A `.rwv-workweave` marker that parses as neither
+current JSON nor a legacy shape `rwv doctor --fix` can migrate — most often
+YAML with no `primary:` field for the migration to backfill from. Every
+marker rwv has ever written carries all three required fields, so this is
+hand-corruption or a truncated write, not a shape upgrading produces.
+
+**What to do:** the finding message names what to write by hand. There is
+nothing here to guess a repair from, so `--fix` leaves the file untouched.
+
 ### `workweave-drift`
 
 **Warning. Report-only.** A worktree the manifest lists is missing from a

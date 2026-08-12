@@ -440,6 +440,82 @@ fn json_output_includes_workweave_tree_integrity_kind() {
 }
 
 // ===========================================================================
+// 6b. Legacy marker with no `primary:` — unmigratable, must not go silent
+// ===========================================================================
+
+/// Write a legacy (YAML) `.rwv-workweave` marker with no `primary:` field —
+/// the shape `migrate_legacy` cannot repair no matter what else it carries.
+fn write_marker_with_no_primary(ww_dir: &Path, project: &str) {
+    std::fs::create_dir_all(ww_dir).unwrap();
+    std::fs::write(
+        ww_dir.join(".rwv-workweave"),
+        format!("project: {project}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn legacy_marker_with_no_primary_is_reported() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let ww_dir = workweaves_dir(&ws).join("my-project--corrupt");
+    write_marker_with_no_primary(&ww_dir, "my-project");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("cannot be migrated automatically"),
+        "doctor must not go silent on a legacy marker with no primary:; got:\n{stdout}"
+    );
+    for field in ["primary", "project", "parent"] {
+        assert!(
+            stdout.contains(field),
+            "the report must name `{field}` as one of the three fields to write \
+             by hand; got:\n{stdout}"
+        );
+    }
+}
+
+/// The regression this pins: `rwv doctor --fix` must not report nothing while
+/// leaving the marker unusable. Nothing can repair this shape (no `primary:`
+/// to migrate from), so the pin is that the truthful report still arrives on
+/// `--fix`'s own render path and the file is left exactly as it was — no
+/// `[fixed]` claim over an untouched file.
+#[test]
+fn legacy_marker_with_no_primary_fix_neither_claims_nor_performs_a_repair() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let ww_dir = workweaves_dir(&ws).join("my-project--corrupt");
+    write_marker_with_no_primary(&ww_dir, "my-project");
+    let marker_path = ww_dir.join(".rwv-workweave");
+    let before = std::fs::read(&marker_path).unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("cannot be migrated automatically"),
+        "`--fix` must report the truth about a marker it cannot repair, not \
+         stay silent; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[fixed]"),
+        "nothing here is fixed, so `--fix` must not claim it; got:\n{stdout}"
+    );
+
+    let after = std::fs::read(&marker_path).unwrap();
+    assert_eq!(
+        before, after,
+        "`--fix` must leave a marker it cannot repair byte-for-byte untouched"
+    );
+}
+
+// ===========================================================================
 // 6. Empty workspace (no .workweaves/ directory at all) stays clean
 // ===========================================================================
 

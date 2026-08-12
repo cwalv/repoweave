@@ -613,7 +613,8 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::UnregisteredDir
                 | WorkweaveTreeIntegrityKind::ForeignPrimary { .. }
                 | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
-                | WorkweaveTreeIntegrityKind::TrackedIndex { .. } => ReportOnly,
+                | WorkweaveTreeIntegrityKind::TrackedIndex { .. }
+                | WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => ReportOnly,
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
@@ -901,6 +902,16 @@ pub enum WorkweaveTreeIntegrityKind {
         project: String,
         /// Path to the tracked index file.
         index_path: PathBuf,
+    },
+    /// A `.rwv-workweave` marker that parses as neither current JSON nor a
+    /// `migrate_legacy`-repairable legacy shape — most often YAML with no
+    /// `primary:` for `migrate_legacy` to backfill from. Every marker rwv
+    /// has ever written carries all three fields, so this is hand-corruption
+    /// or a truncated write rather than a shape upgrading produces.
+    /// Report-only: there is no value here to guess a repair from.
+    UnreadableMarker {
+        /// Why the marker cannot be read, and what to write in its place.
+        detail: String,
     },
 }
 
@@ -2740,10 +2751,11 @@ pub fn scan_workweave_tree_integrity(
             continue;
         }
 
-        // Try to parse the marker. Legacy markers are handled by the
-        // separate legacy-workweave-marker check; we skip them here (they'll
-        // get a `LegacyWorkweaveMarker` violation instead, which directs the
-        // operator to `--fix`).
+        // Try to parse the marker. A marker `migrate_legacy` can repair is
+        // handled by the separate legacy-workweave-marker check; we skip it
+        // here (it gets a `LegacyWorkweaveMarker` violation instead, which
+        // directs the operator to `--fix`). Anything else broken about the
+        // marker is not that check's to report, so it is this one's.
         let marker = match crate::workspace::WorkweaveMarker::read(dir) {
             Ok(Some(m)) => m,
             Ok(None) => {
@@ -2756,8 +2768,12 @@ pub fn scan_workweave_tree_integrity(
                 continue;
             }
             Err(_) => {
-                // Legacy marker — already reported by
-                // scan_for_legacy_workweave_markers; don't double-report.
+                if let Some(detail) = crate::workspace::unmigratable_marker_detail(dir) {
+                    violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                        workweave_dir: dir.clone(),
+                        sub_kind: WorkweaveTreeIntegrityKind::UnreadableMarker { detail },
+                    });
+                }
                 continue;
             }
         };
@@ -6122,6 +6138,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                             project,
                             index_path.display()
                         ),
+                        WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
                     };
                     (crate::integration::Severity::Warning, msg)
                 }
