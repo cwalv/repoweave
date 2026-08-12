@@ -1356,10 +1356,8 @@ impl Vcs for GitVcs {
     }
 
     fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, VcsError> {
-        // `git status --porcelain` prints one line per dirty entry;
-        // empty output means the tree is clean.
-        let output = Self::run(&["status", "--porcelain"], repo)?;
-        Ok(!output.is_empty())
+        // One record per dirty entry, untracked included; none means clean.
+        Ok(!Self::porcelain_status(repo, true)?.is_empty())
     }
 
     fn dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
@@ -1388,51 +1386,20 @@ impl Vcs for GitVcs {
         Ok(!out.status.success())
     }
     fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        // Read without `run`'s global trim: it would strip the leading space
-        // off a first line like " M foo", turning an unstaged modification
-        // into an apparently staged one.
-        let out = git_command()
-            .args(["status", "--porcelain", "--untracked-files=no"])
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: "failed to spawn git status --porcelain".to_owned(),
-                source: e,
-            })?;
-        if !out.status.success() {
-            return Err(VcsError::CommandFailed {
-                args: ["status", "--porcelain", "--untracked-files=no"]
-                    .iter()
-                    .map(|s| (*s).to_owned())
-                    .collect(),
-                repo: repo.to_path_buf(),
-                stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
-            });
-        }
-        let text = String::from_utf8_lossy(&out.stdout);
-        let mut staged = Vec::new();
-        for line in text.lines() {
-            let bytes = line.as_bytes();
-            if bytes.len() < 3 {
-                continue;
-            }
-            // Porcelain v1: index column, worktree column, space, path.
-            let index_status = bytes[0];
-            if index_status == b' ' || index_status == b'?' {
-                continue;
-            }
-            let path_part = line.get(3..).unwrap_or("").trim();
-            // A rename reads `R  old -> new`; the post-rename name is the one
-            // that ends up in the commit.
-            let path = match path_part.split_once(" -> ") {
-                Some((_, new_name)) => new_name,
-                None => path_part,
-            };
-            if !path.is_empty() {
-                staged.push(path.to_owned());
-            }
-        }
-        Ok(staged)
+        Ok(Self::porcelain_status(repo, false)?
+            .into_iter()
+            .filter(|entry| entry.staged != b' ' && entry.staged != b'?')
+            .filter_map(|entry| {
+                // This caller reports what will land in the commit, so a
+                // rename resolves to the name after the arrow.
+                let field = entry.path_field.trim();
+                let path = match field.split_once(" -> ") {
+                    Some((_, new_name)) => new_name,
+                    None => field,
+                };
+                (!path.is_empty()).then(|| path.to_owned())
+            })
+            .collect())
     }
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(&["commit", "-m", message], repo).map(|_| ())
@@ -2700,7 +2667,65 @@ impl GitVcs {
     }
 }
 
+/// One record of `git status --porcelain` v1.
+///
+/// The working-tree column is not carried: no caller has needed it, and a
+/// field nothing reads is a claim about the grammar that nothing checks.
+struct PorcelainEntry {
+    /// Index column. `' '` when the index matches HEAD, `'?'` for a file git
+    /// is not tracking.
+    staged: u8,
+    /// Everything past the two status columns and the space after them. A
+    /// rename reads `old -> new`, and **which half a caller wants is the
+    /// caller's policy**, so both are left here: `lock` compares this against
+    /// paths it owns, and its refusal to bundle unrelated work depends on a
+    /// rename matching neither of them.
+    path_field: String,
+}
+
 impl GitVcs {
+    /// Read `git status --porcelain`, preserving the status columns.
+    ///
+    /// Deliberately not routed through [`GitVcs::run`]. That trims the whole
+    /// output, which strips the leading space from a first line like
+    /// `" M foo"` and leaves an unstaged modification looking exactly like a
+    /// staged one. The columns are the grammar here, so nothing may trim them.
+    fn porcelain_status(
+        repo: &Path,
+        include_untracked: bool,
+    ) -> Result<Vec<PorcelainEntry>, VcsError> {
+        let mut args = vec!["status", "--porcelain"];
+        if !include_untracked {
+            args.push("--untracked-files=no");
+        }
+        let out = git_command()
+            .args(&args)
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        if !out.status.success() {
+            return Err(VcsError::CommandFailed {
+                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                repo: repo.to_path_buf(),
+                stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                // `XY<space>path`: anything shorter carries no path.
+                let path_field = line.get(3..).filter(|p| !p.is_empty())?;
+                Some(PorcelainEntry {
+                    staged: line.as_bytes()[0],
+                    path_field: path_field.to_owned(),
+                })
+            })
+            .collect())
+    }
+
     /// Return the list of dirty file paths in `repo` as reported by
     /// `git status --porcelain`.
     ///
@@ -2708,37 +2733,13 @@ impl GitVcs {
     /// status code and its trailing space. Returns an empty vec when the tree
     /// is clean; returns an `Err` only when git itself fails.
     ///
-    /// **Parsing note:** `run()` trims the overall output, which can strip the
-    /// leading space of a single-entry `" M filename"` result. We normalize
-    /// each line by trimming leading spaces before extracting the path so that
-    /// both `"?? file"` and `"M file"` (after trim) parse correctly: skip the
-    /// first two non-space characters (the XY status code) and any following
-    /// whitespace to obtain the filename.
+    /// A rename arrives whole (`old -> new`). Callers compare these against
+    /// paths they own, and a rename is meant to match neither half.
     fn dirty_file_names_inner(repo: &Path, tracked_only: bool) -> Result<Vec<String>, VcsError> {
-        let output = if tracked_only {
-            Self::run(&["status", "--porcelain", "--untracked-files=no"], repo)?
-        } else {
-            Self::run(&["status", "--porcelain"], repo)?
-        };
-        if output.is_empty() {
-            return Ok(Vec::new());
-        }
-        let names = output
-            .lines()
-            .filter_map(|line| {
-                // Strip leading spaces introduced by run()'s global trim on
-                // single-entry output (e.g. " M rwv.toml" → "M rwv.toml").
-                let trimmed = line.trim_start();
-                // Porcelain v1: XY + space + path. After trim_start the XY
-                // code is at most 2 chars; skip them, then strip the space.
-                trimmed
-                    .get(2..)
-                    .map(|s| s.trim_start_matches(' '))
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string())
-            })
-            .collect();
-        Ok(names)
+        Ok(Self::porcelain_status(repo, !tracked_only)?
+            .into_iter()
+            .map(|entry| entry.path_field)
+            .collect())
     }
 }
 

@@ -66,6 +66,16 @@ fn an_unstaged_modification_is_not_reported_as_staged() {
         vcs.has_uncommitted_changes(repo).expect("read status"),
         "the repo is still dirty — the point is which column says so"
     );
+
+    // The same line, read by the listing that wants only the path. This is
+    // the one shape where a trimming reader and a column-preserving one could
+    // disagree about where the path starts, so it is pinned rather than
+    // reasoned about: the path must come back whole and unprefixed.
+    assert_eq!(
+        vcs.dirty_file_names(repo).expect("read dirty names"),
+        vec!["tracked.txt".to_owned()],
+        "the dirt listing reports the path itself, not a status-shifted slice"
+    );
 }
 
 /// A staged modification is reported, so the test above is not passing
