@@ -1346,10 +1346,12 @@ done:
   (`git.rs:1845-1847`) `[V]`.
 - `rwv doctor`'s canonical scan gained its missing arm mechanically: the
   `Ok(None)` that matched nothing is a `match` the compiler forces to cover
-  `Detached`. `check.rs` now imports `HeadAttachment` in three places
-  (`:3576`, `:3866`, `:4777`) and reads it at four call sites (`:3616`,
-  `:3881`, `:4863`, `:5151`); the `Detached` arm is `check.rs:3908-3933` `[V]`.
-  Note which arm is now the silent one: `Unborn` (`:3907`), deliberately, and
+  `Detached`. `check.rs` matches on `HeadAttachment` at several sites now,
+  each one exhaustive over `Attached` / `Detached` / `Unborn` by construction —
+  a call site cannot silently drop `Detached` again the way the old
+  `Ok(None)` collapse did, because nothing compiles until every arm is
+  written.
+  Note which arm is the silent one: `Unborn`, deliberately, and
   reported separately as `UnbornCheckout` by the workweave pass. See §6 item 2.
 - `rwv lock`'s detached-HEAD warning says which of unborn / detached it saw
   instead of inferring from `.ok().flatten()`: it matches all three arms

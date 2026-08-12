@@ -346,16 +346,15 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "remove_file",
         count: 1,
         justification: "clear_active_project: the one site that removes the \
-            .rwv-active pointer (rwv-internal state), for all three callers \
-            that used to spell the delete themselves. Unconditional here by \
+            .rwv-active pointer (rwv-internal state). Unconditional here by \
             design — the pointer's owner cannot know which caller's \
-            precondition applies, so each establishes its own in FRONT of the \
-            call, and the entry an auditor reads is this one. \
-            (1) deactivate: the verb whose entire content is removing the \
-            pointer and the symlinks beside it. \
-            (2) doctor --fix, dangling pointer: the named project's directory \
+            precondition applies, so each caller establishes its own in \
+            FRONT of the call, and the entry an auditor reads is this one \
+            regardless of how many callers there are. \
+            Both current callers are doctor --fix arms. \
+            (1) dangling pointer: the named project's directory \
             is gone, so the pointer selects nothing that exists. \
-            (3) doctor --fix, weave-root identity conflict: the precondition \
+            (2) weave-root identity conflict: the precondition \
             is evidence the tree does not contain. \
             classify_weave_root_identity emits the fixable RegisteredWorkweave \
             sub-kind only when the marker names THIS workspace's primary AND \
