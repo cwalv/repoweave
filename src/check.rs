@@ -40,6 +40,12 @@ pub enum CheckViolation {
     },
 
     /// A project's `rwv.lock` doesn't match current HEAD SHAs.
+    ///
+    /// Reachable only for an entry the *resolved* lock carries, so this is not
+    /// the whole of lock freshness: an entry whose repo is absent from disk is
+    /// dropped before [`find_violations`] runs and is reported by
+    /// [`run_check_locked`] instead. Both surfaces must name the same two
+    /// revisions in the same spelling for every entry both of them see.
     StaleLock {
         project: ProjectName,
         repo: RepoPath,
@@ -6889,6 +6895,15 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// Compares each repo's HEAD SHA against its `rwv.lock` entry. Outputs per-repo
 /// status to stdout. Returns `Ok(true)` if any repo's tip differs from its lock
 /// entry (exit 1), `Ok(false)` if all match (exit 0).
+///
+/// Total over the **raw** lock, which is what separates it from the pipeline's
+/// [`CheckViolation::StaleLock`] rather than making it a second spelling of it:
+/// an entry whose repo is absent from disk gets a verdict here and is
+/// unreachable there, because [`crate::manifest::LockFile::resolve_versions`]
+/// drops it and [`find_violations`] has no disk to re-read. Where both surfaces
+/// do see an entry they must name the same two revisions in the same spelling —
+/// pinned in `tests/lock_totality_agreement_test.rs`, which is also the only
+/// coverage of the divergence.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
