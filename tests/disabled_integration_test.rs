@@ -392,3 +392,95 @@ fn the_finding_reaches_the_json_surface_marked_unfixable() {
         "the remedy must travel with the finding:\n{found:#}"
     );
 }
+
+/// The pen test for the whole-file class, which needed a different answer from
+/// the region class rather than the same one.
+///
+/// A hybrid file proves rwv's authorship with a marker. A file rwv writes whole
+/// has no marker to carry — and presence at the declared path is not evidence,
+/// because keeping a hand-written `gita/repos.csv` is a reason to disable this
+/// integration in the first place. Attributing it by location would make the
+/// remedy delete exactly what the config change was protecting.
+#[test]
+fn a_hand_authored_whole_file_is_not_attributed_to_the_integration() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let mine = "path,name,flags\n/elsewhere/mine,mine,\n";
+    std::fs::write(project_dir.join("gita/repos.csv"), mine).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("gita/repos.csv"),
+        "a CSV rwv did not write must not be named as its artifact:\n{report}"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert_eq!(
+        read(&project_dir.join("gita/repos.csv")),
+        mine,
+        "the operator's own file must survive the verb whose job is removal"
+    );
+}
+
+/// The other half of the same predicate, so it is a discriminator rather than a
+/// blanket refusal: the CSV rwv actually authored is still named and still
+/// removed. Without this arm, an implementation that attributed nothing at all
+/// would pass the test above.
+#[test]
+fn the_csv_rwv_authored_is_still_named_and_removed() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        report.contains("gita/repos.csv"),
+        "content rwv wrote is content rwv owns:\n{report}"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !project_dir.join("gita/repos.csv").exists(),
+        "and it is removed"
+    );
+}
+
+/// An rwv-authored CSV the operator then edited is theirs from that moment on.
+///
+/// The edit is what a marker's absence means one class over: rwv's content is
+/// no longer what is in the file. Reporting it would offer to delete an edit,
+/// and rwv cannot tell a deliberate edit from an accident — the same fork A2
+/// refuses at, reached from the other side.
+#[test]
+fn an_edited_whole_file_stops_being_the_integrations() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let edited = format!(
+        "{}/tmp/extra,extra,\n",
+        read(&project_dir.join("gita/repos.csv"))
+    );
+    std::fs::write(project_dir.join("gita/repos.csv"), &edited).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("gita/repos.csv"),
+        "an edited file is no longer rwv's content:\n{report}"
+    );
+
+    let (ok, _) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed");
+    assert_eq!(
+        read(&project_dir.join("gita/repos.csv")),
+        edited,
+        "the edit must survive"
+    );
+}

@@ -267,14 +267,25 @@ fn strip_disabled_integrations(
         else {
             continue;
         };
-        // The integration's own cleanup shape, which is the only thing that
-        // knows how to take rwv's region out of a file the operator co-owns.
-        integration.deactivate(output_dir).with_context(|| {
-            format!(
-                "{}: stripping the content of a disabled integration",
-                artifacts.integration
-            )
-        })?;
+        // The integration's own cleanup shape, and ONLY for the class that
+        // needs it: taking rwv's region out of a file the operator co-owns
+        // needs the format knowledge that lives in the integration. Whole
+        // files are removed below instead, because `deactivate` removes the
+        // ones it declares without asking whether rwv wrote them — harmless
+        // where it was already wired (the checkout is being deleted around
+        // it), and a deletion of operator content here.
+        if artifacts
+            .paths
+            .iter()
+            .any(|path| matches!(path, OwnedPath::MarkedRegion(_)))
+        {
+            integration.deactivate(output_dir).with_context(|| {
+                format!(
+                    "{}: stripping the content of a disabled integration",
+                    artifacts.integration
+                )
+            })?;
+        }
 
         for path in &artifacts.paths {
             let OwnedPath::WholeFile(name) = path else {
@@ -286,6 +297,7 @@ fn strip_disabled_integrations(
                     .with_context(|| format!("removing {}", file.display()))?;
             }
             forget_owned_digest(output_dir, name)?;
+            prune_emptied_parent(output_dir, &file);
         }
 
         let names: Vec<String> = artifacts
@@ -319,6 +331,20 @@ fn strip_disabled_integrations(
         }
     }
     Ok(())
+}
+
+/// Remove the directory a removed file lived in, if that removal emptied it and
+/// it is not the project directory itself.
+///
+/// Best effort by construction: `remove_dir` refuses a non-empty directory, and
+/// a non-empty one is the case to leave alone — anything else parked there is
+/// the operator's.
+fn prune_emptied_parent(output_dir: &Path, removed: &Path) {
+    if let Some(parent) = removed.parent() {
+        if parent != output_dir {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
 }
 
 /// Drop attestations for files no enabled integration produces.
