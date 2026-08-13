@@ -53,7 +53,7 @@ a key fails to parse rather than defaulting.
 | `source` | Absolute path of the source workspace |
 | `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
 | `retire` | Whether `--retire` was passed |
-| `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only). Persisted before entering each phase so a crash re-enters the same phase on resume |
+| `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only) |
 | `advanced_tips` | Replay-phase intent per repo. Key: repo path relative to workspace root. Value: SHA string. Empty before replay entry; cleared at relock in the same write that populates `converged_tips` |
 | `converged_tips` | Per-repo converged tips written at relock completion. Empty before. Consumed by advance-target and abort's HEAD check |
 | `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
