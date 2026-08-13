@@ -844,9 +844,7 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
     // different bail sharing "--continue"/"rwv abort" would pass the two
     // checks above without this one firing at all.
     assert!(
-        stderr.contains(
-            "--retire: workweave's manifest repos differ from target after sync-to"
-        ),
+        stderr.contains("--retire: workweave's manifest repos differ from target after sync-to"),
         "the merged-check failure must name itself as the retire divergence refusal; \
          stderr:\n{stderr}"
     );
