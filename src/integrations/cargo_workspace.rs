@@ -947,11 +947,11 @@ impl Integration for CargoWorkspace {
     ///     differ from the SHA-256 recorded when rwv last accepted a
     ///     generation (the R34 headline — cargo rewriting the lock as valid
     ///     TOML). rwv cannot recompute lock content (registry-dependent), so
-    ///     the recorded digest ([`stamp_owned_digest`], written by
+    ///     the recorded digest ([`stamp_owned_generation`], written by
     ///     [`Self::activate_hook`] at the accept moment) is the structural
-    ///     signal. Two exits, both named in the finding: re-run activation
-    ///     to accept + re-stamp, or restore the file. Workspaces without
-    ///     digest state (pre-upgrade) skip this axis silently.
+    ///     signal. Exits, all named in the finding: adopt the current content,
+    ///     regenerate from the current inputs, or restore the file. Workspaces
+    ///     without digest state (pre-upgrade) skip this axis silently.
     ///   - **CLEAN**: present, parseable, digest matches (or not recorded).
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
