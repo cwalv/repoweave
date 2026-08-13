@@ -13,7 +13,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
 
 /// `target/<profile>/deps`, where the compiled library and its
 /// dependencies' metadata live.
@@ -29,54 +28,247 @@ fn deps_dir() -> PathBuf {
 pub(crate) enum RlibSelectionError {
     /// `read_dir` produced no name matching `librepoweave-*.rlib` at all.
     NoNamesMatched,
-    /// One or more names matched, but the stat on every one of them failed.
-    AllStatsFailed { names: Vec<PathBuf> },
+    /// One or more names matched, but reading the crate identity out of every
+    /// one of them failed (the byte read errored, or the crate marker was
+    /// absent from the archive).
+    AllIdentitiesUnreadable { names: Vec<PathBuf> },
+    /// Names matched and were readable, but not one carried the crate
+    /// identity the running test binary is linked against.
+    NoIdentityMatch {
+        /// The identity extracted from the test binary — the exact ID no
+        /// candidate rlib carried.
+        wanted: CrateIdentity,
+        /// Every candidate name and the identity it did carry (or `None`
+        /// for candidates whose identity was unreadable and reported
+        /// separately in `skipped`).
+        candidates: Vec<(PathBuf, Option<CrateIdentity>)>,
+    },
+    /// More than one candidate rlib carried the exact same crate identity as
+    /// the test binary. Two artifacts sharing a StableCrateId is a broken
+    /// invariant of the toolchain; refusing keeps a coin-flip out of the
+    /// selection.
+    AmbiguousIdentityMatch {
+        wanted: CrateIdentity,
+        matched: Vec<PathBuf>,
+    },
 }
 
-/// A chosen rlib, plus any matched name whose stat failed and was excluded
-/// from the choice rather than silently dropped.
+/// A chosen rlib, plus any matched name whose crate-identity read failed and
+/// was excluded from the choice rather than silently dropped.
 #[derive(Debug)]
 pub(crate) struct RlibSelection {
     pub(crate) path: PathBuf,
     pub(crate) skipped: Vec<PathBuf>,
 }
 
-/// Pick the newest-by-mtime path in `matched` for which `stat` succeeds.
+/// The mangled crate identity rustc bakes into every symbol of a given
+/// crate.
 ///
-/// `stat` is a seam: production passes real `metadata().modified()` calls,
-/// which race a concurrent rebuild that unlinks and relinks the same name;
-/// tests pass a closure that fails on chosen names instead, so that failure
-/// path is exercised without racing an actual rebuild.
+/// rustc mangles the crate's 64-bit `StableCrateId` into an ASCII marker of
+/// the form `Cs<base62-of-id>_<len><crate_name>` and stamps it on every
+/// symbol the crate defines. The compiled test binary carries the marker
+/// of the `repoweave` crate it was linked against; each `librepoweave-*.rlib`
+/// carries the marker of the crate archived in it. Matching one against the
+/// other identifies the exact artifact rustc chose at link time — no other
+/// signal on disk (mtime, filename hash, alphabetical order) does that.
 ///
-/// Newest-by-mtime is a heuristic, not a guarantee: `cargo build --release`
-/// and `cargo test --release` unify features differently and can leave two
-/// differently-built `librepoweave-*.rlib` files on disk at once, and this
-/// picks whichever is newer with no way to know which one actually built
-/// the running test binary.
+/// Stored as `Vec<u8>` because the marker is read as raw bytes from the
+/// binary and the archive, and never rendered anywhere it needs to be
+/// UTF-8 (it always is, but we do not depend on it).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CrateIdentity(pub(crate) Vec<u8>);
+
+impl std::fmt::Display for CrateIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&String::from_utf8_lossy(&self.0))
+    }
+}
+
+/// Scan `bytes` for the one mangled `Cs...repoweave` marker rustc stamps on
+/// every symbol from the `repoweave` crate. Returns:
+///
+/// - `Ok(id)` when exactly one such marker is present;
+/// - `Err(None)` when no marker is present (nothing to key on);
+/// - `Err(Some(all))` when multiple distinct markers are present, listing
+///   every one seen so the caller can name the ambiguity.
+///
+/// The marker's shape is fixed by rustc's v0 mangling scheme: literal `Cs`,
+/// a base62-encoded 64-bit `StableCrateId` (1 to 11 chars), a literal `_`,
+/// the ASCII-decimal length of the crate name (here `9` for `repoweave`),
+/// then the crate name. Scanning as bytes avoids depending on `nm`,
+/// `readelf`, or an ELF-parsing crate — the marker is ASCII text embedded in
+/// both binaries and archives regardless of container format.
+pub(crate) fn extract_crate_identity(
+    bytes: &[u8],
+) -> Result<CrateIdentity, Option<Vec<CrateIdentity>>> {
+    // Prefix `Cs`, then 1..=11 base62 chars, then `_9repoweave`.
+    const PREFIX: &[u8] = b"Cs";
+    const SUFFIX: &[u8] = b"_9repoweave";
+    const MIN_ID: usize = 1;
+    const MAX_ID: usize = 11;
+
+    fn is_base62(b: u8) -> bool {
+        b.is_ascii_alphanumeric()
+    }
+
+    let mut found: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
+    let mut i = 0;
+    while i + PREFIX.len() + MIN_ID + SUFFIX.len() <= bytes.len() {
+        if &bytes[i..i + PREFIX.len()] != PREFIX {
+            i += 1;
+            continue;
+        }
+        // Consume as many base62 chars as possible (up to MAX_ID), then
+        // check that the suffix follows.
+        let id_start = i + PREFIX.len();
+        let mut id_end = id_start;
+        while id_end < bytes.len() && id_end - id_start < MAX_ID && is_base62(bytes[id_end]) {
+            id_end += 1;
+        }
+        let id_len = id_end - id_start;
+        if id_len >= MIN_ID
+            && id_end + SUFFIX.len() <= bytes.len()
+            && &bytes[id_end..id_end + SUFFIX.len()] == SUFFIX
+        {
+            let end = id_end + SUFFIX.len();
+            found.insert(bytes[i..end].to_vec());
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+
+    match found.len() {
+        0 => Err(None),
+        1 => Ok(CrateIdentity(found.into_iter().next().unwrap())),
+        _ => Err(Some(found.into_iter().map(CrateIdentity).collect())),
+    }
+}
+
+/// Pick the `librepoweave-*.rlib` in `matched` whose baked crate identity
+/// equals `wanted`.
+///
+/// `read_id` is a seam: production reads the file's bytes and calls
+/// [`extract_crate_identity`]; tests plant fixture bytes or hand back a
+/// direct `Some(id) / None` per candidate, so the failure paths are
+/// exercised without racing an actual rebuild.
+///
+/// This is the correctness fix for the hazard rwv-lxbd measured and
+/// rwv-j3qm documented: `cargo build --release` and `cargo test --release`
+/// resolve features differently, so two `librepoweave-*.rlib` files with
+/// different metadata hashes can coexist in `target/release/deps/`. Selecting
+/// the newer one by `mtime` picks whichever build ran last — which need not
+/// be the one the running test binary was linked against. Selection has to
+/// be keyed on something that identifies the linked artifact; the crate
+/// identity rustc bakes into both the test binary and each rlib does that.
+///
+/// Refusal is preferred to a fallback everywhere: a fallback to mtime here
+/// would resurrect the exact hazard this replaces.
 pub(crate) fn select_rlib(
     matched: Vec<PathBuf>,
-    stat: impl Fn(&Path) -> Option<SystemTime>,
+    wanted: &CrateIdentity,
+    read_id: impl Fn(&Path) -> Option<CrateIdentity>,
 ) -> Result<RlibSelection, RlibSelectionError> {
     if matched.is_empty() {
         return Err(RlibSelectionError::NoNamesMatched);
     }
-    let mut stated = Vec::with_capacity(matched.len());
+    let mut candidates: Vec<(PathBuf, Option<CrateIdentity>)> = Vec::with_capacity(matched.len());
     let mut skipped = Vec::new();
     for path in matched {
-        match stat(&path) {
-            Some(modified) => stated.push((modified, path)),
-            None => skipped.push(path),
+        let id = read_id(&path);
+        if id.is_none() {
+            skipped.push(path.clone());
         }
+        candidates.push((path, id));
     }
-    if stated.is_empty() {
-        return Err(RlibSelectionError::AllStatsFailed { names: skipped });
+    if candidates.iter().all(|(_, id)| id.is_none()) {
+        return Err(RlibSelectionError::AllIdentitiesUnreadable { names: skipped });
     }
-    stated.sort_by_key(|(modified, _)| *modified);
-    let (_, path) = stated.pop().expect("checked non-empty above");
-    Ok(RlibSelection { path, skipped })
+    let matches: Vec<PathBuf> = candidates
+        .iter()
+        .filter(|(_, id)| id.as_ref() == Some(wanted))
+        .map(|(p, _)| p.clone())
+        .collect();
+    match matches.len() {
+        0 => Err(RlibSelectionError::NoIdentityMatch {
+            wanted: wanted.clone(),
+            candidates,
+        }),
+        1 => Ok(RlibSelection {
+            path: matches.into_iter().next().unwrap(),
+            skipped,
+        }),
+        _ => Err(RlibSelectionError::AmbiguousIdentityMatch {
+            wanted: wanted.clone(),
+            matched: matches,
+        }),
+    }
 }
 
-/// The freshest `librepoweave-*.rlib` in the deps directory.
+/// The crate identity the currently-running test binary was linked against
+/// for the `repoweave` crate.
+///
+/// This reads the running test executable's own bytes and extracts the one
+/// `Cs...repoweave` marker rustc stamped on every symbol from that crate.
+/// The whole point of the exercise is that this ID identifies the exact
+/// `librepoweave-*.rlib` on disk that fed the link — not the newest one, not
+/// the alphabetically-first one.
+fn running_test_crate_identity() -> CrateIdentity {
+    let exe = std::env::current_exe().unwrap_or_else(|e| panic!("current_exe failed: {e}"));
+    let bytes = std::fs::read(&exe).unwrap_or_else(|e| {
+        panic!(
+            "read of running test binary {} failed: {e}\n\
+             The compile_probe support code needs to read its own binary to \
+             identify the librepoweave-*.rlib it was linked against; without \
+             it the probe cannot key selection on anything sound.",
+            exe.display()
+        )
+    });
+    match extract_crate_identity(&bytes) {
+        Ok(id) => id,
+        Err(None) => panic!(
+            "no `Cs...repoweave` marker found in running test binary {}\n\
+             rustc stamps a `Cs<StableCrateId>_9repoweave` marker on every \
+             symbol from the repoweave crate; its absence means either the \
+             binary was not linked against repoweave (impossible for a test \
+             in this crate) or the mangling scheme changed under us. The \
+             compile_probe cannot key rlib selection without it and refuses \
+             to guess.",
+            exe.display()
+        ),
+        Err(Some(all)) => {
+            let names: Vec<String> = all.iter().map(|id| id.to_string()).collect();
+            panic!(
+                "found {} distinct `Cs...repoweave` markers in running test \
+                 binary {}: {:?}\n\
+                 A single link produces a single StableCrateId per crate; \
+                 multiple markers mean two repoweave crates were linked into \
+                 one binary, which the compile_probe cannot pick between and \
+                 refuses to guess about.",
+                all.len(),
+                exe.display(),
+                names,
+            )
+        }
+    }
+}
+
+/// Read `path` and return the one `Cs...repoweave` marker inside, or `None`
+/// when the read fails or the marker is absent / ambiguous.
+///
+/// A `None` here is the read-side seam counterpart to
+/// [`RlibSelectionError::AllIdentitiesUnreadable`] and to the "skipped"
+/// bookkeeping in [`RlibSelection`]: production callers get `None` for any
+/// candidate whose identity cannot be pinned down, so [`select_rlib`] can
+/// treat it as excluded-with-reason rather than silently dropped.
+fn read_rlib_identity(path: &Path) -> Option<CrateIdentity> {
+    let bytes = std::fs::read(path).ok()?;
+    extract_crate_identity(&bytes).ok()
+}
+
+/// The `librepoweave-*.rlib` in the deps directory that carries the same
+/// crate identity as the running test binary — i.e. the exact artifact
+/// rustc chose at link time.
 fn repoweave_rlib() -> PathBuf {
     let deps = deps_dir();
     let matched: Vec<PathBuf> = std::fs::read_dir(&deps)
@@ -90,17 +282,19 @@ fn repoweave_rlib() -> PathBuf {
         })
         .collect();
 
-    match select_rlib(matched, |p| p.metadata().ok()?.modified().ok()) {
+    let wanted = running_test_crate_identity();
+
+    match select_rlib(matched, &wanted, read_rlib_identity) {
         Ok(RlibSelection { path, skipped }) => {
             if !skipped.is_empty() {
                 // A passing test's stderr is captured and discarded by
                 // cargo, so this is silent on the common path and surfaces
                 // only alongside a failure that needs explaining.
                 eprintln!(
-                    "compile_probe: stat failed for {} of the matched \
-                     librepoweave-*.rlib name(s) in {}; picked {} from the \
-                     rest. A concurrent release build sharing this target \
-                     directory is the likely cause: {skipped:?}",
+                    "compile_probe: crate-identity read failed for {} of the \
+                     matched librepoweave-*.rlib name(s) in {}; picked {} \
+                     from the rest. A concurrent release build sharing this \
+                     target directory is the likely cause: {skipped:?}",
                     skipped.len(),
                     deps.display(),
                     path.display(),
@@ -120,16 +314,53 @@ fn repoweave_rlib() -> PathBuf {
              `cargo build --release --lib` first.",
             deps.display()
         ),
-        Err(RlibSelectionError::AllStatsFailed { names }) => panic!(
-            "found {} librepoweave-*.rlib name(s) in {} but a stat failed \
-             for every one of them: {names:?}\n\
-             A stat failing right after a directory listing enumerated the \
+        Err(RlibSelectionError::AllIdentitiesUnreadable { names }) => panic!(
+            "found {} librepoweave-*.rlib name(s) in {} but reading a crate \
+             identity from every one of them failed: {names:?}\n\
+             A read failing right after a directory listing enumerated the \
              name means something else removed or replaced the file in \
              between — most likely a concurrent release build sharing this \
              target directory, not a missing artifact. Re-run the suite; \
              if it persists, `cargo build --release --lib` first.",
             names.len(),
             deps.display()
+        ),
+        Err(RlibSelectionError::NoIdentityMatch { wanted, candidates }) => {
+            let listing: Vec<String> = candidates
+                .iter()
+                .map(|(p, id)| match id {
+                    Some(id) => format!("{} -> {id}", p.display()),
+                    None => format!("{} -> <unreadable>", p.display()),
+                })
+                .collect();
+            panic!(
+                "no librepoweave-*.rlib in {} carries the crate identity the \
+                 running test binary was linked against ({wanted}).\n\
+                 Candidates seen: [\n  {}\n]\n\
+                 This is the specific hazard rwv-lxbd measured and this code \
+                 refuses to guess through: `cargo build --release` and \
+                 `cargo test --release` resolve features differently and can \
+                 leave two differently-built rlibs on disk, and the one the \
+                 test binary needs is not present here. The old fallback to \
+                 mtime would have picked whichever happened to be newer — \
+                 possibly the build variant that never linked into this test \
+                 — and the probe would then have proved something about a \
+                 crate no one is exercising. Run `cargo test --release \
+                 --no-run` to rebuild the test-variant artifact, then re-run \
+                 the suite.",
+                deps.display(),
+                listing.join(",\n  "),
+            )
+        }
+        Err(RlibSelectionError::AmbiguousIdentityMatch { wanted, matched }) => panic!(
+            "found {} librepoweave-*.rlib name(s) in {} carrying the same \
+             crate identity ({wanted}) as the running test binary: \
+             {matched:?}\n\
+             Two artifacts sharing a StableCrateId is a broken invariant of \
+             the toolchain — the compile_probe cannot pick between them and \
+             refuses to guess. Remove the duplicate and re-run.",
+            matched.len(),
+            deps.display(),
         ),
     }
 }
