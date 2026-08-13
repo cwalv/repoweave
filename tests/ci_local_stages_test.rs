@@ -185,7 +185,9 @@ fn stages_flag_check_only_runs_check_and_nothing_else() {
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
     assert!(stdout.contains("STUB_CARGO: check"));
     assert!(
-        stdout.trim_end().ends_with("All checks passed (stages: check)."),
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: check)."),
         "subset run should name the stage it ran, not print the full-gate line:\n{stdout}"
     );
 }
@@ -205,7 +207,9 @@ fn stages_flag_drift_only_skips_every_other_stage() {
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
     assert!(stdout.contains("STUB_CARGO: run --quiet --bin generate-explain"));
     assert!(
-        stdout.trim_end().ends_with("All checks passed (stages: drift)."),
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: drift)."),
         "subset run should name the stage it ran, not print the full-gate line:\n{stdout}"
     );
 }
