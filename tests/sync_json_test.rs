@@ -845,6 +845,7 @@ fn sync_json_envelope_round_trips() {
                 &RepoSyncOutcome::AlreadyAhead { commits_ahead: 2 },
             ),
         ],
+        advisories: Vec::new(),
         resolution: None,
     };
     let v = serde_json::to_value(&envelope).unwrap();

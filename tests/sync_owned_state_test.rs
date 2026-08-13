@@ -177,6 +177,45 @@ impl Fixture {
     fn sync_from_primary(&self) -> String {
         self.rwv(&["sync", "primary"], &self.ww_dir)
     }
+
+    /// `rwv sync primary --json` in the workweave, returning stdout parsed
+    /// as JSON. Stdout only (never combined with stderr): the envelope is
+    /// what a `--json` consumer actually reads, and combining streams would
+    /// let stderr chatter corrupt the parse.
+    fn sync_json_from_primary(&self) -> serde_json::Value {
+        let output = common::rwv()
+            .args(["sync", "primary", "--json"])
+            .current_dir(&self.ww_dir)
+            .output()
+            .expect("rwv should run");
+        assert!(
+            output.status.success(),
+            "rwv sync primary --json failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+            panic!(
+                "stdout not parseable as JSON ({e}):\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        })
+    }
+
+    /// `rwv sync primary --json -j 2` in the workweave — NDJSON mode, one
+    /// self-describing record per line, no envelope. Returns raw stdout.
+    fn sync_ndjson_from_primary(&self) -> String {
+        let output = common::rwv()
+            .args(["sync", "primary", "--json", "-j", "2"])
+            .current_dir(&self.ww_dir)
+            .output()
+            .expect("rwv should run");
+        assert!(
+            output.status.success(),
+            "rwv sync primary --json -j 2 failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
 }
 
 /// Read the `Cargo.lock` entry out of a `.rwv-owned-digests` state file.
@@ -523,4 +562,91 @@ fn sync_prints_no_materialize_note_for_source_only_deliveries() {
         "no delivered input moved, so there is nothing for materialize to \
          re-derive and the note must not print.\noutput:\n{output}"
     );
+}
+
+/// The same conditional note, read through the surface a `--json` consumer
+/// actually parses: an `advisories` entry, not a string a caller would have
+/// to grep stderr for.
+#[test]
+fn sync_json_advisories_carries_the_materialize_remedy_when_a_member_manifest_arrives() {
+    let f = fixture();
+    advance_member_manifest(&f);
+
+    let envelope = f.sync_json_from_primary();
+    let advisories = envelope
+        .get("advisories")
+        .and_then(serde_json::Value::as_array)
+        .expect("envelope should carry an advisories array");
+
+    assert_eq!(
+        advisories.len(),
+        1,
+        "expected exactly one advisory: {envelope}"
+    );
+    let advisory = &advisories[0];
+    assert_eq!(advisory["kind"], "derived_state_stale");
+    assert_eq!(advisory["remedy"], "rwv materialize");
+    assert_eq!(
+        advisory["inputs"],
+        serde_json::json!(["github/chatly/server/Cargo.toml"]),
+        "inputs should be the workspace-relative path, not the 'repo: file' \
+         display string the text note uses: {envelope}"
+    );
+}
+
+/// Mirrors [`sync_prints_no_materialize_note_for_source_only_deliveries`] on
+/// the `--json` surface: a source-only delivery raises no advisory, and the
+/// array is present-but-empty rather than absent.
+#[test]
+fn sync_json_advisories_empty_for_source_only_deliveries() {
+    let f = fixture();
+    advance_member_source(&f);
+
+    let envelope = f.sync_json_from_primary();
+    let advisories = envelope
+        .get("advisories")
+        .and_then(serde_json::Value::as_array)
+        .expect("envelope should carry an advisories array even when empty");
+
+    assert!(
+        advisories.is_empty(),
+        "no delivered input moved, so advisories should be empty: {envelope}"
+    );
+}
+
+/// NDJSON mode (`-j N` with `N > 1`) drops the advisory rather than
+/// surfacing it: each line is a self-describing per-repo record with no
+/// envelope for an `advisories` array to sit in, so there is nowhere for it
+/// to go. Deliberate, not an oversight — pinned here rather than left an
+/// unremarked absence, on the same delivery that DOES raise an advisory
+/// under serial `--json` (see
+/// `sync_json_advisories_carries_the_materialize_remedy_when_a_member_manifest_arrives`).
+/// A change that starts leaking the advisory into an NDJSON line, or that
+/// silently drops materialize's own line-emission behavior, should redden
+/// this.
+#[test]
+fn sync_ndjson_carries_no_advisory_even_when_serial_json_would() {
+    let f = fixture();
+    advance_member_manifest(&f);
+
+    let stdout = f.sync_ndjson_from_primary();
+    let mut saw_a_line = false;
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        saw_a_line = true;
+        let parsed: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("NDJSON line not parseable ({e}): {line}"));
+        assert!(
+            parsed.get("advisories").is_none(),
+            "NDJSON has no envelope for an advisories array: {line}"
+        );
+        assert_ne!(
+            parsed.get("kind").and_then(serde_json::Value::as_str),
+            Some("derived_state_stale"),
+            "NDJSON has no per-line advisory record shape: {line}"
+        );
+    }
+    assert!(saw_a_line, "control: NDJSON must emit at least one record");
 }

@@ -1192,6 +1192,36 @@ pub struct Resolution {
     pub project: String,
 }
 
+/// A condition worth an operator's attention that a verb's `--json` output
+/// reports alongside its result, without being a failure of the verb itself.
+///
+/// Every field is something a consumer branches on directly — `kind` a
+/// closed enum, `remedy` a verb string runnable in the checkout where the
+/// advisory appears, `inputs` the workspace-relative paths that raised it.
+/// None of the three is a sentence a consumer would have to parse to act on.
+///
+/// Shared across verbs so more than one `--json` surface can emit the same
+/// vocabulary: a sync-time note and a doctor-time standing finding both fit
+/// this shape without either owning it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct AdvisoryOutput {
+    pub kind: AdvisoryKindOutput,
+    /// The verb that resolves the advisory (e.g. `"rwv materialize"`).
+    pub remedy: String,
+    /// Workspace-relative paths whose state raised this advisory.
+    pub inputs: Vec<String>,
+}
+
+/// Closed vocabulary for [`AdvisoryOutput::kind`]. Adding a member is
+/// additive — existing consumers keep matching the members they know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryKindOutput {
+    /// Generated ecosystem state may no longer agree with the inputs it was
+    /// derived from.
+    DerivedStateStale,
+}
+
 /// Build a workweave directory name using the `{project}--{name}` convention.
 ///
 /// Workweaves are keyed by the project they're created for so that the directory

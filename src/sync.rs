@@ -19,7 +19,10 @@ use crate::vcs::{
     DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName, HeadAttachment, RefName,
     ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
-use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{
+    project_dir, project_rel_path, AdvisoryKindOutput, AdvisoryOutput, Checkout, Resolution,
+    WorkspaceContext,
+};
 use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -463,6 +466,15 @@ pub struct SyncJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<SyncOutcomeOutput>,
+    /// Standing advisories raised during this sync (e.g. delivered changes
+    /// touching a materialized input). Empty, not absent, when there are
+    /// none — a consumer branches on length rather than presence.
+    ///
+    /// Present only in this envelope: `-j N` with `N > 1` streams NDJSON
+    /// instead, one self-describing per-repo line with no envelope for an
+    /// advisory to sit in, so a parallel `--json` sync carries no advisory
+    /// at all. Run `-j 1` (or omit `-j`) to receive one.
+    pub advisories: Vec<AdvisoryOutput>,
     /// Resolved workspace coordinates (workspace root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1525,6 +1537,14 @@ pub trait OutputHandler: Send + Sync {
     /// Default implementation is a no-op — suitable for text-mode and
     /// plain-sync JSON handlers that do not need step-3 SHAs.
     fn record_step3_advance(&self, _path: &str, _from_sha: &str, _to_sha: &str) {}
+
+    /// Record a standing advisory raised during cleanup.
+    ///
+    /// Default implementation is a no-op: text-mode handlers print the
+    /// advisory's human rendering directly at the call site instead, and
+    /// handlers whose envelope carries no `advisories` field (sync-to,
+    /// NDJSON — no envelope to place it in) have nothing to buffer it into.
+    fn record_advisory(&self, _advisory: AdvisoryOutput) {}
 }
 
 /// Text-mode handler: prints one line per repo to stdout/stderr and discards
@@ -1576,6 +1596,7 @@ impl OutputHandler for TextHandler<'_> {
 /// Text chatter is suppressed (`emit_text` returns `false`).
 pub struct JsonEnvelopeHandler<'a> {
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
+    advisories: &'a Mutex<Vec<AdvisoryOutput>>,
 }
 
 impl OutputHandler for JsonEnvelopeHandler<'_> {
@@ -1587,6 +1608,11 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
         let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(out);
+    }
+
+    fn record_advisory(&self, advisory: AdvisoryOutput) {
+        let mut guard = self.advisories.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(advisory);
     }
 }
 
@@ -4516,9 +4542,27 @@ fn delivered_changes(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) -> Option<Vec<Str
     vcs.changed_paths_between(repo, &pre, &head).ok()
 }
 
-/// `repo: file` pairs among the delivered changes that are inputs of the
-/// materialized project: the project manifest, plus each member's detection
-/// manifests for the integrations the project enables.
+/// One delivered change that lands on an input of the materialized project:
+/// the project manifest, or a member's detection manifest for an integration
+/// the project enables.
+struct MaterializedInputHit {
+    /// Display key for the text note: [`project_repo_key`] for the project
+    /// manifest, the member's manifest-relative repo path otherwise.
+    repo_key: String,
+    /// The input file's name within that repo (e.g. `Cargo.toml`).
+    file: String,
+    /// The same hit as a workspace-relative path, for the `--json` surface.
+    workspace_path: String,
+}
+
+impl MaterializedInputHit {
+    /// `repo: file` rendering used by the text-path note.
+    fn display(&self) -> String {
+        format!("{}: {}", self.repo_key, self.file)
+    }
+}
+
+/// Delivered changes that are inputs of the materialized project.
 ///
 /// Generated ecosystem state is derived from exactly these inputs, and sync
 /// never fires the hooks that would re-derive it — materialization is
@@ -4530,7 +4574,7 @@ fn delivered_changes(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) -> Option<Vec<Str
 /// that, not the resolved project name: `--project` can aim a primary's sync
 /// at a project its pointer does not present, and the note must stay quiet
 /// for exactly that delivery.
-fn delivered_materialized_input_changes(ctx: &OpContext<'_>) -> Vec<String> {
+fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInputHit> {
     let presented = crate::workspace::observe_root(&ctx.cwd_workspace_dir)
         .and_then(|obs| obs.presented_project().cloned());
     if presented.as_ref() != Some(&ctx.cwd_project_name) {
@@ -4552,7 +4596,15 @@ fn delivered_materialized_input_changes(ctx: &OpContext<'_>) -> Vec<String> {
         delivered_changes(ctx.project_vcs.as_ref(), &ctx.cwd_project_dir, &ctx.op_id)
     {
         if changed.iter().any(|p| p == Manifest::FILE_NAME) {
-            hits.push(format!("{}: {}", project_repo_key(), Manifest::FILE_NAME));
+            hits.push(MaterializedInputHit {
+                repo_key: project_repo_key().to_owned(),
+                file: Manifest::FILE_NAME.to_owned(),
+                workspace_path: format!(
+                    "{}/{}",
+                    project_rel_path(ctx.cwd_project_name.as_str()),
+                    Manifest::FILE_NAME
+                ),
+            });
         }
     }
     for (repo_path, entry) in project.manifest.iter_entries() {
@@ -4568,7 +4620,11 @@ fn delivered_materialized_input_changes(ctx: &OpContext<'_>) -> Vec<String> {
             .iter()
             .filter(|p| member_inputs.contains(p.as_str()))
         {
-            hits.push(format!("{repo_path}: {file}"));
+            hits.push(MaterializedInputHit {
+                repo_key: repo_path.to_string(),
+                file: file.clone(),
+                workspace_path: format!("{repo_path}/{file}"),
+            });
         }
     }
     hits
@@ -4579,14 +4635,24 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // Before the savepoints go: they are the pre-op tips the staleness note
     // reads its delivered ranges from.
-    if matches!(ctx.verb, op_state::OpVerb::Sync) && emit_text {
-        let stale = delivered_materialized_input_changes(ctx);
-        if !stale.is_empty() {
-            eprintln!(
-                "note: delivered changes touch materialized inputs ({}); run `rwv materialize` \
-                 to bring the generated ecosystem state up to date",
-                stale.join(", ")
-            );
+    if matches!(ctx.verb, op_state::OpVerb::Sync) {
+        let hits = delivered_materialized_input_hits(ctx);
+        if !hits.is_empty() {
+            if emit_text {
+                eprintln!(
+                    "note: delivered changes touch materialized inputs ({}); run `rwv materialize` \
+                     to bring the generated ecosystem state up to date",
+                    hits.iter()
+                        .map(MaterializedInputHit::display)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            ctx.handler.record_advisory(AdvisoryOutput {
+                kind: AdvisoryKindOutput::DerivedStateStale,
+                remedy: "rwv materialize".to_owned(),
+                inputs: hits.into_iter().map(|h| h.workspace_path).collect(),
+            });
         }
     }
 
@@ -5522,6 +5588,7 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
@@ -5534,15 +5601,20 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     } else {
-        let handler = JsonEnvelopeHandler { records: &records };
+        let handler = JsonEnvelopeHandler {
+            records: &records,
+            advisories: &advisories,
+        };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    let advisories = advisories.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
         ndjson,
         records,
+        advisories,
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
         false,
@@ -5591,6 +5663,7 @@ fn json_exit_tail(
 fn run_sync_json_impl(
     ndjson: bool,
     records: Vec<SyncOutcomeOutput>,
+    advisories: Vec<AdvisoryOutput>,
     schema_url: &str,
     project_level_result: anyhow::Result<()>,
     emit_empty_envelope: bool,
@@ -5612,6 +5685,7 @@ fn run_sync_json_impl(
         let payload = SyncJsonOutput {
             schema: schema_url.to_owned(),
             outcomes: records,
+            advisories,
             resolution,
         };
         let out =

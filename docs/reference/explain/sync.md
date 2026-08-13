@@ -137,11 +137,19 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
+    "advisories",
     "outcomes"
   ],
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "advisories": {
+      "description": "Standing advisories raised during this sync (e.g. delivered changes touching a materialized input). Empty, not absent, when there are none — a consumer branches on length rather than presence.\n\nPresent only in this envelope: `-j N` with `N > 1` streams NDJSON instead, one self-describing per-repo line with no envelope for an advisory to sit in, so a parallel `--json` sync carries no advisory at all. Run `-j 1` (or omit `-j`) to receive one.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AdvisoryOutput"
+      }
     },
     "outcomes": {
       "type": "array",
@@ -162,6 +170,43 @@ Schema:
     }
   },
   "definitions": {
+    "AdvisoryKindOutput": {
+      "description": "Closed vocabulary for `AdvisoryOutput::kind`. Adding a member is additive — existing consumers keep matching the members they know.",
+      "oneOf": [
+        {
+          "description": "Generated ecosystem state may no longer agree with the inputs it was derived from.",
+          "type": "string",
+          "enum": [
+            "derived_state_stale"
+          ]
+        }
+      ]
+    },
+    "AdvisoryOutput": {
+      "description": "A condition worth an operator's attention that a verb's `--json` output reports alongside its result, without being a failure of the verb itself.\n\nEvery field is something a consumer branches on directly — `kind` a closed enum, `remedy` a verb string runnable in the checkout where the advisory appears, `inputs` the workspace-relative paths that raised it. None of the three is a sentence a consumer would have to parse to act on.\n\nShared across verbs so more than one `--json` surface can emit the same vocabulary: a sync-time note and a doctor-time standing finding both fit this shape without either owning it.",
+      "type": "object",
+      "required": [
+        "inputs",
+        "kind",
+        "remedy"
+      ],
+      "properties": {
+        "inputs": {
+          "description": "Workspace-relative paths whose state raised this advisory.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "$ref": "#/definitions/AdvisoryKindOutput"
+        },
+        "remedy": {
+          "description": "The verb that resolves the advisory (e.g. `\"rwv materialize\"`).",
+          "type": "string"
+        }
+      }
+    },
     "ConflictOp": {
       "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.",
       "oneOf": [
