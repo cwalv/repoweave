@@ -2255,15 +2255,23 @@ pub fn stamp_owned_generation(
 /// project `output_dir` belongs to.
 ///
 /// The project manifest decides membership and integration configuration; the
-/// rwv lock decides which commit of each member is on disk. Every ecosystem
-/// generation in this weave is a function of those two, so an ecosystem
-/// generation that was correct when they last moved is correct now.
+/// rwv lock decides which commit of each member is on disk. Both are the
+/// weave's own record of itself, and both are files rwv writes.
 ///
-/// **What is deliberately absent: the members' own manifests.** They move when
-/// the lock moves, which is the case this exists for, but a member manifest
-/// edited in place under a still lock is a change this map cannot see. Hashing
-/// every member manifest would make the ledger grow with membership and still
-/// miss a source-only edit, so the axis stops at what the weave itself records.
+/// **What is deliberately absent: the members' own manifests.** A member
+/// `Cargo.toml` is a genuine input to the `Cargo.lock` cargo-workspace
+/// produces, so a member manifest edited in place under a still lock makes the
+/// generated file wrong while every digest here still matches.
+///
+/// What keeps that from being a hole is that no route from such an edit to a
+/// quiet doctor avoids moving the lock. Uncommitted, the member reports
+/// `working-tree-drift`; committed, its HEAD leaves the lock behind and the
+/// project reports `stale-lock`; and the `rwv lock` that settles either one
+/// moves an input recorded here, at which point the staleness axis fires.
+/// Hashing every member manifest would grow the ledger with membership,
+/// re-hash every member on every doctor run, and still miss an edit to a
+/// source file — so the axis stops at the join point every route passes
+/// through.
 pub fn generation_inputs(
     project_dir: &Path,
     project: &crate::manifest::ProjectName,

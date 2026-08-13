@@ -68,6 +68,24 @@ fn advisories(ws: &Path) -> Vec<serde_json::Value> {
         .clone()
 }
 
+/// The `kind`s doctor raises against `repo`, sorted.
+fn violation_kinds_for(ws: &Path, repo: &str) -> Vec<String> {
+    let mut kinds: Vec<String> = doctor_json(ws)["violations"]
+        .as_array()
+        .expect("`violations` must be present, empty rather than absent")
+        .iter()
+        .filter(|v| v["path"].as_str() == Some(repo))
+        .map(|v| {
+            v["kind"]
+                .as_str()
+                .expect("a violation carries a kind")
+                .to_owned()
+        })
+        .collect();
+    kinds.sort();
+    kinds
+}
+
 const LEDGER: &str = ".rwv-owned-digests";
 const LOCK: &str = "version = 4\n";
 
@@ -363,5 +381,84 @@ fn a_stale_entry_on_a_drifted_file_is_not_a_deadlock() {
         advisories(&ws).is_empty(),
         "and the staleness must be gone with it — a flag that clears one \
          condition into the other is the deadlock this asserts against"
+    );
+}
+
+/// A member's own `Cargo.toml` is not a recorded input, so editing one in place
+/// under a still lock moves nothing on this axis. The boundary is deliberate,
+/// and what makes it safe is that no other axis is silent in the states it
+/// leaves.
+///
+/// Measured, walking a member manifest edit from the edit to a clean tree:
+/// uncommitted, doctor reports `working-tree-drift` against the member;
+/// committed, the member's HEAD leaves the lock behind and doctor reports
+/// `stale-lock`; the `rwv lock` that clears that moves a recorded input, and
+/// the staleness axis fires with `rwv materialize`. Every route from the edit
+/// to a quiet report passes through a moved lock, which is the join point the
+/// inputs map is drawn around.
+///
+/// The two halves are one test on one fixture on purpose. "No advisory after a
+/// member edit" is equally true of a staleness check that reports nothing at
+/// all, and the drift assertion is what keeps the silence from becoming a hole
+/// if the axis that covers it goes away.
+#[test]
+fn a_member_manifest_is_not_a_recorded_input() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_a_producer(tmp.path());
+    let project_dir = ws.join("projects/app");
+    let member = "github/acme/lib";
+    let member_manifest = ws.join(member).join("Cargo.toml");
+
+    let ledger: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(project_dir.join(LEDGER)).unwrap())
+            .expect("the ledger is JSON");
+    assert_eq!(
+        ledger["Cargo.lock"]["inputs"]
+            .as_object()
+            .expect("an attested entry carries an inputs map")
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["projects/app/rwv.lock", "projects/app/rwv.toml"],
+        "the map is the weave's own record of membership and revisions, and a \
+         member path appearing here is the decision this pins: {ledger:#}"
+    );
+    assert!(
+        advisories(&ws).is_empty(),
+        "precondition: the generation is current before the edit"
+    );
+    let quiet = violation_kinds_for(&ws, member);
+    assert!(
+        !quiet.contains(&"working-tree-drift".to_owned()),
+        "precondition: the member is clean before the edit; got {quiet:?}"
+    );
+
+    let declared = std::fs::read_to_string(&member_manifest).unwrap();
+    std::fs::write(&member_manifest, declared.replace("0.1.0", "0.2.0")).unwrap();
+
+    assert!(
+        advisories(&ws).is_empty(),
+        "a member manifest is not an input, so editing one leaves the \
+         generation current on this axis: {:?}",
+        advisories(&ws)
+    );
+    let moved = violation_kinds_for(&ws, member);
+    assert!(
+        moved.contains(&"working-tree-drift".to_owned()),
+        "and the report is not silent about the member — this is the axis that \
+         covers the state the staleness map declines to see; got {moved:?}"
+    );
+
+    std::fs::write(project_dir.join("rwv.lock"), MOVED_LOCK).unwrap();
+    let found = advisories(&ws);
+    assert_eq!(
+        found.len(),
+        1,
+        "the lock is an input and it moved: {found:?}"
+    );
+    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(
+        found[0]["inputs"],
+        serde_json::json!(["projects/app/rwv.lock"]),
+        "and the member manifest is not among what moved"
     );
 }
