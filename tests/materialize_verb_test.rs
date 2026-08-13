@@ -457,3 +457,108 @@ fn the_two_consents_cannot_be_given_together() {
         "contradictory consents must be refused, not ranked:\n{report}"
     );
 }
+
+/// Move the rwv-managed `members` list off what rwv derives, so `verify()` has
+/// a finding `--fix` is allowed to repair sitting beside one it is not.
+///
+/// Returns the manifest path and the authored text, so a later assertion can
+/// compare against what rwv produces rather than against a literal — which
+/// member list is correct depends on the checkout, and hard-coding one turns a
+/// fixture difference into a failure about the wrong thing.
+fn move_the_managed_members_list(f: &Fixture) -> (PathBuf, String) {
+    let manifest = f.ww.join("projects/app/Cargo.toml");
+    let authored = std::fs::read_to_string(&manifest).expect("fixture: the project has a manifest");
+    let members = authored
+        .lines()
+        .find(|l| l.trim_start().starts_with("members = "))
+        .unwrap_or_else(|| panic!("fixture: no managed members list to move: {authored}"));
+    let moved = if members.contains("github/acme/server") {
+        "members = []"
+    } else {
+        r#"members = ["github/acme/server"]"#
+    };
+    let broken = authored.replace(members, moved);
+    assert_ne!(
+        broken, authored,
+        "fixture: the edit must actually move the list: {authored}"
+    );
+    std::fs::write(&manifest, &broken).unwrap();
+    (manifest, authored)
+}
+
+/// `--fix` regenerates a project's whole managed set as soon as ANY verify
+/// finding is fixable, and regeneration is one of the two exits out of drift.
+/// Entered for a different finding it is that exit taken with nobody's consent:
+/// the operator's resolve is discarded and they never typed the flag that says
+/// so.
+///
+/// A2's refusal does not reach here. It runs in activation's materialize mode,
+/// and `--fix` re-enters through the intent mode, which reports arrived drift
+/// and proceeds. The per-finding `safe_to_fix` is no defence either — it keeps
+/// `--fix` off the drift finding and says nothing about a repair entered for a
+/// neighbour.
+///
+/// The second half is the control. "The pin did not move" is equally true of a
+/// doctor that regenerates nothing, so the same fixture is shown moving it once
+/// the drift is settled and the same finding is re-broken.
+#[test]
+fn doctor_fix_withholds_regeneration_while_drift_is_unsettled() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let f = fixture();
+    let lock = materialized_then_pinned_back(&f);
+    let (manifest, authored) = move_the_managed_members_list(&f);
+
+    let (_, report) = f.rwv(&["doctor", "--fix"], &f.ww);
+    assert!(
+        report.contains("withheld the regeneration"),
+        "`--fix` must say it declined, not pass over it in silence:\n{report}"
+    );
+    assert!(
+        report.contains("--adopt-drifted") && report.contains("--regenerate-drifted"),
+        "and name the two exits, so the operator can take the one they mean:\n{report}"
+    );
+    assert_eq!(
+        locked_pinnable_version(&std::fs::read_to_string(&lock).unwrap()).as_deref(),
+        Some("0.1.0"),
+        "fixture premise, not the pin: cargo honours a lock that satisfies its \
+         constraints, so these bytes survive a regeneration and cannot tell the \
+         two exits apart. The attestation is what moves — the next assertion is \
+         the one under test"
+    );
+    let (_, still) = f.rwv(&["doctor"], &f.ww);
+    assert!(
+        still.contains("differs from the last rwv-accepted generation"),
+        "and the drift must still be UNACCEPTED afterwards. Cargo honours a \
+         lock that satisfies its constraints, so the bytes survive a \
+         regeneration either way — what a re-entered activation moves is the \
+         attestation, and moving it is `--adopt-drifted` with nobody's \
+         consent:\n{still}"
+    );
+    assert_ne!(
+        std::fs::read_to_string(&manifest).unwrap(),
+        authored,
+        "and the repair is withheld rather than half-applied"
+    );
+
+    let control = fixture();
+    let (ok, materialized) = control.rwv(&["materialize"], &control.ww);
+    assert!(
+        ok,
+        "control fixture: materialize should succeed:\n{materialized}"
+    );
+    let (manifest, authored) = move_the_managed_members_list(&control);
+
+    let (_, after) = control.rwv(&["doctor", "--fix"], &control.ww);
+    assert!(
+        after.contains("regenerated integration content"),
+        "the same finding with no drift beside it must be repaired:\n{after}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&manifest).unwrap(),
+        authored,
+        "and the managed region must be back to what rwv derives:\n{after}"
+    );
+}

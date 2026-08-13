@@ -7733,8 +7733,17 @@ fn collect_doctor_issues(
         );
         let (fixable_issues, user_held_issues): (Vec<_>, Vec<_>) =
             verify_issues.into_iter().partition(|i| i.safe_to_fix);
+        // Withholding is per project, because the repair is: activation runs
+        // every managed file's hooks, and a hook re-attests what it produces —
+        // so a user-held finding anywhere in the project is content this
+        // repair settles without being told which way to settle it. The
+        // per-finding `safe_to_fix` keeps `--fix` off the finding itself and
+        // says nothing about a repair entered for a different one; the drift
+        // refusal that would catch it lives in activation's materialize mode,
+        // and this is its intent mode.
+        let user_held_content = !user_held_issues.is_empty();
         issues.extend(user_held_issues);
-        if fix && !fixable_issues.is_empty() {
+        if fix && !fixable_issues.is_empty() && !user_held_content {
             // The repair primitive must be pointed at the same weave the
             // detector scanned. `activate_intent` targets primary
             // unconditionally, so from a workweave it would rewrite the
@@ -7757,6 +7766,25 @@ fn collect_doctor_issues(
                 }),
             }
         } else {
+            if fix && !fixable_issues.is_empty() {
+                issues.push(Issue {
+                    kind: IssueKind::CoreFinding,
+                    integration: "core".into(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "doctor --fix: withheld the regeneration of `{}`'s integration \
+                         content. Regenerating re-runs the hooks for every managed file \
+                         the project has, and they re-attest what they produce — which \
+                         settles the drift reported above without the consent that says \
+                         which way. Choose it: `rwv materialize --adopt-drifted` records \
+                         the current content as accepted, `rwv materialize \
+                         --regenerate-drifted` discards it and regenerates from the \
+                         current inputs. Then re-run `rwv doctor --fix`",
+                        project.name
+                    ),
+                    safe_to_fix: false,
+                });
+            }
             issues.extend(fixable_issues);
         }
 
