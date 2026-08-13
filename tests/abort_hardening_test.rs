@@ -16,6 +16,29 @@
 //! same shape `phase_reentry_test.rs` and the conflict-marker abort test
 //! use) so the unit under test is the abort path itself, not whatever
 //! the surrounding phase machine happened to produce.
+//!
+//! ## Lock-fixture audit (rwv-fo3x, 2026-08-12)
+//!
+//! Pre-fix, `write_lock` here wrote a TOML shape into `rwv.lock`, which is
+//! JSON post-v0.17 and refused by the production parser at line 1 col 2.
+//! rwv-g8qb's earlier fix flagged this class in `atomic_lease_acquisition_test`
+//! (where an unparseable lock made every sync-under-test refuse at the
+//! lock-read, letting refusal-shaped assertions pass by coincidence).
+//!
+//! Applying the same suspicion here: I replaced `write_lock` with garbage
+//! (`!!!GARBAGE_NOT_PARSEABLE!!!`) and every one of the 9 tests still passed.
+//! Reason: `run_abort` (`src/sync.rs`) uses `Project::from_dir_skip_lock` by
+//! design — its comment: "abort's contract is 'the state is bad, get me
+//! out'. rwv.lock may contain git conflict markers from the half-completed
+//! rebase, so we must not try to parse it." So none of these tests routed
+//! through a lock parse pre- or post-fix; each was testing what its name
+//! claims. Verdict per test: WAS TESTING WHAT IT NAMES — for every case.
+//!
+//! The fix therefore does not change any assertion's meaning. It aligns
+//! the fixture's on-disk contract with production so future regressions
+//! (e.g. a new abort-path preflight that DOES parse the lock) can't be
+//! masked by the fixture, and so the file stops shipping malformed content
+//! for a file the rest of rwv treats as JSON.
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
@@ -110,13 +133,23 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 }
 
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut manifest_toml = String::from("[repositories]\n");
-    for (path, url, sha) in repos {
-        manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"{sha}\"\n"
-        ));
-    }
-    std::fs::write(project_dir.join("rwv.lock"), &manifest_toml).unwrap();
+    // Round-trip through the real parser + `lock::write_lock` so the on-disk
+    // shape matches what `rwv lock` itself would emit. Direct string writes
+    // drift silently: pre-v0.17 the lock was TOML and hand-rolled TOML was
+    // fine here; post-v0.17 the lock is JSON and the same string is refused
+    // by `serde_json` at line 1 column 2. Audit (see file header) confirms
+    // `rwv abort` uses `Project::from_dir_skip_lock` and does not parse
+    // this file — so the drift never masked test scope here — but the
+    // fixture's on-disk contract must still match production's.
+    let entries: Vec<String> = repos
+        .iter()
+        .map(|(path, url, sha)| {
+            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
+        })
+        .collect();
+    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 }
 
 const SERVER_URL: &str = "https://github.com/chatly/server.git";
@@ -654,12 +687,37 @@ fn abort_foreign_tip_options_block_printed_once() {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    let manifest_toml = "[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly2/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly2/server.git\"\nversion = \"main\"\nrole = \"owned\"\n".to_string();
-    std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
-    let lock_yaml = format!(
-        "[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"{server1_sha}\"\n\n[repositories.\"github/chatly2/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly2/server.git\"\nversion = \"{server2_sha}\"\n"
+    // Manifest is TOML — hand-rolled shape is fine. Lock is JSON — route it
+    // through `write_lock` (round-trips via the production parser) so the
+    // fixture's on-disk shape matches production.
+    write_manifest(
+        &project_dir,
+        &[
+            (
+                "github/chatly/server",
+                "https://github.com/chatly/server.git",
+            ),
+            (
+                "github/chatly2/server",
+                "https://github.com/chatly2/server.git",
+            ),
+        ],
     );
-    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    write_lock(
+        &project_dir,
+        &[
+            (
+                "github/chatly/server",
+                "https://github.com/chatly/server.git",
+                &server1_sha,
+            ),
+            (
+                "github/chatly2/server",
+                "https://github.com/chatly2/server.git",
+                &server2_sha,
+            ),
+        ],
+    );
     git(
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
         &project_dir,
