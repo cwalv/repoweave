@@ -277,7 +277,9 @@ fn apply_keyword(
             Some(bound) => {
                 if let Some(value) = instance.as_f64() {
                     if value < bound {
-                        errors.push(format!("{at}: value {instance} is below minimum {argument}"));
+                        errors.push(format!(
+                            "{at}: value {instance} is below minimum {argument}"
+                        ));
                     }
                 }
             }

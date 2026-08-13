@@ -126,7 +126,7 @@ const REPO: &str = "github/acme/repo";
 const ABS: &str = "/ws/github/acme/repo";
 
 fn sha(byte: char) -> String {
-    std::iter::repeat(byte).take(40).collect()
+    std::iter::repeat_n(byte, 40).collect()
 }
 
 fn resolution() -> Resolution {
@@ -649,25 +649,29 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
 // ---------------------------------------------------------------------------
 
 fn update_records() -> Vec<RepoUpdateRecord> {
-    [UpdateKind::Updated, UpdateKind::UpToDate, UpdateKind::Failed]
-        .into_iter()
-        .map(|kind| {
-            let (old_sha, new_sha, error) = match kind {
-                UpdateKind::Updated => (Some(sha('a')), Some(sha('b')), None),
-                UpdateKind::UpToDate => (Some(sha('a')), Some(sha('a')), None),
-                UpdateKind::Failed => (None, None, Some("not a fast-forward".to_owned())),
-            };
-            RepoUpdateRecord {
-                path: REPO.to_owned(),
-                absolute_path: ABS.to_owned(),
-                branch: "main".to_owned(),
-                kind,
-                old_sha,
-                new_sha,
-                error,
-            }
-        })
-        .collect()
+    [
+        UpdateKind::Updated,
+        UpdateKind::UpToDate,
+        UpdateKind::Failed,
+    ]
+    .into_iter()
+    .map(|kind| {
+        let (old_sha, new_sha, error) = match kind {
+            UpdateKind::Updated => (Some(sha('a')), Some(sha('b')), None),
+            UpdateKind::UpToDate => (Some(sha('a')), Some(sha('a')), None),
+            UpdateKind::Failed => (None, None, Some("not a fast-forward".to_owned())),
+        };
+        RepoUpdateRecord {
+            path: REPO.to_owned(),
+            absolute_path: ABS.to_owned(),
+            branch: "main".to_owned(),
+            kind,
+            old_sha,
+            new_sha,
+            error,
+        }
+    })
+    .collect()
 }
 
 fn update_corpus() -> Vec<(&'static str, Value)> {
@@ -882,7 +886,9 @@ fn an_added_envelope_key_is_reported_for_every_verb() {
             .insert("scope".to_owned(), json!("all"));
         let (errors, _) = json_schema::conform(&doc, &schema);
         assert!(
-            errors.iter().any(|e| e.contains("undeclared property `scope`")),
+            errors
+                .iter()
+                .any(|e| e.contains("undeclared property `scope`")),
             "{}: a key the artifact does not declare must be reported, got {errors:?}",
             case.verb
         );
@@ -942,7 +948,9 @@ fn a_negative_commit_count_is_reported() {
             .find(|c| c.verb == verb)
             .expect("registered above");
         let mut doc = first_doc(&case);
-        let outcomes = doc["outcomes"].as_array_mut().expect("outcomes is an array");
+        let outcomes = doc["outcomes"]
+            .as_array_mut()
+            .expect("outcomes is an array");
         let ahead = outcomes
             .iter_mut()
             .find(|o| o["kind"] == json!("already-ahead"))

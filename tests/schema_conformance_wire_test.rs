@@ -99,12 +99,19 @@ fn weave() -> Weave {
     let member_origin = origin.join("server.git");
     let project_origin = origin.join("web-app.git");
     for bare in [&member_origin, &project_origin] {
-        git(&["init", "--bare", "-b", "main", &bare.to_string_lossy()], &origin);
+        git(
+            &["init", "--bare", "-b", "main", &bare.to_string_lossy()],
+            &origin,
+        );
     }
 
     let member = primary.join(MEMBER);
     git(
-        &["clone", &member_origin.to_string_lossy(), &member.to_string_lossy()],
+        &[
+            "clone",
+            &member_origin.to_string_lossy(),
+            &member.to_string_lossy(),
+        ],
         &parent,
     );
     std::fs::write(member.join("README.md"), "init\n").unwrap();
@@ -115,7 +122,11 @@ fn weave() -> Weave {
 
     let project = primary.join("projects").join(PROJECT);
     git(
-        &["clone", &project_origin.to_string_lossy(), &project.to_string_lossy()],
+        &[
+            "clone",
+            &project_origin.to_string_lossy(),
+            &project.to_string_lossy(),
+        ],
         &parent,
     );
     let url = member_origin.to_string_lossy().into_owned();
