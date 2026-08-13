@@ -3233,6 +3233,17 @@ fn load_continuing_context<'a>(
     // advance-target, whose fast-forward a dirty target blocks — re-running
     // the scan here refuses before relock commits rather than partway through
     // the landing.
+    //
+    // Retire re-entry is exempt, and the exemption RESTS ON A PROPERTY OF
+    // ANOTHER FUNCTION: `workweave::collect_dirty_paths`, which retire gates
+    // its delete on, refuses on any uncommitted state including untracked
+    // files, where every scan here is tracked-only. Narrow that to tracked-only
+    // and this exemption becomes a hole — a resumed retire would stop seeing
+    // untracked dirt that the same op refuses on a fresh run. What holds it
+    // today is `retire_refuses_when_workweave_has_uncommitted_changes_after_convergence`
+    // in `tests/phase_reentry_test.rs`, which resumes onto an untracked file and
+    // asserts retire refuses; that test going red is the signal that this skip
+    // needs revisiting rather than the test needing an edit.
     if matches!(entry_phase, op_state::OpPhase::Relock)
         && matches!(recorded_verb, MachineVerb::SyncTo)
     {
