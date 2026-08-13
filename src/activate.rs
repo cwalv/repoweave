@@ -644,9 +644,9 @@ pub fn surfaced_names(root: &Path, names: &[String]) -> Vec<String> {
 /// Unlink the weave-root symlinks surfacing `names`, and prune directories the
 /// removal empties.
 ///
-/// Owner-scoped: this is [`remove_activation_symlinks`] pointed at one name set
-/// rather than at a whole activation's, and it removes nothing the predicate
-/// above would not have counted.
+/// Owner-scoped: this is the activation-symlink cleanup pointed at one name set
+/// rather than at a whole activation's, and it removes nothing
+/// [`surfaced_names`] would not have counted.
 pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
     remove_activation_symlinks(root, &names.iter().cloned().collect())
 }
