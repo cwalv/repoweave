@@ -4287,7 +4287,7 @@ mod tests {
     ///     that reported nothing at all would satisfy every assertion below
     ///     for the wrong reason.
     ///   - the same citation under `tests/` — must now be reported; this is
-    ///     the boundary this bead moves.
+    ///     the boundary this change moves.
     ///   - a fixture path under `tests/`, cited in a comment AND written by
     ///     the fixture's own code in the same file — must stay silent; this
     ///     is the exemption the gate would be WRONG to drop.
