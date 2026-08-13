@@ -1441,7 +1441,6 @@ fn json_output_includes_branch_discipline_kind() {
 /// even though it resolves (through the symlink) to the canonical store on its
 /// shared `main` branch. It is the canonical viewed through a link, not a
 /// workweave checkout that wandered onto a shared branch.
-#[cfg(unix)]
 #[test]
 fn symlinked_reference_does_not_fire_shared_branch() {
     let tmp = common::tempdir().unwrap();
@@ -1457,7 +1456,12 @@ fn symlinked_reference_does_not_fire_shared_branch() {
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
     // Reference-repo materialization: a symlink at the workweave checkout
     // pointing at the canonical clone (which is on `main`).
-    std::os::unix::fs::symlink(&canonical, &ww_checkout).unwrap();
+    repoweave::symlink::create(
+        &canonical,
+        &ww_checkout,
+        repoweave::symlink::LinkTarget::Directory,
+    )
+    .unwrap();
     assert!(ww_checkout.is_symlink(), "fixture must be a symlink");
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
@@ -1480,7 +1484,6 @@ fn symlinked_reference_does_not_fire_shared_branch() {
 /// and (the adversarial half) if it wanders onto `main`, it must STILL fire
 /// `shared-branch`. The carve-out keys on alias-ness, never on role, so it
 /// must not skip a worktree'd reference.
-#[cfg(unix)]
 #[test]
 fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     let tmp = common::tempdir().unwrap();
@@ -1513,7 +1516,6 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
 /// the shared `main` branch must STILL fire `shared-branch`. The carve-out
 /// keys on `CheckoutKind` (alias-ness), never on `role`, so a real worktree —
 /// even of a reference repo — flows through the I3 check and is caught.
-#[cfg(unix)]
 #[test]
 fn worktree_reference_on_shared_branch_still_fires() {
     let tmp = common::tempdir().unwrap();

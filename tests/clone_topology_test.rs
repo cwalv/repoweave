@@ -375,10 +375,9 @@ fn lone_canonical_with_no_workweaves_is_clean() {
 /// canonical clone `canon` — the on-disk shape `rwv workweave create`
 /// produces for a `role: reference` repo. The parent directory is created
 /// first; the symlink is the leaf.
-#[cfg(unix)]
 fn symlink_reference_checkout(ww_repo: &Path, canon: &Path) {
     std::fs::create_dir_all(ww_repo.parent().unwrap()).unwrap();
-    std::os::unix::fs::symlink(canon, ww_repo).unwrap();
+    repoweave::symlink::create(canon, ww_repo, repoweave::symlink::LinkTarget::Directory).unwrap();
     assert!(
         ww_repo.is_symlink(),
         "fixture must produce a symlink at {}",
@@ -392,7 +391,6 @@ fn symlink_reference_checkout(ww_repo: &Path, canon: &Path) {
 /// look identical to `standalone-in-workweave` — but it is the canonical store
 /// viewed through a symlink, which upholds I1 by identity. The
 /// `ReferenceAlias` carve-out must skip it.
-#[cfg(unix)]
 #[test]
 fn symlinked_reference_in_workweave_is_clean() {
     let tmp = common::tempdir().unwrap();
@@ -424,7 +422,6 @@ fn symlinked_reference_in_workweave_is_clean() {
 /// the symlink-alias (valid) from the real standalone store (a violation).
 /// If the skip is too broad and blinds the scanner to genuine corruption,
 /// that is a failure of the carve-out.
-#[cfg(unix)]
 #[test]
 fn real_standalone_still_fires_alongside_symlinked_reference() {
     let tmp = common::tempdir().unwrap();

@@ -3692,7 +3692,6 @@ replace example.com/legacy => ./vendor/legacy
         /// on the way to `<dir>/.rwv-owned-digests` regardless. Anchoring to
         /// the target would put the ledger where none of this module's readers
         /// look, starting with [`carry_attested_owned_files`].
-        #[cfg(unix)]
         #[test]
         fn ledger_anchors_to_the_named_directory() {
             let tmp = TempDir::new().unwrap();
@@ -3701,11 +3700,17 @@ replace example.com/legacy => ./vendor/legacy
             std::fs::create_dir_all(&project_dir).unwrap();
             std::fs::create_dir_all(&elsewhere).unwrap();
             std::fs::write(elsewhere.join("Cargo.lock"), b"version = 3\n").unwrap();
-            std::os::unix::fs::symlink(
-                elsewhere.join("Cargo.lock"),
-                project_dir.join("Cargo.lock"),
+            crate::symlink::create(
+                &elsewhere.join("Cargo.lock"),
+                &project_dir.join("Cargo.lock"),
+                crate::symlink::LinkTarget::File,
             )
             .unwrap();
+            assert_eq!(
+                std::fs::read(project_dir.join("Cargo.lock")).unwrap(),
+                b"version = 3\n",
+                "fixture must resolve through the symlink to elsewhere's content"
+            );
 
             stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 3\n").unwrap();
 
@@ -3732,7 +3737,6 @@ replace example.com/legacy => ./vendor/legacy
         /// no file path to resolve, so a stamp that resolved one would put the
         /// ledger somewhere the fork cannot read: the source would hand over
         /// nothing and the copy would arrive unattested, silently.
-        #[cfg(unix)]
         #[test]
         fn carry_reads_the_ledger_the_stamp_wrote_for_a_symlinked_file() {
             let tmp = TempDir::new().unwrap();
@@ -3743,8 +3747,12 @@ replace example.com/legacy => ./vendor/legacy
                 std::fs::create_dir_all(dir).unwrap();
             }
             std::fs::write(elsewhere.join("Cargo.lock"), b"version = 3\n").unwrap();
-            std::os::unix::fs::symlink(elsewhere.join("Cargo.lock"), source.join("Cargo.lock"))
-                .unwrap();
+            crate::symlink::create(
+                &elsewhere.join("Cargo.lock"),
+                &source.join("Cargo.lock"),
+                crate::symlink::LinkTarget::File,
+            )
+            .unwrap();
             stamp_owned_digest(&source, "Cargo.lock", b"version = 3\n").unwrap();
 
             assert_eq!(

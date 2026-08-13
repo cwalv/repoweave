@@ -1589,7 +1589,6 @@ mod tests {
     /// receipt that could not be found again by an equivalent spelling
     /// would strand the ref it accounts for.
     #[test]
-    #[cfg(unix)]
     fn a_symlinked_spelling_finds_the_same_receipt() {
         let tmp = tempfile::tempdir().unwrap();
         let primary = tmp.path().join("ws");
@@ -1597,7 +1596,7 @@ mod tests {
         let store = make_store(tmp.path(), "weave/github/acme/server");
 
         let link = tmp.path().join("server-link");
-        std::os::unix::fs::symlink(&store, &link).unwrap();
+        crate::symlink::create(&store, &link, crate::symlink::LinkTarget::Directory).unwrap();
 
         let mut registry = RefRegistry::for_project(&primary, &project);
         registry
@@ -1619,7 +1618,6 @@ mod tests {
     /// found by the canonical spelling. Losing it would strand the ref it
     /// accounts for with no way to retract or destroy it.
     #[test]
-    #[cfg(unix)]
     fn a_receipt_recorded_under_a_non_canonical_spelling_is_still_found() {
         let tmp = tempfile::tempdir().unwrap();
         let primary = tmp.path().join("ws");
@@ -1627,7 +1625,7 @@ mod tests {
         let store = make_store(tmp.path(), "weave/github/acme/server");
 
         let link = tmp.path().join("server-link");
-        std::os::unix::fs::symlink(&store, &link).unwrap();
+        crate::symlink::create(&store, &link, crate::symlink::LinkTarget::Directory).unwrap();
         std::fs::write(
             index_path(&primary, &project),
             format!(
