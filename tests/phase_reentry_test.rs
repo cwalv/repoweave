@@ -1235,3 +1235,156 @@ fn advance_target_resume_relocks_under_ff_strategy_too() {
          {target_lock}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Resume re-gates the re-pinned source, and says it re-read it.
+//
+// `--continue` re-pins the source snapshot at resume time so replay re-entry
+// has coherent inputs. The fresh path takes its pin and its GATE together:
+// the classification that pin produces is what refuses an unresolvable lock
+// entry or an anomalous lock relation. The resume path took the pin alone —
+// so a source that went anomalous between the strand and the resume was
+// replayed from at a state the op's own first invocation would have refused,
+// and the operator was told nothing about either the re-read or the state.
+// ---------------------------------------------------------------------------
+
+/// Commit `content` as `name` in `repo`, returning the new tip.
+fn commit_file(repo: &Path, name: &str, content: &str, message: &str) -> String {
+    std::fs::write(repo.join(name), content).unwrap();
+    git(&["add", name], repo);
+    git(&["commit", "-m", message], repo);
+    git_out(&["rev-parse", "HEAD"], repo)
+}
+
+/// Drive the source's committed lock ahead of its own manifest tip: commit,
+/// lock that commit, then rewind the checkout. HEAD is now a strict ancestor
+/// of what the lock pins — `LockRelation::Behind`, the anomalous shape the
+/// fresh path refuses on either side. Returns the tip the lock pins.
+fn make_source_lock_anomalous(source: &Workspace, base_sha: &str) -> String {
+    let ahead = commit_file(&source.server_dir, "ahead.txt", "ahead\n", "src: ahead");
+    write_lock(&source.project_dir, &ahead);
+    git(&["add", "rwv.lock"], &source.project_dir);
+    git(
+        &["commit", "-m", "lock: pin the ahead commit"],
+        &source.project_dir,
+    );
+    git(&["reset", "--hard", base_sha], &source.server_dir);
+    ahead
+}
+
+#[test]
+fn a_resume_refuses_a_source_that_went_anomalous_and_leaves_the_op_parked() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, base_sha) = make_shared_workspaces(tmp.path());
+
+    let op_id = "reentry-test-replay";
+    write_owner_record(&ww.root, &primary.root, &ww.root, "replay");
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+
+    make_source_lock_anomalous(&primary, &base_sha);
+
+    let record_before = std::fs::read(ww.root.join(".rwv-op")).unwrap();
+    let savepoint_before = git_out(
+        &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
+        &ww.server_dir,
+    );
+    let cwd_tip_before = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+
+    let out = rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv command failed to run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !out.status.success(),
+        "a resume must not consume a source at a state the fresh path refuses; \
+         stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("lock-freshness"),
+        "the refusal must be the lock-freshness gate, not some later failure; \
+         stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv sync --continue") && stderr.contains("rwv abort"),
+        "a refused resume must name both ways out of the op it left standing; \
+         stderr:\n{stderr}"
+    );
+
+    // The refusal changed nothing: the op is still exactly where it was, which
+    // is what makes "fix the source, then --continue" a true instruction.
+    assert_eq!(
+        std::fs::read(ww.root.join(".rwv-op")).unwrap(),
+        record_before,
+        "the owner record must be byte-identical across the refusal"
+    );
+    assert_eq!(
+        git_out(
+            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
+            &ww.server_dir
+        ),
+        savepoint_before,
+        "the savepoint must survive the refusal unmoved"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        cwd_tip_before,
+        "a refused resume must not have replayed anything"
+    );
+}
+
+#[test]
+fn a_resume_names_the_source_tip_it_re_read() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _base_sha) = make_shared_workspaces(tmp.path());
+
+    // The source moves between the strand and the resume, healthily: a new
+    // commit, and a lock that pins it. This is the state the banner used to
+    // pass over in silence — the resumed op plans against a read the operator
+    // was never shown.
+    let moved = commit_file(&primary.server_dir, "moved.txt", "moved\n", "src: moved");
+    write_lock(&primary.project_dir, &moved);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: after the strand"],
+        &primary.project_dir,
+    );
+    let source_project_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+
+    write_owner_record(&ww.root, &primary.root, &ww.root, "replay");
+    create_savepoint(&ww.project_dir, "reentry-test-replay");
+    create_savepoint(&ww.server_dir, "reentry-test-replay");
+
+    let out = rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv command failed to run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "a healthy moved source must resume, not refuse; stderr:\n{stderr}"
+    );
+
+    // The value, not the sentence: the tip named is the one this session
+    // pinned and replayed from, so the announcement and the plan cannot come
+    // apart.
+    assert!(
+        stderr.contains("source re-read at resume"),
+        "the resume must state that it re-read the source; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&source_project_tip[..12]),
+        "the re-read line must name the source project tip this resume pinned \
+         ({source_project_tip}); stderr:\n{stderr}"
+    );
+    // And it delivered from that read: CWD holds the moved tip.
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        moved,
+        "the resume must deliver the tips the re-read announced"
+    );
+}

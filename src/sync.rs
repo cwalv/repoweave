@@ -2438,13 +2438,7 @@ fn run_preconditions_after_acquire(
     // at that revision; everything downstream is content-addressed. The one
     // exception is the tips-as-truth pull, whose member tips are per-repo ref
     // reads of the source checkouts, pinned here at the same T0.
-    let classify = if allow_stale_lock {
-        ClassifySource::Skip
-    } else if matches!(verb, MachineVerb::Sync) && source_is_workweave {
-        ClassifySource::RelationsAndTips
-    } else {
-        ClassifySource::Relations
-    };
+    let classify = classify_for(verb, allow_stale_lock, source_is_workweave);
     let snapshot = pin_source_snapshot(
         project_vcs,
         source_project_dir,
@@ -2509,43 +2503,28 @@ fn run_preconditions_after_acquire(
     let mut cwd_lock_behind: Vec<RepoRelation> = Vec::new();
 
     if let (Some(source_class), Some(cwd_class)) = (snapshot.source_class.as_ref(), cwd_class) {
-        if let Some((rp, raw)) = source_class.unresolvable.first() {
-            anyhow::bail!(
-                "{}",
-                unresolvable_lock_refusal(
-                    Side::Source,
-                    source_workspace_name,
-                    source_project_name.as_str(),
-                    rp,
-                    raw,
-                )
-            );
-        }
-        if let Some((rp, raw)) = cwd_class.unresolvable.first() {
-            anyhow::bail!(
-                "{}",
-                unresolvable_lock_refusal(
-                    Side::Destination,
-                    &cwd_workspace_name_str,
-                    cwd_project_name.as_str(),
-                    rp,
-                    raw,
-                )
-            );
-        }
-
-        // Source side: refuse on any non-`ok`, non-`Ahead` relation. (`Ahead` is
-        // handled per verb below.)
-        let source_anomalous: Vec<&RepoRelation> = source_class
-            .relations
-            .iter()
-            .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
-            .collect();
-        if let Some(msg) = lock_relation_refusal(
+        if let Some(msg) = unresolvable_entry_refusal(
+            source_class,
             Side::Source,
             source_workspace_name,
             source_project_name.as_str(),
-            &source_anomalous,
+        ) {
+            anyhow::bail!("{msg}");
+        }
+        if let Some(msg) = unresolvable_entry_refusal(
+            &cwd_class,
+            Side::Destination,
+            &cwd_workspace_name_str,
+            cwd_project_name.as_str(),
+        ) {
+            anyhow::bail!("{msg}");
+        }
+
+        if let Some(msg) = anomalous_relation_refusal(
+            source_class,
+            Side::Source,
+            source_workspace_name,
+            source_project_name.as_str(),
         ) {
             anyhow::bail!("{msg}");
         }
@@ -2553,16 +2532,11 @@ fn run_preconditions_after_acquire(
         // CWD side, both verbs: same rule, same refusal. `Ahead` is the benign
         // in-progress shape each verb then handles its own way below — sync-to
         // relocks it at op start, a pull announces it and lets relock heal it.
-        let cwd_anomalous: Vec<&RepoRelation> = cwd_class
-            .relations
-            .iter()
-            .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
-            .collect();
-        if let Some(msg) = lock_relation_refusal(
+        if let Some(msg) = anomalous_relation_refusal(
+            &cwd_class,
             Side::Destination,
             &cwd_workspace_name_str,
             cwd_project_name.as_str(),
-            &cwd_anomalous,
         ) {
             anyhow::bail!("{msg}");
         }
@@ -3173,13 +3147,19 @@ fn load_continuing_context<'a>(
         (_, Checkout::Primary { .. }) => project_override.clone(),
     };
 
-    let (source_project_dir, source_workspace_root, source_workspace_name, source_is_workweave) = {
+    let (
+        source_project_dir,
+        source_workspace_root,
+        source_workspace_name,
+        source_project_name,
+        source_is_workweave,
+    ) = {
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, other_project_override)?;
         let pname = find_project_name(&source_ctx)?;
         let root = source_ctx.active_path().to_path_buf();
         let dir = project_dir(&root, pname.as_str());
         let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
-        (dir, root, workspace_name(&source_ctx), is_workweave)
+        (dir, root, workspace_name(&source_ctx), pname, is_workweave)
     };
 
     let dest_project_dir = match recorded_verb {
@@ -3204,21 +3184,82 @@ fn load_continuing_context<'a>(
     // T0 is "the start of the (resumed) replay" — re-pinning here gives
     // replay's re-entry rule a coherent set of inputs. Per-repo no-op
     // detection handles already-converged repos cleanly.
+    //
+    // The classification comes with the pin, on the same terms the fresh path
+    // takes it: a re-pinned source the gate never reads is a source this op
+    // consumes at a state its own first invocation would have refused.
     let project_vcs = project_vcs();
-    let classify = if matches!(recorded_verb, MachineVerb::Sync)
-        && source_is_workweave
-        && !allow_stale_lock_resumed
-    {
-        ClassifySource::RelationsAndTips
-    } else {
-        ClassifySource::Skip
-    };
+    let classify = classify_for(recorded_verb, allow_stale_lock_resumed, source_is_workweave);
     let snapshot = pin_source_snapshot(
         project_vcs.as_ref(),
         &source_project_dir,
         &source_workspace_root,
         classify,
     )?;
+
+    // Re-gate the re-pinned source. Replay is the phase that consumes the
+    // snapshot, so this is the re-entry where a source that went anomalous
+    // between strand and resume would otherwise be replayed from without a
+    // word. The refusal says what a fresh refusal cannot: the op is still
+    // there, and both exits from it still are.
+    if matches!(entry_phase, op_state::OpPhase::Replay) {
+        if let Some(class) = snapshot.source_class.as_ref() {
+            for refusal in [
+                unresolvable_entry_refusal(
+                    class,
+                    Side::Source,
+                    &source_workspace_name,
+                    source_project_name.as_str(),
+                ),
+                anomalous_relation_refusal(
+                    class,
+                    Side::Source,
+                    &source_workspace_name,
+                    source_project_name.as_str(),
+                ),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                anyhow::bail!("{}", parked_op_refusal(&refusal, record.verb));
+            }
+        }
+    }
+
+    // Later-phase re-entry re-runs the target dirt scan. Replay re-entry does
+    // not: a repo mid-conflict is the state that stranded this op, and
+    // refusing it as dirt would refuse the resume that resolves it. From
+    // relock onward the remaining phase that reads the target's worktree is
+    // advance-target, whose fast-forward a dirty target blocks — re-running
+    // the scan here refuses before relock commits rather than partway through
+    // the landing.
+    if matches!(entry_phase, op_state::OpPhase::Relock)
+        && matches!(recorded_verb, MachineVerb::SyncTo)
+    {
+        let cwd_project_preflight = Project::from_dir(&cwd_project_dir)
+            .context("failed to load CWD project for the resumed op's dirt scan")?;
+        if let Err(e) = check_dirty_target_preflight(
+            project_vcs.as_ref(),
+            &cwd_project_preflight,
+            &dest_workspace_dir,
+            &dest_project_dir,
+            &cli_path,
+        ) {
+            anyhow::bail!("{}", parked_op_refusal(&format!("{e:#}"), record.verb));
+        }
+    }
+
+    // The re-pin, stated. The banner above announces continuation of the
+    // recorded op; without this line the plan the operator is told about and
+    // the tips this session will actually deliver derive from reads taken
+    // minutes apart, and only one of them was announced. Derived from the
+    // pinned value itself, so it names what this session will replay from.
+    if emit_text {
+        eprintln!(
+            "  source re-read at resume: {source_workspace_name} at {tip}",
+            tip = short_sha(snapshot.source_project_tip.as_str()),
+        );
+    }
 
     Ok(OpContext {
         cwd_ctx,
@@ -3865,6 +3906,78 @@ fn relock_recovery(side: Side, project_name: &str) -> String {
 /// corrupt. Preserves the old lock-freshness "unknown revision" diagnostic,
 /// including the `--project <p>`-qualified recovery hint and the
 /// `--allow-stale-lock` escape hatch.
+/// What the source snapshot classifies, given the op's shape.
+///
+/// One decision, read by the fresh pin and the resume's re-pin. Two copies of
+/// it would let a resume classify a source its fresh invocation gated, or gate
+/// one its fresh invocation waived, from the same arguments.
+fn classify_for(
+    verb: MachineVerb,
+    allow_stale_lock: bool,
+    source_is_workweave: bool,
+) -> ClassifySource {
+    if allow_stale_lock {
+        ClassifySource::Skip
+    } else if matches!(verb, MachineVerb::Sync) && source_is_workweave {
+        ClassifySource::RelationsAndTips
+    } else {
+        ClassifySource::Relations
+    }
+}
+
+/// A resume-time refusal: the gate's own text, plus what is true of a refused
+/// resume and of no fresh refusal — the op is still recorded, and both ways
+/// out of it are still open.
+fn parked_op_refusal(refusal: &str, verb: op_state::OpVerb) -> String {
+    format!(
+        "{refusal}\n\
+         This op is still parked at its recorded phase; the refusal changed nothing. \
+         Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",
+        resume = op_state::resume_command(verb),
+    )
+}
+
+/// The lock-freshness gate's two halves, as predicates over one side's
+/// classification. The fresh path and a resume both run them, so the gate a
+/// resumed op passes is the gate its fresh invocation passed rather than a
+/// second spelling that can drift from it.
+///
+/// Kept as two functions rather than one because the fresh path interleaves
+/// them across both sides — every unresolvable entry outranks every anomalous
+/// relation, on either side, since a lock naming a revision that does not
+/// resolve is a corrupt lock rather than a stale one.
+fn unresolvable_entry_refusal(
+    class: &LockClassification,
+    side: Side,
+    workspace_name: &str,
+    project_name: &str,
+) -> Option<String> {
+    let (repo_path, raw) = class.unresolvable.first()?;
+    Some(unresolvable_lock_refusal(
+        side,
+        workspace_name,
+        project_name,
+        repo_path,
+        raw,
+    ))
+}
+
+/// Refuse on any relation that is neither `Ok` nor the benign `Ahead` (lock
+/// behind HEAD), which each verb handles its own way.
+fn anomalous_relation_refusal(
+    class: &LockClassification,
+    side: Side,
+    workspace_name: &str,
+    project_name: &str,
+) -> Option<String> {
+    let anomalous: Vec<&RepoRelation> = class
+        .relations
+        .iter()
+        .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
+        .collect();
+    lock_relation_refusal(side, workspace_name, project_name, &anomalous)
+}
+
 fn unresolvable_lock_refusal(
     side: Side,
     workspace_name: &str,
