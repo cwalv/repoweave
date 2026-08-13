@@ -236,7 +236,7 @@ fn retire_names_repos_differ_with_no_verdict_when_the_pair_is_unresolvable() {
     // The exact query the retire comparison runs -- `rev-list --count
     // target..cwd` inside the CWD (ww) repo -- must itself fail here, or
     // this fixture exercises a resolvable pair rather than the degrade
-    // path the bead is about.
+    // path this test exists to pin.
     let probe = common::git()
         .args([
             "rev-list",
