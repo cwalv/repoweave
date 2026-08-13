@@ -3204,23 +3204,24 @@ fn load_continuing_context<'a>(
     // there, and both exits from it still are.
     if matches!(entry_phase, op_state::OpPhase::Replay) {
         if let Some(class) = snapshot.source_class.as_ref() {
-            for refusal in [
-                unresolvable_entry_refusal(
-                    class,
-                    Side::Source,
-                    &source_workspace_name,
-                    source_project_name.as_str(),
-                ),
+            // Unresolvable first, on both paths: a lock naming a revision that
+            // does not resolve is corrupt rather than stale, and the operator
+            // fixes it differently.
+            let refusal = unresolvable_entry_refusal(
+                class,
+                Side::Source,
+                &source_workspace_name,
+                source_project_name.as_str(),
+            )
+            .or_else(|| {
                 anomalous_relation_refusal(
                     class,
                     Side::Source,
                     &source_workspace_name,
                     source_project_name.as_str(),
-                ),
-            ]
-            .into_iter()
-            .flatten()
-            {
+                )
+            });
+            if let Some(refusal) = refusal {
                 anyhow::bail!("{}", parked_op_refusal(&refusal, record.verb));
             }
         }
