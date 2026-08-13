@@ -2023,10 +2023,10 @@ impl Vcs for GitVcs {
             }
         }
 
-        // Foreign tip: refuse to reset. The pre-abort ref was already
-        // written by the caller (run_abort writes it for every repo before
-        // calling this), so the tip is preserved either way; we surface
-        // the label so the refusal message can name it.
+        // Foreign tip: refuse to reset. The caller writes a pre-abort ref for
+        // every repo before calling this, so a reference exists — but which
+        // tip it holds is a separate question, answered below. The label is
+        // surfaced either way so the refusal message can name it.
         let resolved_pre_abort = self.resolve_pre_abort_ref(repo, op_id);
         let pre_abort = resolved_pre_abort.clone().unwrap_or_else(|| {
             // Should not happen: run_abort writes the pre-abort ref before

@@ -16,8 +16,8 @@ use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
-    DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName, HeadAttachment, RefName,
-    ForeignTipPolicy, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+    DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName, ForeignTipPolicy, HeadAttachment,
+    RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{
     project_dir, project_rel_path, AdvisoryKindOutput, AdvisoryOutput, Checkout, Resolution,

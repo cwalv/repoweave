@@ -939,7 +939,10 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
         "the abandoned tip must stay reachable through the pre-abort ref"
     );
     assert!(
-        try_git(&["cat-file", "-e", &format!("{foreign_tip}^{{commit}}")], &ws.server_dir),
+        try_git(
+            &["cat-file", "-e", &format!("{foreign_tip}^{{commit}}")],
+            &ws.server_dir
+        ),
         "the abandoned commit object must survive the abort"
     );
 
