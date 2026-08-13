@@ -130,6 +130,43 @@ fn doctor_surfaces_the_io_cause_in_both_renders() {
     );
 }
 
+/// `--fix` cannot ground a write in a read it cannot perform. It must defer to
+/// the same report-only finding plain `doctor` raises rather than attempting
+/// the write anyway and layering a second, error-severity finding for the
+/// same unreadable file on top of it.
+#[test]
+fn doctor_fix_defers_to_the_same_report_only_finding_as_plain_doctor() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    workspace_with_unreadable_gitattributes(&root);
+
+    let plain = common::rwv().arg("doctor").current_dir(&root).output().unwrap();
+    assert!(
+        plain.status.success(),
+        "plain doctor should exit 0 on a report-only finding:\n{}",
+        String::from_utf8_lossy(&plain.stdout)
+    );
+
+    let fix = common::rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8(fix.stdout).unwrap();
+    assert!(
+        fix.status.success(),
+        "doctor --fix must not exit non-zero over a finding it cannot act on:\n{fix_stdout}"
+    );
+    assert!(
+        !fix_stdout.contains("failed to write replay-exclusion"),
+        "doctor --fix attempted a write it could not ground in a read:\n{fix_stdout}"
+    );
+    assert!(
+        fix_stdout.contains("failed to read .gitattributes for replay-exclusion check"),
+        "doctor --fix dropped the report-only finding plain doctor raises:\n{fix_stdout}"
+    );
+}
+
 /// The cause is emitted by `Display`, so a caller that renders the error with
 /// no formatting of its own still hands it to the operator.
 #[test]
