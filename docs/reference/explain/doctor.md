@@ -1176,6 +1176,13 @@ Schema:
           "enum": [
             "legacy-spelling"
           ]
+        },
+        {
+          "description": "`.gitattributes` carries both spellings for `rwv.lock`. Which one git applies is decided by reading order, and the legacy name is live either way: a global `merge.ours.driver` binds to it during a bare `git rebase --continue`.",
+          "type": "string",
+          "enum": [
+            "legacy-alongside-current"
+          ]
         }
       ]
     },
@@ -2630,10 +2637,11 @@ rwv doctor --fix
   `rwv.lock merge=rwv-ours` in `.gitattributes`, or still carries the
   legacy `rwv.lock merge=ours` spelling (renamed to close an
   accidental-collision hazard with an unrelated global
-  `merge.ours.driver` during bare `git rebase --continue`). Run
-  `rwv doctor --fix` to add or migrate the line — the migration path also
-  commits the change (skipping the commit when the repo has other staged
-  work).
+  `merge.ours.driver` during bare `git rebase --continue`), or carries
+  both lines at once, which leaves the legacy name live whichever way
+  git's reading order resolves them. Run `rwv doctor --fix` to add,
+  migrate, or drop the line — those paths also commit the change
+  (skipping the commit when the repo has other staged work).
 - *phantom-merge-driver* — a `.gitattributes` line in a managed repo assigns
   an `rwv-`-prefixed merge driver rwv does not define. Git resolves
   `merge=<name>` through `merge.<name>.driver` config and falls back to a

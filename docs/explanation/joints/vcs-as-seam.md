@@ -233,9 +233,13 @@ is now properly per-VCS. A hg impl can implement `set_replay_exclusion`
 via `[merge-patterns]` in `.hgrc`; a jj impl might do something
 entirely different. Sync neither knows nor cares.
 
-The companion `has_replay_exclusion` query exists so `rwv doctor` can
+The companion `replay_exclusion_state` query exists so `rwv doctor` can
 detect projects initialised before this path landed and offer to add
-the missing entry. The detection logic in core stays VCS-agnostic.
+the missing entry. The detection logic in core stays VCS-agnostic. It
+answers with a state rather than a bool because doctor asks twice — once
+to report, once to repair — and a pair of bools let those two answers be
+derived independently, which is how a repair came to rewrite and commit
+in a project the report had called clean.
 
 ### (d) `Vcs::push_ref`
 

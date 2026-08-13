@@ -41,7 +41,7 @@ fn git_in(dir: &Path, args: &[&str]) {
 }
 
 /// Workspace whose one project has an unreadable `.gitattributes`, so
-/// `has_replay_exclusion` returns `VcsError::Io`.
+/// `replay_exclusion_state` returns `VcsError::Io`.
 fn workspace_with_unreadable_gitattributes(root: &Path) {
     let repo_path = "github/acme/server";
     let repo = root.join(repo_path);

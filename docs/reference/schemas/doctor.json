@@ -954,6 +954,13 @@
           "enum": [
             "legacy-spelling"
           ]
+        },
+        {
+          "description": "`.gitattributes` carries both spellings for `rwv.lock`. Which one git applies is decided by reading order, and the legacy name is live either way: a global `merge.ours.driver` binds to it during a bare `git rebase --continue`.",
+          "type": "string",
+          "enum": [
+            "legacy-alongside-current"
+          ]
         }
       ]
     },

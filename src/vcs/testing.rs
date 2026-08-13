@@ -425,8 +425,12 @@ impl Vcs for FakeVcs {
         unsupported("set_replay_exclusion")
     }
 
-    fn has_replay_exclusion(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {
-        unsupported("has_replay_exclusion")
+    fn replay_exclusion_state(
+        &self,
+        _repo: &Path,
+        _path: &Path,
+    ) -> Result<crate::vcs::ReplayExclusionState, VcsError> {
+        unsupported("replay_exclusion_state")
     }
 
     fn has_committed_replay_exclusion(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {

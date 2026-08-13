@@ -75,6 +75,9 @@ pub fn case_token(v: &CheckViolation) -> String {
             ReplayExclusionKind::LegacySpelling => {
                 "missing-replay-exclusion/legacy-spelling".into()
             }
+            ReplayExclusionKind::LegacyAlongsideCurrent => {
+                "missing-replay-exclusion/legacy-alongside-current".into()
+            }
         },
         CheckViolation::ReplayExclusionUnreadable { .. } => "replay-exclusion-unreadable".into(),
         CheckViolation::MissingMergeDriverConfig { .. } => "missing-merge-driver-config".into(),
@@ -249,6 +252,10 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::MissingReplayExclusion {
             project: project(),
             sub_kind: ReplayExclusionKind::LegacySpelling,
+        },
+        CheckViolation::MissingReplayExclusion {
+            project: project(),
+            sub_kind: ReplayExclusionKind::LegacyAlongsideCurrent,
         },
         CheckViolation::ReplayExclusionUnreadable {
             project: project(),

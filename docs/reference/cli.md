@@ -336,7 +336,7 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | Workweave drift | Worktrees missing from a workweave or extra worktrees not in manifest |
 | Index drift | A repo's index doesn't match HEAD tree (shared-refs side effect) |
 | Working-tree drift | A repo's on-disk files don't match HEAD tree (shared-refs side effect) |
-| Missing replay-exclusion | A project repo's `.gitattributes` lacks `rwv.lock merge=rwv-ours` or still carries the legacy `merge=ours` spelling (`--fix` adds/migrates the line and, on migration, commits it) |
+| Missing replay-exclusion | A project repo's `.gitattributes` lacks `rwv.lock merge=rwv-ours`, still carries the legacy `merge=ours` spelling, or carries both (`--fix` adds/migrates/de-duplicates the line and, where it migrates, commits it) |
 | Legacy `role: primary` | A project `rwv.toml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
 | Dead op-lease | A `.rwv-op-lease` file whose recorded owner has no matching `.rwv-op` for the same op id — structurally impossible to belong to any in-flight operation. `--fix` removes the lease. |
 | Cargo version skew | The same crate is required at different version-req strings across workspace members (post `workspace = true` indirection); warning-severity observatory, report-only |

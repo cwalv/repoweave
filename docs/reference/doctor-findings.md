@@ -199,11 +199,16 @@ at all. `legacy-spelling` — the entry is there under the pre-rename
 `merge=ours`, which reads as satisfied to a human and satisfies nothing:
 sync's check matches the current name, and `ours` collides with a driver a
 global git config may define for something else entirely.
+`legacy-alongside-current` — both lines are present, which is not the
+current one plus harmless residue: two `merge=` assignments on one path
+resolve by reading order, and the legacy name stays bound to whatever
+`merge.ours.driver` the operator's global config defines.
 
 **What to do:** `rwv doctor --fix` appends the line — or migrates the legacy
-spelling in place — and commits it when the repo has no other staged changes.
-The committed form is what sync's invariant reads, so the commit is the part
-that makes it take effect.
+spelling in place, dropping it where the current line is already there — and
+commits it when the repo has no other staged changes. The committed form is
+what sync's invariant reads, so the commit is the part that makes it take
+effect.
 
 ### `replay-exclusion-unreadable`
 

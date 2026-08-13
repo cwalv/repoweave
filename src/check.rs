@@ -6,7 +6,7 @@
 use crate::git::{GIT_DEFAULT_REMOTE_NAME, RWV_MERGE_DRIVER_PREFIX};
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
-use crate::vcs::ResolvedRevisionId;
+use crate::vcs::{ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
     discover_project_paths, project_dir, project_rel_path, projects_dir, strip_projects_prefix,
     Resolution,
@@ -603,7 +603,9 @@ impl CheckViolation {
             | CheckViolation::DeadOpLease { .. } => Auto,
 
             CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
-                ReplayExclusionKind::Absent | ReplayExclusionKind::LegacySpelling => Auto,
+                ReplayExclusionKind::Absent
+                | ReplayExclusionKind::LegacySpelling
+                | ReplayExclusionKind::LegacyAlongsideCurrent => Auto,
             },
             CheckViolation::IndexDrift { kind, .. } => match kind {
                 IndexDriftKind::SafeToFix => Auto,
@@ -720,6 +722,29 @@ pub enum ReplayExclusionKind {
     /// the old name reads as the invariant being met while sync's check —
     /// which matches the current name — sees nothing.
     LegacySpelling,
+    /// `.gitattributes` carries both spellings for `rwv.lock`. Which one git
+    /// applies is decided by reading order, and the legacy name is live
+    /// either way: a global `merge.ours.driver` binds to it during a bare
+    /// `git rebase --continue`.
+    LegacyAlongsideCurrent,
+}
+
+/// The finding a project's replay-exclusion state raises, `None` for the one
+/// state that raises none.
+///
+/// Doctor decides this once. The scan turns the answer into a finding and
+/// `--fix` turns it into a repair, so `--fix` cannot act on a state the scan
+/// called clean — the two read one classification of one read of the file
+/// rather than each deriving its own.
+fn replay_exclusion_finding(state: ReplayExclusionState) -> Option<ReplayExclusionKind> {
+    match state {
+        ReplayExclusionState::Current => None,
+        ReplayExclusionState::Absent => Some(ReplayExclusionKind::Absent),
+        ReplayExclusionState::LegacyOnly => Some(ReplayExclusionKind::LegacySpelling),
+        ReplayExclusionState::LegacyAlongsideCurrent => {
+            Some(ReplayExclusionKind::LegacyAlongsideCurrent)
+        }
+    }
 }
 
 /// How a stale index should be treated.
@@ -3145,7 +3170,7 @@ fn rwv_defines_merge_driver(name: &str) -> bool {
 /// `rwv init` writes and `rwv doctor --fix` repairs.
 ///
 /// Reads the working-tree `.gitattributes`, like
-/// [`Vcs::has_replay_exclusion`](crate::vcs::Vcs::has_replay_exclusion): the
+/// [`Vcs::replay_exclusion_state`](crate::vcs::Vcs::replay_exclusion_state): the
 /// operator's next commit is the one worth catching, and a file read costs no
 /// subprocess. Report-only — repairing a phantom means guessing whether the
 /// operator meant `rwv-ours` or meant nothing at all.
@@ -5951,6 +5976,13 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                              (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
                              and commit)"
                         ),
+                        ReplayExclusionKind::LegacyAlongsideCurrent => format!(
+                            "{project}: project repo has both `rwv.lock merge=rwv-ours` and legacy \
+                             `rwv.lock merge=ours` in .gitattributes; git picks between them by \
+                             reading order, and the legacy name binds to any `merge.ours.driver` \
+                             a global git config defines (run `rwv doctor --fix` to drop the \
+                             legacy line and commit)"
+                        ),
                     },
                 ),
                 CheckViolation::ReplayExclusionUnreadable { project, error } => (
@@ -7207,43 +7239,46 @@ fn apply_workspace_repairs(
         if !project_repo.is_dir() {
             continue;
         }
-        let has_legacy = crate::git::has_working_tree_legacy_replay_exclusion(
-            &project_repo,
-            std::path::Path::new(LockFile::FILE_NAME),
-        )
-        .unwrap_or(false);
-        let has_new = vcs
-            .has_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME))
-            .unwrap_or(false);
-        if has_new && !has_legacy {
+        let Ok(state) =
+            vcs.replay_exclusion_state(&project_repo, std::path::Path::new(LockFile::FILE_NAME))
+        else {
             continue;
-        }
+        };
+        let Some(sub_kind) = replay_exclusion_finding(state) else {
+            continue;
+        };
+        let migration = match sub_kind {
+            ReplayExclusionKind::Absent => None,
+            ReplayExclusionKind::LegacySpelling => {
+                Some("migrated `rwv.lock merge=ours` → `rwv.lock merge=rwv-ours`")
+            }
+            ReplayExclusionKind::LegacyAlongsideCurrent => Some(
+                "dropped the legacy `rwv.lock merge=ours` line, leaving `rwv.lock merge=rwv-ours`",
+            ),
+        };
         // Rewrites a legacy line to the new name in place rather than
         // appending alongside it, and is a no-op once the new line is the
         // only one.
         match vcs.set_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
             Ok(()) => {
-                if has_legacy {
+                if let Some(migration) = migration {
                     // The invariant reads the *committed* form, so a migration
                     // that stops at the working tree is not yet in effect. A
                     // repo with unrelated staged work is left uncommitted —
                     // user work is never bundled with an rwv-authored fix.
                     match commit_replay_exclusion_migration(vcs, &project_repo) {
                         Ok(CommitOutcome::Committed) => println!(
-                            "[fixed] core: migrated `rwv.lock merge=ours` → \
-                             `rwv.lock merge=rwv-ours` in {}/.gitattributes (committed)",
+                            "[fixed] core: {migration} in {}/.gitattributes (committed)",
                             project.name
                         ),
                         Ok(CommitOutcome::SkippedUnrelatedStaged) => println!(
-                            "[fixed] core: migrated `rwv.lock merge=ours` → \
-                             `rwv.lock merge=rwv-ours` in {}/.gitattributes (NOT committed: \
+                            "[fixed] core: {migration} in {}/.gitattributes (NOT committed: \
                              project repo has unrelated staged changes; commit them, then \
                              re-run `rwv doctor --fix` to complete the migration)",
                             project.name
                         ),
                         Ok(CommitOutcome::NothingToCommit) => println!(
-                            "[fixed] core: migrated `rwv.lock merge=ours` → \
-                             `rwv.lock merge=rwv-ours` in {}/.gitattributes",
+                            "[fixed] core: {migration} in {}/.gitattributes",
                             project.name
                         ),
                         Err(e) => fix_errors.push(format!(
@@ -7251,7 +7286,7 @@ fn apply_workspace_repairs(
                             project.name
                         )),
                     }
-                } else if !has_new {
+                } else {
                     println!(
                         "[fixed] core: wrote `rwv.lock merge=rwv-ours` to {}/.gitattributes",
                         project.name
@@ -8475,25 +8510,14 @@ fn collect_doctor_violations(
         if !project_repo.is_dir() {
             continue;
         }
-        // `has_replay_exclusion` matches only the current needle, so a project
-        // still on the legacy spelling reports missing and drives the same
-        // `--fix` migration.
-        match vcs.has_replay_exclusion(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
-            Ok(true) => {}
-            Ok(false) => {
-                let legacy = crate::git::has_working_tree_legacy_replay_exclusion(
-                    &project_repo,
-                    std::path::Path::new(LockFile::FILE_NAME),
-                )
-                .unwrap_or(false);
-                violations.push(CheckViolation::MissingReplayExclusion {
-                    project: project.name.clone(),
-                    sub_kind: if legacy {
-                        ReplayExclusionKind::LegacySpelling
-                    } else {
-                        ReplayExclusionKind::Absent
-                    },
-                });
+        match vcs.replay_exclusion_state(&project_repo, std::path::Path::new(LockFile::FILE_NAME)) {
+            Ok(state) => {
+                if let Some(sub_kind) = replay_exclusion_finding(state) {
+                    violations.push(CheckViolation::MissingReplayExclusion {
+                        project: project.name.clone(),
+                        sub_kind,
+                    });
+                }
             }
             Err(e) => violations.push(CheckViolation::ReplayExclusionUnreadable {
                 project: project.name.clone(),

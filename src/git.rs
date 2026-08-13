@@ -4,7 +4,8 @@ use crate::manifest::Role;
 use crate::vcs::{
     CommitSummary, ConflictOp, DerivedContentPolicy, DerivedContentResolution, HeadAttachment,
     HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName, RawRevisionId, RefName,
-    RemoteDefaultBranch, ResolvedRevisionId, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
+    RemoteDefaultBranch, ReplayExclusionState, ResolvedRevisionId, UniqueDiff, Vcs, VcsError,
+    VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -96,7 +97,7 @@ pub const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
 // The constants are declared here so the inline `-c` flags in
 // [`GitVcs::rebase`], the `.gitattributes` writer in
 // [`GitVcs::set_replay_exclusion`], the readers in
-// [`GitVcs::has_replay_exclusion`] and
+// [`GitVcs::replay_exclusion_state`] and
 // [`GitVcs::has_committed_replay_exclusion`], the invariant in
 // `sync::verify_replay_exclusion_invariant`, and the doctor `--fix`
 // migrator all reference a single source of truth for the name.
@@ -269,38 +270,6 @@ pub fn has_committed_legacy_replay_exclusion(repo: &Path, path: &Path) -> Result
         None => return Ok(false),
     };
     Ok(content.lines().any(|line| line.trim() == legacy))
-}
-
-/// `true` when the on-disk (working-tree) `.gitattributes` carries the
-/// **legacy** `<path> merge=ours` line. Used by `rwv doctor` to detect
-/// projects still on the legacy needle so `--fix` can migrate them.
-pub fn has_working_tree_legacy_replay_exclusion(
-    repo: &Path,
-    path: &Path,
-) -> Result<bool, VcsError> {
-    let attrs_path = repo.join(".gitattributes");
-    let path_str = path.to_str().ok_or_else(|| VcsError::Io {
-        ctx: format!(
-            "replay-exclusion path {} is not valid UTF-8",
-            path.display()
-        ),
-        source: std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "non-utf8 replay-exclusion path",
-        ),
-    })?;
-    let legacy = legacy_rwv_replay_exclusion_needle(path_str);
-    let contents = match std::fs::read_to_string(&attrs_path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(e) => {
-            return Err(VcsError::Io {
-                ctx: format!("failed to read {}", attrs_path.display()),
-                source: e,
-            })
-        }
-    };
-    Ok(contents.lines().any(|line| line.trim() == legacy))
 }
 
 /// Build the two `KEY=VALUE` argument strings that inline-define the
@@ -1797,7 +1766,11 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
+    fn replay_exclusion_state(
+        &self,
+        repo: &Path,
+        path: &Path,
+    ) -> Result<ReplayExclusionState, VcsError> {
         let attrs_path = repo.join(".gitattributes");
         let path_str = path.to_str().ok_or_else(|| VcsError::Io {
             ctx: format!(
@@ -1810,10 +1783,13 @@ impl Vcs for GitVcs {
             ),
         })?;
         let needle = rwv_replay_exclusion_needle(path_str);
+        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_str);
 
         let contents = match std::fs::read_to_string(&attrs_path) {
             Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ReplayExclusionState::Absent)
+            }
             Err(e) => {
                 return Err(VcsError::Io {
                     ctx: format!("failed to read {}", attrs_path.display()),
@@ -1822,7 +1798,18 @@ impl Vcs for GitVcs {
             }
         };
 
-        Ok(contents.lines().any(|line| line.trim() == needle))
+        let mut has_new = false;
+        let mut has_legacy = false;
+        for line in contents.lines().map(str::trim) {
+            has_new |= line == needle;
+            has_legacy |= line == legacy_needle;
+        }
+        Ok(match (has_new, has_legacy) {
+            (true, true) => ReplayExclusionState::LegacyAlongsideCurrent,
+            (true, false) => ReplayExclusionState::Current,
+            (false, true) => ReplayExclusionState::LegacyOnly,
+            (false, false) => ReplayExclusionState::Absent,
+        })
     }
 
     fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {

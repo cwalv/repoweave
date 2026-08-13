@@ -1957,6 +1957,27 @@ impl DerivedContentPolicy {
     }
 }
 
+/// Which replay-exclusion assignments a repo carries for one path, as of a
+/// single read.
+///
+/// One value rather than a pair of predicates: the exclusion is configured or
+/// not, and superseded-but-still-present is a third state, not the absence of
+/// the second. Two independent predicates let one caller answer "configured"
+/// while another answers "needs migrating" about the same file, which is how
+/// a repair came to act on a state the report called clean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayExclusionState {
+    /// No assignment for the path.
+    Absent,
+    /// The superseded assignment only.
+    LegacyOnly,
+    /// Both, which resolves by position rather than by intent and leaves the
+    /// superseded name live.
+    LegacyAlongsideCurrent,
+    /// The current assignment, and nothing superseded beside it.
+    Current,
+}
+
 /// Operations repoweave needs from a version control system.
 ///
 /// Implementations exist for git (and eventually jj, sl, hg). Each method
@@ -2316,26 +2337,29 @@ pub trait Vcs: Send + Sync {
     /// custom cherry-pick loop that previously did per-commit exclusion.
     fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError>;
 
-    /// `true` when [`set_replay_exclusion`] has been configured for `path` in
-    /// `repo`.
+    /// How [`set_replay_exclusion`] stands for `path` in `repo`, from one
+    /// read.
     ///
-    /// For git: true iff `<repo>/.gitattributes`
-    /// contains a `<path> merge=rwv-ours` line. The legacy `merge=ours`
-    /// spelling is NOT accepted — a repo carrying only the legacy line is
-    /// reported as missing so `rwv doctor --fix` migrates it. See
-    /// [`crate::git::has_working_tree_legacy_replay_exclusion`] for
-    /// migration detection.
+    /// For git: reads `<repo>/.gitattributes` once and reports which of
+    /// `<path> merge=rwv-ours` and the legacy `<path> merge=ours` it carries.
+    /// The legacy spelling never counts as configured — on its own or beside
+    /// the current line, it names a driver an unrelated global
+    /// `merge.ours.driver` can define.
     ///
-    /// Used by `rwv doctor` to detect projects initialised before the
-    /// replay-exclusion path landed and offer to add the missing entry.
+    /// `rwv doctor` both reports and repairs off this one value, so what it
+    /// reports and what `--fix` acts on are the same classification.
     ///
     /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-    fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
+    fn replay_exclusion_state(
+        &self,
+        repo: &Path,
+        path: &Path,
+    ) -> Result<ReplayExclusionState, VcsError>;
 
     /// `true` when [`set_replay_exclusion`] has been configured for `path` in
     /// `repo`'s **committed** tree (not just the working tree).
     ///
-    /// Different from [`has_replay_exclusion`]: that one reads the on-disk
+    /// Different from [`replay_exclusion_state`]: that one reads the on-disk
     /// `.gitattributes`; this one reads the committed-at-HEAD copy. The
     /// committed form is the one that survives a rebase (the replay starts
     /// from the committed tree, not the working tree), so sync's precondition
@@ -2345,7 +2369,7 @@ pub trait Vcs: Send + Sync {
     /// Returns `false` when the file isn't committed yet.
     ///
     /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-    /// [`has_replay_exclusion`]: Vcs::has_replay_exclusion
+    /// [`replay_exclusion_state`]: Vcs::replay_exclusion_state
     fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 
     /// Fast-forward `repo`'s current branch to `to`, refusing rather than

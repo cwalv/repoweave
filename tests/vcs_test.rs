@@ -1,6 +1,8 @@
 use repoweave::git::git_vcs;
 use repoweave::manifest::Role;
-use repoweave::vcs::{ConflictOp, DerivedContentPolicy, RefName, ResolvedRevisionId, VcsError};
+use repoweave::vcs::{
+    ConflictOp, DerivedContentPolicy, RefName, ReplayExclusionState, ResolvedRevisionId, VcsError,
+};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -861,7 +863,7 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
 }
 
 // ============================================================================
-// Vcs::set_replay_exclusion / has_replay_exclusion
+// Vcs::set_replay_exclusion / replay_exclusion_state
 // ============================================================================
 //
 // The replay-exclusion mechanism wires git's per-path merge driver
@@ -935,55 +937,84 @@ fn set_replay_exclusion_is_idempotent() {
 }
 
 #[test]
-fn has_replay_exclusion_false_when_gitattributes_missing() {
+fn replay_exclusion_state_absent_when_gitattributes_missing() {
     let dir = init_repo();
     let vcs = git_vcs();
 
-    assert!(!vcs
-        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap());
+    assert_eq!(
+        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
+            .unwrap(),
+        ReplayExclusionState::Absent
+    );
 }
 
 #[test]
-fn has_replay_exclusion_false_when_line_absent() {
+fn replay_exclusion_state_absent_when_line_absent() {
     let dir = init_repo();
     let vcs = git_vcs();
     fs::write(dir.path().join(".gitattributes"), "*.png binary\n").unwrap();
 
-    assert!(!vcs
-        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap());
+    assert_eq!(
+        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
+            .unwrap(),
+        ReplayExclusionState::Absent
+    );
 }
 
 #[test]
-fn has_replay_exclusion_true_when_line_present() {
+fn replay_exclusion_state_current_when_line_present() {
     let dir = init_repo();
     let vcs = git_vcs();
     vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
         .unwrap();
 
-    assert!(vcs
-        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap());
+    assert_eq!(
+        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
+            .unwrap(),
+        ReplayExclusionState::Current
+    );
 }
 
 // ---------------------------------------------------------------------------
 // Legacy `merge=ours` migration
 // ---------------------------------------------------------------------------
 
-/// `has_replay_exclusion` must NOT accept the legacy `merge=ours` line.
-/// If it did, `rwv doctor` and the sync invariant would silently treat a
-/// legacy-only project as fixed and never migrate it to `rwv-ours` — the
-/// exact hazard the rename closes. Accept only the new needle.
+/// The legacy `merge=ours` line must NOT read as configured. If it did,
+/// `rwv doctor` and the sync invariant would silently treat a legacy-only
+/// project as fixed and never migrate it to `rwv-ours` — the exact hazard
+/// the rename closes.
 #[test]
-fn has_replay_exclusion_false_when_only_legacy_line_present() {
+fn replay_exclusion_state_legacy_only_when_only_legacy_line_present() {
     let dir = init_repo();
     let vcs = git_vcs();
     fs::write(dir.path().join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
-    assert!(!vcs
-        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
-        .unwrap());
+    assert_eq!(
+        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
+            .unwrap(),
+        ReplayExclusionState::LegacyOnly
+    );
+}
+
+/// A file carrying both lines is its own state, not "configured". The
+/// legacy name is live whichever way git's reading order resolves the pair,
+/// so reading this as satisfied is what let `--fix` rewrite and commit a
+/// project the report had called clean.
+#[test]
+fn replay_exclusion_state_names_both_lines_when_both_present() {
+    let dir = init_repo();
+    let vcs = git_vcs();
+    fs::write(
+        dir.path().join(".gitattributes"),
+        "*.png binary\nrwv.lock merge=ours\nrwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        vcs.replay_exclusion_state(dir.path(), std::path::Path::new("rwv.lock"))
+            .unwrap(),
+        ReplayExclusionState::LegacyAlongsideCurrent
+    );
 }
 
 /// `set_replay_exclusion` on a `.gitattributes` that carries only the
