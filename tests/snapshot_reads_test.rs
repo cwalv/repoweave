@@ -388,3 +388,120 @@ fn read_file_at_revision_returns_committed_content() {
         "Working tree should still have 'version three'"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Lock entries resolve once, at pin time, against the SOURCE
+// ---------------------------------------------------------------------------
+
+/// Two workspaces whose `release` branch points at DIFFERENT commits, and a
+/// source lock that pins `lib` by that branch name rather than by SHA.
+///
+/// Returns `(source_workspace, cwd_workspace, sha_a, sha_b)`: the source's
+/// `release` is at `sha_b`, CWD's is at `sha_a`, and both objects are present
+/// on both sides (independent clones of one origin that carried both).
+///
+/// A SHA-form entry means the same thing wherever it is read; a branch-form
+/// entry does not, which is what makes the resolution context observable.
+fn branch_form_lock_workspaces(
+    tmp: &Path,
+) -> (std::path::PathBuf, std::path::PathBuf, String, String) {
+    let origin = tmp.join("origin-lib");
+    let sha_a = init_repo(&origin);
+    let sha_b = make_commit(&origin, "b.txt", "b\n", "lib: B");
+    git(&["branch", "release", &sha_b], &origin);
+    let lib_url = format!("file://{}", origin.display());
+
+    let source_ws = tmp.join("source");
+    let source_proj = source_ws.join("projects").join("myproject");
+    std::fs::create_dir_all(&source_proj).unwrap();
+    init_repo(&source_proj);
+    write_manifest(&source_proj, &[("lib", &lib_url)]);
+    std::fs::write(
+        source_proj.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    // The lock pins the BRANCH NAME. Whoever resolves it decides what it means.
+    write_lock(&source_proj, &[("lib", lib_url.as_str(), "release")]);
+    git(
+        &["add", "rwv.toml", ".gitattributes", "rwv.lock"],
+        &source_proj,
+    );
+    git(&["commit", "-m", "lock: pin lib at release"], &source_proj);
+    std::fs::write(source_ws.join(".rwv-active"), "myproject\n").unwrap();
+
+    let source_lib = source_ws.join("lib");
+    git(&["clone", lib_url.as_str(), "lib"], &source_ws);
+    git(&["checkout", "release"], &source_lib);
+
+    let cwd_ws = tmp.join("cwd");
+    let cwd_projects = cwd_ws.join("projects");
+    std::fs::create_dir_all(&cwd_projects).unwrap();
+    git(
+        &["clone", source_proj.to_str().unwrap(), "myproject"],
+        &cwd_projects,
+    );
+    std::fs::write(cwd_ws.join(".rwv-active"), "myproject\n").unwrap();
+
+    let cwd_lib = cwd_ws.join("lib");
+    git(&["clone", lib_url.as_str(), "lib"], &cwd_ws);
+    // CWD's own `release` names the OTHER commit. Both objects are here, so
+    // the fast-forward below is possible — only the resolution decides.
+    git(&["branch", "-f", "release", &sha_a], &cwd_lib);
+    git(&["checkout", "release"], &cwd_lib);
+
+    (source_ws, cwd_ws, sha_a, sha_b)
+}
+
+/// A branch-form lock entry means what the SOURCE says it means. Replay used to
+/// re-resolve the same raw entry against CWD, where the same name reaches a
+/// different commit, so the sync silently converged on CWD's own answer and
+/// reported it as up-to-date.
+#[test]
+fn a_branch_form_lock_entry_resolves_against_the_source_not_cwd() {
+    let tmp = common::tempdir().unwrap();
+    let (source_ws, cwd_ws, sha_a, sha_b) = branch_form_lock_workspaces(tmp.path());
+    let cwd_lib = cwd_ws.join("lib");
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &cwd_lib),
+        sha_a,
+        "fixture precondition: CWD's release must start at the other commit"
+    );
+
+    rwv()
+        .current_dir(&cwd_ws)
+        .args(["sync", source_ws.to_str().unwrap(), "--strategy=ff"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &cwd_lib),
+        sha_b,
+        "the lock entry must resolve to what the SOURCE's `release` names"
+    );
+}
+
+/// The same, with the source named by a path INSIDE it rather than its root.
+/// Member checkouts live under the workspace root, so the resolution has to
+/// start from the resolved root and not from whatever the operator typed —
+/// otherwise every entry resolves against a directory that holds no repos.
+#[test]
+fn naming_the_source_by_an_inner_path_still_resolves_its_members() {
+    let tmp = common::tempdir().unwrap();
+    let (source_ws, cwd_ws, _sha_a, sha_b) = branch_form_lock_workspaces(tmp.path());
+    let source_proj = source_ws.join("projects").join("myproject");
+    let cwd_lib = cwd_ws.join("lib");
+
+    rwv()
+        .current_dir(&cwd_ws)
+        .args(["sync", source_proj.to_str().unwrap(), "--strategy=ff"])
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &cwd_lib),
+        sha_b,
+        "a source named by its project dir must still resolve its member checkouts"
+    );
+}

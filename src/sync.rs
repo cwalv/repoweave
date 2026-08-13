@@ -677,11 +677,16 @@ fn dropped_derived_content(
         .unwrap_or_default()
 }
 
+/// `containment` is HEAD's verdict against `target`, read by the caller at
+/// replay entry — the same value the op record's intent write consumed, so a
+/// commit landing here between the two makes the strategy fail rather than
+/// re-classifying the repo behind the record's back.
 fn sync_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
     baseline: ReplayBaseline,
+    containment: Option<Containment>,
     strategy: SyncStrategy,
     pre_replay_tip: Option<&ResolvedRevisionId>,
 ) -> RepoSyncOutcome {
@@ -704,28 +709,15 @@ fn sync_one_repo(
         };
     }
 
-    let head = match vcs.head_revision(repo) {
-        Ok(h) => h,
-        Err(e) => {
-            let error = e.to_string();
-            return RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
-                error,
-                cause: Some(e),
-            });
+    match containment {
+        Some(Containment::Equal) => return RepoSyncOutcome::NoOp,
+        Some(Containment::Ahead(commits_ahead)) => {
+            return RepoSyncOutcome::AlreadyAhead {
+                commits_ahead,
+                baseline,
+            }
         }
-    };
-
-    if head == *target {
-        return RepoSyncOutcome::NoOp;
-    }
-
-    let containment = Containment::observe(vcs, repo, &head, target);
-
-    if let Some(Containment::Ahead(commits_ahead)) = containment {
-        return RepoSyncOutcome::AlreadyAhead {
-            commits_ahead,
-            baseline,
-        };
+        _ => {}
     }
 
     match apply_strategy(vcs, repo, target, baseline, containment, strategy) {
@@ -2003,16 +1995,16 @@ struct OpContext<'a> {
 /// Two invocations of the same predicate read the checkouts' HEADs at two
 /// instants, and a member that is `Ok` at the first read and `Ahead` at the
 /// second pins no tip while the note announces one.
-enum ClassifySource<'a> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClassifySource {
     /// No consumer: `--allow-stale-lock` bypasses the gate, and a resumed
     /// session re-runs no preconditions.
     Skip,
-    /// Classify the checkouts under this workspace dir. The gate's refusals
-    /// read the relations.
-    Relations(&'a Path),
+    /// Classify the source's checkouts. The gate's refusals read the relations.
+    Relations,
     /// Classify, and additionally pin the `Ahead` checkouts' committed tips as
     /// replay's targets.
-    RelationsAndTips(&'a Path),
+    RelationsAndTips,
 }
 
 /// Atomic source snapshot pinned at T0 (start of replay).
@@ -2028,6 +2020,13 @@ struct SourceSnapshot {
     source_manifest: Manifest,
     /// Source lock (raw, unresolved), read at `source_project_tip`.
     raw_source_lock: LockFile,
+    /// `raw_source_lock` resolved ONCE, against the SOURCE workspace, at T0.
+    /// A lock entry in tag or branch form names a different commit in a
+    /// different workspace, so the workspace whose lock it is, is the only one
+    /// that can say what it means. Every downstream consumer takes its target
+    /// from here; nothing re-resolves the raw lock in another context. An entry
+    /// the source could not resolve is absent, never guessed at.
+    source_lock: crate::manifest::ResolvedLockFile,
     /// The source's member checkouts classified at T0, `None` under
     /// [`ClassifySource::Skip`]. The staleness refusals, the tips-as-truth
     /// note and `pull_tips` all derive from this one value.
@@ -2355,7 +2354,7 @@ fn run_preconditions_after_acquire(
     cwd_workspace_dir: &Path,
     cwd_ctx: &WorkspaceContext,
     source_project_dir: &Path,
-    source_workspace_dir: &Path,
+    source_workspace_root: &Path,
     source_workspace_name: &str,
     source_project_name: &ProjectName,
     cwd_project_name: &ProjectName,
@@ -2442,11 +2441,16 @@ fn run_preconditions_after_acquire(
     let classify = if allow_stale_lock {
         ClassifySource::Skip
     } else if matches!(verb, MachineVerb::Sync) && source_is_workweave {
-        ClassifySource::RelationsAndTips(source_workspace_dir)
+        ClassifySource::RelationsAndTips
     } else {
-        ClassifySource::Relations(source_workspace_dir)
+        ClassifySource::Relations
     };
-    let snapshot = pin_source_snapshot(project_vcs, source_project_dir, classify)?;
+    let snapshot = pin_source_snapshot(
+        project_vcs,
+        source_project_dir,
+        source_workspace_root,
+        classify,
+    )?;
 
     // Replay preconditions (pure reads; refusals leave no trace on-workspace —
     // the acquired op-state is cleaned up by the caller on Err).
@@ -2487,10 +2491,18 @@ fn run_preconditions_after_acquire(
     let cwd_class = if allow_stale_lock {
         None
     } else {
+        let (resolved, unresolvable) = match cwd_project.lock.as_ref() {
+            Some(raw) => {
+                let (resolved, failures) = raw.clone().resolve_versions(cwd_workspace_dir);
+                (Some(resolved), failures)
+            }
+            None => (None, Vec::new()),
+        };
         Some(classify_lock_relations(
             cwd_workspace_dir,
             &cwd_project.manifest,
-            cwd_project.lock.as_ref(),
+            resolved.as_ref(),
+            unresolvable,
         ))
     };
 
@@ -2744,7 +2756,13 @@ fn guard_and_mark<'a>(
     // pulled-as-tips only when the source is workweave-typed; a primary-weave
     // source keeps the refusal (a reproducibility-sensitive locked-snapshot pull
     // from the primary must not silently take live tips over its committed lock).
-    let (source_project_dir, source_workspace_name, source_project_name, source_is_workweave) = {
+    let (
+        source_project_dir,
+        source_workspace_root,
+        source_workspace_name,
+        source_project_name,
+        source_is_workweave,
+    ) = {
         let override_arg = match verb {
             MachineVerb::Sync => other_project_override.clone(),
             // For sync-to, the target workspace must resolve to CWD's project.
@@ -2752,9 +2770,13 @@ fn guard_and_mark<'a>(
         };
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
         let pname = find_project_name(&source_ctx)?;
-        let dir = project_dir(source_ctx.active_path(), pname.as_str());
+        // The operator may name any path inside the source; a member checkout
+        // is found by joining onto the workspace ROOT, never onto whatever was
+        // typed.
+        let root = source_ctx.active_path().to_path_buf();
+        let dir = project_dir(&root, pname.as_str());
         let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
-        (dir, workspace_name(&source_ctx), pname, is_workweave)
+        (dir, root, workspace_name(&source_ctx), pname, is_workweave)
     };
 
     // dest_project_dir is where the terminal write lands.
@@ -2840,7 +2862,7 @@ fn guard_and_mark<'a>(
         &cwd_workspace_dir,
         cwd_ctx,
         &source_project_dir,
-        &source_workspace_dir,
+        &source_workspace_root,
         &source_workspace_name,
         &source_project_name,
         &cwd_project_name,
@@ -3151,12 +3173,13 @@ fn load_continuing_context<'a>(
         (_, Checkout::Primary { .. }) => project_override.clone(),
     };
 
-    let (source_project_dir, source_workspace_name, source_is_workweave) = {
+    let (source_project_dir, source_workspace_root, source_workspace_name, source_is_workweave) = {
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, other_project_override)?;
         let pname = find_project_name(&source_ctx)?;
-        let dir = project_dir(source_ctx.active_path(), pname.as_str());
+        let root = source_ctx.active_path().to_path_buf();
+        let dir = project_dir(&root, pname.as_str());
         let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
-        (dir, workspace_name(&source_ctx), is_workweave)
+        (dir, root, workspace_name(&source_ctx), is_workweave)
     };
 
     let dest_project_dir = match recorded_verb {
@@ -3186,11 +3209,16 @@ fn load_continuing_context<'a>(
         && source_is_workweave
         && !allow_stale_lock_resumed
     {
-        ClassifySource::RelationsAndTips(source_workspace_dir.as_path())
+        ClassifySource::RelationsAndTips
     } else {
         ClassifySource::Skip
     };
-    let snapshot = pin_source_snapshot(project_vcs.as_ref(), &source_project_dir, classify)?;
+    let snapshot = pin_source_snapshot(
+        project_vcs.as_ref(),
+        &source_project_dir,
+        &source_workspace_root,
+        classify,
+    )?;
 
     Ok(OpContext {
         cwd_ctx,
@@ -3739,24 +3767,18 @@ struct LockClassification {
 ///
 /// Reference-symlink checkouts are skipped (they alias the shared canonical and
 /// are never rebased). Repos missing on disk are skipped (nothing to classify).
-/// The lock is resolved against the workspace so tag/branch/SHA lock forms all
-/// compare as canonical SHAs, exactly like `rwv status`. `lock` is `None` when
-/// the project carries no committed lock at all (every entry then classifies as
-/// `no-lock`). Lock entries whose revision does not resolve on disk are returned
-/// in `unresolvable` rather than silently dropped.
+/// `resolved_lock` is the workspace's own lock already resolved against
+/// `workspace_dir` — the caller resolves, so the value the relations compare
+/// against is the same one every other consumer of that resolve reads.
+/// `None` when the project carries no committed lock at all (every entry then
+/// classifies as `no-lock`). `unresolvable` carries the entries that resolve
+/// produced no answer for, so they are reported rather than silently dropped.
 fn classify_lock_relations(
     workspace_dir: &Path,
     manifest: &Manifest,
-    lock: Option<&LockFile>,
+    resolved_lock: Option<&crate::manifest::ResolvedLockFile>,
+    unresolvable: Vec<(RepoPath, crate::vcs::RawRevisionId)>,
 ) -> LockClassification {
-    let (resolved_lock, unresolvable) = match lock {
-        Some(raw) => {
-            let (resolved, failures) = raw.clone().resolve_versions(workspace_dir);
-            (Some(resolved), failures)
-        }
-        None => (None, Vec::new()),
-    };
-
     let mut out = Vec::new();
     for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
@@ -3776,7 +3798,6 @@ fn classify_lock_relations(
             continue;
         }
         let lock_sha = resolved_lock
-            .as_ref()
             .and_then(|l| l.get_entry(repo_path))
             .map(|e| e.version.clone());
         let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
@@ -4154,15 +4175,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     let mut any_failure = !materialize_failures.is_empty();
 
-    let (source_lock, source_lock_failures) = snapshot
-        .raw_source_lock
-        .clone()
-        .resolve_versions(&ctx.cwd_workspace_dir);
-    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> = source_lock_failures
-        .iter()
-        .map(|(p, _)| p.clone())
-        .collect();
-
     struct SyncTask {
         repo_path: crate::manifest::RepoPath,
         abs: PathBuf,
@@ -4171,6 +4183,13 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         vcs: Box<dyn Vcs>,
         target: ResolvedRevisionId,
         baseline: ReplayBaseline,
+        /// HEAD's containment of `target`, read once here at replay entry.
+        /// The intent write below and the move in the fan-out both consume
+        /// this value, so the record cannot describe a different landing than
+        /// the one the strategy attempts; a commit that lands between the two
+        /// makes the strategy fail rather than silently re-classifying the
+        /// repo. `None` when the pair did not resolve.
+        containment: Option<Containment>,
         /// The repo's tip before this op replayed anything, taken from the
         /// op's savepoint so a `--continue` re-entry reads the same tip the
         /// interrupted run did rather than the pick it stopped on.
@@ -4199,29 +4218,26 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 continue;
             }
         }
-        if unresolvable.contains(repo_path) {
-            if emit_text {
-                eprintln!(
-                    "  {repo_path}: lock pins unknown revision {} in local clone",
-                    raw_entry.version
-                );
-            }
-            any_failure = true;
-            let head_unreadable_error = format!(
-                "lock pins unknown revision {} in local clone",
-                raw_entry.version
-            );
-            let outcome = RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
-                error: head_unreadable_error,
-                cause: None,
-            });
-            ctx.handler
-                .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
-            continue;
-        }
-        let lock_entry = match source_lock.get_entry(repo_path) {
+        // The source resolved its own lock at pin time. An entry missing from
+        // that resolution is one the source could not answer for — either the
+        // revision does not exist there or it holds no checkout to look in —
+        // and re-asking CWD would answer a different question about a
+        // tag-or-branch-form entry.
+        let lock_entry = match snapshot.source_lock.get_entry(repo_path) {
             Some(e) => e,
-            None => continue,
+            None => {
+                any_failure = true;
+                let outcome = RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+                    error: format!(
+                        "source lock pins {}, which the source workspace could not resolve",
+                        raw_entry.version
+                    ),
+                    cause: None,
+                });
+                ctx.handler
+                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
+                continue;
+            }
         };
         // The lock names paths; the manifest names backends. A lock entry
         // with no manifest entry has no declared backend to resolve from.
@@ -4234,6 +4250,19 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Some(tip) => (tip.clone(), ReplayBaseline::SourceCommittedTip),
             None => (lock_entry.version.clone(), ReplayBaseline::SourceLockEntry),
         };
+        let containment = match vcs.head_revision(&abs) {
+            Ok(head) => Containment::observe(vcs.as_ref(), &abs, &head, &target),
+            Err(e) => {
+                any_failure = true;
+                let outcome = RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+                    error: e.to_string(),
+                    cause: Some(e),
+                });
+                ctx.handler
+                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
+                continue;
+            }
+        };
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
             pre_replay_tip: vcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
@@ -4241,40 +4270,31 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             vcs,
             target,
             baseline,
+            containment,
         });
     }
 
     // === advanced_tips write 1: pre-write planned targets for genuine ff-movers ===
     //
-    // Before the parallel fan-out, classify every sync task: if the repo's
-    // current HEAD is a STRICT ancestor of the lock target (head ≠ target AND
-    // head ⊏ target), this is a genuine fast-forward and the landing tip is
-    // knowable now.  Pre-write target → advanced_tips so abort can attribute the
-    // repo the instant it is advanced, with no window.
+    // A repo whose entry verdict is `Behind` is a genuine fast-forward and its
+    // landing tip is knowable now.  Pre-write target → advanced_tips so abort
+    // can attribute the repo the instant it is advanced, with no window.
     //
-    // Repos whose HEAD equals target (NoOp) or whose HEAD is ahead of target
-    // (AlreadyAhead) are skipped — savepoint already attributes the no-op case,
-    // and recording an unreached target for an already-ahead repo is
-    // forgeable.  Repos with local commits that diverge (not strict ancestors)
-    // are skipped here; their fresh rebased tip is captured post-join (write 3).
+    // `Equal` (NoOp) and `Ahead` (AlreadyAhead) are skipped — savepoint already
+    // attributes the no-op case, and recording an unreached target for an
+    // already-ahead repo is forgeable.  `Diverged` repos are skipped here; their
+    // fresh rebased tip is captured post-join (write 3).
     {
-        let mut entry_tips: std::collections::BTreeMap<String, String> =
-            std::collections::BTreeMap::new();
-        for task in &sync_tasks {
-            if let Ok(head) = task.vcs.head_revision(&task.abs) {
-                if head != task.target
-                    && task
-                        .vcs
-                        .is_ancestor(&task.abs, &head, &task.target)
-                        .unwrap_or(false)
-                {
-                    entry_tips.insert(
-                        task.repo_path.as_str().to_owned(),
-                        task.target.as_str().to_owned(),
-                    );
-                }
-            }
-        }
+        let entry_tips: std::collections::BTreeMap<String, String> = sync_tasks
+            .iter()
+            .filter(|task| matches!(task.containment, Some(Containment::Behind(_))))
+            .map(|task| {
+                (
+                    task.repo_path.as_str().to_owned(),
+                    task.target.as_str().to_owned(),
+                )
+            })
+            .collect();
         if !entry_tips.is_empty() {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
                 anyhow::anyhow!("internal: owner record missing during replay entry write")
@@ -4305,6 +4325,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 &task.abs,
                 &task.target,
                 task.baseline,
+                task.containment,
                 strategy,
                 task.pre_replay_tip.as_ref(),
             );
@@ -4469,7 +4490,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn pin_source_snapshot(
     source_vcs: &dyn Vcs,
     source_project_dir: &Path,
-    classify: ClassifySource<'_>,
+    source_workspace_root: &Path,
+    classify: ClassifySource,
 ) -> anyhow::Result<SourceSnapshot> {
     let source_project_tip = source_vcs
         .head_revision(source_project_dir)
@@ -4521,15 +4543,24 @@ fn pin_source_snapshot(
         })?
     };
 
+    let (source_lock, source_lock_unresolvable) = raw_source_lock
+        .clone()
+        .resolve_versions(source_workspace_root);
+
     let source_class = match classify {
         ClassifySource::Skip => None,
-        ClassifySource::Relations(dir) | ClassifySource::RelationsAndTips(dir) => Some(
-            classify_lock_relations(dir, &source_manifest, Some(&raw_source_lock)),
-        ),
+        ClassifySource::Relations | ClassifySource::RelationsAndTips => {
+            Some(classify_lock_relations(
+                source_workspace_root,
+                &source_manifest,
+                Some(&source_lock),
+                source_lock_unresolvable,
+            ))
+        }
     };
 
-    let pull_tips = match (&classify, &source_class) {
-        (ClassifySource::RelationsAndTips(_), Some(class)) => class
+    let pull_tips = match (classify, &source_class) {
+        (ClassifySource::RelationsAndTips, Some(class)) => class
             .relations
             .iter()
             .filter(|r| r.relation == LockRelation::Ahead)
@@ -4542,6 +4573,7 @@ fn pin_source_snapshot(
         source_project_tip,
         source_manifest,
         raw_source_lock,
+        source_lock,
         source_class,
         pull_tips,
     })
@@ -6496,6 +6528,107 @@ mod tests {
         assert!(
             !line.contains("diverge"),
             "containment is not divergence; got: {line}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // sync_one_repo consumes the entry verdict; it does not re-read HEAD
+    // -----------------------------------------------------------------------
+    //
+    // The op record's intent write and the move it records are two consumers of
+    // one classification. A second HEAD read here is what let them disagree, so
+    // these hand `sync_one_repo` a verdict that CONTRADICTS the disk: an outcome
+    // that follows the disk is a re-read that has grown back.
+
+    #[test]
+    fn the_repo_outcome_follows_the_carried_verdict_not_the_disk() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let target = git_vcs().head_revision(&repo).unwrap();
+
+        // On disk HEAD IS the target, which a fresh read would call NoOp.
+        let outcome = sync_one_repo(
+            git_vcs().as_ref(),
+            &repo,
+            &target,
+            ReplayBaseline::SourceLockEntry,
+            Some(Containment::Ahead(7)),
+            SyncStrategy::Ff,
+            None,
+        );
+
+        assert!(
+            matches!(
+                outcome,
+                RepoSyncOutcome::AlreadyAhead {
+                    commits_ahead: 7,
+                    ..
+                }
+            ),
+            "the carried verdict must decide the outcome; got: {outcome}"
+        );
+    }
+
+    #[test]
+    fn a_carried_equal_verdict_runs_no_strategy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let target = git_vcs().head_revision(&repo).unwrap();
+        let moved = commit(&repo, "later");
+
+        // On disk HEAD is now PAST the target, which a fresh read would call
+        // AlreadyAhead — and a re-read that reached the strategy would try to
+        // move the checkout.
+        let outcome = sync_one_repo(
+            git_vcs().as_ref(),
+            &repo,
+            &target,
+            ReplayBaseline::SourceLockEntry,
+            Some(Containment::Equal),
+            SyncStrategy::Ff,
+            None,
+        );
+
+        assert!(
+            matches!(outcome, RepoSyncOutcome::NoOp),
+            "the carried verdict must decide the outcome; got: {outcome}"
+        );
+        assert_eq!(
+            git_vcs().head_revision(&repo).unwrap(),
+            moved,
+            "a no-op outcome must have moved nothing"
+        );
+    }
+
+    #[test]
+    fn a_commit_landing_after_the_verdict_reaches_the_strategy() {
+        // The record's intent write says this repo is a planned fast-forward to
+        // `target`. A re-read here would find HEAD past `target` and report
+        // already-ahead — the record claiming a landing the printed outcome
+        // denies. The carried verdict sends it to the strategy instead, which
+        // is the only place that can act on what is actually there.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let target = commit(&repo, "target");
+        commit(&repo, "foreign");
+
+        let outcome = sync_one_repo(
+            git_vcs().as_ref(),
+            &repo,
+            &target,
+            ReplayBaseline::SourceLockEntry,
+            Some(Containment::Behind(1)),
+            SyncStrategy::Ff,
+            None,
+        );
+
+        assert!(
+            !matches!(outcome, RepoSyncOutcome::AlreadyAhead { .. }),
+            "a planned ff-mover must not be silently re-classified behind the \
+             record's back; got: {outcome}"
         );
     }
 
