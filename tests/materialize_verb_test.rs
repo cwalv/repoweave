@@ -59,6 +59,53 @@ impl Fixture {
     }
 }
 
+/// Write a two-version directory source under `source_dir` and the
+/// `.cargo/config.toml` at `weave_root` that replaces crates.io with it.
+///
+/// A directory source is the cheapest thing real cargo will resolve a semver
+/// range against without a network, and two versions is what makes a resolve
+/// something that can be observed to move: the newest matching one is what a
+/// fresh resolve picks, so a lock holding the older one is a pin with somewhere
+/// to go.
+fn write_local_crate_source(source_dir: &Path, weave_root: &Path, versions: &[&str]) {
+    for version in versions {
+        let pkg = source_dir.join(format!("pinnable-{version}"));
+        std::fs::create_dir_all(pkg.join("src")).unwrap();
+        std::fs::write(
+            pkg.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"pinnable\"\nversion = \"{version}\"\nedition = \"2021\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(pkg.join("src/lib.rs"), "pub fn pinned() {}\n").unwrap();
+        std::fs::write(pkg.join(".cargo-checksum.json"), r#"{"files":{}}"#).unwrap();
+    }
+    std::fs::create_dir_all(weave_root.join(".cargo")).unwrap();
+    std::fs::write(
+        weave_root.join(".cargo/config.toml"),
+        format!(
+            "[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = \"{}\"\n",
+            source_dir.display()
+        ),
+    )
+    .unwrap();
+}
+
+/// The `version = "x.y.z"` line of the `pinnable` package in a `Cargo.lock`.
+fn locked_pinnable_version(lock_text: &str) -> Option<String> {
+    let mut lines = lock_text.lines();
+    while let Some(line) = lines.next() {
+        if line.trim() == r#"name = "pinnable""# {
+            return lines
+                .next()
+                .and_then(|v| v.trim().strip_prefix(r#"version = ""#).map(str::to_string))
+                .and_then(|v| v.strip_suffix('"').map(str::to_string));
+        }
+    }
+    None
+}
+
 /// A primary weave with one Rust member and a workweave forked off it.
 ///
 /// The project repo gitignores the lock, so the workweave's worktree arrives
@@ -68,17 +115,23 @@ impl Fixture {
 /// where the two agree cannot tell "left the pointer alone" from "rewrote the
 /// pointer with the value it already held", and the second is a selection this
 /// verb is not allowed to make.
+///
+/// The member depends on a package the local source offers twice, so the lock
+/// this fixture produces holds a resolve that a re-resolve would move. Content
+/// that cannot move cannot tell apart the two exits out of drift.
 fn fixture() -> Fixture {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let ws = root.join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
+    write_local_crate_source(&root.join("crate-source"), &ws, &["0.1.0", "0.1.1"]);
 
     let server = ws.join("github/acme/server");
     std::fs::create_dir_all(server.join("src")).unwrap();
     std::fs::write(
         server.join("Cargo.toml"),
-        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\npinnable = \"0.1\"\n",
     )
     .unwrap();
     std::fs::write(server.join("src/lib.rs"), "").unwrap();
@@ -135,11 +188,10 @@ fn fixture() -> Fixture {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    Fixture {
-        _tmp: tmp,
-        ws,
-        ww: weaveroot.join("app--agent-1"),
-    }
+    let ww = weaveroot.join("app--agent-1");
+    write_local_crate_source(&root.join("crate-source"), &ww, &["0.1.0", "0.1.1"]);
+
+    Fixture { _tmp: tmp, ws, ww }
 }
 
 /// The seam, stated as one test: the verb runs exactly where the verb it was
@@ -236,4 +288,172 @@ fn materialize_takes_no_project_argument() {
     let f = fixture();
     let (ok, report) = f.rwv(&["materialize", "app"], &f.ws);
     assert!(!ok, "materialize must reject a project argument:\n{report}");
+}
+
+// ---------------------------------------------------------------------------
+// Arriving at drift in an attested generated file
+// ---------------------------------------------------------------------------
+//
+// rwv records a digest when it accepts a generation; a workweave is born
+// holding its source's record verbatim, so it can arrive already holding
+// content that record does not describe. These drive the shipped binary
+// because the claim is about what an operator standing in a workweave can read
+// and then run — a message that is merely correct in a unit test is still a
+// dead end if the verb it names is refused where it prints.
+//
+// The discriminator is the resolve, not the bytes: `cargo fetch` re-serializes
+// a lock it honours, so a probe that watches for a hand-written line reports
+// destruction where the pin in fact survived.
+
+/// Materialize once so the lock exists and is attested, then pin it back to the
+/// older version the source offers and leave that unattested.
+///
+/// This is the shape the operator produces by running the ecosystem tool in the
+/// seat: content rwv never accepted, holding a resolve that is *not* what a
+/// re-resolve would pick. Returns the lock path.
+fn materialized_then_pinned_back(f: &Fixture) -> PathBuf {
+    let (ok, report) = f.rwv(&["materialize"], &f.ww);
+    assert!(ok, "fixture: first materialize should succeed:\n{report}");
+
+    let lock = f.ww.join("projects/app/Cargo.lock");
+    let generated = std::fs::read_to_string(&lock).expect("fixture: the hook writes the lock");
+    assert_eq!(
+        locked_pinnable_version(&generated).as_deref(),
+        Some("0.1.1"),
+        "fixture: a first resolve should pick the newest matching version"
+    );
+    let pinned = generated.replace(r#"version = "0.1.1""#, r#"version = "0.1.0""#);
+    assert_ne!(
+        pinned, generated,
+        "fixture: the downgrade must change the lock"
+    );
+    std::fs::write(&lock, &pinned).unwrap();
+    lock
+}
+
+/// The defect this pins: the finding used to name `rwv activate`, which is
+/// refused in a workweave, and `rwv doctor --fix`, which never touches a
+/// finding it is not permitted to fix. Both halves are asserted through the
+/// binary — that the named verb arrives, and that running it clears what named
+/// it.
+#[test]
+fn doctor_in_a_workweave_names_a_remedy_that_runs_there() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let f = fixture();
+    materialized_then_pinned_back(&f);
+
+    let (_, doctor) = f.rwv(&["doctor"], &f.ww);
+    assert!(
+        doctor.contains("differs from the last rwv-accepted generation"),
+        "doctor must report content rwv never accepted:\n{doctor}"
+    );
+    assert!(
+        doctor.contains("rwv materialize --adopt-drifted")
+            && doctor.contains("rwv materialize --regenerate-drifted"),
+        "the finding must name both exits, spelled as they are invoked:\n{doctor}"
+    );
+
+    let (ok, report) = f.rwv(&["materialize", "--adopt-drifted"], &f.ww);
+    assert!(
+        ok,
+        "the remedy the finding named must run in the checkout it printed in:\n{report}"
+    );
+
+    let (_, after) = f.rwv(&["doctor"], &f.ww);
+    assert!(
+        !after.contains("differs from the last rwv-accepted generation"),
+        "running the named remedy must clear the finding that named it:\n{after}"
+    );
+}
+
+/// Without a consent flag the verb stops rather than choosing. The hook it
+/// would otherwise run re-stamps whatever it produced, so proceeding here is
+/// adoption wearing no name.
+#[test]
+fn materialize_refuses_on_content_it_never_accepted() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let f = fixture();
+    let lock = materialized_then_pinned_back(&f);
+
+    let (ok, report) = f.rwv(&["materialize"], &f.ww);
+    assert!(
+        !ok,
+        "materialize must refuse on arriving at drift:\n{report}"
+    );
+    assert!(
+        report.contains("--adopt-drifted") && report.contains("--regenerate-drifted"),
+        "the refusal must name both exits:\n{report}"
+    );
+    assert!(
+        report.contains(&lock.display().to_string()),
+        "the refusal must list what it would act on:\n{report}"
+    );
+    assert_eq!(
+        locked_pinnable_version(&std::fs::read_to_string(&lock).unwrap()).as_deref(),
+        Some("0.1.0"),
+        "refusing must leave the content alone"
+    );
+}
+
+/// The two consents are the two losses, and they are opposite: adopting keeps
+/// the resolve and moves the record onto it, regenerating keeps the record's
+/// authority and throws the resolve away.
+///
+/// Each arm is the other's control. A pin that survives proves nothing unless
+/// the same fixture can be shown moving it, and the regenerate arm is that
+/// demonstration.
+#[test]
+fn the_two_consents_move_opposite_things() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+
+    let adopted = fixture();
+    let lock = materialized_then_pinned_back(&adopted);
+    let (ok, report) = adopted.rwv(&["materialize", "--adopt-drifted"], &adopted.ww);
+    assert!(ok, "--adopt-drifted should succeed:\n{report}");
+    assert_eq!(
+        locked_pinnable_version(&std::fs::read_to_string(&lock).unwrap()).as_deref(),
+        Some("0.1.0"),
+        "adopting must attest the resolve that was there, not replace it"
+    );
+
+    let regenerated = fixture();
+    let lock = materialized_then_pinned_back(&regenerated);
+    let (ok, report) = regenerated.rwv(&["materialize", "--regenerate-drifted"], &regenerated.ww);
+    assert!(ok, "--regenerate-drifted should succeed:\n{report}");
+    assert_eq!(
+        locked_pinnable_version(&std::fs::read_to_string(&lock).unwrap()).as_deref(),
+        Some("0.1.1"),
+        "regenerating must discard what it was consented to discard"
+    );
+
+    let (_, doctor) = regenerated.rwv(&["doctor"], &regenerated.ww);
+    assert!(
+        !doctor.contains("differs from the last rwv-accepted generation"),
+        "regeneration must re-attest what it produced:\n{doctor}"
+    );
+}
+
+/// Both flags at once is not a stricter request, it is two contradictory ones.
+/// Refusing at the parse boundary is what keeps a precedence rule from being
+/// invented downstream to break the tie.
+#[test]
+fn the_two_consents_cannot_be_given_together() {
+    let f = fixture();
+    let (ok, report) = f.rwv(
+        &["materialize", "--adopt-drifted", "--regenerate-drifted"],
+        &f.ww,
+    );
+    assert!(
+        !ok,
+        "contradictory consents must be refused, not ranked:\n{report}"
+    );
 }

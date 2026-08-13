@@ -155,15 +155,24 @@ Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace f
 
 Anchored by `tests/doc_claims_activate_test.rs`.
 
-### `rwv materialize`
+### `rwv materialize [--regenerate-drifted | --adopt-drifted]`
 
-Run the integration install hooks for the project this checkout already presents, and nothing else. No arguments, no flags.
+Run the integration install hooks for the project this checkout already presents, and nothing else. No arguments.
 
 Activation is two operations: **selection** (`.rwv-active`, the weave root's shared names) and **materialization** (the install hooks). Only a primary can express selection, which is why `rwv activate` is refused inside a workweave. Materialization is meaningful wherever the project identity is already fixed — a workweave always, a primary for the project it currently presents — so this verb is valid in both.
 
 Hooks materialize; they never move a pin. A lock file gains what a new member requires and a version it already pins stays put. Advancing a dependency is `cargo update` / `npm update` / `uv lock --upgrade`, never a repoweave verb.
 
 It takes no project name, because naming one would be a selection. At a primary with no active project it refuses and names `rwv activate`.
+
+A generated file rwv attests whose content differs from the generation rwv accepted stops the run: the two exits destroy opposite things, so the operator picks.
+
+| Flag | Effect |
+|---|---|
+| `--regenerate-drifted` | Discard the drifted content and regenerate it from the current inputs |
+| `--adopt-drifted` | Record the drifted content as the accepted generation |
+
+Passing both is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through rwv — those bytes are content rwv never accepted, so nothing in the workspace holds a copy. `rwv doctor` reports the same files and names the same two flags.
 
 `rwv activate --no-materialize` is the mirror: select without materializing.
 

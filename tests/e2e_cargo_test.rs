@@ -402,8 +402,12 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
         "doctor must report the digest mismatch (R34):\n{stdout_drift}"
     );
     assert!(
-        stdout_drift.contains("accept the new content"),
-        "finding must name the accept exit:\n{stdout_drift}"
+        stdout_drift.contains("rwv materialize --adopt-drifted"),
+        "finding must name the adopt exit:\n{stdout_drift}"
+    );
+    assert!(
+        stdout_drift.contains("rwv materialize --regenerate-drifted"),
+        "finding must name the regenerate exit:\n{stdout_drift}"
     );
     assert!(
         stdout_drift.contains("restore the file"),

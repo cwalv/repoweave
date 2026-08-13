@@ -599,9 +599,20 @@ pub fn run() -> anyhow::Result<()> {
                 activate::ActivateOptions { no_materialize },
             )?;
         }
-        Some(Commands::Materialize) => {
+        Some(Commands::Materialize {
+            regenerate_drifted,
+            adopt_drifted,
+        }) => {
             let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
-            activate::materialize(&ctx)?;
+            // clap refuses the two together, so this reads as the exclusive
+            // choice it is rather than a precedence.
+            let consent = consent::RegenerateDriftedConsent::from_flag(regenerate_drifted)
+                .map(consent::DriftConsent::Regenerate)
+                .or_else(|| {
+                    consent::AdoptDriftedConsent::from_flag(adopt_drifted)
+                        .map(consent::DriftConsent::Adopt)
+                });
+            activate::materialize(&ctx, consent)?;
         }
         Some(Commands::Prime { no_suppress }) => {
             // `prime` tolerates the not-in-a-workspace case (silent unless

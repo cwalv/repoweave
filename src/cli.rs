@@ -73,7 +73,14 @@ pub enum Commands {
         no_materialize: bool,
     },
     /// Run the integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
-    Materialize,
+    Materialize {
+        /// Consent to discarding the current content of drifted rwv-attested generated files and regenerating them from the current inputs
+        #[arg(long, conflicts_with = "adopt_drifted")]
+        regenerate_drifted: bool,
+        /// Consent to recording drifted rwv-attested generated files' current content as the accepted generation
+        #[arg(long)]
+        adopt_drifted: bool,
+    },
     /// Print structured workspace context for agent system prompts
     Prime {
         /// Always emit output, even when CWD is not inside a weave or workweave
@@ -692,5 +699,69 @@ pub mod consent {
         pub(in crate::cli) fn from_flag(adopt_detached_checkouts: bool) -> Option<Self> {
             adopt_detached_checkouts.then_some(Self(()))
         }
+    }
+
+    /// Proof that the operator consented to discarding the current content of
+    /// an rwv-attested generated file and regenerating it from the current
+    /// inputs. Minted from `--regenerate-drifted`.
+    ///
+    /// `Copy`: see [`DetachConsent`]'s doc comment.
+    #[derive(Debug, Clone, Copy)]
+    pub struct RegenerateDriftedConsent(());
+
+    impl RegenerateDriftedConsent {
+        /// Mint unconditionally. `#[cfg(test)]`: see
+        /// [`DetachConsent::granted`]'s doc comment.
+        #[cfg(test)]
+        pub(crate) fn granted() -> Self {
+            Self(())
+        }
+
+        /// Mint from the parsed `--regenerate-drifted` value: `Some` iff the
+        /// operator passed it. `pub(in crate::cli)`: see
+        /// [`DetachConsent::from_flag`]'s doc comment.
+        pub(in crate::cli) fn from_flag(regenerate_drifted: bool) -> Option<Self> {
+            regenerate_drifted.then_some(Self(()))
+        }
+    }
+
+    /// Proof that the operator consented to recording an rwv-attested
+    /// generated file's current content as the accepted generation. Minted
+    /// from `--adopt-drifted`.
+    ///
+    /// `Copy`: see [`DetachConsent`]'s doc comment.
+    #[derive(Debug, Clone, Copy)]
+    pub struct AdoptDriftedConsent(());
+
+    impl AdoptDriftedConsent {
+        /// Mint unconditionally. `#[cfg(test)]`: see
+        /// [`DetachConsent::granted`]'s doc comment.
+        #[cfg(test)]
+        pub(crate) fn granted() -> Self {
+            Self(())
+        }
+
+        /// Mint from the parsed `--adopt-drifted` value: `Some` iff the
+        /// operator passed it. `pub(in crate::cli)`: see
+        /// [`DetachConsent::from_flag`]'s doc comment.
+        pub(in crate::cli) fn from_flag(adopt_drifted: bool) -> Option<Self> {
+            adopt_drifted.then_some(Self(()))
+        }
+    }
+
+    /// Which exit the operator chose out of drift in an rwv-attested generated
+    /// file. `None` at the call site is the third state — no choice made — and
+    /// the one that refuses.
+    ///
+    /// One enum over two independent `Option`s because the exits destroy
+    /// opposite things: regenerating discards content the operator may have
+    /// produced deliberately, adopting attests content that may be an accident.
+    /// Both at once is not a stricter request, it is two contradictory ones,
+    /// and a type that cannot hold both is what keeps a precedence rule from
+    /// being invented to break the tie.
+    #[derive(Debug, Clone, Copy)]
+    pub enum DriftConsent {
+        Regenerate(RegenerateDriftedConsent),
+        Adopt(AdoptDriftedConsent),
     }
 }

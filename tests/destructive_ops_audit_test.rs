@@ -375,7 +375,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "activate.rs",
         pattern: "remove_file",
-        count: 2,
+        count: 3,
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
             (2) foreign-shared-name cleanup: only top-level symlinks whose \
@@ -384,7 +384,18 @@ const ALLOWLIST: &[Allowed] = &[
             does not present — and only while surfacing the one it does. \
             Recoverable by re-surfacing that other project. \
             deactivate's .rwv-active removal moved to workspace.rs's \
-            clear_active_project, audited above.",
+            clear_active_project, audited above. \
+            (3) settle_arrived_drift's regenerate arm. Precondition: the file \
+            is named by the owned-digest ledger AND its bytes differ from the \
+            digest recorded when rwv accepted its generation — a fully-owned \
+            generated file, whole-delete safe by the declaration that put it \
+            there. Bare materialize REFUSES and lists every path it would \
+            discard, so the override is informed by the run before it; the \
+            consent is --regenerate-drifted, named for the discard, minted \
+            only in cli::dispatch and unforgeable elsewhere. NOT recoverable \
+            by rwv: the discarded bytes are content rwv never accepted, so no \
+            digest, savepoint or copy of them exists — `rwv explain \
+            materialize` says so at the flag.",
     },
     Allowed {
         file: "op_state.rs",

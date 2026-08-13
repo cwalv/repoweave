@@ -5643,8 +5643,9 @@ mod s7_cargo_doctor {
     ///        as DIFFERENT but VALID TOML (what a cargo invocation does).
     /// Then:  verify() reports a WARNING naming the file, the state
     ///        ("differs from the last rwv-accepted generation"), and BOTH
-    ///        exits (accept via re-activation, or restore). NOT safe_to_fix
-    ///        — the operator chooses.
+    ///        consents, spelled as they are invoked. NOT safe_to_fix — the
+    ///        operator chooses, and each named verb runs in a workweave,
+    ///        which is where this finding is most often read.
     #[test]
     fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
         let (tmp, project, manifest, config, cache) = s7_6_fixture();
@@ -5692,15 +5693,30 @@ mod s7_cargo_doctor {
             "must name the state: {}",
             issue.message
         );
-        // Name BOTH exits.
+        // Name BOTH consents, spelled as they are invoked. A remedy the
+        // operator cannot run in the checkout the finding printed in is a dead
+        // end, and `rwv activate` — what this used to name — is refused in a
+        // workweave.
         assert!(
-            issue.message.contains("accept the new content"),
-            "must name the accept exit: {}",
+            issue.message.contains("rwv materialize --adopt-drifted"),
+            "must name the adopt exit: {}",
+            issue.message
+        );
+        assert!(
+            issue
+                .message
+                .contains("rwv materialize --regenerate-drifted"),
+            "must name the regenerate exit: {}",
             issue.message
         );
         assert!(
             issue.message.contains("restore the file"),
             "must name the restore exit: {}",
+            issue.message
+        );
+        assert!(
+            !issue.message.contains("rwv activate"),
+            "naming a verb the workweave refuses is the defect this fixed: {}",
             issue.message
         );
     }

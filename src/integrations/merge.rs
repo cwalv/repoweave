@@ -2218,26 +2218,63 @@ pub fn carry_attested_owned_files(
     Ok(carried.into_keys().collect())
 }
 
+/// An attested owned file whose current bytes are not the ones rwv accepted,
+/// carrying the content that was read to reach that verdict.
+///
+/// The bytes travel with the verdict because the caller that adopts them must
+/// attest what was compared: a second read could stamp content the drift check
+/// never saw.
+pub struct DriftedOwnedFile {
+    pub name: String,
+    pub content: Vec<u8>,
+}
+
+/// Every attested owned file in `dir` whose on-disk bytes differ from the
+/// digest recorded for it, in ledger order.
+///
+/// The ledger is the enumeration, not the integrations' declared file sets: an
+/// entry exists only where some generator's output was accepted, and that
+/// acceptance is the thing drift is measured against. An entry whose file is
+/// gone is absent from the result — a missing generated file is regenerable
+/// and reports on its own axis.
+pub fn drifted_attested_owned_files(dir: &Path) -> Vec<DriftedOwnedFile> {
+    read_owned_digests(dir)
+        .into_iter()
+        .filter_map(|(name, recorded)| {
+            let content = std::fs::read(dir.join(&name)).ok()?;
+            (owned_digest(&content) != recorded).then_some(DriftedOwnedFile { name, content })
+        })
+        .collect()
+}
+
 /// The canonical DRIFT-state issue for a **fully-owned** generated file whose
 /// on-disk content no longer matches the digest recorded when rwv last
 /// accepted a generation ([`stamp_owned_digest`]).
 ///
 /// Report-not-mandate: the ecosystem tool rewriting its own lockfile is
 /// legitimate behavior the operator should SEE, not an error that fails
-/// doctor — so the severity is `Warning` and `safe_to_fix` is **false**
-/// (auto-repair would silently pick one of the two exits for the operator).
-/// The message names the file, the state, and BOTH exits: re-run activation
-/// (`rwv activate` or `rwv doctor --fix`) to accept the new content and
-/// re-stamp, or restore the file to the recorded state.
+/// doctor — so the severity is `Warning`.
+///
+/// `safe_to_fix` is **false**, and stays false for a stronger reason than
+/// caution: the two exits destroy opposite things. Regenerating discards
+/// content the operator may have produced on purpose; adopting attests content
+/// that may be an accident. `--fix` has no way to know which, so choosing
+/// either on the operator's behalf is the laundering the consent flags exist to
+/// prevent, and the finding names them instead.
+///
+/// Both named remedies run in the checkout where this fires. Its origin is a
+/// workweave carrying an attestation it never re-earned, and `rwv activate` is
+/// refused there.
 pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
     Issue {
         integration: name.to_string(),
         severity: Severity::Warning,
         message: format!(
             "{name} generated file has drift: {}; content differs from the last \
-             rwv-accepted generation. Re-run activation (rwv activate or \
-             rwv doctor --fix) to accept the new content and re-stamp, or \
-             restore the file to the recorded state",
+             rwv-accepted generation. Run `rwv materialize --adopt-drifted` to \
+             record the current content as the accepted generation, \
+             `rwv materialize --regenerate-drifted` to discard it and regenerate \
+             from the current inputs, or restore the file to the recorded content",
             path.display()
         ),
         kind: IssueKind::ManagedFileDrift,

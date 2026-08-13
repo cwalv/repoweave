@@ -37,24 +37,54 @@ materializing. One word names the operation on both sides.
 
 ### What it touches
 
-1. **Surfacing repair.** The weave root's symlinks onto the project's owned
+1. **Drift settlement.** Generated files rwv attests are compared against what
+   it accepted, and content it never accepted stops the run (see below).
+2. **Surfacing repair.** The weave root's symlinks onto the project's owned
    files are re-created if missing, scoped to this project's own files. The
    root's shared names are not moved — the root already presents this project,
    so there is nothing to move.
-2. **Install hooks.** Each enabled integration's hook runs against the
+3. **Install hooks.** Each enabled integration's hook runs against the
    now-in-place symlinks.
 
 It does **not** author managed content. If an integration's managed file is
 missing, its hook refuses and names `rwv doctor --fix`, which is the verb that
 authors.
 
+### Arriving at drift
+
+rwv records a digest of each generated file at the moment it accepts that
+file's generation, so a lock file whose content differs from that record is
+content rwv never accepted — an ecosystem tool run by hand in this checkout, or
+an attestation a workweave inherited from a source sitting on the same
+difference.
+
+`materialize` **refuses** on arriving there, because the two ways out destroy
+opposite things and only the operator knows which applies:
+
+| Flag | Effect |
+|---|---|
+| `--regenerate-drifted` | Discard the current content and regenerate it from the current inputs |
+| `--adopt-drifted` | Record the current content as the accepted generation |
+
+Regenerating throws away a deliberate edit; adopting attests an accident.
+Passing both is refused — they are contradictory requests, not a stricter one.
+
+The refusal lists every path it would act on, so running once without a flag is
+how you see what is at stake. **What `--regenerate-drifted` discards is not
+recoverable through rwv**: the bytes are content rwv never accepted, so no
+digest, savepoint or copy of them exists anywhere in the workspace. Copy the
+file aside first if you might want it back. `--adopt-drifted` discards nothing.
+
+Files with no difference never reach this fork, so the friction is paid only
+where the ambiguity is real.
+
 ## Invocation
 
 ```
-rwv materialize
+rwv materialize [--regenerate-drifted | --adopt-drifted]
 ```
 
-No flags, no arguments.
+No arguments.
 
 Run `rwv --help materialize` for the full clap surface.
 
@@ -66,9 +96,10 @@ message.
 ## Exit codes
 
 - `0` — hooks ran successfully.
-- non-zero — no project is presented by this checkout, the workspace could not
-  be resolved, the manifest failed to parse, or an integration hook returned an
-  error.
+- non-zero — no project is presented by this checkout, a generated file rwv
+  attests holds content it never accepted and no consent flag was passed, the
+  workspace could not be resolved, the manifest failed to parse, or an
+  integration hook returned an error.
 
 ## Examples
 
@@ -94,5 +125,9 @@ rwv materialize
 - *managed file missing … run `rwv doctor --fix` to regenerate* — the project's
   ecosystem config was never authored (or was deleted). `materialize` never
   authors; `rwv doctor --fix` does.
+- *materialize stopped: content rwv never accepted is on disk* — pick an exit
+  with `--adopt-drifted` or `--regenerate-drifted`, per "Arriving at drift"
+  above. `rwv doctor` reports the same files, and its finding names the same
+  two flags.
 - *integration activate-hook error* — an install command returned non-zero. Fix
   the underlying ecosystem problem and rerun.

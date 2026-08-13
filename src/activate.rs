@@ -36,12 +36,14 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use crate::cli::consent::DriftConsent;
 use crate::integration::{Integration, Severity};
 use crate::integration_runner::{
     build_detection_cache, enabled_integrations, run_activate_hooks, run_activations, run_checks,
     run_deactivations, run_verifications,
 };
 use crate::integrations::builtin_integrations;
+use crate::integrations::merge::{drifted_attested_owned_files, stamp_owned_digest};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::symlink::LinkTarget;
 use crate::workspace::{
@@ -50,7 +52,7 @@ use crate::workspace::{
 };
 
 /// Which class of verb is driving activation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub enum ActivationMode {
     /// The target project's integrations author their managed/generated
     /// content into that project's own directory. Regeneration is not
@@ -66,7 +68,11 @@ pub enum ActivationMode {
     /// the recorded pins is made real on disk. No authoring, no verify pass,
     /// and no claim on the weave root's shared names — the project acted on is
     /// the one the root already presents, so there is nothing to select.
-    Materialize,
+    ///
+    /// Carries the operator's [`DriftConsent`] because arriving at an attested
+    /// generated file whose content rwv never accepted is a fork this mode
+    /// alone reaches, and the choice out of it is the operator's.
+    Materialize(Option<DriftConsent>),
 }
 
 /// What a surfacing call may do with the weave root's SHARED names — the
@@ -200,7 +206,7 @@ pub fn activate_intent_with_options(
 ///
 /// The refusal and the target come from one read of the root, so the case that
 /// refuses is exactly the case with no project to name.
-pub fn materialize(ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn materialize(ctx: &WorkspaceContext, consent: Option<DriftConsent>) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let Some(project) = observe_root(root)
         .as_ref()
@@ -219,8 +225,64 @@ pub fn materialize(ctx: &WorkspaceContext) -> anyhow::Result<()> {
         project.as_str(),
         false,
         ActivateOptions::default(),
-        ActivationMode::Materialize,
+        ActivationMode::Materialize(consent),
     )
+}
+
+/// Settle attested generated files in `output_dir` whose content rwv never
+/// accepted, before anything downstream reads or rewrites them.
+///
+/// Runs ahead of the hooks because a hook that regenerates re-stamps whatever
+/// it produced, which turns arriving at drift into silently adopting it. The
+/// two exits destroy opposite things — regenerating discards content the
+/// operator may have written deliberately, adopting attests content that may be
+/// an accident — so with no consent this refuses and names both.
+///
+/// Regenerating is a removal here rather than a call into any integration:
+/// a ledger entry exists only where a generator's output was accepted, every
+/// such generator runs in the activate hook this function precedes, and each of
+/// those files is fully owned — whole-write and whole-delete safe by the
+/// declaration that put it in the ledger.
+fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> anyhow::Result<()> {
+    let drifted = drifted_attested_owned_files(output_dir);
+    if drifted.is_empty() {
+        return Ok(());
+    }
+
+    match consent {
+        None => {
+            let listed = drifted
+                .iter()
+                .map(|file| format!("\n  {}", output_dir.join(&file.name).display()))
+                .collect::<String>();
+            anyhow::bail!(
+                "materialize stopped: content rwv never accepted is on disk for \
+                 {} generated file(s) it attests:{listed}\n\
+                 Re-run with `--adopt-drifted` to record the current content as \
+                 the accepted generation, or `--regenerate-drifted` to discard it \
+                 and regenerate from the current inputs.",
+                drifted.len()
+            );
+        }
+        Some(DriftConsent::Adopt(_)) => {
+            for file in &drifted {
+                stamp_owned_digest(output_dir, &file.name, &file.content).with_context(|| {
+                    format!(
+                        "adopting the current content of {}",
+                        output_dir.join(&file.name).display()
+                    )
+                })?;
+            }
+        }
+        Some(DriftConsent::Regenerate(_)) => {
+            for file in &drifted {
+                let path = output_dir.join(&file.name);
+                std::fs::remove_file(&path)
+                    .with_context(|| format!("discarding drifted {}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Options for [`activate_with_options`].
@@ -352,7 +414,9 @@ fn activate_at(
                 eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
             }
         }
-        ActivationMode::Materialize => {}
+        ActivationMode::Materialize(consent) => {
+            settle_arrived_drift(&ctx_base.output_dir, consent)?;
+        }
     }
 
     // Everything below acts on the weave ROOT. Which project the root
@@ -367,7 +431,7 @@ fn activate_at(
     // touches the root only when the target is already the project the root
     // presents — whose owned-file union the regeneration it just ran may have
     // changed.
-    if mode == ActivationMode::Intent {
+    if matches!(mode, ActivationMode::Intent) {
         let observed = observe_root(root);
         if observed
             .as_ref()
@@ -391,7 +455,7 @@ fn activate_at(
     //    the other route.
     let surfacing_mode = match mode {
         ActivationMode::Context => SurfacingMode::Select,
-        ActivationMode::Intent | ActivationMode::Materialize => SurfacingMode::Repair,
+        ActivationMode::Intent | ActivationMode::Materialize(_) => SurfacingMode::Repair,
     };
     surface_symlinks(
         root,
@@ -1818,5 +1882,97 @@ mod tests {
             Path::new("projects/web-app/go.work"),
             "the refusal must leave the presented project's surfacing in place"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Arriving at drift in an attested generated file
+    // -----------------------------------------------------------------------
+
+    mod arrived_drift {
+        use super::*;
+        use crate::cli::consent::{AdoptDriftedConsent, RegenerateDriftedConsent};
+        use crate::integrations::merge::{check_owned_digest, OwnedDigestCheck};
+
+        /// A directory where `name` was accepted holding `accepted`, and now
+        /// holds `on_disk`.
+        fn attested(name: &str, accepted: &[u8], on_disk: &[u8]) -> tempfile::TempDir {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            std::fs::write(dir.join(name), accepted).unwrap();
+            stamp_owned_digest(dir, name, accepted).unwrap();
+            std::fs::write(dir.join(name), on_disk).unwrap();
+            tmp
+        }
+
+        fn regenerate() -> Option<DriftConsent> {
+            Some(DriftConsent::Regenerate(RegenerateDriftedConsent::granted()))
+        }
+
+        fn adopt() -> Option<DriftConsent> {
+            Some(DriftConsent::Adopt(AdoptDriftedConsent::granted()))
+        }
+
+        #[test]
+        fn content_rwv_accepted_is_not_a_fork() {
+            let tmp = attested("Cargo.lock", b"version = 4\n", b"version = 4\n");
+            settle_arrived_drift(tmp.path(), None)
+                .expect("the common case must not ask the operator anything");
+        }
+
+        #[test]
+        fn an_attested_file_that_is_gone_is_not_a_fork() {
+            let tmp = tempfile::tempdir().unwrap();
+            stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 4\n").unwrap();
+            settle_arrived_drift(tmp.path(), None)
+                .expect("a file to regenerate is not a choice between two losses");
+        }
+
+        #[test]
+        fn drift_with_no_consent_refuses_naming_the_path_and_both_exits() {
+            let tmp = attested("Cargo.lock", b"version = 4\n", b"version = 3\n");
+            let msg = settle_arrived_drift(tmp.path(), None)
+                .expect_err("drift with no consent must refuse")
+                .to_string();
+            assert!(
+                msg.contains(&tmp.path().join("Cargo.lock").display().to_string()),
+                "the refusal is the loss list the override is read against: {msg}"
+            );
+            assert!(
+                msg.contains("--adopt-drifted") && msg.contains("--regenerate-drifted"),
+                "a refusal that does not name both exits strands the operator: {msg}"
+            );
+            assert_eq!(
+                std::fs::read(tmp.path().join("Cargo.lock")).unwrap(),
+                b"version = 3\n",
+                "refusing must leave the file alone"
+            );
+        }
+
+        #[test]
+        fn adopt_attests_the_bytes_the_check_compared() {
+            let tmp = attested("Cargo.lock", b"version = 4\n", b"version = 3\n");
+            settle_arrived_drift(tmp.path(), adopt()).unwrap();
+            assert_eq!(
+                std::fs::read(tmp.path().join("Cargo.lock")).unwrap(),
+                b"version = 3\n",
+                "adopting must not rewrite the content it accepts"
+            );
+            assert_eq!(
+                check_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n"),
+                OwnedDigestCheck::Matches,
+                "the ledger must now attest what is on disk"
+            );
+        }
+
+        #[test]
+        fn regenerate_discards_the_content_so_the_generator_makes_it_again() {
+            let tmp = attested("Cargo.lock", b"version = 4\n", b"version = 3\n");
+            settle_arrived_drift(tmp.path(), regenerate()).unwrap();
+            assert!(
+                !tmp.path().join("Cargo.lock").exists(),
+                "the hooks that follow create what is absent; content left in \
+                 place is content a generator may decline to replace"
+            );
+        }
     }
 }
