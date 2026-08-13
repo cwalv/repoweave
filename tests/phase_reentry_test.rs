@@ -410,6 +410,59 @@ fn advance_target_reentry_refuses_to_land_on_a_detached_target() {
 }
 
 // ---------------------------------------------------------------------------
+// Cross-verb --continue: the invoked verb must match the recorded op's verb.
+//
+// `load_continuing_context` reads the CLI-invoked verb only to cross-check it
+// against `record.verb`; every read past that point uses `record.verb`, so a
+// missing check is purely diagnostic — the recorded op still completes, just
+// under the CLI name the operator didn't type. The fixture below is the same
+// advance-target/equal-tips setup `advance_target_reentry_on_equal_tips_is_a_noop_success`
+// uses to resume a sync-to op to a clean success, so mismatching the verb
+// here demonstrates the refusal is the only thing standing between a `sync`
+// invocation and a silently completed landing.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn continue_refuses_a_sync_invocation_against_a_sync_to_op() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
+
+    let op_id = "reentry-test-advance";
+    write_sync_to_owner_record_at_advance_target(&ww.root, &primary.root);
+    write_lease(&primary.root, &ww.root);
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+
+    let err_output = rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("in-progress op is `sync-to` but `rwv sync --continue` was invoked"),
+        "the refusal must name both the recorded verb and the invoked one; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("Run `rwv sync-to --continue` instead"),
+        "the refusal must name the correct resume command; got:\n{stderr}"
+    );
+
+    // Purely diagnostic: a refused cross-verb continue leaves the mismatched
+    // op exactly where it was, not partway resumed under the wrong verb.
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "the owner record must survive the refusal"
+    );
+    assert!(
+        primary.root.join(".rwv-op-lease").exists(),
+        "the target lease must survive the refusal"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Lease-side --continue: end-state parity with owner-side --continue.
 //
 // Plant an owner record at the SOURCE workweave (ww), a thin lease at the
@@ -787,6 +840,26 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
         stderr.contains("rwv abort"),
         "error must mention rwv abort for rollback; stderr:\n{stderr}"
     );
+    // Pin the specific refusal, not just its generic resumability hints: a
+    // different bail sharing "--continue"/"rwv abort" would pass the two
+    // checks above without this one firing at all.
+    assert!(
+        stderr.contains(
+            "--retire: workweave's manifest repos differ from target after sync-to"
+        ),
+        "the merged-check failure must name itself as the retire divergence refusal; \
+         stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(SERVER_PATH),
+        "the refusal must name which repo diverged; stderr:\n{stderr}"
+    );
+
+    // Nothing destructive happened: the workweave must still be on disk.
+    assert!(
+        ww.root.exists(),
+        "a refused retire must leave the workweave in place"
+    );
 }
 
 /// Test: --continue completes retire after the operator reconciles.
@@ -868,6 +941,72 @@ fn retire_continue_completes_after_reconciliation() {
     assert!(
         !primary.root.join(".rwv-op-lease").exists(),
         "target lease must be cleared after successful retire"
+    );
+}
+
+/// Test: retire refuses to delete a workweave that still has uncommitted
+/// changes, even once the merged-check (manifest repos match target) passes.
+///
+/// Setup: ww and primary already share tips (no divergence, unlike the
+/// merged-check-failure test above), so the first retire guard clears. An
+/// untracked file left in ww's manifest repo worktree is the uncommitted
+/// change the second guard must catch. Verify:
+///   - rwv sync-to --continue fails, naming the dirty path.
+///   - the workweave is NOT deleted.
+///   - the untracked file is untouched (the refusal took no action).
+#[test]
+fn retire_refuses_when_workweave_has_uncommitted_changes_after_convergence() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
+
+    let op_id = "retire-dirty-check";
+
+    write_sync_to_retire_record(&ww.root, &ww.root, &primary.root, op_id, &[]);
+    write_lease_with_id(&primary.root, &ww.root, op_id);
+
+    let target_op_id = format!("{op_id}-target");
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+    create_savepoint(&primary.project_dir, &target_op_id);
+    create_savepoint(&primary.server_dir, &target_op_id);
+
+    // Leave an uncommitted (untracked) file in ww's manifest repo. Tips still
+    // match primary's, so the merged-check passes and the dirty-check is what
+    // must fire.
+    std::fs::write(ww.server_dir.join("stray.txt"), "not committed\n").unwrap();
+
+    let out = rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv command failed to run");
+    assert!(
+        !out.status.success(),
+        "sync-to --continue must fail when the workweave is dirty; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--retire: workweave has uncommitted changes after sync-to"),
+        "the refusal must name itself as the retire dirty-check; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(SERVER_PATH),
+        "the refusal must name which repo is dirty; stderr:\n{stderr}"
+    );
+
+    assert!(
+        ww.root.exists(),
+        "a workweave refused for dirtiness must not be deleted"
+    );
+    assert!(
+        ww.server_dir.join("stray.txt").exists(),
+        "the refusal must not have touched the uncommitted file"
+    );
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "owner record must survive the dirty-check refusal"
     );
 }
 
