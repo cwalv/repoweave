@@ -116,6 +116,13 @@ Outcome `kind` tags include `converged`, `already-ahead`, `no-op`, and
 `rebase-failed`) plus an optional structured `cause`
 surfacing the underlying `VcsError`.
 
+Every outcome carries a `containment` record naming how this checkout stood
+against the source when the outcome was decided — `equal`, `ahead`, `behind`
+or `diverged`, with the commit counts — and the `baseline` saying which read
+of the source it was measured against. Branch on that rather than on the
+prose in `failure.message`. It is absent only where the outcome was decided
+before any pair could be read, such as a HEAD that would not resolve.
+
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
 moment each repo's sync completes. Lines arrive in completion order (not
@@ -231,6 +238,125 @@ Schema:
             "cherry-pick"
           ]
         }
+      ]
+    },
+    "ContainmentOutput": {
+      "description": "What one repo's replay was decided from: how this checkout stood against the source, and which read of the source it was measured against.\n\nThe two travel together because a verdict without its baseline counts commits ahead of nothing in particular.",
+      "type": "object",
+      "required": [
+        "baseline",
+        "verdict"
+      ],
+      "properties": {
+        "baseline": {
+          "description": "Which read produced the source tip this verdict measured against.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReplayBaseline"
+            }
+          ]
+        },
+        "verdict": {
+          "description": "The ancestry between this checkout and the source tip.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ContainmentVerdictOutput"
+            }
+          ]
+        }
+      }
+    },
+    "ContainmentVerdictOutput": {
+      "description": "How a repo's checkout stood against the source tip it was measured against: equal to it, containing it and carrying commits it does not, contained by it, or each holding commits the other lacks.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "relation"
+          ],
+          "properties": {
+            "relation": {
+              "type": "string",
+              "enum": [
+                "equal"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "commits",
+            "relation"
+          ],
+          "properties": {
+            "commits": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "relation": {
+              "type": "string",
+              "enum": [
+                "ahead"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "commits",
+            "relation"
+          ],
+          "properties": {
+            "commits": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "relation": {
+              "type": "string",
+              "enum": [
+                "behind"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "ahead",
+            "behind",
+            "relation"
+          ],
+          "properties": {
+            "ahead": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "behind": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "relation": {
+              "type": "string",
+              "enum": [
+                "diverged"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ReplayBaseline": {
+      "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
+      "type": "string",
+      "enum": [
+        "source-lock-entry",
+        "source-committed-tip"
       ]
     },
     "Resolution": {
@@ -382,6 +508,17 @@ Schema:
             "absolute_path": {
               "type": "string"
             },
+            "containment": {
+              "description": "How this checkout stood against the source when the strategy ran. The `kind` says what the strategy did; this says what it was up against — `behind` is a fast-forward, `diverged` is a rebase.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ContainmentOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "derived_content_dropped": {
               "description": "Repo-relative paths this repo declares derived whose replayed version the landed tree does not carry: the replay resolved them to the target's version instead. Regenerating them from their source of record and committing is what makes the landed tree describe itself again. Omitted when nothing was resolved away.",
               "type": "array",
@@ -428,6 +565,17 @@ Schema:
               "format": "uint",
               "minimum": 0.0
             },
+            "containment": {
+              "description": "How this checkout stood against the source, and which read of the source `commits_ahead` counts against.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ContainmentOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "kind": {
               "type": "string",
               "enum": [
@@ -460,6 +608,17 @@ Schema:
           "properties": {
             "absolute_path": {
               "type": "string"
+            },
+            "containment": {
+              "description": "How this checkout stood against the source, and which read of the source it was equal to.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ContainmentOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -494,6 +653,17 @@ Schema:
           "properties": {
             "absolute_path": {
               "type": "string"
+            },
+            "containment": {
+              "description": "How this checkout stood against the source when the strategy ran. `failure.message` renders this in prose; branch on this instead. Absent where the outcome was decided before any pair was read.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ContainmentOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "failure": {
               "$ref": "#/definitions/SyncFailureOutput"

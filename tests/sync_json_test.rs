@@ -9,8 +9,8 @@
 
 use assert_cmd::Command as AssertCommand;
 use repoweave::sync::{
-    ReplayBaseline, RepoSyncOutcome, SyncFailure, SyncJsonOutput, SyncOutcomeOutput,
-    SYNC_JSON_SCHEMA_URL,
+    ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome, SyncFailure,
+    SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, VcsError, VcsErrorOutput};
 use serde_json::Value;
@@ -339,7 +339,17 @@ fn sync_json_no_op_when_already_at_lock() {
 // ---------------------------------------------------------------------------
 
 fn serialize_outcome(path: &str, abs: &str, outcome: &RepoSyncOutcome) -> Value {
-    let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs.to_owned(), outcome);
+    serialize_outcome_decided_from(path, abs, outcome, None)
+}
+
+fn serialize_outcome_decided_from(
+    path: &str,
+    abs: &str,
+    outcome: &RepoSyncOutcome,
+    containment: Option<ContainmentOutput>,
+) -> Value {
+    let out =
+        SyncOutcomeOutput::from_outcome(path.to_owned(), abs.to_owned(), outcome, containment);
     serde_json::to_value(&out).unwrap()
 }
 
@@ -842,6 +852,7 @@ fn sync_json_envelope_round_trips() {
                 &RepoSyncOutcome::Converged {
                     derived_content_dropped: Vec::new(),
                 },
+                None,
             ),
             SyncOutcomeOutput::from_outcome(
                 "p2".into(),
@@ -850,6 +861,10 @@ fn sync_json_envelope_round_trips() {
                     commits_ahead: 2,
                     baseline: ReplayBaseline::SourceLockEntry,
                 },
+                Some(ContainmentOutput {
+                    verdict: ContainmentVerdictOutput::Ahead { commits: 2 },
+                    baseline: ReplayBaseline::SourceLockEntry,
+                }),
             ),
         ],
         advisories: Vec::new(),
@@ -987,5 +1002,137 @@ fn vcs_error_io_output_uses_message_not_error() {
     assert!(
         v["message"].as_str().unwrap().contains("permission denied"),
         "message should contain io::Error display: {v}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The containment disclosure, on the surface a consumer reads
+//
+// The verdict a repo's outcome was decided from used to reach `--json` only
+// as prose: `already-ahead` carried a bare `commits_ahead` with no statement
+// of what it was ahead OF, and a failed fast-forward carried its verdict
+// inside `failure.message`, which the schema documents as free-form. Both
+// tests below drive the binary and read stdout, because a field that
+// serializes and never arrives is the failure mode a struct-literal test
+// cannot see.
+//
+// `behind` and `diverged` are reached here. `ahead` and `equal` are pinned
+// one layer down — the envelope round-trip above and the conformance corpus —
+// because reaching them through the binary costs a fixture per verdict and
+// the wire shape they take is the same one these two exercise.
+// ---------------------------------------------------------------------------
+
+/// The containment object of the outcome for `path`, or a panic naming what
+/// the envelope did carry.
+fn containment_of(stdout: &str, path: &str) -> Value {
+    let parsed: Value = serde_json::from_str(stdout)
+        .unwrap_or_else(|e| panic!("stdout not parseable as JSON ({e}):\n{stdout}"));
+    let outcomes = parsed
+        .get("outcomes")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("outcomes array missing:\n{stdout}"));
+    let outcome = outcomes
+        .iter()
+        .find(|o| o.get("path").and_then(Value::as_str) == Some(path))
+        .unwrap_or_else(|| panic!("no outcome for {path}:\n{stdout}"));
+    outcome
+        .get("containment")
+        .cloned()
+        .unwrap_or_else(|| panic!("outcome for {path} carries no containment:\n{outcome}"))
+}
+
+#[test]
+fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(
+        &ww.server_dir,
+        "change.txt",
+        "ww change\n",
+        "ww: add change",
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww change"], &ww.project_dir);
+
+    let assert = rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--json"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    let containment = containment_of(&stdout, SERVER_PATH);
+    assert_eq!(
+        containment["verdict"]["relation"], "behind",
+        "a repo the source is ahead of converged by fast-forward, and the \
+         envelope must say so: {containment}"
+    );
+    assert_eq!(
+        containment["verdict"]["commits"], 1,
+        "the count is the one commit this checkout lacked: {containment}"
+    );
+    assert_eq!(
+        containment["baseline"], "source-lock-entry",
+        "the source relocked before this sync, so the target came from its \
+         lock entry rather than a tip pulled ahead of it: {containment}"
+    );
+}
+
+#[test]
+fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary\n",
+        "primary: C2",
+    );
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+
+    // Two commits here against the source's one, so the pair of counts cannot
+    // be read correctly by a disclosure that transposes them.
+    make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
+    let c_ww = make_commit(&ww.server_dir, "ww2.txt", "ww2\n", "ww: second");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+
+    let assert = rwv()
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--json",
+            "--discard-local-commits",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    let containment = containment_of(&stdout, SERVER_PATH);
+    assert_eq!(
+        containment["verdict"]["relation"], "diverged",
+        "the fast-forward failed because both sides hold commits the other \
+         lacks, and that is the fact a consumer must not have to parse out of \
+         the failure message: {containment}"
+    );
+    assert_eq!(
+        containment["verdict"]["ahead"], 2,
+        "two commits here the source lacks: {containment}"
+    );
+    assert_eq!(
+        containment["verdict"]["behind"], 1,
+        "one commit there this checkout lacks: {containment}"
+    );
+    assert_eq!(
+        containment["baseline"], "source-lock-entry",
+        "the source relocked, so its lock entry is what this was measured \
+         against: {containment}"
     );
 }

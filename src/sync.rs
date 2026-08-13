@@ -105,6 +105,54 @@ impl Containment {
     }
 }
 
+/// How a repo's checkout stood against the source tip it was measured
+/// against: equal to it, containing it and carrying commits it does not,
+/// contained by it, or each holding commits the other lacks.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(tag = "relation", rename_all = "kebab-case")]
+pub enum ContainmentVerdictOutput {
+    Equal,
+    Ahead { commits: usize },
+    Behind { commits: usize },
+    Diverged { ahead: usize, behind: usize },
+}
+
+impl From<Containment> for ContainmentVerdictOutput {
+    fn from(c: Containment) -> Self {
+        match c {
+            Containment::Equal => Self::Equal,
+            Containment::Ahead(commits) => Self::Ahead { commits },
+            Containment::Behind(commits) => Self::Behind { commits },
+            Containment::Diverged { ahead, behind } => Self::Diverged { ahead, behind },
+        }
+    }
+}
+
+/// What one repo's replay was decided from: how this checkout stood against
+/// the source, and which read of the source it was measured against.
+///
+/// The two travel together because a verdict without its baseline counts
+/// commits ahead of nothing in particular.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+pub struct ContainmentOutput {
+    /// The ancestry between this checkout and the source tip.
+    pub verdict: ContainmentVerdictOutput,
+    /// Which read produced the source tip this verdict measured against.
+    pub baseline: ReplayBaseline,
+}
+
+impl ContainmentOutput {
+    /// The disclosure for a repo whose pair the machine read, `None` for one
+    /// whose outcome was decided before any such read (an unreadable HEAD, a
+    /// lock entry the source could not resolve).
+    fn observed(containment: Option<Containment>, baseline: ReplayBaseline) -> Option<Self> {
+        containment.map(|c| Self {
+            verdict: c.into(),
+            baseline,
+        })
+    }
+}
+
 fn plural_s(n: usize) -> &'static str {
     if n == 1 {
         ""
@@ -116,7 +164,8 @@ fn plural_s(n: usize) -> &'static str {
 /// Which read gave replay this repo's target: the source lock's entry for it,
 /// or the source checkout's committed tip pulled ahead of that entry
 /// (tips-as-truth).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum ReplayBaseline {
     SourceLockEntry,
     SourceCommittedTip,
@@ -472,6 +521,11 @@ pub enum SyncOutcomeOutput {
         /// describe itself again. Omitted when nothing was resolved away.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         derived_content_dropped: Vec<String>,
+        /// How this checkout stood against the source when the strategy ran.
+        /// The `kind` says what the strategy did; this says what it was up
+        /// against — `behind` is a fast-forward, `diverged` is a rebase.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        containment: Option<ContainmentOutput>,
     },
     AlreadyAhead {
         path: String,
@@ -481,6 +535,10 @@ pub enum SyncOutcomeOutput {
         /// `rwv sync-to --json` output when step 3 advanced this repo.
         #[serde(skip_serializing_if = "Option::is_none")]
         step3_advance: Option<Step3AdvanceOutput>,
+        /// How this checkout stood against the source, and which read of the
+        /// source `commits_ahead` counts against.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        containment: Option<ContainmentOutput>,
     },
     NoOp {
         path: String,
@@ -489,6 +547,10 @@ pub enum SyncOutcomeOutput {
         /// `rwv sync-to --json` output when step 3 advanced this repo.
         #[serde(skip_serializing_if = "Option::is_none")]
         step3_advance: Option<Step3AdvanceOutput>,
+        /// How this checkout stood against the source, and which read of the
+        /// source it was equal to.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        containment: Option<ContainmentOutput>,
     },
     Failed {
         path: String,
@@ -499,11 +561,24 @@ pub enum SyncOutcomeOutput {
         /// Typically absent when the repo failed in step 1.
         #[serde(skip_serializing_if = "Option::is_none")]
         step3_advance: Option<Step3AdvanceOutput>,
+        /// How this checkout stood against the source when the strategy ran.
+        /// `failure.message` renders this in prose; branch on this instead.
+        /// Absent where the outcome was decided before any pair was read.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        containment: Option<ContainmentOutput>,
     },
 }
 
 impl SyncOutcomeOutput {
-    pub fn from_outcome(path: String, absolute_path: String, outcome: &RepoSyncOutcome) -> Self {
+    /// `containment` is the verdict the machine read for this repo before its
+    /// strategy ran, threaded from that one read rather than taken again here:
+    /// the text line and this record then describe one observation of the pair.
+    pub fn from_outcome(
+        path: String,
+        absolute_path: String,
+        outcome: &RepoSyncOutcome,
+        containment: Option<ContainmentOutput>,
+    ) -> Self {
         match outcome {
             RepoSyncOutcome::Converged {
                 derived_content_dropped,
@@ -512,23 +587,27 @@ impl SyncOutcomeOutput {
                 absolute_path,
                 step3_advance: None,
                 derived_content_dropped: derived_content_dropped.clone(),
+                containment,
             },
             RepoSyncOutcome::AlreadyAhead { commits_ahead, .. } => Self::AlreadyAhead {
                 path,
                 absolute_path,
                 commits_ahead: *commits_ahead,
                 step3_advance: None,
+                containment,
             },
             RepoSyncOutcome::NoOp => Self::NoOp {
                 path,
                 absolute_path,
                 step3_advance: None,
+                containment,
             },
             RepoSyncOutcome::Failed(failure) => Self::Failed {
                 path,
                 absolute_path,
                 failure: SyncFailureOutput::from(failure),
                 step3_advance: None,
+                containment,
             },
         }
     }
@@ -1821,7 +1900,15 @@ pub trait OutputHandler: Send + Sync {
     /// `path` is the repo's manifest-relative path string; `abs_path` is
     /// the absolute on-disk path. `outcome` is the raw sync result —
     /// implementations convert to `SyncOutcomeOutput` internally when needed.
-    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome);
+    /// `containment` is the verdict this repo's outcome was decided from,
+    /// `None` where it was decided before any pair was read.
+    fn record(
+        &self,
+        path: &str,
+        abs_path: &str,
+        outcome: &RepoSyncOutcome,
+        containment: Option<ContainmentOutput>,
+    );
 
     /// Return `true` if the orchestration body should emit human-readable
     /// text progress to stdout/stderr. JSON-mode handlers return `false`.
@@ -1905,7 +1992,13 @@ impl OutputHandler for TextHandler<'_> {
         true
     }
 
-    fn record(&self, path: &str, _abs_path: &str, outcome: &RepoSyncOutcome) {
+    fn record(
+        &self,
+        path: &str,
+        _abs_path: &str,
+        outcome: &RepoSyncOutcome,
+        _containment: Option<ContainmentOutput>,
+    ) {
         let _guard = self.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
         if outcome.is_failure() {
             eprintln!("  {path}: {outcome}");
@@ -1948,8 +2041,19 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
         false
     }
 
-    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
-        let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
+    fn record(
+        &self,
+        path: &str,
+        abs_path: &str,
+        outcome: &RepoSyncOutcome,
+        containment: Option<ContainmentOutput>,
+    ) {
+        let out = SyncOutcomeOutput::from_outcome(
+            path.to_owned(),
+            abs_path.to_owned(),
+            outcome,
+            containment,
+        );
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(out);
     }
@@ -1978,8 +2082,19 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
         false
     }
 
-    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
-        let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
+    fn record(
+        &self,
+        path: &str,
+        abs_path: &str,
+        outcome: &RepoSyncOutcome,
+        containment: Option<ContainmentOutput>,
+    ) {
+        let out = SyncOutcomeOutput::from_outcome(
+            path.to_owned(),
+            abs_path.to_owned(),
+            outcome,
+            containment,
+        );
         let record = SyncOutcomeNdjsonRecord {
             schema: self.schema_url,
             outcome: &out,
@@ -2036,8 +2151,19 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
         *guard = Some(retired.name.clone());
     }
 
-    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
-        let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
+    fn record(
+        &self,
+        path: &str,
+        abs_path: &str,
+        outcome: &RepoSyncOutcome,
+        containment: Option<ContainmentOutput>,
+    ) {
+        let out = SyncOutcomeOutput::from_outcome(
+            path.to_owned(),
+            abs_path.to_owned(),
+            outcome,
+            containment,
+        );
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(out);
     }
@@ -4528,7 +4654,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     cause: None,
                 });
                 ctx.handler
-                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
+                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome, None);
                 continue;
             }
         };
@@ -4552,7 +4678,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     cause: Some(e),
                 });
                 ctx.handler
-                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
+                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome, None);
                 continue;
             }
         };
@@ -4642,6 +4768,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 task.repo_path.as_str(),
                 &task.abs.to_string_lossy(),
                 &outcome,
+                ContainmentOutput::observed(task.containment, task.baseline),
             );
             (is_failure, converged_head)
         });
@@ -8505,7 +8632,13 @@ mod tests {
             false
         }
 
-        fn record(&self, _path: &str, _abs_path: &str, _outcome: &RepoSyncOutcome) {
+        fn record(
+            &self,
+            _path: &str,
+            _abs_path: &str,
+            _outcome: &RepoSyncOutcome,
+            _containment: Option<ContainmentOutput>,
+        ) {
             *self.count.lock().unwrap() += 1;
         }
     }
@@ -8529,7 +8662,7 @@ mod tests {
         // Drive record() from outside the sync orchestration to prove the trait
         // contract is sufficient on its own.
         for outcome in &outcomes {
-            handler.record("some/repo", "/abs/some/repo", outcome);
+            handler.record("some/repo", "/abs/some/repo", outcome, None);
         }
 
         assert_eq!(

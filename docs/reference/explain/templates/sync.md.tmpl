@@ -116,6 +116,13 @@ Outcome `kind` tags include `converged`, `already-ahead`, `no-op`, and
 `rebase-failed`) plus an optional structured `cause`
 surfacing the underlying `VcsError`.
 
+Every outcome carries a `containment` record naming how this checkout stood
+against the source when the outcome was decided — `equal`, `ahead`, `behind`
+or `diverged`, with the commit counts — and the `baseline` saying which read
+of the source it was measured against. Branch on that rather than on the
+prose in `failure.message`. It is absent only where the outcome was decided
+before any pair could be read, such as a HEAD that would not resolve.
+
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
 moment each repo's sync completes. Lines arrive in completion order (not

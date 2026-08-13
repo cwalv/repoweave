@@ -79,8 +79,9 @@ use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
 use repoweave::sync::{
-    Step3AdvanceOutput, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SyncToJsonOutput,
-    SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
+    ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, Step3AdvanceOutput,
+    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
+    SYNC_TO_JSON_SCHEMA_URL,
 };
 use repoweave::update::{RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_SCHEMA_URL};
 use repoweave::vcs::{ConflictOp, VcsErrorOutput};
@@ -572,45 +573,81 @@ fn sync_failures() -> Vec<SyncFailureOutput> {
 /// Every [`SyncOutcomeOutput`] variant. `step3_advance` is sampled at both
 /// settings on every variant that carries it, because `sync` omits it and
 /// `sync-to` supplies it — one envelope's normal shape is the other's.
+/// Every containment verdict, each paired with a baseline, so both closed
+/// vocabularies are sampled across one corpus document. Absence is sampled
+/// separately by the outcomes that carry `None`.
+fn containments() -> Vec<ContainmentOutput> {
+    vec![
+        ContainmentOutput {
+            verdict: ContainmentVerdictOutput::Behind { commits: 2 },
+            baseline: ReplayBaseline::SourceLockEntry,
+        },
+        ContainmentOutput {
+            verdict: ContainmentVerdictOutput::Diverged {
+                ahead: 1,
+                behind: 4,
+            },
+            baseline: ReplayBaseline::SourceCommittedTip,
+        },
+        ContainmentOutput {
+            verdict: ContainmentVerdictOutput::Ahead { commits: 3 },
+            baseline: ReplayBaseline::SourceLockEntry,
+        },
+        ContainmentOutput {
+            verdict: ContainmentVerdictOutput::Equal,
+            baseline: ReplayBaseline::SourceCommittedTip,
+        },
+    ]
+}
+
 fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
     let step3 = with_step3.then(advance);
+    let c = containments();
     let mut outcomes = vec![
         SyncOutcomeOutput::Converged {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             step3_advance: step3.clone(),
             derived_content_dropped: Vec::new(),
+            containment: Some(c[0]),
         },
         SyncOutcomeOutput::Converged {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             step3_advance: step3.clone(),
             derived_content_dropped: vec!["Cargo.lock".to_owned()],
+            containment: Some(c[1]),
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             commits_ahead: 3,
             step3_advance: step3.clone(),
+            containment: Some(c[2]),
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             commits_ahead: 0,
             step3_advance: step3.clone(),
+            containment: None,
         },
         SyncOutcomeOutput::NoOp {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             step3_advance: step3.clone(),
+            containment: Some(c[3]),
         },
     ];
-    for failure in sync_failures() {
+    for (n, failure) in sync_failures().into_iter().enumerate() {
         outcomes.push(SyncOutcomeOutput::Failed {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             failure,
             step3_advance: step3.clone(),
+            // A failure decided before any pair was read carries no verdict,
+            // and that shape has to be sampled too.
+            containment: (n > 0).then(|| c[n % c.len()]),
         });
     }
     outcomes
