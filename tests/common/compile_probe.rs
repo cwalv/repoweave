@@ -205,14 +205,29 @@ pub(crate) fn select_rlib(
     }
 }
 
+/// Holds a `repoweave`-defined symbol in every test binary that links this
+/// module, which is what gives [`running_test_crate_identity`] a marker to
+/// read.
+///
+/// Linking the crate does not by itself put its identity in the binary. A
+/// binary whose every use of `repoweave` is generic, inlined or
+/// const-evaluated defines no symbol rustc stamped with that crate's
+/// identity, and which instantiations survive optimization shifts with the
+/// metadata hash — so the same source is identifiable when this package
+/// builds as a workspace member and unidentifiable when it builds standalone,
+/// which is how CI builds it. Referencing a concrete non-generic function
+/// makes the marker a property of the link rather than of the optimizer.
+#[used]
+static REPOWEAVE_IDENTITY_ANCHOR: fn() -> &'static str = repoweave::rwv_version;
+
 /// The crate identity the currently-running test binary was linked against
 /// for the `repoweave` crate.
 ///
 /// This reads the running test executable's own bytes and extracts the one
-/// `Cs...repoweave` marker rustc stamped on every symbol from that crate.
-/// The whole point of the exercise is that this ID identifies the exact
-/// `librepoweave-*.rlib` on disk that fed the link — not the newest one, not
-/// the alphabetically-first one.
+/// `Cs...repoweave` marker rustc stamped on the symbols the binary carries
+/// from that crate. The whole point of the exercise is that this ID
+/// identifies the exact `librepoweave-*.rlib` on disk that fed the link —
+/// not the newest one, not the alphabetically-first one.
 fn running_test_crate_identity() -> CrateIdentity {
     let exe = std::env::current_exe().unwrap_or_else(|e| panic!("current_exe failed: {e}"));
     let bytes = std::fs::read(&exe).unwrap_or_else(|e| {
@@ -228,12 +243,12 @@ fn running_test_crate_identity() -> CrateIdentity {
         Ok(id) => id,
         Err(None) => panic!(
             "no `Cs...repoweave` marker found in running test binary {}\n\
-             rustc stamps a `Cs<StableCrateId>_9repoweave` marker on every \
-             symbol from the repoweave crate; its absence means either the \
-             binary was not linked against repoweave (impossible for a test \
-             in this crate) or the mangling scheme changed under us. The \
-             compile_probe cannot key rlib selection without it and refuses \
-             to guess.",
+             rustc stamps a `Cs<StableCrateId>_9repoweave` marker on the \
+             symbols a binary carries from the repoweave crate, and \
+             REPOWEAVE_IDENTITY_ANCHOR exists so that this binary carries \
+             one. Its absence means the anchor was dropped or the mangling \
+             scheme changed under us. The compile_probe cannot key rlib \
+             selection without it and refuses to guess.",
             exe.display()
         ),
         Err(Some(all)) => {
