@@ -2,7 +2,7 @@
 
 When the project's repo membership changes — repos added, removed, or synced in from another workweave — the ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, etc.) need to be brought into line with the new `rwv.toml`.
 
-The normal paths (`rwv add`, `rwv remove`) run activation hooks automatically, so regeneration is implicit. This page covers the cases where you need to trigger it by hand.
+The normal paths (`rwv add`, `rwv remove`) run activation hooks automatically, so regeneration is implicit — unless a generated file rwv attests holds content it never accepted, in which case they withhold the hooks and name the two ways out. This page covers the cases where you need to trigger it by hand, and [Content rwv never accepted](#content-rwv-never-accepted) covers that one.
 
 ## When to run this
 
@@ -24,7 +24,7 @@ rwv activate <project>
 2. Regenerates ecosystem workspace files in `projects/<project>/` from its current `rwv.toml`.
 3. Symlinks those files to the weave directory so build tools see them where they expect.
 
-The ecosystem install step runs automatically as part of activation (e.g., `npm install`, `uv sync`, `cargo fetch`). It brings the ecosystem state up to current membership; it never advances a version an existing lock file pins. Pass `--no-materialize` to generate the workspace config files without running installs:
+The ecosystem install step runs automatically as part of activation (e.g., `npm install`, `uv sync`, `cargo fetch`). It brings the ecosystem state up to current membership; it never advances a version an existing lock file pins, and it is withheld while there is [content rwv never accepted](#content-rwv-never-accepted) on disk. Pass `--no-materialize` to generate the workspace config files without running installs:
 
 ```bash
 rwv activate <project> --no-materialize
@@ -44,7 +44,9 @@ It takes no project argument — it materializes the project the checkout alread
 
 Like activation, it never advances a version an existing lock file pins.
 
-Generated files rwv attests but whose current content it never accepted **stop the run** rather than being overwritten. The refusal lists every path at stake, so running once with no flag is how you see it; the two ways out destroy opposite things, so each is asked for explicitly:
+## Content rwv never accepted
+
+Generated files rwv attests but whose current content it never accepted **stop the run** rather than being overwritten. `rwv materialize` is where you say which way; the refusal lists every path at stake, so running once with no flag is how you see it, and the two ways out destroy opposite things, so each is asked for explicitly:
 
 ```bash
 rwv materialize --regenerate-drifted   # discard the current content, re-derive from inputs
@@ -52,6 +54,8 @@ rwv materialize --adopt-drifted        # record the current content as the accep
 ```
 
 What `--regenerate-drifted` discards is not recoverable through rwv — copy anything you mean to keep out of the tree first.
+
+The install hooks are what settles this: they re-run each generator and record what it produces as accepted. So the verbs that run them without carrying a flag to answer with — `rwv activate`, `rwv add`, `rwv remove`, `rwv update`, `rwv doctor --fix` — withhold the hooks while it stands, name both flags on stderr, and go through once you have chosen. The rest of what each verb does still happens: `rwv add` still writes the manifest entry.
 
 ## Verify the result
 

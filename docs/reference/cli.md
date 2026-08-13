@@ -153,6 +153,8 @@ Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace f
 
 `.rwv-active` is the single source of truth for the active project; CWD does not override.
 
+The install hooks are withheld while a generated file rwv attests holds content it never accepted — see `rwv materialize` below, which is where that is settled.
+
 Anchored by `tests/doc_claims_activate_test.rs`.
 
 ### `rwv materialize [--regenerate-drifted | --adopt-drifted]`
@@ -177,6 +179,8 @@ A generated file rwv attests whose content differs from the generation rwv accep
 | `--adopt-drifted` | Record the drifted content as the accepted generation |
 
 Passing both is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through rwv — those bytes are content rwv never accepted, so nothing in the workspace holds a copy. `rwv doctor` reports the same files and names the same two flags.
+
+The hooks are what settles drift, so this is where the consent is given but not the only verb it binds: `rwv activate`, `rwv add`, `rwv remove`, `rwv update` and `rwv doctor --fix` run the same hooks and withhold them, naming both flags, while drift stands.
 
 `rwv activate --no-materialize` is the mirror: select without materializing.
 

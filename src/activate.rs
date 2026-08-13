@@ -628,12 +628,53 @@ fn activate_at(
     //    package.json). Suppressed by `--no-materialize` for fast
     //    context-switches; the user can run install commands directly when
     //    they need them.
-    if !opts.no_materialize {
+    if !opts.no_materialize && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
         let hook_issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         report_and_check_activate_hook_issues(&hook_issues)?;
     }
 
     Ok(())
+}
+
+/// Whether the hooks must not run, because arrived drift is still unsettled.
+///
+/// A hook re-runs its generator and re-attests what it produced, so over an
+/// attested file rwv never accepted it takes one of the two drift exits with
+/// nobody's consent — and which exit is not even determined, since the
+/// ecosystem tool decides whether it rewrites the bytes or keeps them. That is
+/// the laundering the consents exist to prevent, so the answer here is the same
+/// for every verb that reaches this line, and this asks no question about which
+/// one did.
+///
+/// [`settle_arrived_drift`] leaves nothing for this to find in the one mode
+/// that carries a consent: without one it bails, and with one it has already
+/// stamped or discarded every drifted file by the time surfacing is done.
+///
+/// Withholding rather than refusing: the intent verbs write the manifest before
+/// they regenerate, so a bail here would exit non-zero over a change that
+/// already landed. The manifest change stands, the operator is told what did
+/// not happen, and the two consents that unblock it are named.
+fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
+    let drifted = drifted_attested_owned_files(output_dir);
+    if drifted.is_empty() {
+        return false;
+    }
+    let listed = drifted
+        .iter()
+        .map(|file| format!("\n  {}", output_dir.join(&file.name).display()))
+        .collect::<String>();
+    eprintln!(
+        "[withheld] core: the install hooks were not run. They re-run each \
+         generator and record what it produces as accepted, which would settle \
+         the content rwv never accepted on disk for {} generated file(s) it \
+         attests, without the consent that says which way:{listed}\n\
+         Choose it: `rwv materialize --adopt-drifted` records the current \
+         content as the accepted generation, `rwv materialize \
+         --regenerate-drifted` discards it and regenerates from the current \
+         inputs. Then re-run this command.",
+        drifted.len()
+    );
+    true
 }
 
 /// Report integration activate-hook issues to stderr and bail if any are

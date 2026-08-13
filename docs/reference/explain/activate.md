@@ -40,7 +40,11 @@ previous state.
    to `projects/<project>/<file>` for each file in the active integrations'
    union of `generated_files()` and `managed_files()` (Axis-1 surfacing).
 4. **Install hooks:** integration install commands run against the now-in-place
-   symlinks. Suppressed by `--no-materialize`.
+   symlinks. Suppressed by `--no-materialize`, and withheld while a generated
+   file rwv attests holds content it never accepted — a hook re-runs its
+   generator and records what it produces as accepted, which would answer that
+   fork on the operator's behalf. Settle it with `rwv materialize
+   --adopt-drifted` or `rwv materialize --regenerate-drifted`, then rerun.
 5. **Write `.rwv-active`.**
 
 The per-integration `verify()` pass (step 1) covers Axis-2 content drift

@@ -113,6 +113,12 @@ file aside first if you might want it back. `--adopt-drifted` discards nothing.
 Files with no difference never reach this fork, so the friction is paid only
 where the ambiguity is real.
 
+This is where the consent is given, and not the only verb it binds. The hooks
+are what settles drift, so every verb that runs them withholds them while drift
+stands, and says so on stderr: `rwv activate`, `rwv add`, `rwv remove`,
+`rwv update` and `rwv doctor --fix`. None of those carries a flag to answer
+with — the answer is given here, once, and then they go through.
+
 ## Invocation
 
 ```
