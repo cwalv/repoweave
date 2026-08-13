@@ -49,6 +49,88 @@ impl Side {
     }
 }
 
+/// Two-way ancestry of one repo pair on the destination↔source axis, named
+/// from the SUBJECT tip's vantage: `Ahead(n)` means the subject contains the
+/// other tip and carries `n` commits it does not.
+///
+/// [`LockRelation`] answers the same question on the lock↔HEAD pair. The two
+/// are separate facts about separate pairs, and a message about one must not
+/// borrow the other's words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Containment {
+    Equal,
+    Ahead(usize),
+    Behind(usize),
+    Diverged { ahead: usize, behind: usize },
+}
+
+impl Containment {
+    /// Classify `subject` against `other` in `repo`, reading the pair once.
+    ///
+    /// `None` when either range is unresolvable in `repo`'s object store —
+    /// a failed count reads as zero, and zero on both sides spells `Equal`.
+    fn observe(
+        vcs: &dyn Vcs,
+        repo: &Path,
+        subject: &ResolvedRevisionId,
+        other: &ResolvedRevisionId,
+    ) -> Option<Self> {
+        if subject == other {
+            return Some(Self::Equal);
+        }
+        let ahead = vcs.count_commits_in_range(repo, other, subject).ok()?;
+        let behind = vcs.count_commits_in_range(repo, subject, other).ok()?;
+        Some(match (ahead, behind) {
+            (0, 0) => Self::Equal,
+            (ahead, 0) => Self::Ahead(ahead),
+            (0, behind) => Self::Behind(behind),
+            (ahead, behind) => Self::Diverged { ahead, behind },
+        })
+    }
+
+    /// The verdict as an operator phrase measuring the subject against
+    /// `other`, which names the other tip in the reader's terms.
+    fn describe(self, other: &str) -> String {
+        match self {
+            Self::Equal => format!("equal to {other}"),
+            Self::Ahead(n) => format!(
+                "strictly ahead of {other} by {n} commit{s} (contains it)",
+                s = plural_s(n)
+            ),
+            Self::Behind(n) => format!("strictly behind {other} by {n} commit{s}", s = plural_s(n)),
+            Self::Diverged { ahead, behind } => {
+                format!("diverged from {other} ({ahead} ahead, {behind} behind)")
+            }
+        }
+    }
+}
+
+fn plural_s(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+/// Which read gave replay this repo's target: the source lock's entry for it,
+/// or the source checkout's committed tip pulled ahead of that entry
+/// (tips-as-truth).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayBaseline {
+    SourceLockEntry,
+    SourceCommittedTip,
+}
+
+impl ReplayBaseline {
+    fn label(self) -> &'static str {
+        match self {
+            Self::SourceLockEntry => "the source lock entry",
+            Self::SourceCommittedTip => "the source's committed tip",
+        }
+    }
+}
+
 /// Display name for a workspace: the workweave name when in a workweave,
 /// otherwise the basename of the primary path.
 fn workspace_name(ctx: &WorkspaceContext) -> String {
@@ -284,9 +366,14 @@ pub enum RepoSyncOutcome {
     Converged {
         derived_content_dropped: Vec<String>,
     },
-    /// Lock SHA is already an ancestor of HEAD; no change made.
-    AlreadyAhead { commits_ahead: usize },
-    /// HEAD was already equal to the lock SHA before sync.
+    /// Replay's target is already an ancestor of HEAD; no change made.
+    /// `baseline` names which read produced that target, so the line can say
+    /// what HEAD is ahead OF.
+    AlreadyAhead {
+        commits_ahead: usize,
+        baseline: ReplayBaseline,
+    },
+    /// HEAD was already equal to replay's target before sync.
     NoOp,
     /// Strategy failed (conflict, divergence, etc.).
     Failed(SyncFailure),
@@ -426,7 +513,7 @@ impl SyncOutcomeOutput {
                 step3_advance: None,
                 derived_content_dropped: derived_content_dropped.clone(),
             },
-            RepoSyncOutcome::AlreadyAhead { commits_ahead } => Self::AlreadyAhead {
+            RepoSyncOutcome::AlreadyAhead { commits_ahead, .. } => Self::AlreadyAhead {
                 path,
                 absolute_path,
                 commits_ahead: *commits_ahead,
@@ -552,11 +639,13 @@ impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Converged { .. } => f.write_str("converged"),
-            Self::AlreadyAhead { commits_ahead } => write!(
+            Self::AlreadyAhead {
+                commits_ahead,
+                baseline,
+            } => write!(
                 f,
-                "already-ahead (lock is {commits_ahead} commit{s} behind HEAD; \
-                 rerun with --strategy=rebase to land HEAD on lock, or accept the divergence)",
-                s = if *commits_ahead == 1 { "" } else { "s" }
+                "already-ahead — HEAD is {shape}; nothing to replay",
+                shape = Containment::Ahead(*commits_ahead).describe(baseline.label()),
             ),
             Self::NoOp => f.write_str("up-to-date"),
             Self::Failed(failure) => fmt::Display::fmt(failure, f),
@@ -592,6 +681,7 @@ fn sync_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
+    baseline: ReplayBaseline,
     strategy: SyncStrategy,
     pre_replay_tip: Option<&ResolvedRevisionId>,
 ) -> RepoSyncOutcome {
@@ -604,7 +694,7 @@ fn sync_one_repo(
     // forward; the head-equality / AlreadyAhead short-circuits assume a
     // repo not in a mid-op state.
     if matches!(vcs.mid_op(repo), Some(ConflictOp::Rebase)) && strategy == SyncStrategy::Rebase {
-        return match apply_strategy(vcs, repo, target, strategy) {
+        return match apply_strategy(vcs, repo, target, baseline, None, strategy) {
             Ok(()) => RepoSyncOutcome::Converged {
                 derived_content_dropped: dropped_derived_content(vcs, repo, target, pre_replay_tip),
             },
@@ -629,15 +719,16 @@ fn sync_one_repo(
         return RepoSyncOutcome::NoOp;
     }
 
-    // Detect AlreadyAhead: lock is a strict ancestor of HEAD (HEAD is past the lock).
-    let is_ancestor = vcs.is_ancestor(repo, target, &head).unwrap_or(false);
+    let containment = Containment::observe(vcs, repo, &head, target);
 
-    if is_ancestor {
-        let commits_ahead = vcs.count_commits_in_range(repo, target, &head).unwrap_or(0);
-        return RepoSyncOutcome::AlreadyAhead { commits_ahead };
+    if let Some(Containment::Ahead(commits_ahead)) = containment {
+        return RepoSyncOutcome::AlreadyAhead {
+            commits_ahead,
+            baseline,
+        };
     }
 
-    match apply_strategy(vcs, repo, target, strategy) {
+    match apply_strategy(vcs, repo, target, baseline, containment, strategy) {
         Ok(()) => RepoSyncOutcome::Converged {
             derived_content_dropped: dropped_derived_content(vcs, repo, target, pre_replay_tip),
         },
@@ -675,18 +766,26 @@ impl StrategyError {
     }
 }
 
+/// `containment` is the verdict on HEAD against `target` read before this
+/// strategy ran; `None` where no such read was taken (a mid-rebase re-entry
+/// reaches the rebase arm without one).
 fn apply_strategy(
     vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
+    baseline: ReplayBaseline,
+    containment: Option<Containment>,
     strategy: SyncStrategy,
 ) -> Result<(), StrategyError> {
     match strategy {
         SyncStrategy::Ff => {
             if let Err(e) = vcs.advance_if_fast_forward(repo, target) {
+                let shape = match containment {
+                    Some(c) => format!(" (HEAD is {})", c.describe(baseline.label())),
+                    None => String::new(),
+                };
                 return Err(StrategyError::from_message(format!(
-                    "cannot fast-forward; rerun with --strategy rebase. {}",
-                    e
+                    "cannot fast-forward{shape}; rerun with --strategy rebase. {e}"
                 )));
             }
         }
@@ -812,23 +911,54 @@ fn check_phase1_ancestor(
         return Ok(());
     }
 
-    // CWD is not an ancestor of source. Count the commits CWD has that source
-    // doesn't (the ones a fast-forward would refuse to land).
-    let extra_count = vcs
-        .count_commits_in_range(cwd_project_dir, source_tip, cwd_tip)
-        .map(|n| n.to_string())
-        .unwrap_or_else(|_| "?".to_owned());
+    let other = format!("source workspace '{source_workspace_name}' ({source_tip})");
+    let shape = match Containment::observe(vcs, cwd_project_dir, cwd_tip, source_tip) {
+        Some(c) => c.describe(&other),
+        None => format!("not an ancestor of {other}"),
+    };
 
     anyhow::bail!(
-        "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} has {extra_count} \
-         commits not in source workspace '{source_workspace_name}'.\n\
+        "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} is {shape}.\n\
+         {blocking}\n\
          \n\
          To land them: rerun with `--strategy rebase`.\n\
          To bring source in sync first: sync the other direction.\n\
          To discard them (recoverable via `rwv abort`): rerun with `--discard-local-commits` \
          (pre-sync state preserved under {savepoints}).",
+        blocking = blocking_commits_block(vcs, cwd_project_dir, source_tip, cwd_tip),
         savepoints = vcs.savepoint_namespace(),
     );
+}
+
+/// Number of commits to show inline per refused repo before summarising the
+/// rest as "and N more".
+const BLOCKING_COMMITS_CAP: usize = 5;
+
+/// The commits `to` carries that `from` does not, as an indented evidence
+/// block naming at most [`BLOCKING_COMMITS_CAP`] of them.
+fn blocking_commits_block(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    from: &ResolvedRevisionId,
+    to: &ResolvedRevisionId,
+) -> String {
+    let (commits, total) =
+        vcs.log_oneline_range(repo, from.as_str(), to.as_str(), BLOCKING_COMMITS_CAP);
+    if commits.is_empty() {
+        return "  (commit range unresolvable)".to_owned();
+    }
+    let mut block = commits
+        .iter()
+        .map(|c| format!("  {c}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if total > BLOCKING_COMMITS_CAP {
+        block.push_str(&format!(
+            "\n  ... and {} more",
+            total - BLOCKING_COMMITS_CAP
+        ));
+    }
+    block
 }
 
 // ---------------------------------------------------------------------------
@@ -4040,6 +4170,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         /// Workers borrow it; none of them resolves one.
         vcs: Box<dyn Vcs>,
         target: ResolvedRevisionId,
+        baseline: ReplayBaseline,
         /// The repo's tip before this op replayed anything, taken from the
         /// op's savepoint so a `--continue` re-entry reads the same tip the
         /// interrupted run did rather than the pick it stopped on.
@@ -4099,9 +4230,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .get_entry(repo_path)
             .map(|e| vcs_for(e.vcs_type))
             .unwrap_or_else(crate::vcs::probe_vcs);
-        let target = match snapshot.pull_tips.get(repo_path) {
-            Some(tip) => tip.clone(),
-            None => lock_entry.version.clone(),
+        let (target, baseline) = match snapshot.pull_tips.get(repo_path) {
+            Some(tip) => (tip.clone(), ReplayBaseline::SourceCommittedTip),
+            None => (lock_entry.version.clone(), ReplayBaseline::SourceLockEntry),
         };
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
@@ -4109,6 +4240,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             abs,
             vcs,
             target,
+            baseline,
         });
     }
 
@@ -4172,6 +4304,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 task.vcs.as_ref(),
                 &task.abs,
                 &task.target,
+                task.baseline,
                 strategy,
                 task.pre_replay_tip.as_ref(),
             );
@@ -4982,8 +5115,16 @@ fn retire_workweave_after_sync_to(
             .head_revision(&target_repo)
             .with_context(|| format!("--retire: read target head for {}", repo_path))?;
         if cwd_head != target_head {
+            // The check stays equality-only — equal-or-refuse is the right
+            // conservatism for a gate that deletes a workspace. The verdict is
+            // reported so the operator knows which way to reconcile.
+            let verdict =
+                match Containment::observe(vcs.as_ref(), &cwd_repo, &cwd_head, &target_head) {
+                    Some(c) => format!(" — CWD is {}", c.describe("the target")),
+                    None => String::new(),
+                };
             diverged.push(format!(
-                "{}: CWD={} target={}",
+                "{}: CWD={} target={}{verdict}",
                 repo_path.as_str(),
                 short_sha(cwd_head.as_str()),
                 short_sha(target_head.as_str())
@@ -5155,7 +5296,17 @@ fn apply_project_strategy(
     match strategy {
         SyncStrategy::Ff => {
             // CWD must be ancestor of source (caller verified). Fast-forward.
-            vcs.advance_if_fast_forward(cwd_project_dir, source_tip)?;
+            let containment = Containment::observe(vcs, cwd_project_dir, cwd_tip, source_tip);
+            if let Err(e) = vcs.advance_if_fast_forward(cwd_project_dir, source_tip) {
+                let shape = match containment {
+                    Some(c) => format!(
+                        " (CWD's project tip is {})",
+                        c.describe(&format!("source's project tip ({source_tip})"))
+                    ),
+                    None => String::new(),
+                };
+                anyhow::bail!("project repo fast-forward failed{shape}: {e}");
+            }
         }
         SyncStrategy::Rebase => {
             // The replay states `keep_target_side`, which is what the repo's
@@ -5616,10 +5767,6 @@ struct AbortNoiseSummary {
     no_savepoint: usize,
     untouched: usize,
 }
-
-/// Number of commits to show inline per refused repo before summarising the
-/// rest as "and N more".
-const BLOCKING_COMMITS_CAP: usize = 5;
 
 /// Record a per-repo abort outcome into `summary`/`any_foreign`, printing
 /// actionable lines immediately and deferring non-actionable counts to the
@@ -6155,17 +6302,20 @@ fn ff_advance_repo(
         .unwrap_or(false);
 
     if !is_ancestor {
+        let other = format!("CWD's tip ({cwd_tip})");
+        let shape = match Containment::observe(vcs, target_repo, &target_tip, cwd_tip) {
+            Some(c) => c.describe(&other),
+            None => format!("not an ancestor of {other}"),
+        };
         anyhow::bail!(
-            "target repo at {} cannot be fast-forwarded: target tip ({}) is not an ancestor \
-             of CWD tip ({}). The target holds commits CWD's tip does not, so landing CWD \
-             onto it would drop them. Either the target moved after step 1, or replay took \
-             the target's lock as its base while that lock was behind these commits \
-             (`--allow-stale-lock` permits that). Roll back with `rwv abort` and re-run; a \
-             target whose lock is behind its HEAD is named at op start with the \
-             `rwv lock --commit` that fixes it.",
+            "target repo at {} cannot be fast-forwarded: its tip ({}) is {shape}. The target \
+             holds commits CWD's tip does not, so landing CWD onto it would drop them. Either \
+             the target moved after step 1, or replay took the target's lock as its base while \
+             that lock was behind these commits (`--allow-stale-lock` permits that). Roll back \
+             with `rwv abort` and re-run; a target whose lock is behind its HEAD is named at op \
+             start with the `rwv lock --commit` that fixes it.",
             target_repo.display(),
             target_tip,
-            cwd_tip,
         );
     }
 
@@ -6231,6 +6381,191 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Containment — the dest↔source verdict every refusal on that axis reads
+    // -----------------------------------------------------------------------
+
+    /// Two tips in one repo with no ancestry either way, forked from a shared
+    /// base: `(left, right)`, one commit each side.
+    fn forked_tips(dir: &Path) -> (ResolvedRevisionId, ResolvedRevisionId) {
+        init_repo(dir);
+        let base = git(dir, &["rev-parse", "HEAD"]);
+        let left = commit(dir, "left");
+        git(dir, &["checkout", "-b", "right", &base]);
+        let right = commit(dir, "right");
+        (left, right)
+    }
+
+    #[test]
+    fn containment_names_each_shape_of_one_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let base = git_vcs().head_revision(&repo).unwrap();
+        let ahead = commit(&repo, "a");
+
+        let vcs = git_vcs();
+        assert_eq!(
+            Containment::observe(vcs.as_ref(), &repo, &base, &base),
+            Some(Containment::Equal)
+        );
+        assert_eq!(
+            Containment::observe(vcs.as_ref(), &repo, &ahead, &base),
+            Some(Containment::Ahead(1))
+        );
+        assert_eq!(
+            Containment::observe(vcs.as_ref(), &repo, &base, &ahead),
+            Some(Containment::Behind(1))
+        );
+
+        let forked = tmp.path().join("f");
+        let (left, right) = forked_tips(&forked);
+        assert_eq!(
+            Containment::observe(vcs.as_ref(), &forked, &left, &right),
+            Some(Containment::Diverged {
+                ahead: 1,
+                behind: 1
+            })
+        );
+    }
+
+    #[test]
+    fn every_verdict_renders_in_one_vocabulary() {
+        // `Equal` and `Behind` reach no refusal site today; they are rendered
+        // here so the words a later consumer inherits are pinned rather than
+        // invented at that call site.
+        let other = "the source lock entry";
+        assert_eq!(
+            Containment::Equal.describe(other),
+            "equal to the source lock entry"
+        );
+        assert_eq!(
+            Containment::Ahead(1).describe(other),
+            "strictly ahead of the source lock entry by 1 commit (contains it)"
+        );
+        assert_eq!(
+            Containment::Behind(2).describe(other),
+            "strictly behind the source lock entry by 2 commits"
+        );
+        assert_eq!(
+            Containment::Diverged {
+                ahead: 3,
+                behind: 4
+            }
+            .describe(other),
+            "diverged from the source lock entry (3 ahead, 4 behind)"
+        );
+    }
+
+    #[test]
+    fn containment_declines_a_pair_it_cannot_resolve() {
+        // A count git refuses to produce is not zero, and zero on both sides
+        // is what `Equal` means: the pair that cannot be read must yield no
+        // verdict at all, or every unreadable pair reports as converged.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let head = git_vcs().head_revision(&repo).unwrap();
+        let absent =
+            ResolvedRevisionId::from_canonical("0000000000000000000000000000000000000001", None);
+
+        assert_eq!(
+            Containment::observe(git_vcs().as_ref(), &repo, &head, &absent),
+            None
+        );
+    }
+
+    #[test]
+    fn the_already_ahead_line_names_its_baseline_and_advises_no_rebase() {
+        // The condition that reaches this variant PROVED containment, so a
+        // rebase onto that baseline is a no-op and advising one sent an
+        // operator chasing a divergence that does not exist.
+        let line = RepoSyncOutcome::AlreadyAhead {
+            commits_ahead: 2,
+            baseline: ReplayBaseline::SourceCommittedTip,
+        }
+        .to_string();
+
+        assert!(
+            line.contains("strictly ahead of the source's committed tip by 2 commits"),
+            "the line must name the baseline it was given; got: {line}"
+        );
+        assert!(
+            !line.contains("rebase"),
+            "a proven-contained tip must not be told to rebase; got: {line}"
+        );
+        assert!(
+            !line.contains("diverge"),
+            "containment is not divergence; got: {line}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // check_phase1_ancestor — the destination↔source refusal
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn the_phase1_refusal_calls_a_contained_source_ahead_and_names_the_blockers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("project");
+        init_repo(&repo);
+        let source_tip = git_vcs().head_revision(&repo).unwrap();
+        let cwd_tip = commit(&repo, "local-work");
+
+        let err = check_phase1_ancestor(
+            git_vcs().as_ref(),
+            &repo,
+            &cwd_tip,
+            &source_tip,
+            "feat",
+            "primary",
+        )
+        .expect_err("a destination holding commits the source lacks must refuse")
+        .to_string();
+
+        assert!(
+            err.contains("strictly ahead of source workspace 'primary'")
+                && err.contains("by 1 commit (contains it)"),
+            "the refusal must render the proven verdict; got: {err}"
+        );
+        assert!(
+            !err.contains("diverged"),
+            "a contained source is not a divergence; got: {err}"
+        );
+        assert!(
+            err.contains("local-work"),
+            "the refusal must name the commits that block it; got: {err}"
+        );
+    }
+
+    #[test]
+    fn the_phase1_refusal_separates_a_diverged_destination_from_an_ahead_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("project");
+        let (cwd_tip, source_tip) = forked_tips(&repo);
+
+        let err = check_phase1_ancestor(
+            git_vcs().as_ref(),
+            &repo,
+            &cwd_tip,
+            &source_tip,
+            "feat",
+            "primary",
+        )
+        .expect_err("a diverged destination must refuse")
+        .to_string();
+
+        assert!(
+            err.contains("diverged from source workspace 'primary'")
+                && err.contains("(1 ahead, 1 behind)"),
+            "the refusal must render both operands of a divergence; got: {err}"
+        );
+        assert!(
+            !err.contains("strictly ahead"),
+            "a diverged destination contains nothing; got: {err}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // ff_advance_repo — landing takes the target's witness
     //
     // This is the phase-body layer of the detached-target refusal, and it is
@@ -6286,6 +6621,29 @@ mod tests {
             git(&target, &["rev-parse", "refs/heads/main"]),
             cwd_tip.as_str(),
             "target `main` must hold the landed commit"
+        );
+    }
+
+    #[test]
+    fn ff_advance_repo_leads_its_refusal_with_the_containment_verdict() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (cwd, target, cwd_tip) = landing_pair(tmp.path());
+        git(&target, &["config", "user.email", "t@t"]);
+        git(&target, &["config", "user.name", "T"]);
+        commit(&target, "target-only");
+
+        let err = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
+            .expect_err("a target holding commits CWD's tip does not must refuse");
+        let msg = format!("{err:#}");
+
+        assert!(
+            msg.contains("diverged from CWD's tip") && msg.contains("(1 ahead, 1 behind)"),
+            "the refusal must lead with the verdict and both counts; got:\n{msg}"
+        );
+        assert!(
+            msg.contains("either the target moved after step 1")
+                || msg.contains("Either the target moved after step 1"),
+            "the two causal hypotheses must survive the verdict; got:\n{msg}"
         );
     }
 
@@ -7669,9 +8027,16 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "feat: regenerate"]);
 
-        apply_strategy(git_vcs().as_ref(), &repo, &main_tip, SyncStrategy::Rebase)
-            .map_err(|e| e.message)
-            .expect("a declared derived path must not stop a manifest-repo replay");
+        apply_strategy(
+            git_vcs().as_ref(),
+            &repo,
+            &main_tip,
+            ReplayBaseline::SourceLockEntry,
+            None,
+            SyncStrategy::Rebase,
+        )
+        .map_err(|e| e.message)
+        .expect("a declared derived path must not stop a manifest-repo replay");
 
         assert_eq!(
             std::fs::read_to_string(repo.join("generated.txt")).unwrap(),
@@ -7702,7 +8067,14 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "feat: regenerate"]);
 
-        let stopped = apply_strategy(git_vcs().as_ref(), &repo, &main_tip, SyncStrategy::Rebase);
+        let stopped = apply_strategy(
+            git_vcs().as_ref(),
+            &repo,
+            &main_tip,
+            ReplayBaseline::SourceLockEntry,
+            None,
+            SyncStrategy::Rebase,
+        );
         assert!(
             stopped.is_err(),
             "an authored conflict must stop the replay whatever the policy"
@@ -7718,9 +8090,16 @@ mod tests {
         std::fs::write(repo.join("shared.txt"), "merged\n").unwrap();
         git(&repo, &["add", "shared.txt"]);
 
-        apply_strategy(git_vcs().as_ref(), &repo, &main_tip, SyncStrategy::Rebase)
-            .map_err(|e| e.message)
-            .expect("the resumed replay must carry through the declared path");
+        apply_strategy(
+            git_vcs().as_ref(),
+            &repo,
+            &main_tip,
+            ReplayBaseline::SourceLockEntry,
+            None,
+            SyncStrategy::Rebase,
+        )
+        .map_err(|e| e.message)
+        .expect("the resumed replay must carry through the declared path");
 
         assert!(
             git_vcs().mid_op(&repo).is_none(),

@@ -9,7 +9,8 @@
 
 use assert_cmd::Command as AssertCommand;
 use repoweave::sync::{
-    RepoSyncOutcome, SyncFailure, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
+    ReplayBaseline, RepoSyncOutcome, SyncFailure, SyncJsonOutput, SyncOutcomeOutput,
+    SYNC_JSON_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, VcsError, VcsErrorOutput};
 use serde_json::Value;
@@ -361,7 +362,10 @@ fn outcome_already_ahead_serializes_with_commits_ahead() {
     let v = serialize_outcome(
         "github/cwalv/foo",
         "/abs/foo",
-        &RepoSyncOutcome::AlreadyAhead { commits_ahead: 3 },
+        &RepoSyncOutcome::AlreadyAhead {
+            commits_ahead: 3,
+            baseline: ReplayBaseline::SourceLockEntry,
+        },
     );
     assert_eq!(v["kind"], "already-ahead");
     assert_eq!(v["commits_ahead"], 3);
@@ -842,7 +846,10 @@ fn sync_json_envelope_round_trips() {
             SyncOutcomeOutput::from_outcome(
                 "p2".into(),
                 "/abs/p2".into(),
-                &RepoSyncOutcome::AlreadyAhead { commits_ahead: 2 },
+                &RepoSyncOutcome::AlreadyAhead {
+                    commits_ahead: 2,
+                    baseline: ReplayBaseline::SourceLockEntry,
+                },
             ),
         ],
         advisories: Vec::new(),

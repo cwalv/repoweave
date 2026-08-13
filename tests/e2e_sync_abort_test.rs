@@ -228,6 +228,41 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     (primary, ww, c1)
 }
 
+const API_URL: &str = "https://github.com/chatly/api.git";
+const API_PATH: &str = "github/chatly/api";
+
+/// Two workspaces sharing TWO manifest repos, so one op can reach two
+/// different per-repo verdicts. Only the source's project repo declares the
+/// second repo, which leaves CWD's project a strict ancestor of the source's
+/// and keeps the Phase 1 ancestor gate out of the way.
+///
+/// Returns `(primary, ww, c1, ww_api)`.
+fn make_shared_workspaces_two_repos(parent: &Path) -> (Workspace, Workspace, String, PathBuf) {
+    let (primary, ww, c1) = make_shared_workspaces(parent);
+
+    let primary_api = primary.root.join(API_PATH);
+    let api_c1 = init_repo(&primary_api);
+    let ww_api = ww.root.join(API_PATH);
+    git(
+        &["worktree", "add", &ww_api.to_string_lossy(), "-b", "ww/api"],
+        &primary_api,
+    );
+
+    write_manifest(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL), (API_PATH, API_URL)],
+        None,
+    );
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &c1), (API_PATH, API_URL, &api_c1)],
+    );
+    git(&["add", "rwv.toml", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: add api"], &primary.project_dir);
+
+    (primary, ww, c1, ww_api)
+}
+
 // ---------------------------------------------------------------------------
 // Smoke tests — command recognition
 // ---------------------------------------------------------------------------
@@ -626,7 +661,9 @@ fn sync_refuses_when_destination_project_repo_has_diverged_from_source() {
         .stderr(
             predicate::str::contains("destination workspace")
                 .and(predicate::str::contains("project repo"))
-                .and(predicate::str::contains("commits not in source workspace")),
+                .and(predicate::str::contains("diverged from source workspace"))
+                .and(predicate::str::contains("(1 ahead, 1 behind)"))
+                .and(predicate::str::contains("strictly ahead").not()),
         );
 }
 
@@ -1680,6 +1717,85 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
     assert!(
         !stdout.contains(": ok"),
         "sync must not report bare 'ok' for already-ahead case; got stdout: {stdout}"
+    );
+    // The state the condition proved is containment. A rebase onto a baseline
+    // HEAD already contains changes nothing, and an operator who is told to
+    // run one spends the attempt discovering that.
+    assert!(
+        !stdout.contains("rebase") && !stdout.contains("diverge"),
+        "a strictly-ahead pull must not advise a rebase or call itself a \
+         divergence; got stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("strictly ahead of the source lock entry"),
+        "the line must name the baseline HEAD is ahead of; got stdout: {stdout}"
+    );
+}
+
+/// Two repos in one op reach two different verdicts. Each per-repo line
+/// carries its own, and the summary that follows names no cause at all — a
+/// single-cause sentence is wrong for at least one of the repos it covers, and
+/// the operator reads the summary first.
+#[test]
+fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, c1, ww_api) = make_shared_workspaces_two_repos(tmp.path());
+
+    // server: primary advances, ww advances differently → diverged.
+    let c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary\n",
+        "primary: C2",
+    );
+    make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
+
+    // api: only ww advances → ww strictly contains the source's lock entry.
+    let api_c1 = git_out(&["rev-parse", "HEAD"], &primary.root.join(API_PATH));
+    make_commit(&ww_api, "ww-api.txt", "ww api\n", "ww: api ahead");
+
+    // Keep the source's lock pinning the source's own HEADs, so the op reaches
+    // the replay rather than a lock-relation refusal.
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &c2), (API_PATH, API_URL, &api_c1)],
+    );
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    assert_ne!(
+        c1, c2,
+        "fixture precondition: the source's server tip moved"
+    );
+
+    let out = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    let both = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        both.contains("diverged from the source lock entry (1 ahead, 1 behind)"),
+        "the diverged repo's line must carry its own verdict; got:\n{both}"
+    );
+    assert!(
+        both.contains("strictly ahead of the source lock entry by 1 commit (contains it)"),
+        "the contained repo's line must carry its own verdict; got:\n{both}"
+    );
+    assert!(
+        both.contains("see per-repo lines above"),
+        "the summary must defer to the lines that hold the operands; got:\n{both}"
+    );
+    assert!(
+        !both.contains("concurrent modification"),
+        "the summary must not assert a cause the engine did not observe; got:\n{both}"
     );
 }
 
