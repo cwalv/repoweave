@@ -352,3 +352,43 @@ fn nothing_is_reported_or_stripped_while_the_integrations_are_enabled() {
         );
     }
 }
+
+/// The agent surface, asserted where an agent reads it.
+///
+/// A consumer routing on `rwv doctor --json` sees a typed `kind` and a
+/// `safe_to_fix` that tells it not to wait for `--fix`. Both are the finding's
+/// whole machine-readable contract, and a text-only assertion would be green
+/// with the JSON path dropping either.
+#[test]
+fn the_finding_reaches_the_json_surface_marked_unfixable() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    disable(&ws, "gita");
+
+    let output = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv should run");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("`--json` must emit parseable JSON");
+
+    let found = parsed["issues"]
+        .as_array()
+        .expect("`issues` must be an array")
+        .iter()
+        .find(|issue| issue["kind"] == "disabled-integration-artifact")
+        .unwrap_or_else(|| panic!("the finding must arrive on --json:\n{parsed:#}"));
+
+    assert_eq!(found["integration"], "gita");
+    assert_eq!(
+        found["safe_to_fix"], false,
+        "an agent must be told this one is not waiting on --fix:\n{found:#}"
+    );
+    assert!(
+        found["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("rwv materialize")),
+        "the remedy must travel with the finding:\n{found:#}"
+    );
+}
