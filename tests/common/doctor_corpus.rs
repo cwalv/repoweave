@@ -619,6 +619,7 @@ pub fn issue_corpus() -> Vec<Issue> {
             "1.23",
             "github/acme/repo/go.mod",
         ))),
+        IssueKind::DerivedStateStale,
         IssueKind::DisabledIntegrationArtifact,
         IssueKind::IntegrationFailed,
         IssueKind::CoreFinding,
@@ -648,6 +649,7 @@ pub fn issue_kind_token(kind: &IssueKind) -> String {
         | IssueKind::Surfacing
         | IssueKind::ConfigRejected
         | IssueKind::MemberIncompatibility(_)
+        | IssueKind::DerivedStateStale
         | IssueKind::DisabledIntegrationArtifact
         | IssueKind::IntegrationFailed
         | IssueKind::CoreFinding => kind.tag().to_string(),

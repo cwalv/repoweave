@@ -4543,8 +4543,13 @@ fn delivered_changes(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) -> Option<Vec<Str
 }
 
 /// One delivered change that lands on an input of the materialized project:
-/// the project manifest, or a member's detection manifest for an integration
-/// the project enables.
+/// the project manifest, the rwv lock, or a member's detection manifest for an
+/// integration the project enables.
+///
+/// The lock is an input because it decides which commit of each member is on
+/// disk, and generated ecosystem state is derived from what those commits
+/// contain. A delivery that moves only the lock moves no manifest and would
+/// otherwise land silently.
 struct MaterializedInputHit {
     /// Display key for the text note: [`project_repo_key`] for the project
     /// manifest, the member's manifest-relative repo path otherwise.
@@ -4595,16 +4600,17 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
     if let Some(changed) =
         delivered_changes(ctx.project_vcs.as_ref(), &ctx.cwd_project_dir, &ctx.op_id)
     {
-        if changed.iter().any(|p| p == Manifest::FILE_NAME) {
-            hits.push(MaterializedInputHit {
-                repo_key: project_repo_key().to_owned(),
-                file: Manifest::FILE_NAME.to_owned(),
-                workspace_path: format!(
-                    "{}/{}",
-                    project_rel_path(ctx.cwd_project_name.as_str()),
-                    Manifest::FILE_NAME
-                ),
-            });
+        for file in [Manifest::FILE_NAME, crate::manifest::LockFile::FILE_NAME] {
+            if changed.iter().any(|p| p == file) {
+                hits.push(MaterializedInputHit {
+                    repo_key: project_repo_key().to_owned(),
+                    file: file.to_owned(),
+                    workspace_path: format!(
+                        "{}/{file}",
+                        project_rel_path(ctx.cwd_project_name.as_str()),
+                    ),
+                });
+            }
         }
     }
     for (repo_path, entry) in project.manifest.iter_entries() {

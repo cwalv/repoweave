@@ -1577,6 +1577,7 @@ mod doctor_json {
             &ww_dirs,
             None,
             vec![],
+            vec![],
         ))
         .expect("doctor payload serializes");
         assert_eq!(
@@ -1734,6 +1735,7 @@ mod doctor_json {
             &ws,
             &no_ww,
             None,
+            vec![],
             vec![],
         ))
         .expect("doctor payload serializes");

@@ -454,6 +454,7 @@ fn emit(
     issues: Vec<Issue>,
     res: Option<Resolution>,
     plugins: Vec<PluginRecord>,
+    advisories: Vec<repoweave::workspace::AdvisoryOutput>,
 ) -> Value {
     let mut workweave_dirs = HashMap::new();
     workweave_dirs.insert(workweave(), PathBuf::from("/ws/.workweaves/proj--feat-a"));
@@ -464,12 +465,28 @@ fn emit(
         &workweave_dirs,
         res,
         plugins,
+        advisories,
     ))
     .expect("doctor payload serializes")
 }
 
+/// One sample of the advisory vocabulary doctor shares with `rwv sync --json`.
+fn advisories() -> Vec<repoweave::workspace::AdvisoryOutput> {
+    vec![repoweave::workspace::AdvisoryOutput {
+        kind: repoweave::workspace::AdvisoryKindOutput::DerivedStateStale,
+        remedy: "rwv materialize".to_owned(),
+        inputs: vec!["projects/proj/rwv.lock".to_owned()],
+    }]
+}
+
 fn populated() -> Value {
-    emit(corpus(), issues(), Some(resolution()), plugins())
+    emit(
+        corpus(),
+        issues(),
+        Some(resolution()),
+        plugins(),
+        advisories(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -503,7 +520,7 @@ fn emitted_output_validates_against_the_committed_schema() {
 
 #[test]
 fn empty_envelope_validates_against_the_committed_schema() {
-    let (errors, walk) = check(&emit(Vec::new(), Vec::new(), None, Vec::new()));
+    let (errors, walk) = check(&emit(Vec::new(), Vec::new(), None, Vec::new(), Vec::new()));
     assert!(
         errors.is_empty(),
         "clean-workspace output does not satisfy {COMMITTED_SCHEMA_PATH}:\n  {}",

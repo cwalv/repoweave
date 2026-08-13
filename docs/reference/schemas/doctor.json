@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "$schema",
+    "advisories",
     "issues",
     "plugins",
     "violations"
@@ -12,6 +13,13 @@
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "advisories": {
+      "description": "Standing advisories this checkout raises, in the vocabulary `rwv sync --json` already emits: a condition with a named remedy and the paths that raised it. Empty, not absent, so a consumer branches on length.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AdvisoryOutput"
+      }
     },
     "issues": {
       "description": "Findings raised by an integration rather than by one of rwv's own scans: a missing ecosystem tool, drift or user-held content in a managed file, a surfacing symlink that does not resolve, a member incompatibility. Disjoint from `violations` — nothing on this array carries `kind: \"core-finding\"`.",
@@ -46,6 +54,43 @@
     }
   },
   "definitions": {
+    "AdvisoryKindOutput": {
+      "description": "Closed vocabulary for [`AdvisoryOutput::kind`]. Adding a member is additive — existing consumers keep matching the members they know.",
+      "oneOf": [
+        {
+          "description": "Generated ecosystem state may no longer agree with the inputs it was derived from.",
+          "type": "string",
+          "enum": [
+            "derived_state_stale"
+          ]
+        }
+      ]
+    },
+    "AdvisoryOutput": {
+      "description": "A condition worth an operator's attention that a verb's `--json` output reports alongside its result, without being a failure of the verb itself.\n\nEvery field is something a consumer branches on directly — `kind` a closed enum, `remedy` a verb string runnable in the checkout where the advisory appears, `inputs` the workspace-relative paths that raised it. None of the three is a sentence a consumer would have to parse to act on.\n\nShared across verbs so more than one `--json` surface can emit the same vocabulary: a sync-time note and a doctor-time standing finding both fit this shape without either owning it.",
+      "type": "object",
+      "required": [
+        "inputs",
+        "kind",
+        "remedy"
+      ],
+      "properties": {
+        "inputs": {
+          "description": "Workspace-relative paths whose state raised this advisory.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "$ref": "#/definitions/AdvisoryKindOutput"
+        },
+        "remedy": {
+          "description": "The verb that resolves the advisory (e.g. `\"rwv materialize\"`).",
+          "type": "string"
+        }
+      }
+    },
     "BranchDisciplineKind": {
       "description": "Discriminator for [`CheckViolation::BranchDiscipline`] findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch, or on a ref of its own namespace that predates the flat naming: [`SharedBranch`](Self::SharedBranch), [`ForeignEphemeral`](Self::ForeignEphemeral), [`Detached`](Self::Detached), [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch), [`UnrecordedEphemeralBranch`](Self::UnrecordedEphemeralBranch), [`UnbornCheckout`](Self::UnbornCheckout). * (b) canonical-store attachment — what the canonical store's HEAD is: [`CanonicalHoldsLiveWorkweaveRef`](Self::CanonicalHoldsLiveWorkweaveRef), [`CanonicalHoldsLeakedRef`](Self::CanonicalHoldsLeakedRef), [`CanonicalDetached`](Self::CanonicalDetached). * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe), [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive), or [`StaleEphemeralBranchUnowned`](Self::StaleEphemeralBranchUnowned). The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.\n\n# Ownership is by record, never by name shape (R2)\n\nThe (b) grouping and the safe/live/unowned split in (c) both key on whether rwv holds a persisted ownership receipt ([`crate::workweave_index::RefRegistry`]) for the exact ref in the exact store. A branch that merely *looks* like one of rwv's — a hand-made `<a>--<b>/<c>` — is an operator branch: the canonical-store pass leaves it alone, and `--fix` never deletes it.",
       "oneOf": [
@@ -608,6 +653,7 @@
             "managed-file-user-held",
             "surfacing",
             "config-rejected",
+            "derived-state-stale",
             "disabled-integration-artifact",
             "integration-failed",
             "core-finding"

@@ -86,6 +86,7 @@ fn renders_as_json(v: CheckViolation) -> bool {
         &workweave_dirs,
         None,
         Vec::new(),
+        vec![],
     ))
     .expect("doctor payload serializes");
     doc["violations"]
@@ -573,6 +574,7 @@ fn rendered_issue_tags(issues: Vec<Issue>) -> Vec<String> {
         &HashMap::new(),
         None,
         Vec::new(),
+        vec![],
     ))
     .expect("doctor payload serializes");
     doc["issues"]
@@ -641,6 +643,7 @@ fn a_member_incompatibility_arrives_as_fields_rather_than_a_sentence() {
         &HashMap::new(),
         None,
         Vec::new(),
+        vec![],
     ))
     .expect("doctor payload serializes");
     let entry = doc["issues"]

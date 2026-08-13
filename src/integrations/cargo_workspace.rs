@@ -144,9 +144,10 @@
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
     check_owned_digest, drift_issues, fully_owned_digest_mismatch_issue,
-    fully_owned_parse_fail_issue, holds_owned_region, keypath, merge_activate, missing_issue,
-    orphaned_region_issues, stamp_owned_digest, strip_deactivate, toml_array_strings, KeyPath,
-    ManagedDoc, MergeResult, OwnedDigestCheck, OwnedValue, Ownership, TomlDoc,
+    fully_owned_parse_fail_issue, generation_inputs, holds_owned_region, keypath, merge_activate,
+    missing_issue, orphaned_region_issues, stamp_owned_generation, strip_deactivate,
+    toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedDigestCheck, OwnedValue, Ownership,
+    TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use anyhow::Context;
@@ -873,8 +874,13 @@ impl Integration for CargoWorkspace {
                 lock_path.display()
             )
         })?;
-        stamp_owned_digest(ctx.output_dir, "Cargo.lock", &lock_bytes)
-            .context("recording accepted-generation digest for Cargo.lock")?;
+        stamp_owned_generation(
+            ctx.output_dir,
+            "Cargo.lock",
+            &lock_bytes,
+            generation_inputs(ctx.output_dir, ctx.project),
+        )
+        .context("recording accepted-generation digest for Cargo.lock")?;
 
         Ok(())
     }

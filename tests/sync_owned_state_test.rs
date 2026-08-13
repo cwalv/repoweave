@@ -11,10 +11,14 @@
 //! What sync owes the operator instead is a pointer at the verb whose
 //! mandate materialization is: a note naming `rwv materialize`, printed
 //! only when the delivered changes touched inputs the generated state is
-//! derived from (the project manifest, a member's detection manifest). A
-//! source-only delivery changes nothing the hooks would regenerate, so it
-//! prints nothing — the fires / does-not-fire arms pin the conditional from
-//! both sides.
+//! derived from — the project manifest, the rwv lock, or a member's
+//! detection manifest. A delivery that touches none of them prints nothing;
+//! the fires / does-not-fire arms pin the conditional from both sides.
+//!
+//! The lock is an input because it decides which commit of each member is on
+//! disk, and that is what the ecosystem tool resolved against. It also means
+//! the quiet arm cannot be a member commit: sync refuses a source whose lock
+//! is behind its members, so delivering member work always moves the lock.
 //!
 //! The locks are hand-authored and stamped with the shipped digest helper,
 //! each carrying a package no resolution of this fixture's two
@@ -343,6 +347,21 @@ fn advance_member_source(f: &Fixture) {
     f.relock_and_commit();
 }
 
+/// The parent commits project-repo content that is not an input of anything
+/// generated: a note beside the manifest, with no relock.
+///
+/// This is what a delivery that moves no input looks like once the lock counts
+/// as one. A member commit cannot play that role: sync refuses a source whose
+/// lock is behind its members, so delivering member work necessarily moves the
+/// lock, and the lock decides which commit of each member the generated state
+/// was resolved against.
+fn advance_project_note(f: &Fixture) {
+    let note = f.source_project_dir.join("NOTES.md");
+    std::fs::write(&note, "a note that nothing generates from\n").unwrap();
+    git(&["add", "-A"], &f.source_project_dir);
+    git(&["commit", "-m", "note"], &f.source_project_dir);
+}
+
 /// The parent commits a change to a member's `Cargo.toml` — a detection
 /// manifest, so an input of the materialized state.
 fn advance_member_manifest(f: &Fixture) {
@@ -494,6 +513,34 @@ fn sync_names_materialize_when_delivered_changes_touch_the_project_manifest() {
     );
 }
 
+/// The rwv lock alone is enough. A delivery that carries no manifest of any
+/// kind still moves which commit of each member is on disk, and the generated
+/// state was resolved against those commits.
+///
+/// This is the arm the measured defect needed: the reported divergence was a
+/// source-line edit, where no manifest moved at all.
+#[test]
+fn sync_names_materialize_when_delivered_changes_touch_only_the_lock() {
+    let f = fixture();
+    advance_member_source(&f);
+
+    let output = f.sync_from_primary();
+
+    assert!(
+        output.contains("rwv materialize"),
+        "a delivery that moved the lock moved an input.\noutput:\n{output}"
+    );
+    assert!(
+        output.contains("(project): rwv.lock"),
+        "the note should name the lock as the input that moved.\noutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Cargo.toml"),
+        "and no manifest moved in this delivery, so none should be \
+         named.\noutput:\n{output}"
+    );
+}
+
 /// The receiver can be the primary too: pulling a workweave's input change
 /// into a primary that presents the same project notes the same remedy.
 #[test]
@@ -544,18 +591,16 @@ fn sync_at_primary_stays_quiet_for_a_project_the_root_does_not_present() {
 /// The note is conditional, not a banner: a source-only delivery touches
 /// nothing the hooks would regenerate, so sync stays quiet about them.
 #[test]
-fn sync_prints_no_materialize_note_for_source_only_deliveries() {
+fn sync_prints_no_materialize_note_for_non_input_deliveries() {
     let f = fixture();
-    advance_member_source(&f);
+    advance_project_note(&f);
 
-    let parent_tip = git_head(&f.server_dir());
     let output = f.sync_from_primary();
 
-    assert_eq!(
-        git_head(&f.ww_server_dir()),
-        parent_tip,
-        "control: the source-only change must actually have been delivered — \
-         a sync with nothing to deliver stays quiet for the wrong reason"
+    assert!(
+        f.ww_dir.join("projects/web-app/NOTES.md").is_file(),
+        "control: the change must actually have been delivered — a sync with \
+         nothing to deliver stays quiet for the wrong reason"
     );
     assert!(
         !output.contains("rwv materialize"),
@@ -588,9 +633,13 @@ fn sync_json_advisories_carries_the_materialize_remedy_when_a_member_manifest_ar
     assert_eq!(advisory["remedy"], "rwv materialize");
     assert_eq!(
         advisory["inputs"],
-        serde_json::json!(["github/chatly/server/Cargo.toml"]),
-        "inputs should be the workspace-relative path, not the 'repo: file' \
-         display string the text note uses: {envelope}"
+        serde_json::json!([
+            "projects/web-app/rwv.lock",
+            "github/chatly/server/Cargo.toml"
+        ]),
+        "inputs should be the workspace-relative paths, not the 'repo: file' \
+         display string the text note uses — and the lock is one of them, \
+         because delivering the member commit is what moved it: {envelope}"
     );
 }
 
@@ -598,9 +647,9 @@ fn sync_json_advisories_carries_the_materialize_remedy_when_a_member_manifest_ar
 /// the `--json` surface: a source-only delivery raises no advisory, and the
 /// array is present-but-empty rather than absent.
 #[test]
-fn sync_json_advisories_empty_for_source_only_deliveries() {
+fn sync_json_advisories_empty_for_non_input_deliveries() {
     let f = fixture();
-    advance_member_source(&f);
+    advance_project_note(&f);
 
     let envelope = f.sync_json_from_primary();
     let advisories = envelope

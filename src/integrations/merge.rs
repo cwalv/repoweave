@@ -51,7 +51,7 @@
 use crate::integration::{Issue, IssueKind, Severity};
 use crate::workweave_index;
 use anyhow::{Context, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
@@ -2143,15 +2143,68 @@ fn owned_digest(content: &[u8]) -> String {
     hex
 }
 
-/// Read the digest state map from `state_dir`, tolerating absence and
-/// corruption (both yield an empty map — the file is advisory bookkeeping
-/// that the next stamp rewrites wholesale).
-fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, String> {
+/// One ledger entry: the digest of the content rwv accepted, and — when rwv
+/// generated it rather than adopted it — the digests of the inputs that
+/// generation read.
+///
+/// Untagged, so the pre-amendment spelling (a bare digest string) still parses.
+/// Such an entry says what was accepted and nothing about what produced it,
+/// which is why it can only ever read as stale: an unknown provenance is not
+/// evidence of a current one. The next generation rewrites it in the attested
+/// shape, so the condition heals itself.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum LedgerEntry {
+    /// The accepted content's digest, with no record of its inputs.
+    Adopted(String),
+    /// The accepted content's digest and the inputs generation read, as
+    /// workspace-relative path to digest.
+    Generated {
+        digest: String,
+        inputs: BTreeMap<String, String>,
+    },
+}
+
+impl LedgerEntry {
+    /// The digest of the content rwv accepted.
+    pub fn digest(&self) -> &str {
+        match self {
+            Self::Adopted(digest) | Self::Generated { digest, .. } => digest,
+        }
+    }
+
+    /// The inputs generation read, or `None` when the entry does not record
+    /// them.
+    pub fn inputs(&self) -> Option<&BTreeMap<String, String>> {
+        match self {
+            Self::Adopted(_) => None,
+            Self::Generated { inputs, .. } => Some(inputs),
+        }
+    }
+}
+
+/// Read the ledger from `state_dir`, tolerating absence and corruption (both
+/// yield an empty map — the file is advisory bookkeeping that the next stamp
+/// rewrites wholesale).
+fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, LedgerEntry> {
     let path = state_dir.join(OWNED_DIGESTS_FILE);
     let Ok(text) = std::fs::read_to_string(&path) else {
         return BTreeMap::new();
     };
     serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Write `entries` as `dir`'s ledger, and keep the machine-local file out of
+/// VCS. Every writer goes through here so the on-disk shape has one author.
+fn write_owned_digests(dir: &Path, entries: &BTreeMap<String, LedgerEntry>) -> anyhow::Result<()> {
+    let path = dir.join(OWNED_DIGESTS_FILE);
+    let json = serde_json::to_string_pretty(entries)
+        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("writing owned-digest state {}", path.display()))?;
+    // Best effort — an ignore failure must never fail the stamp itself.
+    let _ = workweave_index::ensure_ignored_in_dir(dir, OWNED_DIGESTS_FILE);
+    Ok(())
 }
 
 /// Record `content`'s digest for `file_name` in `dir`'s state file, creating
@@ -2166,16 +2219,63 @@ fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, String> {
 /// unreadable anyway; the fresh stamp is the only recovery).
 pub fn stamp_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> anyhow::Result<()> {
     let mut map = read_owned_digests(dir);
-    map.insert(file_name.to_string(), owned_digest(content));
-    let path = dir.join(OWNED_DIGESTS_FILE);
-    let json = serde_json::to_string_pretty(&map)
-        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("writing owned-digest state {}", path.display()))?;
-    // Hygiene at the write chokepoint: keep the machine-local state file out
-    // of VCS. Best effort — an ignore failure must never fail the stamp itself.
-    let _ = workweave_index::ensure_ignored_in_dir(dir, OWNED_DIGESTS_FILE);
-    Ok(())
+    map.insert(
+        file_name.to_string(),
+        LedgerEntry::Adopted(owned_digest(content)),
+    );
+    write_owned_digests(dir, &map)
+}
+
+/// Record `content` as the generation rwv produced for `file_name` in `dir`,
+/// together with the digests of the `inputs` that generation read.
+///
+/// The distinction from [`stamp_owned_digest`] is not bookkeeping detail. That
+/// one accepts bytes; this one attests a derivation. Recording inputs beside
+/// bytes rwv did not derive would claim a provenance that does not exist, and
+/// the claim would then read as freshness for as long as those inputs sat
+/// still.
+pub fn stamp_owned_generation(
+    dir: &Path,
+    file_name: &str,
+    content: &[u8],
+    inputs: BTreeMap<String, String>,
+) -> anyhow::Result<()> {
+    let mut map = read_owned_digests(dir);
+    map.insert(
+        file_name.to_string(),
+        LedgerEntry::Generated {
+            digest: owned_digest(content),
+            inputs,
+        },
+    );
+    write_owned_digests(dir, &map)
+}
+
+/// The inputs a generation reads, as workspace-relative path to digest, for the
+/// project `output_dir` belongs to.
+///
+/// The project manifest decides membership and integration configuration; the
+/// rwv lock decides which commit of each member is on disk. Every ecosystem
+/// generation in this weave is a function of those two, so an ecosystem
+/// generation that was correct when they last moved is correct now.
+///
+/// **What is deliberately absent: the members' own manifests.** They move when
+/// the lock moves, which is the case this exists for, but a member manifest
+/// edited in place under a still lock is a change this map cannot see. Hashing
+/// every member manifest would make the ledger grow with membership and still
+/// miss a source-only edit, so the axis stops at what the weave itself records.
+pub fn generation_inputs(
+    project_dir: &Path,
+    project: &crate::manifest::ProjectName,
+) -> BTreeMap<String, String> {
+    let project_rel = crate::workspace::project_rel_path(project.as_str());
+    ["rwv.toml", "rwv.lock"]
+        .into_iter()
+        .filter_map(|name| {
+            let content = std::fs::read(project_dir.join(name)).ok()?;
+            Some((format!("{project_rel}/{name}"), owned_digest(&content)))
+        })
+        .collect()
 }
 
 /// Drop `file_name`'s entry from `dir`'s state file, leaving the other
@@ -2189,11 +2289,12 @@ pub fn forget_owned_digest(dir: &Path, file_name: &str) -> anyhow::Result<()> {
     if map.remove(file_name).is_none() {
         return Ok(());
     }
-    let path = dir.join(OWNED_DIGESTS_FILE);
-    let json = serde_json::to_string_pretty(&map)
-        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("writing owned-digest state {}", path.display()))
+    write_owned_digests(dir, &map)
+}
+
+/// The files `dir`'s ledger attests, in ledger order.
+pub fn attested_owned_files(dir: &Path) -> Vec<String> {
+    read_owned_digests(dir).into_keys().collect()
 }
 
 /// Compare `content` against the digest `dir`'s state file records for
@@ -2206,7 +2307,7 @@ pub fn forget_owned_digest(dir: &Path, file_name: &str) -> anyhow::Result<()> {
 pub fn check_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> OwnedDigestCheck {
     match read_owned_digests(dir).get(file_name) {
         None => OwnedDigestCheck::NotRecorded,
-        Some(recorded) if *recorded == owned_digest(content) => OwnedDigestCheck::Matches,
+        Some(recorded) if recorded.digest() == owned_digest(content) => OwnedDigestCheck::Matches,
         Some(_) => OwnedDigestCheck::Differs,
     }
 }
@@ -2228,24 +2329,19 @@ pub fn carry_attested_owned_files(
     dest_dir: &Path,
 ) -> anyhow::Result<Vec<String>> {
     let mut carried = BTreeMap::new();
-    for (name, digest) in read_owned_digests(source_dir) {
+    for (name, entry) in read_owned_digests(source_dir) {
         let Ok(bytes) = std::fs::read(source_dir.join(&name)) else {
             continue;
         };
         let dest = dest_dir.join(&name);
         std::fs::write(&dest, &bytes)
             .with_context(|| format!("copying attested owned file to {}", dest.display()))?;
-        carried.insert(name, digest);
+        carried.insert(name, entry);
     }
     if carried.is_empty() {
         return Ok(vec![]);
     }
-    let path = dest_dir.join(OWNED_DIGESTS_FILE);
-    let json = serde_json::to_string_pretty(&carried)
-        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("writing owned-digest state {}", path.display()))?;
-    let _ = workweave_index::ensure_ignored_in_dir(dest_dir, OWNED_DIGESTS_FILE);
+    write_owned_digests(dest_dir, &carried)?;
     Ok(carried.into_keys().collect())
 }
 
@@ -2273,7 +2369,76 @@ pub fn drifted_attested_owned_files(dir: &Path) -> Vec<DriftedOwnedFile> {
         .into_iter()
         .filter_map(|(name, recorded)| {
             let content = std::fs::read(dir.join(&name)).ok()?;
-            (owned_digest(&content) != recorded).then_some(DriftedOwnedFile { name, content })
+            (owned_digest(&content) != recorded.digest())
+                .then_some(DriftedOwnedFile { name, content })
+        })
+        .collect()
+}
+
+/// Generated state whose attested inputs no longer describe the checkout.
+///
+/// One read produces both renderings — the operator's sentence and the typed
+/// advisory — because two surfaces that must agree cannot each ask the
+/// question separately and still be guaranteed the same answer.
+pub struct StaleGeneration {
+    /// The generated file, workspace-relative.
+    pub generated: String,
+    /// The attested inputs that no longer match, workspace-relative and
+    /// sorted. Empty when the entry records no inputs at all.
+    pub moved_inputs: Vec<String>,
+}
+
+impl StaleGeneration {
+    /// Whether the entry predates input attestation, in which case nothing is
+    /// known to have moved and nothing is known to have stayed.
+    pub fn provenance_unknown(&self) -> bool {
+        self.moved_inputs.is_empty()
+    }
+}
+
+/// Attested generated files in `dir` whose recorded inputs no longer match what
+/// is on disk under `workspace_root`, in ledger order.
+///
+/// Present state on both sides: the ledger says which inputs a generation read
+/// and what they hashed to, and this re-hashes them now. Nothing is
+/// regenerated, no other checkout is consulted, and no history is needed — a
+/// workweave answers for itself.
+///
+/// An entry with no recorded inputs is stale. It is the honest answer: rwv
+/// accepted those bytes without recording what produced them, so it cannot say
+/// they still follow from anything.
+pub fn stale_generations(
+    project_dir: &Path,
+    project: &crate::manifest::ProjectName,
+) -> Vec<StaleGeneration> {
+    let current = generation_inputs(project_dir, project);
+    let project_rel = crate::workspace::project_rel_path(project.as_str());
+    read_owned_digests(project_dir)
+        .into_iter()
+        .filter_map(|(name, entry)| {
+            let generated = format!("{project_rel}/{name}");
+            let Some(recorded) = entry.inputs() else {
+                return Some(StaleGeneration {
+                    generated,
+                    moved_inputs: Vec::new(),
+                });
+            };
+            // Both directions, keyed on the union: an input that has appeared
+            // since the generation moved the derivation just as much as one
+            // whose bytes changed, and an input that has gone away is not
+            // evidence that what it produced still holds.
+            let moved: Vec<String> = recorded
+                .keys()
+                .chain(current.keys())
+                .filter(|path| recorded.get(*path) != current.get(*path))
+                .cloned()
+                .collect::<BTreeSet<String>>()
+                .into_iter()
+                .collect();
+            (!moved.is_empty()).then_some(StaleGeneration {
+                generated,
+                moved_inputs: moved,
+            })
         })
         .collect()
 }

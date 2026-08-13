@@ -2017,6 +2017,7 @@ pub enum IssueKindOutput {
     Surfacing,
     ConfigRejected,
     MemberIncompatibility(MemberIncompatibilityOutput),
+    DerivedStateStale,
     DisabledIntegrationArtifact,
     IntegrationFailed,
     CoreFinding,
@@ -2056,6 +2057,7 @@ impl IssueKindOutput {
                     required_by: observation.required_by().to_owned(),
                 })
             }
+            IssueKind::DerivedStateStale => Self::DerivedStateStale,
             IssueKind::DisabledIntegrationArtifact => Self::DisabledIntegrationArtifact,
             IssueKind::IntegrationFailed => Self::IntegrationFailed,
             IssueKind::CoreFinding => Self::CoreFinding,
@@ -5665,6 +5667,11 @@ pub struct DoctorJsonOutput {
     /// incompatibility. Disjoint from `violations` — nothing on this array
     /// carries `kind: "core-finding"`.
     pub issues: Vec<IssueOutput>,
+    /// Standing advisories this checkout raises, in the vocabulary
+    /// `rwv sync --json` already emits: a condition with a named remedy and the
+    /// paths that raised it. Empty, not absent, so a consumer branches on
+    /// length.
+    pub advisories: Vec<crate::workspace::AdvisoryOutput>,
     /// `rwv-*` executables discovered on `PATH`. Each record carries the verb
     /// name, absolute path, and a `shadowed` flag for duplicates: when the
     /// same name appears in multiple `PATH` directories, the first copy wins
@@ -7543,6 +7550,67 @@ enum Repair {
     Apply,
 }
 
+/// Every generated file in the loaded projects whose attested inputs no longer
+/// describe the checkout, as the one read both doctor surfaces render.
+///
+/// The condition `rwv sync` announces once, standing. A note prints at a moment
+/// the operator may not be reading and is then gone; this is derivable from
+/// present state whenever they ask, and from this checkout alone — no source
+/// workspace, no history.
+fn stale_generation_findings(
+    world: &DoctorWorld,
+) -> Vec<crate::integrations::merge::StaleGeneration> {
+    let mut findings = Vec::new();
+    for project in &world.input.projects {
+        let project_dir =
+            crate::workspace::project_dir(&world.workspace_dir, project.name.as_str());
+        findings.extend(crate::integrations::merge::stale_generations(
+            &project_dir,
+            &project.name,
+        ));
+    }
+    findings
+}
+
+/// The operator's rendering of a stale generation.
+fn stale_generation_issue(finding: &crate::integrations::merge::StaleGeneration) -> Issue {
+    use crate::integration::Severity;
+
+    let cause = if finding.provenance_unknown() {
+        "it was accepted without a record of what produced it, so nothing here can \
+         say it still follows from the current inputs"
+            .to_string()
+    } else {
+        format!(
+            "the inputs it was generated from have moved since: {}",
+            finding.moved_inputs.join(", ")
+        )
+    };
+    Issue {
+        integration: "core".into(),
+        severity: Severity::Warning,
+        message: format!(
+            "{} may no longer match this checkout — {cause}. Run `rwv materialize` \
+             to re-derive it",
+            finding.generated
+        ),
+        kind: IssueKind::DerivedStateStale,
+        safe_to_fix: false,
+    }
+}
+
+/// The same finding as the typed advisory `rwv sync --json` already emits, so
+/// an agent branches on one vocabulary rather than two.
+fn stale_generation_advisory(
+    finding: &crate::integrations::merge::StaleGeneration,
+) -> crate::workspace::AdvisoryOutput {
+    crate::workspace::AdvisoryOutput {
+        kind: crate::workspace::AdvisoryKindOutput::DerivedStateStale,
+        remedy: "rwv materialize".to_owned(),
+        inputs: finding.moved_inputs.clone(),
+    }
+}
+
 /// One finding per disabled integration whose content is still on disk.
 ///
 /// **Report only, and there is deliberately no `--fix` arm.** Reaching the state
@@ -7745,6 +7813,11 @@ fn collect_doctor_issues(
             issues.extend(surf_fixable);
         }
     }
+    issues.extend(
+        stale_generation_findings(world)
+            .iter()
+            .map(stale_generation_issue),
+    );
     issues
 }
 
@@ -7860,6 +7933,7 @@ pub fn build_doctor_json(
     workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
     resolution: Option<Resolution>,
     plugins: Vec<crate::plugins::PluginRecord>,
+    advisories: Vec<crate::workspace::AdvisoryOutput>,
 ) -> DoctorJsonOutput {
     DoctorJsonOutput {
         schema_url: DOCTOR_SCHEMA_URL.to_owned(),
@@ -7868,6 +7942,7 @@ pub fn build_doctor_json(
             .map(|v| ViolationOutput::from_violation(v, workspace_dir, workweave_dirs))
             .collect(),
         issues: issues.into_iter().map(IssueOutput::from_issue).collect(),
+        advisories,
         plugins,
         resolution,
     }
@@ -8476,6 +8551,10 @@ pub fn run_check_json(
     // reporting only — the presence or absence of plugins never affects the
     // has_violations signal or the doctor exit code.
     let plugins = crate::plugins::discover_plugins(None::<&std::ffi::OsStr>);
+    let advisories = stale_generation_findings(&world)
+        .iter()
+        .map(stale_generation_advisory)
+        .collect();
     let payload = build_doctor_json(
         violations,
         issues,
@@ -8483,6 +8562,7 @@ pub fn run_check_json(
         &workweave_dirs,
         ctx.resolution(),
         plugins,
+        advisories,
     );
     let out =
         serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;

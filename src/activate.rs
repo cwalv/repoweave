@@ -44,7 +44,7 @@ use crate::integration_runner::{
 };
 use crate::integrations::builtin_integrations;
 use crate::integrations::merge::{
-    drifted_attested_owned_files, forget_owned_digest, stamp_owned_digest,
+    attested_owned_files, drifted_attested_owned_files, forget_owned_digest, stamp_owned_digest,
 };
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::symlink::LinkTarget;
@@ -321,6 +321,43 @@ fn strip_disabled_integrations(
     Ok(())
 }
 
+/// Drop attestations for files no enabled integration produces.
+///
+/// An attestation is a claim that rwv generated a file from recorded inputs.
+/// When nothing enabled here declares that file any more — the last member of
+/// its ecosystem left, or its integration was just stripped — rwv produces it
+/// no longer, and a claim about a derivation it will never redo is a standing
+/// finding no verb could ever clear. The file itself is not touched: whether an
+/// orphaned generated file should survive its producer is a different question
+/// from whether rwv still vouches for it.
+fn forget_unproduced_attestations(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &crate::integration_runner::IntegrationContextBase,
+) -> anyhow::Result<()> {
+    let output_dir = ctx_base.output_dir.as_path();
+    let attested = attested_owned_files(output_dir);
+    if attested.is_empty() {
+        return Ok(());
+    }
+    let default_config = IntegrationConfig::default();
+    let produced: BTreeSet<String> = enabled_integrations(integrations, manifest, &default_config)
+        .flat_map(|(integration, config)| {
+            let ctx = ctx_base.build_context(config, manifest);
+            integration.generated_files(&ctx)
+        })
+        .collect();
+
+    for name in attested.iter().filter(|name| !produced.contains(*name)) {
+        forget_owned_digest(output_dir, name)?;
+        eprintln!(
+            "[forgot] core: nothing enabled here generates {name}; rwv no longer \
+             vouches for it"
+        );
+    }
+    Ok(())
+}
+
 /// Settle attested generated files in `output_dir` whose content rwv never
 /// accepted, before anything downstream reads or rewrites them.
 ///
@@ -508,6 +545,7 @@ fn activate_at(
         }
         ActivationMode::Materialize(consent) => {
             strip_disabled_integrations(root, &integrations, &manifest, &ctx_base)?;
+            forget_unproduced_attestations(&integrations, &manifest, &ctx_base)?;
             settle_arrived_drift(&ctx_base.output_dir, consent)?;
         }
     }

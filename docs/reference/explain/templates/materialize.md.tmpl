@@ -73,6 +73,18 @@ file — and the lock beside it — is never named or removed. Re-enabling the
 integration and running `rwv doctor --fix` regenerates everything except the
 ecosystem lock, whose next generation belongs to the ecosystem tool.
 
+### Re-deriving state whose inputs moved
+
+rwv records the digests of the inputs each generation read — the project
+manifest and `rwv.lock` — beside the digest of what it produced. When those
+inputs have moved since, `rwv doctor` reports the generated file as
+`derived-state-stale` and names this verb; running it re-derives the state and
+records the inputs the new generation read.
+
+An attestation for a file nothing enabled here generates any more is dropped
+rather than carried: rwv will not redo that derivation, so it stops vouching for
+the result. The file itself is left alone.
+
 ### Arriving at drift
 
 rwv records a digest of each generated file at the moment it accepts that

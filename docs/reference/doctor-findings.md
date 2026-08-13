@@ -882,9 +882,33 @@ a file region you hold the pen on, which `--fix` reports and never overwrites.
 | `surfacing` | A weave-root symlink onto an owned file is absent, occupied by real content, or resolves into a different project. |
 | `config-rejected` | `rwv.toml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
 | `member-incompatibility` | A value you hold is incompatible with what the members require. Carries the observation as fields, below. |
+| `derived-state-stale` | Generated ecosystem state no longer follows from the inputs it was derived from. Reported only — see below. |
 | `disabled-integration-artifact` | An integration is disabled for this project, but content it authored is still on disk. Reported only — see below. |
 | `integration-failed` | An integration's hook returned an error; the runner captured it so the remaining integrations could still run. |
 | `core-finding` | Raised by doctor itself while driving the integrations. On the wire this appears only under `--fix`, which `--json` has no form of — see the disjointness rule above. |
+
+`derived-state-stale` is the standing form of the note `rwv sync` prints once.
+rwv records the digests of the inputs each generation read — the project
+manifest and `rwv.lock` — beside the digest of what it produced, so whether a
+lock file still follows from this checkout is answerable at any later moment
+from present state alone: nothing is regenerated to compare against, no other
+workspace is consulted, and no history is kept. A workweave answers for itself.
+
+An entry written before inputs were attested reads as stale. That is the honest
+answer rather than a lenient one — rwv accepted those bytes without recording
+what produced them, so it cannot claim they still follow from anything — and it
+heals itself, because the next generation rewrites the entry in the attested
+shape. Expect to see it once per project after upgrading.
+
+On `--json` this finding also appears in the `advisories` array, in the same
+`{kind, remedy, inputs}` shape `rwv sync --json` emits, so an agent branches on
+one vocabulary rather than two. `inputs` names the paths that moved, and is
+empty exactly when the entry records no inputs to compare.
+
+**What to do:** run `rwv materialize`. If the generated file also holds content
+rwv never accepted, materialize refuses first and names the two consents — see
+`rwv explain materialize`; taking either one clears both conditions, because the
+generation that follows attests its own inputs.
 
 `disabled-integration-artifact` is the one kind `--fix` has no arm for at all,
 and the omission is the design rather than a gap. Disabling an integration

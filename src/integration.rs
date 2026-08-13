@@ -169,6 +169,9 @@ pub enum IssueKind {
     /// An `Ownership::DefaultOnly` value that is incompatible with what the
     /// members require. Carries the observation the predicate made.
     MemberIncompatibility(Box<crate::integrations::merge::MemberIncompatibility>),
+    /// Generated state whose attested inputs no longer describe the checkout.
+    /// The condition `rwv sync` announces once, standing.
+    DerivedStateStale,
     /// Content an integration authored is still on disk while that integration
     /// is disabled. Reported, never repaired: the implied state is absence, and
     /// reaching it means deleting.
@@ -201,6 +204,7 @@ impl IssueKind {
             Self::Surfacing => "surfacing",
             Self::ConfigRejected => "config-rejected",
             Self::MemberIncompatibility(_) => Self::MEMBER_INCOMPATIBILITY,
+            Self::DerivedStateStale => "derived-state-stale",
             Self::DisabledIntegrationArtifact => "disabled-integration-artifact",
             Self::IntegrationFailed => "integration-failed",
             Self::CoreFinding => "core-finding",
