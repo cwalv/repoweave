@@ -2357,7 +2357,11 @@ pub trait Vcs: Send + Sync {
     /// branch ref are touched only on success. No conflict markers are ever
     /// left in the working tree.
     ///
-    /// For git: runs `git merge --ff-only <to>`.
+    /// For git: runs `git merge --ff-only <to>` with `-c
+    /// advice.diverging=false`, so a refusal's stderr carries git's `fatal:`
+    /// cause without git's own hint block recommending `git merge --no-ff`
+    /// or `git rebase` — either of which would bypass whatever op called
+    /// this.
     /// Safe by construction: no `reset --hard` replacement that could
     /// discard reachable history.
     fn advance_if_fast_forward(&self, repo: &Path, to: &ResolvedRevisionId)

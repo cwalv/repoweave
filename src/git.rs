@@ -1849,9 +1849,31 @@ impl Vcs for GitVcs {
         repo: &Path,
         to: &ResolvedRevisionId,
     ) -> Result<(), VcsError> {
-        Self::run(&["merge", "--ff-only", to.as_str()], repo)
-            .map(|_| ())
-            .map_err(|e| Self::classify_untracked_collision(e, repo))
+        let merge_args = ["merge", "--ff-only", to.as_str()];
+        let output = git_command()
+            .args(["-c", "advice.diverging=false"])
+            .args(merge_args)
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {merge_args:?}"),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Report the operation, not the flag: `-c advice.diverging=false`
+        // is how this call silences git's own hint, not something the
+        // operator asked for.
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let err = VcsError::CommandFailed {
+            args: merge_args.iter().map(|a| (*a).to_owned()).collect(),
+            repo: repo.to_path_buf(),
+            stderr,
+        };
+        Err(Self::classify_untracked_collision(err, repo))
     }
 
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {

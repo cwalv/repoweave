@@ -1847,6 +1847,57 @@ fn sync_ff_reports_failed_for_diverged_repo() {
     );
 }
 
+/// The diverged ff refusal states rwv's own verdict and remedy, and keeps
+/// git's `fatal:` cause underneath — but must not carry git's `hint:` block,
+/// which recommends `git merge --no-ff` / `git rebase`, either of which
+/// bypasses the sync op this refusal is inside of.
+#[test]
+fn sync_ff_diverged_refusal_keeps_cause_drops_advice() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary\n",
+        "primary: C2",
+    );
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+
+    let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+
+    let out = rwv()
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--discard-local-commits",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cannot fast-forward") && stderr.contains("rerun with --strategy rebase"),
+        "rwv's own verdict and remedy must survive; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("fatal: Not possible to fast-forward"),
+        "git's own cause must survive; got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("hint:"),
+        "git's advice block recommends bypassing the open op; must not appear: {stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Named override flags — new tests
 // ---------------------------------------------------------------------------
