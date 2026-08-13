@@ -325,10 +325,15 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
     let ww_project_before = head(&f.ww.project_dir);
     block_commits(&f.ww.project_dir, &hooks);
 
+    // The op fails: phase 3's relock hits the same blocked commit and bails.
+    // That failure is also this fixture's proof that the hook fired at all —
+    // without it, every check below holds against a run where the hook never
+    // ran and the relock succeeded.
     let assert = rwv()
         .args(["sync-to", &f.main.root.to_string_lossy()])
         .current_dir(&f.ww.root)
-        .assert();
+        .assert()
+        .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     // The outcome the claim would have described: no relock commit landed, so
