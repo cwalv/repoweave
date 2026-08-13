@@ -6483,6 +6483,41 @@ pub fn run_sync_to(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Resu
 /// `project_repo_advance`. These fields are absent from the plain
 /// `rwv sync --json` envelope ([`SyncJsonOutput`]).
 pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
+    let run = sync_to_json_run(ctx, request);
+    if let Some(envelope) = &run.envelope {
+        let out =
+            serde_json::to_string_pretty(envelope).context("failed to serialize sync-to output")?;
+        println!("{out}");
+    }
+    json_exit_tail(run.any_failure, run.project_level_result)
+}
+
+/// What a `rwv sync-to --json` run produced, before any of it reaches stdout.
+///
+/// [`run_sync_to_json`] is this plus a `println!` and the exit tail both JSON
+/// emitters share. The split is what lets the envelope be read as a value: a
+/// caller that wants the machine's own answers does not have to capture fd 1,
+/// and does not lose the process to the failure exit.
+pub struct SyncToJsonRun {
+    /// The envelope to print. `None` when there is nothing to print: NDJSON
+    /// streamed each record as it arrived, and a machine that refused before
+    /// resolving its coordinates has no op to describe.
+    pub envelope: Option<SyncToJsonOutput>,
+    /// Whether any per-repo outcome failed — what decides the exit code.
+    pub any_failure: bool,
+    /// The project-level result, which can fail after the per-repo outcomes
+    /// are already captured.
+    pub project_level_result: anyhow::Result<()>,
+}
+
+/// Run the `rwv sync-to` machine under `--json` and assemble its envelope.
+///
+/// Every identity field on the envelope is the machine's own answer: the
+/// coordinates it recorded once its context resolved, and the witness retire's
+/// delete returned. On a resumed op those differ from what the invocation
+/// carries — the op is owned by a workspace the caller need not be in, and its
+/// target is in the op record rather than in `request`.
+pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
@@ -6519,15 +6554,14 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
     let coordinates = coordinates.into_inner().unwrap_or_else(|e| e.into_inner());
     let retired = retired.into_inner().unwrap_or_else(|e| e.into_inner());
 
-    // If we never reached the per-repo loop (project-level precondition
-    // failure), propagate the error so main prints it via anyhow.
-    if records.is_empty() && project_level_result.is_err() {
-        return project_level_result;
-    }
-
     let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
 
-    if !ndjson {
+    // Nothing to describe when we never reached the per-repo loop (a
+    // project-level precondition failure): the error is the whole story, and
+    // the tail propagates it.
+    let envelope = if ndjson || (records.is_empty() && project_level_result.is_err()) {
+        None
+    } else {
         // Splice step3_advance into each per-outcome record.
         let mut outcomes: Vec<SyncOutcomeOutput> = records;
         for outcome in &mut outcomes {
@@ -6548,11 +6582,7 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
         // The machine records its coordinates before its first phase, and
         // every record above is written by a phase. Nothing here means the op
         // refused before it started, and the refusal is the whole story.
-        let Some(coordinates) = coordinates else {
-            return project_level_result;
-        };
-
-        let payload = SyncToJsonOutput {
+        coordinates.map(|coordinates| SyncToJsonOutput {
             schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
             source_workweave: coordinates.source_workweave,
             target: coordinates.target.to_string_lossy().into_owned(),
@@ -6560,13 +6590,14 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
             outcomes,
             project_repo_advance,
             resolution: ctx.resolution(),
-        };
-        let out =
-            serde_json::to_string_pretty(&payload).context("failed to serialize sync-to output")?;
-        println!("{out}");
-    }
+        })
+    };
 
-    json_exit_tail(any_failure, project_level_result)
+    SyncToJsonRun {
+        envelope,
+        any_failure,
+        project_level_result,
+    }
 }
 
 /// What one repo's step-3 fast-forward did, taken from the reads the advance

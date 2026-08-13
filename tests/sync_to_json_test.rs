@@ -17,9 +17,14 @@
 //! Additional tests cover:
 //! - `source_workweave` is null when invoked from the primary weave.
 //! - `retired` is false when `--retire` is not passed.
+//! - a resumed op's envelope, driven through the library from both sides of
+//!   the op, where the three identity fields above are the only place the
+//!   machine's answer and the invocation's differ.
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
+use repoweave::sync::{sync_to_json_run, SyncRequest};
+use repoweave::workspace::WorkspaceContext;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -688,4 +693,149 @@ fn sync_to_json_outside_workspace_no_panic() {
         // No panic or backtrace.
         .stderr(predicate::str::contains("panicked").not())
         .stderr(predicate::str::contains("RUST_BACKTRACE").not());
+}
+
+// ===========================================================================
+// A resumed op's envelope, on the one path that reaches it
+//
+// `--json` and `--continue` are mutually exclusive at the CLI, so no
+// invocation of the binary emits an envelope for an op it did not itself
+// start. A library caller reaches one: `do_continue` sends the machine to the
+// op record, whose owner workspace, target and retire flag are not what the
+// request carries. Each identity field then has two candidate answers that
+// differ — the machine's and the invocation's — which is what makes the
+// assertions below behavioural rather than a statement about how the
+// derivation is spelled.
+//
+// One resume is not enough to separate all three. The invocation answers
+// `source_workweave` and `target` wrongly only when the caller is somewhere
+// other than the owner, and answers `retired` wrongly only when it IS a
+// workweave — a workweave-rooted op reporting a retire it did not run. So the
+// two tests below drive the same stranded op from the two sides of it.
+// ===========================================================================
+
+const RESUMED_OP_ID: &str = "envelope-identity-resume";
+
+/// Plant the owner record a `sync-to` leaves behind when it dies after relock:
+/// owned by `workspace`, landing into `target`, retiring nothing.
+fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
+    let body = format!(
+        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
+         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+        src = workspace.display(),
+        tgt = target.display(),
+    );
+    std::fs::write(workspace.join(".rwv-op"), body).unwrap();
+}
+
+/// Plant the thin lease the target side holds while the op runs.
+fn write_lease(workspace: &Path, owner: &Path) {
+    let body = format!(
+        "{{\"id\": \"{RESUMED_OP_ID}\", \"owner\": \"{owner}\", \
+         \"created_at\": \"2026-06-10T00:00:00Z\"}}",
+        owner = owner.display(),
+    );
+    std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
+}
+
+fn create_savepoint(repo: &Path) {
+    let head = git_out(&["rev-parse", "HEAD"], repo);
+    git(
+        &[
+            "update-ref",
+            &format!("refs/rwv/pre-op/{RESUMED_OP_ID}"),
+            &head,
+        ],
+        repo,
+    );
+}
+
+/// A `sync-to` op owned by the workweave and stranded at advance-target, with
+/// the lease on the target. Returns `(primary, workweave)`.
+fn stranded_sync_to_op(parent: &Path, workweave_name: &str) -> (PathBuf, PathBuf) {
+    let (primary, ww, _primary_server, ww_server, _primary_project, ww_project, _advance_sha) =
+        make_workweave_ahead_fixture(parent, workweave_name);
+
+    write_sync_to_owner_record_at_advance_target(&ww, &primary);
+    write_lease(&primary, &ww);
+    create_savepoint(&ww_project);
+    create_savepoint(&ww_server);
+
+    (primary, ww)
+}
+
+/// The request a resume carries. `retire` disagrees with the record on purpose:
+/// the resume path takes `project_override` and `jobs` off the request and
+/// everything else off the op, so the retire phase does not run and this flag
+/// is only reachable by a `retired` that reads the invocation.
+fn resume_request() -> SyncRequest {
+    SyncRequest {
+        do_continue: true,
+        retire: true,
+        ..SyncRequest::default()
+    }
+}
+
+/// The envelope of a run that completed, or a panic naming why it did not — a
+/// fixture that drifts into a refusal must not read as a wrong field.
+fn completed_envelope(run: repoweave::sync::SyncToJsonRun) -> repoweave::sync::SyncToJsonOutput {
+    if let Err(e) = &run.project_level_result {
+        panic!("the resumed op did not complete: {e:#}");
+    }
+    run.envelope
+        .expect("a resumed op that ran its phases has an envelope to emit")
+}
+
+#[test]
+fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
+    let tmp = common::tempdir().unwrap();
+    let workweave_name = "sample-weave";
+    let (primary, _ww) = stranded_sync_to_op(tmp.path(), workweave_name);
+
+    // From the target, which holds the lease and not the op: this checkout is
+    // the primary weave and owns nothing, and the request names no target.
+    let invocation = WorkspaceContext::resolve(&primary, None).unwrap();
+    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request()));
+
+    assert_eq!(
+        envelope.source_workweave.as_deref(),
+        Some(workweave_name),
+        "source_workweave must name the workweave that OWNS the op, not the \
+         primary weave this resume was invoked from"
+    );
+    assert_eq!(
+        Path::new(&envelope.target).canonicalize().ok(),
+        primary.canonicalize().ok(),
+        "target must be the workspace the op recorded; the request carries none"
+    );
+}
+
+#[test]
+fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww) = stranded_sync_to_op(tmp.path(), "sample-weave");
+
+    // From the owner workweave, so a `retired` read off the request has
+    // everything it wants: a workweave to name and a run that succeeds. The op
+    // still records no retire, and no delete happened.
+    let invocation = WorkspaceContext::resolve(&ww, None).unwrap();
+    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request()));
+
+    assert!(
+        !envelope.retired,
+        "retired must come from the delete's witness — this op records no \
+         retire, whatever the request asked for"
+    );
+    assert!(
+        ww.join(".rwv-workweave").exists(),
+        "the workweave must still be here, so `retired: false` is the fact and \
+         not an accident of the fixture"
+    );
+    assert_eq!(
+        Path::new(&envelope.target).canonicalize().ok(),
+        primary.canonicalize().ok(),
+        "target must be the workspace the op recorded; the request carries none"
+    );
 }

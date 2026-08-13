@@ -18,13 +18,20 @@
 //! emitting JSON, or a repo whose HEAD moves between two adjacent reads — is
 //! respectively unreachable and a race.
 //!
-//! Residue, and it is wide: these are token scans over two functions. They
-//! catch the recomputation coming back in the spelling it left in. A new
-//! recomputation spelled differently — reading the checkout off some other
-//! context, re-resolving the target through a helper, taking the target's
-//! HEAD through a binding named something else — passes both. They also say
-//! nothing about the other envelope fields, about `run_sync_json`, or about
-//! any file but `src/sync.rs`.
+//! Residue: these are token scans, and a token scan catches the recomputation
+//! only in the spelling it left in. Reading the checkout off some other
+//! context, re-resolving the target through a helper, taking the target's HEAD
+//! through a binding named something else — each passes both scans.
+//!
+//! The three identity fields have one path where behaviour separates the two
+//! derivations, and the two `resumed_sync_to_json_run_*` tests in
+//! `tests/sync_to_json_test.rs` take it: a stranded op resumed through the
+//! library, from each of its two sides, where what the invocation carries and
+//! what the machine resolved are different values. Those survive a rename.
+//! Nothing equivalent exists for `step3_advance`, whose two candidate reads
+//! are separated only by a race, so the second scan below stands alone.
+//! Neither scan says anything about `run_sync_json` or about any file but
+//! `src/sync.rs`.
 
 mod common;
 
@@ -72,10 +79,21 @@ fn sites_naming(lines: &[SourceLine], name: &str, needles: &[&str]) -> Vec<Strin
         .collect()
 }
 
+/// The functions that may not read the invocation's own arguments: the one
+/// that assembles the envelope and the wrapper that prints it. Both, because
+/// assembly moving back into the wrapper is a refactor, not a change of
+/// subject — a scan naming only one of them goes quiet the moment the code
+/// crosses that line.
+const ENVELOPE_ASSEMBLY: [&str; 2] = ["sync_to_json_run", "run_sync_to_json"];
+
 #[test]
 fn the_scan_reaches_the_functions_it_pins() {
     let lines = production_lines();
-    for name in ["run_sync_to_json", "run_advance_target"] {
+    let pinned = ENVELOPE_ASSEMBLY
+        .iter()
+        .copied()
+        .chain(["run_advance_target"]);
+    for name in pinned {
         assert!(
             lines
                 .iter()
@@ -98,14 +116,19 @@ fn the_envelope_reports_the_op_the_machine_ran_not_the_one_invoked() {
     // the retire flag as passed, the target as the operator spelled it, and
     // the checkout the command was typed in. On a resumed op the machine reads
     // all three from the op record instead, and they are the op's answer.
-    let found = sites_naming(
-        &lines,
-        "run_sync_to_json",
-        &["request.retire", "request.source", "ctx.checkout"],
-    );
+    let found: Vec<String> = ENVELOPE_ASSEMBLY
+        .iter()
+        .flat_map(|name| {
+            sites_naming(
+                &lines,
+                name,
+                &["request.retire", "request.source", "ctx.checkout"],
+            )
+        })
+        .collect();
     assert!(
         found.is_empty(),
-        "`run_sync_to_json` assembles the envelope from what the machine \
+        "the `rwv sync-to --json` envelope is assembled from what the machine \
          reported — the coordinates it recorded when its context resolved, and \
          the witness retire's delete returned. Reading the invocation's own \
          arguments here answers a different question: what was asked for, not \
