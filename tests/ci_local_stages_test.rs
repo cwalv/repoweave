@@ -1,18 +1,22 @@
 //! `scripts/ci-local.sh` is the one script CI, the release gate, the
-//! pre-push hook and every contributor run. This pins two things about its
-//! `--stages` selector: the no-flag invocation still runs all six stages, in
-//! the same order, with the same header text, as before the selector
-//! existed; and `--stages=drift` isolates the regenerate-and-diff block,
-//! exiting non-zero and naming the remedy when regeneration disagrees with
-//! the committed tree.
+//! pre-push hook and every contributor run. This pins three things about its
+//! `--stages` selector: the no-flag invocation still runs all seven stages,
+//! in the same order, with the same header text; `--stages=drift` isolates
+//! the regenerate-and-diff block, exiting non-zero and naming the remedy
+//! when regeneration disagrees with the committed tree; and the windows
+//! stage skips loudly, printing the install command, whenever the target
+//! isn't there — never a hard failure, because ci-checks.yml's windows-check
+//! job already owns Windows compile truth authoritatively.
 //!
-//! Every test drives the real script as a subprocess with a stub `cargo` on
-//! `PATH`, so a stage's *shape* — which header prints, in what order, on what
-//! exit code — is pinned without paying for a real build. `#![cfg(unix)]`:
-//! the script under test is a `#!/usr/bin/env bash` file, so every helper
-//! here exists for a target this suite already can't run on; a per-test
-//! `#[cfg(unix)]` would strand them all as dead code on the one platform that
-//! denies warnings on the host target.
+//! Every test drives the real script as a subprocess with a stub `cargo` and
+//! `rustup` on `PATH`, so a stage's *shape* — which header prints, in what
+//! order, on what exit code — is pinned without paying for a real build or
+//! depending on whether this host happens to have the Windows target
+//! installed. `#![cfg(unix)]`: the script under test is a
+//! `#!/usr/bin/env bash` file, so every helper here exists for a target this
+//! suite already can't run on; a per-test `#[cfg(unix)]` would strand them
+//! all as dead code on the one platform that denies warnings on the host
+//! target.
 
 #![cfg(unix)]
 
@@ -37,13 +41,28 @@ if [ \"$1 $2 $3\" = \"run --quiet --bin\" ] && [ -n \"${CI_LOCAL_TEST_DRIFT_FILE
 fi\n\
 exit 0\n";
 
-/// A directory holding only a stub `cargo` that logs its argv and exits 0.
-/// Prepend it to `PATH` so `scripts/ci-local.sh` never reaches a real build.
+// `rustup target list --installed` is queried live at runtime rather than
+// baked into the stub file, so one stub serves both the installed and
+// missing-target scenarios via CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED.
+const STUB_RUSTUP: &str = "#!/bin/sh\n\
+if [ \"$*\" = \"target list --installed\" ]; then\n\
+    if [ \"${CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED:-1}\" = \"1\" ]; then\n\
+        echo x86_64-pc-windows-msvc\n\
+    fi\n\
+    exit 0\n\
+fi\n\
+exit 0\n";
+
+/// A directory holding stub `cargo` and `rustup` binaries that log their
+/// argv and exit 0. Prepend it to `PATH` so `scripts/ci-local.sh` never
+/// reaches a real build or depends on this host's installed targets.
 fn stub_bin_dir() -> tempfile::TempDir {
     let dir = common::tempdir().expect("tempdir");
-    let cargo_path = dir.path().join("cargo");
-    std::fs::write(&cargo_path, STUB_CARGO).unwrap();
-    std::fs::set_permissions(&cargo_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (name, body) in [("cargo", STUB_CARGO), ("rustup", STUB_RUSTUP)] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     dir
 }
 
@@ -84,15 +103,15 @@ fn fixture_repo() -> tempfile::TempDir {
     dir
 }
 
-fn run_ci_local(cwd: &Path, stub_bin: &Path, args: &[&str], drift_file: Option<&Path>) -> Output {
+fn run_ci_local(cwd: &Path, stub_bin: &Path, args: &[&str], extra_env: &[(&str, &str)]) -> Output {
     let real_path = std::env::var("PATH").unwrap_or_default();
     let path = format!("{}:{real_path}", stub_bin.display());
     let mut cmd = Command::new(ci_local_sh());
     cmd.args(args).current_dir(cwd).env("PATH", path);
-    if let Some(f) = drift_file {
-        cmd.env("CI_LOCAL_TEST_DRIFT_FILE", f);
-    } else {
-        cmd.env_remove("CI_LOCAL_TEST_DRIFT_FILE");
+    cmd.env_remove("CI_LOCAL_TEST_DRIFT_FILE");
+    cmd.env_remove("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED");
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
     cmd.output().expect("ci-local.sh should run")
 }
@@ -107,6 +126,7 @@ fn stderr_of(out: &Output) -> String {
 
 const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",
+    "==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc",
     "==> cargo test --release",
     "==> cargo clippy --all-targets -- -D warnings",
     "==> cargo doc --no-deps (rustdoc warnings deny)",
@@ -115,10 +135,10 @@ const HEADERS_IN_ORDER: &[&str] = &[
 ];
 
 #[test]
-fn default_run_executes_all_six_stages_in_order() {
+fn default_run_executes_all_seven_stages_in_order() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
-    let out = run_ci_local(fixture.path(), stub.path(), &[], None);
+    let out = run_ci_local(fixture.path(), stub.path(), &[], &[]);
     assert!(
         out.status.success(),
         "default run should pass on a clean fixture: {}",
@@ -143,7 +163,7 @@ fn default_run_executes_all_six_stages_in_order() {
     );
     assert_eq!(
         stdout.matches("STUB_CARGO:").count(),
-        6,
+        7,
         "expected one cargo invocation per stage:\n{stdout}"
     );
 }
@@ -152,7 +172,7 @@ fn default_run_executes_all_six_stages_in_order() {
 fn stages_flag_check_only_runs_check_and_nothing_else() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
-    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=check"], None);
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=check"], &[]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
     assert!(stdout.contains("==> cargo check"));
@@ -167,11 +187,12 @@ fn stages_flag_check_only_runs_check_and_nothing_else() {
 fn stages_flag_drift_only_skips_every_other_stage() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
-    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=drift"], None);
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=drift"], &[]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
-    assert!(stdout.contains(HEADERS_IN_ORDER[5]));
-    for h in &HEADERS_IN_ORDER[..5] {
+    let last = HEADERS_IN_ORDER.len() - 1;
+    assert!(stdout.contains(HEADERS_IN_ORDER[last]));
+    for h in &HEADERS_IN_ORDER[..last] {
         assert!(!stdout.contains(h), "unexpected header {h:?} in:\n{stdout}");
     }
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
@@ -182,7 +203,7 @@ fn stages_flag_drift_only_skips_every_other_stage() {
 fn unknown_stage_is_rejected_before_anything_runs() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
-    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=bogus"], None);
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=bogus"], &[]);
     assert!(!out.status.success(), "bogus stage should be refused");
     assert!(stderr_of(&out).contains("unknown stage: bogus"));
     assert!(
@@ -203,7 +224,10 @@ fn drift_stage_exits_non_zero_and_names_the_remedy_on_real_drift() {
         fixture.path(),
         stub.path(),
         &["--stages=drift"],
-        Some(&drift_target),
+        &[(
+            "CI_LOCAL_TEST_DRIFT_FILE",
+            drift_target.to_str().expect("utf8 fixture path"),
+        )],
     );
     assert!(
         !out.status.success(),
@@ -219,6 +243,56 @@ fn drift_stage_exits_non_zero_and_names_the_remedy_on_real_drift() {
 fn drift_stage_passes_when_regeneration_matches_the_committed_tree() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
-    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=drift"], None);
+    let out = run_ci_local(fixture.path(), stub.path(), &["--stages=drift"], &[]);
     assert!(out.status.success(), "{}", stderr_of(&out));
+}
+
+#[test]
+fn windows_stage_runs_the_cross_check_when_the_target_is_installed() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.contains("STUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc")
+    );
+    assert!(
+        !stdout.contains("windows cross-check skipped"),
+        "should not skip when the target is installed:\n{stdout}"
+    );
+}
+
+#[test]
+fn windows_stage_skips_loudly_with_the_install_command_when_the_target_is_missing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "0")],
+    );
+    assert!(
+        out.status.success(),
+        "a missing target should skip, not fail: {}",
+        stderr_of(&out)
+    );
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.contains(
+            "windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc"
+        ),
+        "missing the loud skip line with its remedy:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .contains("STUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc"),
+        "the cross-check itself should not have run:\n{stdout}"
+    );
 }

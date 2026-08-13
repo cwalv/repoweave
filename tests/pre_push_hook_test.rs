@@ -61,6 +61,16 @@ fn contains_no_bare_cargo_invocations() {
 
 const STUB_CARGO: &str = "#!/bin/sh\nprintf 'STUB_CARGO: %s\\n' \"$*\"\nexit 0\n";
 
+// Always reports the target installed, so the delegated gate's windows stage
+// runs the check (via the stub cargo above) rather than skipping — this test
+// counts one cargo invocation per stage and a skip would silently drop one.
+const STUB_RUSTUP: &str = "#!/bin/sh\n\
+if [ \"$*\" = \"target list --installed\" ]; then\n\
+    echo x86_64-pc-windows-msvc\n\
+    exit 0\n\
+fi\n\
+exit 0\n";
+
 fn git(args: &[&str], cwd: &Path) {
     let out = common::git()
         .args(args)
@@ -115,9 +125,11 @@ fn fixture_repo() -> tempfile::TempDir {
 fn a_plain_branch_push_runs_every_stage_of_the_delegated_gate_once() {
     let fixture = fixture_repo();
     let stub_dir = common::tempdir().expect("tempdir");
-    let cargo_path = stub_dir.path().join("cargo");
-    std::fs::write(&cargo_path, STUB_CARGO).unwrap();
-    std::fs::set_permissions(&cargo_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (name, body) in [("cargo", STUB_CARGO), ("rustup", STUB_RUSTUP)] {
+        let path = stub_dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     let real_path = std::env::var("PATH").unwrap_or_default();
     let path = format!("{}:{real_path}", stub_dir.path().display());
@@ -145,7 +157,7 @@ fn a_plain_branch_push_runs_every_stage_of_the_delegated_gate_once() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         stdout.matches("STUB_CARGO:").count(),
-        6,
+        7,
         "expected one cargo invocation per ci-local.sh stage:\n{stdout}"
     );
     assert!(stdout.contains("All checks passed."));

@@ -4,7 +4,7 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--stages=check,test,clippy,doc,fmt,drift]
+# Usage: scripts/ci-local.sh [--stages=check,windows,test,clippy,doc,fmt,drift]
 #
 # With no --stages, runs all stages in the order above — this is what CI, the
 # release gate and the pre-push hook invoke. --stages selects a subset, in
@@ -12,11 +12,14 @@
 # a Choreographer re-gating an integration tip between child landings wants
 # --stages=drift alone, without paying for a full build first.
 #
-# Exits non-zero on the first failure.
+# Exits non-zero on the first failure. The windows stage is the one
+# exception: ci-checks.yml's windows-check job already owns Windows compile
+# truth authoritatively, so a contributor without the target installed gets a
+# loud skip there, not a red gate for a check CI runs regardless.
 
 set -euo pipefail
 
-ALL_STAGES=(check test clippy doc fmt drift)
+ALL_STAGES=(check windows test clippy doc fmt drift)
 
 join_by_comma() {
     local IFS=,
@@ -68,6 +71,15 @@ header() {
 if run_stage check; then
     header "cargo check"
     cargo check
+fi
+
+if run_stage windows; then
+    header "cargo check --locked --all-targets --target x86_64-pc-windows-msvc"
+    if command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -qx x86_64-pc-windows-msvc; then
+        cargo check --locked --all-targets --target x86_64-pc-windows-msvc
+    else
+        printf 'windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc\n'
+    fi
 fi
 
 if run_stage test; then
