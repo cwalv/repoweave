@@ -632,6 +632,24 @@ and renames it to the flat name. A rename preserves the tip, so no commit
 moves. Namespace membership is decided against the name this workweave
 *mints*, never by taking the observed name apart.
 
+#### `blocked-ephemeral-namespace`
+
+**Warning. Report-only.** Two or more refs share this workweave's namespace in
+one store. git holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a
+directory of the same name, so the flat ref cannot be created and no migration
+arm can run.
+
+Reported *in place of* `unmigrated-ephemeral-branch`, not beside it: the
+migration pass skips the pair before any arm runs, so the rename that finding
+promises cannot happen. The skip is deliberate — every arm records its
+ownership receipt before it writes the ref, and a receipt for a pre-flat name
+resolves to no workweave on disk, which reads as stale and deletable.
+
+**What to do:** decide which ref is this workweave's branch and move or delete
+the others, leaving at most one ref under the namespace; then re-run `rwv
+doctor --fix` to migrate it. Never auto-fixed: which ref is which is not
+derivable from the refs.
+
 #### `unrecorded-ephemeral-branch`
 
 **Warning. Auto-fixable.** The workweave's flat ref exists in the canonical

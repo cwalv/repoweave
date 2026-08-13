@@ -2746,3 +2746,235 @@ fn migration_reaches_the_project_repo_checkout() {
         "and it must carry a receipt keyed to the project repo's store"
     );
 }
+
+// ===========================================================================
+// Report path vs `--fix` skip guards, for the three auto-fixable kinds
+//
+// `fix_branch_model_migration` refuses on three pass rules of its own — an
+// operation in flight, a workweave name that will not parse, and more than one
+// ref under a workweave's namespace. Each is compared here against what the
+// *report* path says in the same state, because a report that promises a
+// repair the pass will skip is a remedy the operator cannot run.
+// ===========================================================================
+
+/// The `sub_kind` discriminants doctor reports, sorted. An externally-tagged
+/// enum puts the variant name in the sole key of the `sub_kind` object; a unit
+/// variant is a bare string.
+fn branch_discipline_sub_kinds(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    let mut kinds: Vec<String> = json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .filter(|v| v["kind"] == "branch-discipline")
+        .map(|v| match &v["sub_kind"] {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Object(o) => o
+                .keys()
+                .next()
+                .expect("a sub_kind object carries its variant name")
+                .clone(),
+            other => panic!("unexpected sub_kind shape: {other}"),
+        })
+        .collect();
+    kinds.sort();
+    kinds
+}
+
+/// Every `kind` doctor reports, sorted — used where the finding that names a
+/// blocker is not a branch-discipline one.
+fn doctor_kinds(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    let mut kinds: Vec<String> = json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .map(|v| {
+            v["kind"]
+                .as_str()
+                .expect("a violation has a kind")
+                .to_owned()
+        })
+        .collect();
+    kinds.sort();
+    kinds
+}
+
+/// Build the fixture `migration_skips_a_workweave_namespace_holding_two_refs`
+/// drives from the `--fix` side: one workweave, its checkout attached to
+/// `<flat>/main`, and a second ref `<flat>/master` sharing the namespace.
+fn two_refs_in_one_namespace(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let ws = make_primary(tmp);
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    add_commit(&ww_checkout, "work.txt", "sibling work");
+    let sibling_tip = rev(&ww_checkout, "HEAD");
+    create_branch(&canonical, "myproj--feat-a/master", &sibling_tip);
+    git_in(&ww_checkout, &["reset", "--hard", "main"]);
+
+    (ws, canonical, ww_checkout)
+}
+
+/// The divergence this audit was opened for. The migration pass skips a
+/// namespace holding two refs; the report used to answer the same state with
+/// `unmigrated-ephemeral-branch`, whose message says `--fix` "records an
+/// ownership receipt for it and renames it" — a rename git will refuse, and
+/// one the pass never attempts. Nothing else in the report named the second
+/// ref, so the blocker was invisible until the operator ran `--fix`.
+///
+/// The control is the second half: collapse the namespace to one ref and the
+/// same fixture reports `unmigrated-ephemeral-branch` again and `--fix`
+/// performs the rename. Without it, a scan that reported neither finding would
+/// satisfy the first half's absence assertion.
+#[test]
+fn a_blocked_namespace_is_reported_as_itself_not_as_a_rename_that_cannot_run() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, _ww_checkout) = two_refs_in_one_namespace(tmp.path());
+
+    let kinds = branch_discipline_sub_kinds(&ws);
+    assert!(
+        kinds.contains(&"blocked-ephemeral-namespace".to_string()),
+        "the state the migration skips on must name itself: {kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&"unmigrated-ephemeral-branch".to_string()),
+        "and must not also be reported as the rename it blocks: {kinds:?}"
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("myproj--feat-a/main") && stdout.contains("myproj--feat-a/master"),
+        "the report must name both blocking refs — the operator chooses between \
+         them and cannot choose unseen; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("renames it to"),
+        "and must not promise the rename; got:\n{stdout}"
+    );
+
+    // Control: one ref out of the namespace, and the promise comes back —
+    // together with the repair that honours it.
+    git_in(
+        &canonical,
+        &["branch", "-m", "myproj--feat-a/master", "feat-a-master"],
+    );
+    let collapsed = branch_discipline_sub_kinds(&ws);
+    assert!(
+        collapsed.contains(&"unmigrated-ephemeral-branch".to_string())
+            && !collapsed.contains(&"blocked-ephemeral-namespace".to_string()),
+        "with one ref under the namespace the migration is reachable again: {collapsed:?}"
+    );
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "and the rename the report promised actually runs"
+    );
+}
+
+/// A deliberate silence, pinned. The migration pass also skips a workweave with
+/// an operation in flight — but unlike the blocked namespace, that blocker is
+/// already a finding of its own (`stale-op-state`, which names `rwv abort`).
+/// So `unmigrated-ephemeral-branch` is left standing beside it rather than
+/// suppressed: the finding is true, the operator is not blind to the blocker,
+/// and an op in flight is transient in a way a shared namespace is not.
+///
+/// The line this pins is the absence of an op-state predicate in
+/// `scan_workweave_repo_branches`. Adding one — suppressing the migration
+/// finding while `.rwv-op` exists — reddens the first assertion.
+#[test]
+fn an_in_flight_op_leaves_the_migration_finding_standing_beside_the_op_state_one() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+
+    let owner = repoweave::op_state::OwnerRecord::new_sync(
+        &repoweave::op_state::OpId::new_now(),
+        repoweave::op_state::SyncStrategy::Rebase,
+        ws.clone(),
+        ww_dir.clone(),
+    );
+    repoweave::op_state::write_owner(&ww_dir, &owner).expect("owner record written");
+
+    let sub_kinds = branch_discipline_sub_kinds(&ws);
+    assert!(
+        sub_kinds.contains(&"unmigrated-ephemeral-branch".to_string()),
+        "the migration finding stays: it is true, and the op is transient: {sub_kinds:?}"
+    );
+    let kinds = doctor_kinds(&ws);
+    assert!(
+        kinds.contains(&"stale-op-state".to_string()),
+        "and what blocks `--fix` from acting on it is reported in the same run — \
+         that adjacency is why the finding above is not suppressed: {kinds:?}"
+    );
+}
+
+/// The remaining pair in the matrix, and why it needs no report-side change:
+/// the namespace guard cannot reach `unrecorded-ephemeral-branch`, because that
+/// finding requires the flat ref to exist and git will not hold
+/// `refs/heads/p--w` beside any `refs/heads/p--w/...`.
+///
+/// Measured against git rather than asserted, in both directions, so the
+/// unreachability is a property of the tool and not of a reading of it.
+#[test]
+fn the_flat_ref_and_a_namespace_ref_cannot_coexist_so_the_skip_cannot_reach_unrecorded() {
+    let tmp = common::tempdir().unwrap();
+    let repo = init_repo_with_commit(&tmp.path().join("repo"));
+
+    create_branch(&repo, "myproj--feat-a/main", "main");
+    let blocked = git()
+        .args(["branch", "myproj--feat-a", "main"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(
+        !blocked.status.success(),
+        "git must refuse the flat ref while a ref exists under its namespace; \
+         it succeeded, which would make the two states co-occur"
+    );
+
+    let other = init_repo_with_commit(&tmp.path().join("other"));
+    create_branch(&other, "myproj--feat-a", "main");
+    let blocked_other = git()
+        .args(["branch", "myproj--feat-a/main", "main"])
+        .current_dir(&other)
+        .output()
+        .unwrap();
+    assert!(
+        !blocked_other.status.success(),
+        "and must refuse a namespace ref while the flat ref exists"
+    );
+}

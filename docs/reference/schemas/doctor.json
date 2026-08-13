@@ -235,6 +235,36 @@
           "additionalProperties": false
         },
         {
+          "description": "(a) Two or more refs share this workweave's namespace in one store, so the flat name cannot be created and no migration arm can run.\n\ngit holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a directory of the same name, so the rename the migration would perform is refused whatever order the arms take. `fix_branch_model_migration` skips the pair before any arm, which is why this is reported in place of [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch) rather than beside it: that finding's message promises a rename this state cannot produce.\n\nReport-only, and the repair is an operator's judgement rather than a missing arm — which of the refs is this workweave's branch, and where the others belong, is not derivable from the refs themselves.",
+          "type": "object",
+          "required": [
+            "blocked-ephemeral-namespace"
+          ],
+          "properties": {
+            "blocked-ephemeral-namespace": {
+              "type": "object",
+              "required": [
+                "blocking_refs",
+                "expected_ref"
+              ],
+              "properties": {
+                "blocking_refs": {
+                  "description": "Every pre-flat ref found under that namespace, in listing order.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expected_ref": {
+                  "description": "The flat ref no arm can create while the namespace is shared (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
           "description": "(a) The workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
           "type": "object",
           "required": [

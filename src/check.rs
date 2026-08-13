@@ -672,6 +672,7 @@ impl CheckViolation {
                 BranchDisciplineKind::CanonicalDetached { .. } => Consented("--reattach-checkouts"),
                 BranchDisciplineKind::SharedBranch { .. }
                 | BranchDisciplineKind::ForeignEphemeral { .. }
+                | BranchDisciplineKind::BlockedEphemeralNamespace { .. }
                 | BranchDisciplineKind::UnbornCheckout { .. }
                 | BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. }
                 | BranchDisciplineKind::CanonicalHoldsLeakedRef { .. }
@@ -1195,6 +1196,27 @@ pub enum BranchDisciplineKind {
         actual_branch: String,
         /// The flat ref it migrates to (`<project>--<workweave>`).
         expected_ref: String,
+    },
+    /// (a) Two or more refs share this workweave's namespace in one store, so
+    /// the flat name cannot be created and no migration arm can run.
+    ///
+    /// git holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a
+    /// directory of the same name, so the rename the migration would perform
+    /// is refused whatever order the arms take. `fix_branch_model_migration`
+    /// skips the pair before any arm, which is why this is reported in place
+    /// of [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch)
+    /// rather than beside it: that finding's message promises a rename this
+    /// state cannot produce.
+    ///
+    /// Report-only, and the repair is an operator's judgement rather than a
+    /// missing arm — which of the refs is this workweave's branch, and where
+    /// the others belong, is not derivable from the refs themselves.
+    BlockedEphemeralNamespace {
+        /// The flat ref no arm can create while the namespace is shared
+        /// (`<project>--<workweave>`).
+        expected_ref: String,
+        /// Every pre-flat ref found under that namespace, in listing order.
+        blocking_refs: Vec<String>,
     },
     /// (a) The workweave's flat ref exists in the canonical store, but rwv
     /// holds no receipt for it.
@@ -3989,6 +4011,15 @@ fn scan_workweave_repo_branches(
                     continue; // healthy
                 }
                 match a.legacy_name_under(&flat) {
+                    // Which of the two the migration can act on is decided
+                    // by the same count the migration pass skips on, so the
+                    // report never promises a rename git will refuse.
+                    Some(_) if legacy_refs.len() > 1 => {
+                        BranchDisciplineKind::BlockedEphemeralNamespace {
+                            expected_ref: expected_ref.clone(),
+                            blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
+                        }
+                    }
                     Some(legacy) => BranchDisciplineKind::UnmigratedEphemeralBranch {
                         actual_branch: legacy.to_string(),
                         expected_ref: expected_ref.clone(),
@@ -6481,6 +6512,34 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                             actual_branch,
                             expected_ref,
                         ),
+                        BranchDisciplineKind::BlockedEphemeralNamespace {
+                            expected_ref,
+                            blocking_refs,
+                        } => {
+                            safe_to_fix = false;
+                            format!(
+                                "{}: {} refs share workweave namespace `{}` ({}), and git \
+                                 cannot create the ref `{}` while any ref exists under \
+                                 `{}/`. The branch-model migration skips this pair rather \
+                                 than recording an ownership receipt for a rename that \
+                                 cannot happen, so `rwv doctor --fix` will not touch it. \
+                                 Which of those refs is this workweave's branch, and where \
+                                 the others belong, is not rwv's call to make — leave at \
+                                 most one ref under `{}/`, then re-run `rwv doctor --fix` \
+                                 to migrate it",
+                                repo_path.display(),
+                                blocking_refs.len(),
+                                expected_ref,
+                                blocking_refs
+                                    .iter()
+                                    .map(|r| format!("`{r}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                                expected_ref,
+                                expected_ref,
+                                expected_ref,
+                            )
+                        }
                         BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(
                             "{}: branch `{}` is this workweave's ephemeral ref but rwv \
                              holds no ownership receipt for it. rwv deletes a branch \
