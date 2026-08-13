@@ -236,7 +236,7 @@ impl std::fmt::Display for OpVerb {
 ///
 /// The persisted phase is always the phase in progress. Every phase is
 /// idempotent and re-runnable from the record alone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpPhase {
     /// Manifest repos + project repo strategy phase (today's Phase 2 + 1').
@@ -355,7 +355,7 @@ impl PhaseTips {
 /// and `cleanup` reads it to decide whether the project savepoint survives as
 /// the only remaining pointer to discarded commits, so mint and read must be
 /// the same value rather than the same text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Override {
     /// The lock-freshness precondition was waived on both sides.

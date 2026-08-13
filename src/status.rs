@@ -1,12 +1,13 @@
 //! `rwv status` — per-repo state of the CWD workspace.
 
 use crate::manifest::Project;
+use crate::op_state;
 use crate::vcs::{vcs_for, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Schema URL for `rwv status --json` output. Pins to the committed artifact
 /// under `docs/reference/schemas/status.json`. Emitted as the top-level
@@ -25,6 +26,50 @@ pub struct StatusJsonOutput {
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+    /// The sync/sync-to op parked at this workspace, or leased to one
+    /// elsewhere, if any. Absent when no op is in progress — the same
+    /// disclosure the in-flight refusal makes, before an operator has to
+    /// attempt a mutation to learn it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub op: Option<OpStatus>,
+}
+
+/// The in-flight op recorded at this workspace (owner) or the workspace this
+/// one leases to (owner elsewhere), disclosed read-only on `rwv status`.
+///
+/// The record minus the tip tables (`advanced_tips`/`converged_tips`): those
+/// are replay bookkeeping an operator deciding `--continue` vs `abort`
+/// doesn't need. `verb`, `phase` and `overrides` are the op-state crate's own
+/// types, not a re-encoding of them — a second vocabulary for the same three
+/// facts is the thing this disclosure must not become.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OpStatus {
+    pub id: String,
+    pub verb: op_state::OpVerb,
+    pub phase: op_state::OpPhase,
+    pub started_at: String,
+    /// Workspace holding the full op record (`.rwv-op`) — the workspace
+    /// `--continue`/`abort` must run from. Equal to the reporting workspace
+    /// unless this workspace only holds a lease.
+    pub owner: PathBuf,
+    pub source: PathBuf,
+    pub target: PathBuf,
+    pub overrides: Vec<op_state::Override>,
+}
+
+impl From<op_state::ResolvedOwner> for OpStatus {
+    fn from(resolved: op_state::ResolvedOwner) -> Self {
+        Self {
+            id: resolved.record.id,
+            verb: resolved.record.verb,
+            phase: resolved.record.phase,
+            started_at: resolved.record.started_at,
+            owner: resolved.owner_workspace,
+            source: resolved.record.source,
+            target: resolved.record.target,
+            overrides: resolved.record.overrides,
+        }
+    }
 }
 
 /// Relation between the current branch tip and the lock SHA.
@@ -385,20 +430,45 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
         }
     }
 
+    let op = op_state::resolve_to_owner(&workspace_dir)?.map(OpStatus::from);
+
     if json {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
             resolution: ctx.resolution(),
+            op,
         };
         let out = serde_json::to_string_pretty(&envelope)
             .context("failed to serialize status to JSON")?;
         println!("{out}");
     } else {
+        if let Some(op) = &op {
+            print_op_header(op);
+        }
         print_table(&entries);
     }
 
     Ok(())
+}
+
+/// The header `rwv status` prints ahead of the table when this workspace owns
+/// or leases an in-flight op: the same fact the in-flight refusal names
+/// (verb, phase, age, owner dir, op id, both remedies), disclosed without an
+/// operator having to attempt a mutation first to see it.
+fn print_op_header(op: &OpStatus) {
+    println!(
+        "{verb} in progress (op {id}, mid `{phase}`, started {elapsed} ago) at {owner}",
+        verb = op.verb,
+        id = op.id,
+        phase = op.phase,
+        elapsed = op_state::elapsed_since(&op.started_at),
+        owner = op.owner.display(),
+    );
+    println!(
+        "  resume with `{resume}`, or `rwv abort` to discard",
+        resume = op_state::resume_command(op.verb),
+    );
 }
 
 fn print_table(entries: &[RepoStatus]) {
@@ -486,6 +556,7 @@ mod tests {
                 parent: None,
             }],
             resolution: None,
+            op: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");
@@ -514,6 +585,52 @@ mod tests {
             repos[0]
         );
         assert!(decoded.repos[0].parent.is_none());
+        // No in-flight op: the top-level `op` key is omitted, not null — a
+        // consumer branches on key presence the same way it does for `parent`.
+        assert!(
+            v.get("op").is_none(),
+            "op field should be omitted when None; got: {v}"
+        );
+        assert!(decoded.op.is_none());
+    }
+
+    /// An in-flight op discloses the record minus the tip tables, keyed by
+    /// the op-state crate's own `verb`/`phase`/`overrides` types.
+    #[test]
+    fn status_json_op_field_round_trips() {
+        let envelope = StatusJsonOutput {
+            schema_url: STATUS_SCHEMA_URL.to_string(),
+            repos: vec![],
+            resolution: None,
+            op: Some(OpStatus {
+                id: "1779769917405921588".into(),
+                verb: op_state::OpVerb::Sync,
+                phase: op_state::OpPhase::Replay,
+                started_at: "2026-06-10T21:14:03Z".into(),
+                owner: "/abs/ws/target".into(),
+                source: "/abs/ws/source".into(),
+                target: "/abs/ws/target".into(),
+                overrides: vec![op_state::Override::AllowStaleLock],
+            }),
+        };
+
+        let json = serde_json::to_string(&envelope).expect("serializes");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parses");
+        assert_eq!(v["op"]["id"], "1779769917405921588");
+        assert_eq!(v["op"]["verb"], "sync");
+        assert_eq!(v["op"]["phase"], "replay");
+        assert_eq!(v["op"]["owner"], "/abs/ws/target");
+        assert_eq!(v["op"]["source"], "/abs/ws/source");
+        assert_eq!(v["op"]["overrides"][0], "allow-stale-lock");
+        // The record minus the tip tables: neither key exists on the wire.
+        assert!(v["op"].get("advanced_tips").is_none());
+        assert!(v["op"].get("converged_tips").is_none());
+
+        let decoded: StatusJsonOutput = serde_json::from_str(&json).expect("deserializes");
+        let op = decoded.op.expect("op present after round-trip");
+        assert_eq!(op.verb, op_state::OpVerb::Sync);
+        assert_eq!(op.phase, op_state::OpPhase::Replay);
+        assert_eq!(op.overrides, vec![op_state::Override::AllowStaleLock]);
     }
 
     /// The `parent` field carries both the recorded path and the per-repo
@@ -542,6 +659,7 @@ mod tests {
                 }),
             }],
             resolution: None,
+            op: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");

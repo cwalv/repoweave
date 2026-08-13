@@ -25,12 +25,21 @@ Run `rwv --help status` for the full clap surface.
 Default text output is a fixed-column table: one repo per row, with
 `path branch tip lock: <sha> [<relation>] [<mid-op>]`.
 
+When this workspace owns an in-flight `sync`/`sync-to` op, or leases one to
+another workspace, a header line prints ahead of the table: verb, op id,
+phase, age, and the owning workspace, followed by the two remedies
+(`--continue` from the owning workspace, or `rwv abort`). This is the same
+disclosure the in-flight refusal makes on a conflicting mutation — `status`
+surfaces it read-only, so a clean `git status` in every repo is not mistaken
+for "no op in progress".
+
 Under `--json`, output is the envelope:
 
 ```
 {
   "$schema": "<url>",
-  "repos": [ { "path": "...", ... }, ... ]
+  "repos": [ { "path": "...", ... }, ... ],
+  "op": { "id": "...", "verb": "sync", "phase": "replay", ... }
 }
 ```
 
@@ -39,6 +48,12 @@ The `$schema` URL points to the committed schema artifact. Each element of
 (fully resolved), `branch`, `tip`, `lock_sha`, `relation`
 (`ok`/`ahead`/`behind`/`diverged`/`no_lock`/`unknown`), `mid_op`, `role`,
 `url`, `project`.
+
+`op` is present only when this workspace owns or leases an in-flight op: an
+`OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
+(`replay`/`relock`/`advance-target`/`retire`), `started_at`, the `owner`
+workspace (where `--continue`/`abort` must run), `source`, `target`, and
+`overrides`. Absent (not `null`) when no op is in progress.
 
 Schema:
 
@@ -55,6 +70,17 @@ Schema:
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "op": {
+      "description": "The sync/sync-to op parked at this workspace, or leased to one elsewhere, if any. Absent when no op is in progress — the same disclosure the in-flight refusal makes, before an operator has to attempt a mutation to learn it.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/OpStatus"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "repos": {
       "type": "array",
@@ -101,6 +127,121 @@ Schema:
           "type": "string",
           "enum": [
             "unreachable"
+          ]
+        }
+      ]
+    },
+    "OpPhase": {
+      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order; the driver loop persists the phase before entering it so a crash re-enters the same phase on resume.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "oneOf": [
+        {
+          "description": "Manifest repos + project repo strategy phase (today's Phase 2 + 1').",
+          "type": "string",
+          "enum": [
+            "replay"
+          ]
+        },
+        {
+          "description": "Regenerate and commit `rwv.lock` (today's Phase 3). On completion, converged tips are written into the owner record.",
+          "type": "string",
+          "enum": [
+            "relock"
+          ]
+        },
+        {
+          "description": "FF-advance every target repo to its converged tip (sync-to only).",
+          "type": "string",
+          "enum": [
+            "advance-target"
+          ]
+        },
+        {
+          "description": "Merged-check then workweave removal (`--retire` only).",
+          "type": "string",
+          "enum": [
+            "retire"
+          ]
+        }
+      ]
+    },
+    "OpStatus": {
+      "description": "The in-flight op recorded at this workspace (owner) or the workspace this one leases to (owner elsewhere), disclosed read-only on `rwv status`.\n\nThe record minus the tip tables (`advanced_tips`/`converged_tips`): those are replay bookkeeping an operator deciding `--continue` vs `abort` doesn't need. `verb`, `phase` and `overrides` are the op-state crate's own types, not a re-encoding of them — a second vocabulary for the same three facts is the thing this disclosure must not become.",
+      "type": "object",
+      "required": [
+        "id",
+        "overrides",
+        "owner",
+        "phase",
+        "source",
+        "started_at",
+        "target",
+        "verb"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "overrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Override"
+          }
+        },
+        "owner": {
+          "description": "Workspace holding the full op record (`.rwv-op`) — the workspace `--continue`/`abort` must run from. Equal to the reporting workspace unless this workspace only holds a lease.",
+          "type": "string"
+        },
+        "phase": {
+          "$ref": "#/definitions/OpPhase"
+        },
+        "source": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "verb": {
+          "$ref": "#/definitions/OpVerb"
+        }
+      }
+    },
+    "OpVerb": {
+      "description": "Which top-level verb started this op.",
+      "oneOf": [
+        {
+          "description": "Single-step sync (existing `rwv sync`).",
+          "type": "string",
+          "enum": [
+            "sync"
+          ]
+        },
+        {
+          "description": "Two-step sync-to.",
+          "type": "string",
+          "enum": [
+            "sync-to"
+          ]
+        }
+      ]
+    },
+    "Override": {
+      "description": "A named consent supplied at invocation and recorded on the owner record.\n\nEach variant is one CLI flag, and serialises to that flag's name without the leading dashes — the spelling already on disk in every `.rwv-op` written so far. `--continue` re-derives the op's consent from this list and `cleanup` reads it to decide whether the project savepoint survives as the only remaining pointer to discarded commits, so mint and read must be the same value rather than the same text.",
+      "oneOf": [
+        {
+          "description": "The lock-freshness precondition was waived on both sides.",
+          "type": "string",
+          "enum": [
+            "allow-stale-lock"
+          ]
+        },
+        {
+          "description": "Phase 1' may hard-reset the project repo past commits the source does not carry.",
+          "type": "string",
+          "enum": [
+            "discard-local-commits"
           ]
         }
       ]

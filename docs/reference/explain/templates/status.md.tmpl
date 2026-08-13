@@ -25,12 +25,21 @@ Run `rwv --help status` for the full clap surface.
 Default text output is a fixed-column table: one repo per row, with
 `path branch tip lock: <sha> [<relation>] [<mid-op>]`.
 
+When this workspace owns an in-flight `sync`/`sync-to` op, or leases one to
+another workspace, a header line prints ahead of the table: verb, op id,
+phase, age, and the owning workspace, followed by the two remedies
+(`--continue` from the owning workspace, or `rwv abort`). This is the same
+disclosure the in-flight refusal makes on a conflicting mutation — `status`
+surfaces it read-only, so a clean `git status` in every repo is not mistaken
+for "no op in progress".
+
 Under `--json`, output is the envelope:
 
 ```
 {
   "$schema": "<url>",
-  "repos": [ { "path": "...", ... }, ... ]
+  "repos": [ { "path": "...", ... }, ... ],
+  "op": { "id": "...", "verb": "sync", "phase": "replay", ... }
 }
 ```
 
@@ -39,6 +48,12 @@ The `$schema` URL points to the committed schema artifact. Each element of
 (fully resolved), `branch`, `tip`, `lock_sha`, `relation`
 (`ok`/`ahead`/`behind`/`diverged`/`no_lock`/`unknown`), `mid_op`, `role`,
 `url`, `project`.
+
+`op` is present only when this workspace owns or leases an in-flight op: an
+`OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
+(`replay`/`relock`/`advance-target`/`retire`), `started_at`, the `owner`
+workspace (where `--continue`/`abort` must run), `source`, `target`, and
+`overrides`. Absent (not `null`) when no op is in progress.
 
 Schema:
 
