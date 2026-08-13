@@ -8,6 +8,11 @@
 //!   - The `$schema` URL points at `docs/reference/schemas/sync-to.json`.
 //!   - The outcome shape is identical to `rwv sync --json` — same `kind` tags,
 //!     same fields — only the `$schema` URL differs.
+//!   - The target-side dirty preflight refuses on uncommitted TRACKED changes
+//!     only; a non-colliding untracked file in the target does not block the
+//!     sync. A target-side untracked file that collides with a path the
+//!     fast-forward writes still refuses, but at step 3 rather than up front,
+//!     naming the path and leaving the op resumable via `sync-to --continue`.
 //!
 //! This test mirrors `tests/doc_claims_sync_test.rs` for the sync-to verb.
 
@@ -495,4 +500,185 @@ fn sync_to_allow_stale_lock_bypasses_target_precondition() {
         .current_dir(&ww.root)
         .assert()
         .success();
+}
+
+// ===========================================================================
+// 5. Target-side dirty preflight is tracked-only
+//
+// Doc claim (`rwv explain sync-to`, "Target-side preflights"): sync-to
+// refuses on uncommitted TRACKED changes in a target repo. An untracked file
+// that doesn't collide with a path the fast-forward writes is not scanned by
+// the preflight and must not block the sync. A colliding untracked file is
+// still refused, but at fast-forward time rather than up front, naming the
+// path and leaving the op resumable via `rwv sync-to --continue`.
+// ===========================================================================
+
+/// Count savepoints under `refs/rwv/pre-op/` in `repo`, without needing the
+/// op-id: enough to tell "a savepoint exists" from "none does".
+fn savepoint_count(repo: &Path) -> usize {
+    let out = common::git()
+        .args(["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op"])
+        .current_dir(repo)
+        .output()
+        .expect("git for-each-ref failed to start");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .count()
+}
+
+/// A target-side untracked file that the incoming fast-forward never writes
+/// is not dirt: sync-to must succeed and the file must survive untouched.
+#[test]
+fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    // Untracked scratch file in the target, at a path the fast-forward
+    // never touches.
+    std::fs::write(primary.server_dir.join("scratch.txt"), "scratch\n").unwrap();
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        c2,
+        "a non-colliding untracked file must not block the fast-forward"
+    );
+    assert_eq!(
+        std::fs::read_to_string(primary.server_dir.join("scratch.txt")).unwrap(),
+        "scratch\n",
+        "the target's untracked scratch file must survive the sync untouched"
+    );
+}
+
+/// A target-side untracked file that DOES collide with a path the incoming
+/// fast-forward writes still refuses — git itself cannot resolve that
+/// collision — but the refusal happens at step 3, names the path, and
+/// leaves op-state and savepoints intact so `rwv sync-to --continue`
+/// completes once the file is moved or removed.
+#[test]
+fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+
+    // ww adds a NEW path the target does not have — exactly what the
+    // fast-forward will try to write into the target's worktree.
+    let c2 = make_commit(
+        &ww.server_dir,
+        "newfile.txt",
+        "ww content\n",
+        "ww: add newfile",
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    // Target holds an untracked file at that exact path — the collision.
+    std::fs::write(
+        primary.server_dir.join("newfile.txt"),
+        "primary scratch\n",
+    )
+    .unwrap();
+
+    let primary_project_tip_before = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let primary_server_tip_before = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+
+    let err_output = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+
+    assert!(
+        stderr.contains("newfile.txt"),
+        "refusal must name the colliding path; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv sync-to --continue"),
+        "refusal must name the resume command; got:\n{stderr}"
+    );
+    // Pins the named per-repo refusal specifically (not just the raw git
+    // stderr, which also happens to mention the path, or the whole-op
+    // fallback bail, which also happens to mention --continue).
+    assert!(
+        stderr.contains("collide with paths this fast-forward would write"),
+        "refusal must be the named per-repo collision message, not a raw \
+         passthrough of git's own error; got:\n{stderr}"
+    );
+
+    // Nothing was clobbered.
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        primary_project_tip_before,
+        "target project repo must not advance when a manifest repo collided"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        primary_server_tip_before,
+        "target server repo must not advance past the collision"
+    );
+    assert_eq!(
+        std::fs::read_to_string(primary.server_dir.join("newfile.txt")).unwrap(),
+        "primary scratch\n",
+        "the target's untracked file must survive the refused advance"
+    );
+
+    // Op-state parked recoverably in both workspaces (record + savepoints).
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "owner record must remain in CWD after the collision refusal"
+    );
+    assert!(
+        primary.root.join(".rwv-op-lease").exists(),
+        "target lease must remain after the collision refusal"
+    );
+    assert!(
+        savepoint_count(&ww.server_dir) > 0,
+        "CWD savepoint must remain after the collision refusal"
+    );
+    assert!(
+        savepoint_count(&primary.server_dir) > 0,
+        "target savepoint must remain after the collision refusal"
+    );
+
+    // Move the colliding file aside and resume.
+    std::fs::rename(
+        primary.server_dir.join("newfile.txt"),
+        primary.server_dir.join("newfile.txt.bak"),
+    )
+    .unwrap();
+
+    rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        c2,
+        "--continue should complete the fast-forward once the collision is cleared"
+    );
+    assert_eq!(
+        std::fs::read_to_string(primary.server_dir.join("newfile.txt")).unwrap(),
+        "ww content\n",
+        "the landed newfile.txt must carry ww's content, not the target's old scratch file"
+    );
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "op-state should be cleared once --continue completes"
+    );
 }

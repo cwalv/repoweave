@@ -3330,7 +3330,15 @@ fn check_sync_to_ff_precondition(
 }
 
 /// sync-to dirty-target preflight: refuse if the target workweave has
-/// uncommitted changes that advance-target would overwrite.
+/// uncommitted **tracked** changes that advance-target would fast-forward
+/// over.
+///
+/// Untracked files are not scanned here — a fast-forward only ever touches
+/// paths the incoming tree writes, so a target-side untracked file is safe
+/// unless it collides with one of those paths. That narrower question
+/// doesn't have an answer until replay has picked CWD's tips, which is after
+/// this preflight runs; [`ff_advance_repo`] catches an actual collision at
+/// advance time instead, where git itself refuses to clobber it.
 fn check_dirty_target_preflight(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
@@ -3343,23 +3351,25 @@ fn check_dirty_target_preflight(
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: a dirty shared canonical must not block a
         // sync-to that never touches it (advance-target excludes it too).
-        if checkout_is_syncable(&target_repo)
-            && vcs_for(entry.vcs_type)
-                .has_uncommitted_changes(&target_repo)
-                .unwrap_or(true)
-        {
-            dirty.push(repo_path.to_string());
+        if checkout_is_syncable(&target_repo) {
+            let tracked = vcs_for(entry.vcs_type)
+                .tracked_dirty_file_names(&target_repo)
+                .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
+            if !tracked.is_empty() {
+                dirty.push(repo_path.to_string());
+            }
         }
     }
-    if project_vcs
-        .has_uncommitted_changes(target_project_dir)
-        .unwrap_or(true)
-    {
+    let project_tracked = project_vcs
+        .tracked_dirty_file_names(target_project_dir)
+        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
+    if !project_tracked.is_empty() {
         dirty.push(project_repo_key().to_string());
     }
     if !dirty.is_empty() {
         anyhow::bail!(
-            "sync-to precondition failed: target workweave has uncommitted changes in:\n  {}\n\
+            "sync-to precondition failed: target workweave has uncommitted tracked changes \
+             in:\n  {}\n\
              \n\
              advance-target fast-forwards the target's worktrees over this work. Commit or \
              stash in the target ({}), then re-run.",
@@ -6309,14 +6319,22 @@ fn ff_advance_repo(
         ),
     };
 
-    // Fast-forwarding a dirty target worktree risks its uncommitted changes.
-    // The sync-to preflight already refused on a dirty target; this catches
-    // concurrent modification since then, with a named precondition instead
-    // of merge's generic refusal. Checked after the equal-tip return: a
-    // dirty worktree we won't move is safe.
-    if vcs.has_uncommitted_changes(target_repo).unwrap_or(true) {
+    // Fast-forwarding a target worktree with dirty tracked files risks
+    // clobbering them. The sync-to preflight already refused on tracked
+    // target dirt; this catches concurrent modification since then, with a
+    // named precondition instead of merge's generic refusal. Checked after
+    // the equal-tip return: a dirty worktree we won't move is safe.
+    //
+    // Untracked files are not scanned here for the same reason the preflight
+    // doesn't: a fast-forward only clobbers an untracked path that collides
+    // with one the incoming tree writes, and `advance_attached_ref` below
+    // catches that collision natively and re-mints it as a named refusal.
+    let tracked = vcs
+        .tracked_dirty_file_names(target_repo)
+        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
+    if !tracked.is_empty() {
         anyhow::bail!(
-            "target repo at {} has uncommitted changes; refusing to fast-forward \
+            "target repo at {} has uncommitted tracked changes; refusing to fast-forward \
              over them. Commit or stash in the target, then re-run.",
             target_repo.display(),
         );
@@ -6355,11 +6373,23 @@ fn ff_advance_repo(
     // it moves in; `advance_attached_ref` re-observes before acting, so an
     // attachment that changed since the read above is a refusal rather than
     // a landing on whatever HEAD became (how wide that window should be
-    // stays open). Underneath, the ff refuses rather than clobbers
-    // if the update would touch uncommitted changes — the VCS-native
-    // backstop behind the two explicit dirty gates above.
-    vcs.advance_attached_ref(&on, cwd_tip)
-        .context("fast-forward advance failed in target")?;
+    // stays open). Underneath, the ff refuses rather than clobbers if the
+    // update would touch tracked changes — the VCS-native backstop behind
+    // the tracked-dirty gate above — or an untracked file colliding with an
+    // incoming path, which the `UntrackedCollision` arm below names.
+    if let Err(e) = vcs.advance_attached_ref(&on, cwd_tip) {
+        if let VcsError::UntrackedCollision { repo, paths } = &e {
+            anyhow::bail!(
+                "target repo at {} has untracked file(s) that collide with paths this \
+                 fast-forward would write:\n  {}\n\
+                 \n\
+                 Move or remove them in the target, then `rwv sync-to --continue`.",
+                repo.display(),
+                paths.join("\n  "),
+            );
+        }
+        return Err(e).context("fast-forward advance failed in target");
+    }
 
     Ok(FfAdvance {
         from: target_tip,

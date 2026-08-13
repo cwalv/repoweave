@@ -880,6 +880,43 @@ impl GitVcs {
         }
     }
 
+    /// Re-mint a failed `merge --ff-only` as [`VcsError::UntrackedCollision`]
+    /// when git's own refusal names the untracked files in the way.
+    fn classify_untracked_collision(e: VcsError, repo: &Path) -> VcsError {
+        let VcsError::CommandFailed { stderr, .. } = &e else {
+            return e;
+        };
+        match Self::untracked_collision_paths(stderr) {
+            Some(paths) => VcsError::UntrackedCollision {
+                repo: repo.to_path_buf(),
+                paths,
+            },
+            None => e,
+        }
+    }
+
+    /// Pull the file list out of git's untracked-collision refusal:
+    ///
+    ///   error: The following untracked working tree files would be overwritten by merge:
+    ///           <path>
+    ///   Please move or remove them before you merge.
+    ///   Aborting
+    ///
+    /// `None` when `stderr` isn't shaped like that refusal, so a caller falls
+    /// back to the raw [`VcsError::CommandFailed`] instead of misreading an
+    /// unrelated ff-only failure (real divergence, an unknown ref) as a file list.
+    fn untracked_collision_paths(stderr: &str) -> Option<Vec<String>> {
+        let after_header = stderr.split("would be overwritten by merge:").nth(1)?;
+        let before_trailer = after_header.split("Please move or remove them").next()?;
+        let paths: Vec<String> = before_trailer
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect();
+        (!paths.is_empty()).then_some(paths)
+    }
+
     /// Resolve `rev` to its canonical 40-hex SHA in `repo`.
     ///
     /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Private
@@ -1803,8 +1840,9 @@ impl Vcs for GitVcs {
         repo: &Path,
         to: &ResolvedRevisionId,
     ) -> Result<(), VcsError> {
-        Self::run(&["merge", "--ff-only", to.as_str()], repo)?;
-        Ok(())
+        Self::run(&["merge", "--ff-only", to.as_str()], repo)
+            .map(|_| ())
+            .map_err(|e| Self::classify_untracked_collision(e, repo))
     }
 
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {

@@ -394,6 +394,13 @@ pub enum VcsError {
     /// widen the evidence before relying on this variant to mean a hook
     /// specifically.
     HookRejected { repo: PathBuf, stderr: String },
+    /// A fast-forward or checkout would overwrite an untracked file that
+    /// collides with a path the incoming tree writes.
+    ///
+    /// Git refuses this natively rather than clobbering it; `paths` is
+    /// pulled out of git's own refusal so a caller can name the specific
+    /// files instead of re-parsing [`VcsError::CommandFailed`] stderr itself.
+    UntrackedCollision { repo: PathBuf, paths: Vec<String> },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -418,6 +425,7 @@ impl VcsError {
             Self::StaleRefWitness { .. } => "stale-ref-witness",
             Self::MidOperation { .. } => "mid-operation",
             Self::HookRejected { .. } => "hook-rejected",
+            Self::UntrackedCollision { .. } => "untracked-collision",
             Self::Io { .. } => "io",
             Self::CommandFailed { .. } => "command-failed",
         }
@@ -468,6 +476,10 @@ pub enum VcsErrorOutput {
         repo: PathBuf,
         stderr: String,
     },
+    UntrackedCollision {
+        repo: PathBuf,
+        paths: Vec<String>,
+    },
     Io {
         ctx: String,
         /// Display form of the underlying `io::Error`. The native source is
@@ -517,6 +529,10 @@ impl From<&VcsError> for VcsErrorOutput {
             VcsError::HookRejected { repo, stderr } => Self::HookRejected {
                 repo: repo.clone(),
                 stderr: stderr.clone(),
+            },
+            VcsError::UntrackedCollision { repo, paths } => Self::UntrackedCollision {
+                repo: repo.clone(),
+                paths: paths.clone(),
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -571,6 +587,13 @@ impl fmt::Display for VcsError {
                 "a hook in {} rejected the operation: {}",
                 repo.display(),
                 stderr.trim()
+            ),
+            Self::UntrackedCollision { repo, paths } => write!(
+                f,
+                "{} has untracked file(s) that would be overwritten: {}. Move or remove \
+                 them, then re-run.",
+                repo.display(),
+                paths.join(", ")
             ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(

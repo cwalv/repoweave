@@ -720,7 +720,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
         .clone();
     let stderr = String::from_utf8_lossy(&err_output.stderr);
     assert!(
-        stderr.contains("uncommitted changes"),
+        stderr.contains("uncommitted tracked changes"),
         "refusal must name the dirty-target precondition; got:\n{stderr}"
     );
     assert!(
