@@ -3939,11 +3939,6 @@ fn relock_recovery(side: Side, project_name: &str) -> String {
     }
 }
 
-/// Refusal naming the first unresolvable lock entry (a tag/branch the lock pins
-/// that no longer exists on disk). Distinct from a relation — the lock itself is
-/// corrupt. Preserves the old lock-freshness "unknown revision" diagnostic,
-/// including the `--project <p>`-qualified recovery hint and the
-/// `--allow-stale-lock` escape hatch.
 /// What the source snapshot classifies, given the op's shape.
 ///
 /// One decision, read by the fresh pin and the resume's re-pin. Two copies of
@@ -3990,14 +3985,7 @@ fn unresolvable_entry_refusal(
     workspace_name: &str,
     project_name: &str,
 ) -> Option<String> {
-    let (repo_path, raw) = class.unresolvable.first()?;
-    Some(unresolvable_lock_refusal(
-        side,
-        workspace_name,
-        project_name,
-        repo_path,
-        raw,
-    ))
+    unresolvable_lock_refusal(side, workspace_name, project_name, &class.unresolvable)
 }
 
 /// Refuse on any relation that is neither `Ok` nor the benign `Ahead` (lock
@@ -4016,28 +4004,41 @@ fn anomalous_relation_refusal(
     lock_relation_refusal(side, workspace_name, project_name, &anomalous)
 }
 
+/// Build a lock-freshness refusal naming every unresolvable lock entry (a
+/// pinned tag/branch that no longer exists on disk) in one message — the
+/// corrupt-lock counterpart to `lock_relation_refusal`, gated first since a
+/// lock naming a revision that does not resolve is corrupt rather than
+/// merely stale. Returns `None` when `entries` is empty.
 fn unresolvable_lock_refusal(
     side: Side,
     workspace_name: &str,
     project_name: &str,
-    repo_path: &RepoPath,
-    raw_version: &crate::vcs::RawRevisionId,
-) -> String {
+    entries: &[(RepoPath, crate::vcs::RawRevisionId)],
+) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
     let side_str = side.as_str();
-    let raw = raw_version.as_str();
     // Atomic `--commit` form (Correction 4): the two-step `rwv lock` +
     // "commit before syncing" teaches the broken pattern where a
     // written-but-unstaged `rwv.lock` then kills the re-run mid-op. `rwv lock
     // --commit` writes AND commits in one step.
     let recovery = relock_recovery(side, project_name);
-    format!(
+    let mut lines = String::new();
+    for (repo_path, raw_version) in entries {
+        lines.push_str(&format!(
+            "\n  {repo_path}: unknown revision {}",
+            raw_version.as_str()
+        ));
+    }
+    Some(format!(
         "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
-         references unknown revision {raw} for {repo_path}.\n\
+         references unknown revisions:{lines}\n\
          \n\
          Usual fix: {recovery}.\n\
          To skip this check: pass `--allow-stale-lock` (use when you know the lock is \
          intentionally ahead of HEAD).",
-    )
+    ))
 }
 
 /// Build a lock-freshness refusal naming each offending repo, its relation, and
@@ -8187,12 +8188,45 @@ mod tests {
             Side::Source,
             "ws",
             "app",
-            &crate::manifest::RepoPath::new("github/org/lib").unwrap(),
-            &crate::vcs::RawRevisionId::new("v-does-not-exist"),
-        );
+            &[(
+                crate::manifest::RepoPath::new("github/org/lib").unwrap(),
+                crate::vcs::RawRevisionId::new("v-does-not-exist"),
+            )],
+        )
+        .expect("non-empty entries yield a refusal");
         assert!(
             msg.contains("rwv lock --commit"),
             "unresolvable-lock hint must name `rwv lock --commit`: {msg}"
+        );
+    }
+
+    // An operator with several corrupt lock entries must see all of them at
+    // once, the same way `anomalous_relation_refusal` names every offending
+    // relation in one message rather than stopping at the first.
+    #[test]
+    fn unresolvable_entry_refusal_names_every_offending_repo() {
+        let class = LockClassification {
+            relations: Vec::new(),
+            unresolvable: vec![
+                (
+                    crate::manifest::RepoPath::new("github/org/lib").unwrap(),
+                    crate::vcs::RawRevisionId::new("v-one-missing"),
+                ),
+                (
+                    crate::manifest::RepoPath::new("github/org/other").unwrap(),
+                    crate::vcs::RawRevisionId::new("v-two-missing"),
+                ),
+            ],
+        };
+        let msg = unresolvable_entry_refusal(&class, Side::Source, "ws", "app")
+            .expect("non-empty unresolvable set yields a refusal");
+        assert!(
+            msg.contains("github/org/lib") && msg.contains("v-one-missing"),
+            "refusal must name the first corrupt entry: {msg}"
+        );
+        assert!(
+            msg.contains("github/org/other") && msg.contains("v-two-missing"),
+            "refusal must ALSO name the second corrupt entry in the same message: {msg}"
         );
     }
 
