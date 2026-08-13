@@ -9,8 +9,14 @@
 //!
 //! Coverage in this file:
 //!
-//! * **Race**: two concurrent `rwv sync` invocations against the same workweave
-//!   — exactly one succeeds, the loser gets the in-flight refusal.
+//! * **In-flight refusal**: a second `rwv sync` against a workweave whose
+//!   `.rwv-op` is held by a real parked op gets the in-flight refusal and
+//!   leaves the holder's record untouched. Constructed deterministically (a
+//!   rebase conflict parks the first op mid-replay); the *concurrent* half of
+//!   the mutex — two racers, one winner — is pinned load-invariantly by the
+//!   in-process unit tests `op_state::tests::
+//!   acquire_op_is_atomic_under_concurrent_racers` and `durable_file::tests::
+//!   concurrent_create_new_has_exactly_one_winner`.
 //! * **Precondition-refusal cleanup**: acquire → fail a precondition after
 //!   acquisition → the acquired records are cleared (cleanup table row
 //!   "precondition refusal → cleared everywhere"). Verified by observing that
@@ -98,13 +104,22 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 }
 
 fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut manifest_toml = String::from("[repositories]\n");
-    for (path, url, sha) in repos {
-        manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"{sha}\"\n"
-        ));
-    }
-    std::fs::write(project_dir.join("rwv.lock"), &manifest_toml).unwrap();
+    // Round-trip through the real parser + `lock::write_lock` (same as
+    // e2e_op_state_test.rs). This file's original local copy had drifted to a
+    // TOML-ish shape the real JSON parser refuses — every sync in the fixture
+    // died at the post-acquire dirt scan ("failed to parse rwv.lock"),
+    // release-on-refusal cleared the records, and the racing test this file
+    // used to hold was green only when its loser overlapped that brief hold
+    // (rwv-g8qb).
+    let entries: Vec<String> = repos
+        .iter()
+        .map(|(path, url, sha)| {
+            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
+        })
+        .collect();
+    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 }
 
 fn rwv() -> AssertCommand {
@@ -197,107 +212,126 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 }
 
 // ---------------------------------------------------------------------------
-// Race: two concurrent syncs — exactly one wins, the other sees in-flight.
+// In-flight refusal: a sync against a held workweave refuses and leaves the
+// holder intact.
 // ---------------------------------------------------------------------------
 //
-// Runs both `rwv sync` invocations from separate threads coordinated by a
-// barrier. The winner may complete successfully OR fail on some downstream
-// git conflict (fine); the loser MUST see the in-flight refusal from the
-// atomic-acquisition path — not a raw AlreadyExists, not a lock-relation
-// refusal, not a savepoint-collision. Trials are repeated to expose
-// ordering flakiness that would otherwise slip past.
+// The property: `.rwv-op` is a mutex — while one sync op holds it, a second
+// `rwv sync` at the same workweave must be refused with the operator-facing
+// in-flight shape (verb / `--continue` / `rwv abort`), not a raw filesystem
+// AlreadyExists and not some downstream git-layer collision, and the holder's
+// record must survive the refused attempt byte-for-byte.
+//
+// The in-flight holder is REAL, not hand-planted JSON: the first `rwv sync`
+// is parked mid-replay by a rebase conflict (same recipe as
+// e2e_op_state_test.rs test 2), and the cleanup table's "phase failure →
+// records kept everywhere" row leaves its `.rwv-op` on disk. The second sync
+// then runs against that parked op with no concurrency anywhere — the verdict
+// depends only on on-disk artifacts, never on scheduling.
+//
+// History: this test used to race two `rwv sync` processes released by a
+// thread barrier and assert exactly one in-flight refusal. The barrier
+// synchronized the parents, not the children's critical sections, so the
+// overlap was merely hoped for — under host load the trial collapsed
+// (observed both ways: the winner completing and RELEASING before the loser
+// arrived, and both racers failing on a torn read) and the assertion went red
+// with no defect present (rwv-g8qb). The concurrent half of the property —
+// two racers, exactly one winner — is pinned by in-process unit tests whose
+// verdicts are load-invariant because the winner's artifact persists (no
+// release), so the loser refuses under EVERY interleaving:
+// `op_state::tests::acquire_op_is_atomic_under_concurrent_racers` and
+// `durable_file::tests::concurrent_create_new_has_exactly_one_winner`.
 
 #[test]
-fn concurrent_sync_atomic_acquire_yields_exactly_one_in_flight_refusal() {
-    for trial in 0..3 {
-        let tmp = common::tempdir().unwrap();
-        let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-        // Give primary an advance so `sync` has real work to do (Phase 2).
-        let c2 = make_commit(
-            &primary.server_dir,
-            &format!("advance-{trial}.txt"),
-            "advance\n",
-            "primary: advance",
-        );
-        write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-        git(&["add", "rwv.lock"], &primary.project_dir);
-        git(&["commit", "-m", "lock: advance"], &primary.project_dir);
+    // Primary: advance to C2 with a file.
+    let c2 = make_commit(
+        &primary.server_dir,
+        "shared.txt",
+        "primary version\n",
+        "primary: add shared.txt",
+    );
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
 
-        let ww_root_a = ww.root.clone();
-        let primary_root_a = primary.root.clone();
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let barrier_a = barrier.clone();
+    // ww: a conflicting commit on the same file (plus lock update), so the
+    // replay rebase must stop on a conflict.
+    let c_ww = make_commit(
+        &ww.server_dir,
+        "shared.txt",
+        "ww version\n",
+        "ww: add shared.txt (conflicts with primary)",
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
 
-        let h1 = std::thread::spawn(move || {
-            barrier_a.wait();
-            rwv()
-                .args(["sync", &primary_root_a.to_string_lossy()])
-                .current_dir(&ww_root_a)
-                .assert()
-                .try_success()
-                .map(|a| String::from_utf8_lossy(&a.get_output().stderr).to_string())
-                .map_err(|e| e.to_string())
-        });
+    // First sync: acquires `.rwv-op`, then parks on the replay conflict.
+    // A phase failure keeps the records (cleanup table), so the op is now
+    // in flight on disk — a real holder produced by the production acquire
+    // path, exactly what a crashed/conflicted peer leaves behind.
+    let assertion = rwv()
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--strategy",
+            "rebase",
+            "--discard-local-commits",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let parked_stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    // The park must be the conflict, not an in-flight refusal — nothing was
+    // in flight when it started.
+    assert!(
+        !parked_stderr.contains("in progress (started"),
+        "first sync must park on the conflict, not refuse as in-flight; \
+         got: {parked_stderr}"
+    );
+    let op_path = ww.root.join(".rwv-op");
+    assert!(
+        op_path.exists(),
+        "a mid-replay phase failure must keep `.rwv-op` (cleanup table); \
+         first sync stderr: {parked_stderr}"
+    );
+    let holder_record = std::fs::read(&op_path).unwrap();
 
-        let ww_root_b = ww.root.clone();
-        let primary_root_b = primary.root.clone();
-        let barrier_b = barrier.clone();
-        let h2 = std::thread::spawn(move || {
-            barrier_b.wait();
-            rwv()
-                .args(["sync", &primary_root_b.to_string_lossy()])
-                .current_dir(&ww_root_b)
-                .assert()
-                .try_success()
-                .map(|a| String::from_utf8_lossy(&a.get_output().stderr).to_string())
-                .map_err(|e| e.to_string())
-        });
+    // Second sync against the held workweave. Acquisition dominates every
+    // other refusal (Correction-1 ordering), so regardless of what state the
+    // parked op left the repos in, the refusal MUST be the in-flight shape.
+    let assertion = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let refusal = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert!(
+        refusal.contains("in progress")
+            && refusal.contains("--continue")
+            && refusal.contains("rwv abort"),
+        "second sync must see the in-flight refusal with both exits; \
+         got: {refusal}"
+    );
+    // The refusal MUST NOT surface as a raw AlreadyExists / a git-level
+    // collision — those would show that acquisition happened too late.
+    assert!(
+        !refusal.contains("AlreadyExists") && !refusal.contains("File exists"),
+        "refusal must be the in-flight shape, not raw filesystem \
+         AlreadyExists; got: {refusal}"
+    );
 
-        let r1 = h1.join().unwrap();
-        let r2 = h2.join().unwrap();
-
-        // Collect stderrs: successful runs surface via Ok(stderr); failing runs
-        // via Err(assertion display which includes stderr). We only need to
-        // check the failure carries the in-flight refusal shape.
-        let stderrs = [
-            match &r1 {
-                Ok(s) => s.clone(),
-                Err(e) => e.clone(),
-            },
-            match &r2 {
-                Ok(s) => s.clone(),
-                Err(e) => e.clone(),
-            },
-        ];
-
-        let in_flight_hits = stderrs
-            .iter()
-            .filter(|s| {
-                s.contains("in progress") && s.contains("--continue") && s.contains("rwv abort")
-            })
-            .count();
-
-        // Exactly one of the two racers must have hit the in-flight refusal.
-        // (Zero would mean the TOCTOU is back; both would mean somehow both
-        // lost, which shouldn't happen because there is nothing else to race
-        // with here.)
-        assert_eq!(
-            in_flight_hits, 1,
-            "trial {trial}: exactly one racer must see the in-flight refusal.\n\
-             r1: {r1:?}\nr2: {r2:?}"
-        );
-
-        // The refusal MUST NOT surface as a raw AlreadyExists / a git-level
-        // collision — those would show that acquisition happened too late.
-        for s in &stderrs {
-            assert!(
-                !s.contains("AlreadyExists") && !s.contains("File exists"),
-                "trial {trial}: refusal must be the in-flight shape, not raw \
-                 filesystem AlreadyExists; got: {s}"
-            );
-        }
-    }
+    // At most one holder: the refused attempt must not have clobbered,
+    // rewritten, or released the parked op's record.
+    let after = std::fs::read(&op_path).unwrap();
+    assert_eq!(
+        holder_record, after,
+        "the holder's `.rwv-op` must survive a refused sync byte-for-byte"
+    );
 }
 
 // ---------------------------------------------------------------------------
