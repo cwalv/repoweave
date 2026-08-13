@@ -852,6 +852,20 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
         stderr.contains(SERVER_PATH),
         "the refusal must name which repo diverged; stderr:\n{stderr}"
     );
+    // The gate is equality-only on purpose — the right conservatism for a
+    // delete. What the operator still needs is which way to reconcile, and
+    // only the per-repo verdict says it. Here CWD contains the target, so the
+    // reconcile runs toward the target; a line that stopped at the two SHAs
+    // leaves the operator to work that out with git plumbing.
+    assert!(
+        stderr.contains("CWD is strictly ahead of the target by 1 commit (contains it)"),
+        "the per-repo line must state the reconcile direction, not just the two \
+         tips; stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("diverged"),
+        "a target CWD provably contains is not a divergence; stderr:\n{stderr}"
+    );
 
     // Nothing destructive happened: the workweave must still be on disk.
     assert!(
