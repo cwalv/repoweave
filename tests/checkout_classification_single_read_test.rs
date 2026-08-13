@@ -11,11 +11,15 @@
 //! filesystem to change inside a window measured in microseconds, and a test
 //! that widens the window with a sleep pins the sleep.
 //!
-//! Residue: this reads `src/sync.rs` only. Every other caller of
-//! `classify_checkout` — `workweave.rs`, `check.rs` — is unexamined here, and
-//! a second read introduced in one of them is invisible to this test. It also
-//! counts calls per enclosing function, so a function holding one call that
-//! moves to a different path within it still reads as one.
+//! Residue: this reads `src/sync.rs` only. `workweave.rs` and `check.rs` also
+//! call `classify_checkout`, but every one of those call sites is a single
+//! read inside its own enclosing function, spent on one `continue`/`retain`
+//! filter with nothing else downstream reading the same fact a second time —
+//! not the decision-and-explanation split this test guards against — so they
+//! are left unpinned. A second read added to any of those call sites is
+//! invisible to this test. It also counts calls per enclosing function, so a
+//! function holding one call that moves to a different path within it still
+//! reads as one.
 
 mod common;
 
