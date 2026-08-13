@@ -10,7 +10,9 @@
 # release gate and the pre-push hook invoke. --stages selects a subset, in
 # that same fixed order, regardless of the order named on the command line;
 # a Choreographer re-gating an integration tip between child landings wants
-# --stages=drift alone, without paying for a full build first.
+# --stages=drift alone, without paying for a full build first. A subset run's
+# terminal line names the stages it ran, so a log naming less than all seven
+# is never mistaken for a full gate.
 #
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile
@@ -116,4 +118,15 @@ if run_stage drift; then
     }
 fi
 
-printf '\nAll checks passed.\n'
+ran_stages=()
+for s in "${ALL_STAGES[@]}"; do
+    if run_stage "$s"; then
+        ran_stages+=("$s")
+    fi
+done
+
+if [ "${#ran_stages[@]}" -eq "${#ALL_STAGES[@]}" ]; then
+    printf '\nAll checks passed.\n'
+else
+    printf '\nAll checks passed (stages: %s).\n' "$(join_by_comma "${ran_stages[@]}")"
+fi

@@ -1,12 +1,15 @@
 //! `scripts/ci-local.sh` is the one script CI, the release gate, the
-//! pre-push hook and every contributor run. This pins three things about its
+//! pre-push hook and every contributor run. This pins four things about its
 //! `--stages` selector: the no-flag invocation still runs all seven stages,
-//! in the same order, with the same header text; `--stages=drift` isolates
-//! the regenerate-and-diff block, exiting non-zero and naming the remedy
-//! when regeneration disagrees with the committed tree; and the windows
-//! stage skips loudly, printing the install command, whenever the target
-//! isn't there — never a hard failure, because ci-checks.yml's windows-check
-//! job already owns Windows compile truth authoritatively.
+//! in the same order, with the same header text and the same terminal line;
+//! `--stages=drift` isolates the regenerate-and-diff block, exiting non-zero
+//! and naming the remedy when regeneration disagrees with the committed
+//! tree; the windows stage skips loudly, printing the install command,
+//! whenever the target isn't there — never a hard failure, because
+//! ci-checks.yml's windows-check job already owns Windows compile truth
+//! authoritatively; and a subset run's terminal line names the stages that
+//! ran, so it can never be mistaken for a full gate by a reader holding only
+//! the log.
 //!
 //! Every test drives the real script as a subprocess with a stub `cargo` and
 //! `rustup` on `PATH`, so a stage's *shape* — which header prints, in what
@@ -181,6 +184,10 @@ fn stages_flag_check_only_runs_check_and_nothing_else() {
     }
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
     assert!(stdout.contains("STUB_CARGO: check"));
+    assert!(
+        stdout.trim_end().ends_with("All checks passed (stages: check)."),
+        "subset run should name the stage it ran, not print the full-gate line:\n{stdout}"
+    );
 }
 
 #[test]
@@ -197,6 +204,58 @@ fn stages_flag_drift_only_skips_every_other_stage() {
     }
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
     assert!(stdout.contains("STUB_CARGO: run --quiet --bin generate-explain"));
+    assert!(
+        stdout.trim_end().ends_with("All checks passed (stages: drift)."),
+        "subset run should name the stage it ran, not print the full-gate line:\n{stdout}"
+    );
+}
+
+/// The regression this suite exists to catch: a subset run's terminal line
+/// must not be the same string a full run prints. `default_run_executes_all_seven_stages_in_order`
+/// pins the full-run line as exactly `All checks passed.`; this pins that no
+/// subset invocation ever produces that same line, so a log holding only the
+/// terminal output can always tell the two apart.
+#[test]
+fn subset_run_terminal_line_never_equals_the_full_run_line() {
+    let stub = stub_bin_dir();
+    for stages in ["check", "drift", "windows", "check,drift"] {
+        let fixture = fixture_repo();
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            &[&format!("--stages={stages}")],
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let stdout = stdout_of(&out);
+        let terminal_line = stdout.trim_end().lines().last().unwrap_or("");
+        assert_ne!(
+            terminal_line, "All checks passed.",
+            "--stages={stages} produced the same terminal line as a full run:\n{stdout}"
+        );
+    }
+}
+
+/// Naming every stage explicitly, out of order, is a full run in substance —
+/// it should get the plain line a no-flag invocation gets, not a stages-list
+/// line that would (falsely) suggest something was left out.
+#[test]
+fn stages_flag_naming_all_seven_explicitly_gets_the_full_run_line() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift,fmt,doc,clippy,test,windows,check"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.trim_end().ends_with("All checks passed."),
+        "naming all seven stages should print the full-run line:\n{stdout}"
+    );
+    assert_eq!(stdout.matches("STUB_CARGO:").count(), 7);
 }
 
 #[test]
