@@ -1606,7 +1606,7 @@ pub struct OpCoordinates {
 
 /// Witness that `--retire` deleted a workweave.
 ///
-/// Produced by the delete's own return in [`retire_workweave_after_sync_to`]
+/// Produced by the delete's own return in `retire_workweave_after_sync_to`
 /// and nowhere else, so a `retired` claim cannot be assembled from the flags
 /// the operator passed.
 pub struct RetiredWorkweave {
