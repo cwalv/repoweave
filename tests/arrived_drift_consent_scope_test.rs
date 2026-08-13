@@ -120,21 +120,32 @@ struct Fixture {
     ws: PathBuf,
 }
 
+/// A run of the shipped binary, with the two streams kept apart.
+///
+/// Which stream carries the withholding is part of the claim, not packaging:
+/// stdout is the structured surface `--json` consumers parse, and a diagnostic
+/// emitted there would corrupt it while still reading as present to a test that
+/// concatenated the two.
+struct Run {
+    ok: bool,
+    err: String,
+    all: String,
+}
+
 impl Fixture {
-    fn rwv(&self, args: &[&str]) -> (bool, String) {
+    fn rwv(&self, args: &[&str]) -> Run {
         let output = common::rwv()
             .args(args)
             .current_dir(&self.ws)
             .output()
             .expect("rwv should run");
-        (
-            output.status.success(),
-            format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        )
+        let out = String::from_utf8_lossy(&output.stdout).to_string();
+        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        Run {
+            ok: output.status.success(),
+            all: format!("{out}{err}"),
+            err,
+        }
     }
 
     fn lock(&self) -> PathBuf {
@@ -147,7 +158,7 @@ impl Fixture {
 
     fn drift_is_unaccepted(&self) -> bool {
         self.rwv(&["doctor"])
-            .1
+            .all
             .contains("differs from the last rwv-accepted generation")
     }
 }
@@ -262,8 +273,12 @@ fn fixture() -> Fixture {
 /// Materialize once so the lock exists and is attested. The fixture's clean
 /// starting point, and the control arms stop here.
 fn materialized(f: &Fixture) {
-    let (ok, report) = f.rwv(&["materialize"]);
-    assert!(ok, "fixture: first materialize should succeed:\n{report}");
+    let run = f.rwv(&["materialize"]);
+    assert!(
+        run.ok,
+        "fixture: first materialize should succeed:\n{}",
+        run.all
+    );
     assert_eq!(
         locked_pinnable_version(&f.lock_text()).as_deref(),
         Some("0.1.1"),
@@ -292,17 +307,33 @@ fn materialized_then_pinned_back(f: &Fixture) {
     );
 }
 
-fn assert_named_both_consents(report: &str, verb: &str) {
+/// The withholding is a design surface, so it is asserted on the stream an
+/// operator reads rather than on the pair concatenated.
+///
+/// A withhold that stops printing is a silent skip — the failure mode the
+/// consents exist to prevent, wearing the fix's own name. Each clause is a
+/// separate way for that to happen: nothing said at all, the exits unnamed, or
+/// the operator left believing the run finished the job.
+fn assert_the_operator_was_told(run: &Run, verb: &str) {
+    let seen = &run.err;
     assert!(
-        report.contains("[withheld]"),
-        "`rwv {verb}` must say what it declined to do, not pass over it in \
-         silence:\n{report}"
+        seen.contains("[withheld]"),
+        "`rwv {verb}` must say what it declined to do on stderr, not pass over \
+         it in silence and not bury it in the structured stdout `--json` \
+         consumers parse. Whole run:\n{}",
+        run.all
     );
     assert!(
-        report.contains("rwv materialize --adopt-drifted")
-            && report.contains("rwv materialize --regenerate-drifted"),
+        seen.contains("rwv materialize --adopt-drifted")
+            && seen.contains("rwv materialize --regenerate-drifted"),
         "and name both exits, spelled as they are invoked, so the operator can \
-         take the one they mean:\n{report}"
+         take the one they mean:\n{seen}"
+    );
+    assert!(
+        seen.contains("have NOT been re-derived"),
+        "and say that the rest of the verb landed while the generated files \
+         did not move — an operator told only about the drift is one fact \
+         short of knowing what their workspace now holds:\n{seen}"
     );
 }
 
@@ -323,19 +354,26 @@ fn activate_does_not_settle_the_drift_it_just_named() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let (ok, report) = f.rwv(&["activate", "app"]);
-    assert!(ok, "activate must still select the project:\n{report}");
+    let run = f.rwv(&["activate", "app"]);
     assert!(
-        report.contains("differs from the last rwv-accepted generation"),
-        "premise, not the claim: the run must still report the drift:\n{report}"
+        run.ok,
+        "activate must still select the project:\n{}",
+        run.all
+    );
+    assert!(
+        run.all
+            .contains("differs from the last rwv-accepted generation"),
+        "premise, not the claim: the run must still report the drift:\n{}",
+        run.all
     );
     assert!(
         f.drift_is_unaccepted(),
         "a verb that names both consents and then acts without one is the \
          laundering they exist to prevent — the drift must still be \
-         UNACCEPTED afterwards:\n{report}"
+         UNACCEPTED afterwards:\n{}",
+        run.all
     );
-    assert_named_both_consents(&report, "activate");
+    assert_the_operator_was_told(&run, "activate");
     assert_eq!(
         locked_pinnable_version(&f.lock_text()).as_deref(),
         Some("0.1.0"),
@@ -361,22 +399,28 @@ fn a_verb_with_no_drift_in_its_way_still_runs_the_generator() {
         "fixture: the unnamed clone is not in the resolve yet"
     );
 
-    let (ok, report) = f.rwv(&["add", "github/acme/extra"]);
-    assert!(ok, "`rwv add` should succeed:\n{report}");
+    let run = f.rwv(&["add", "github/acme/extra"]);
+    assert!(run.ok, "`rwv add` should succeed:\n{}", run.all);
     assert!(
-        !report.contains("[withheld]"),
-        "nothing is being withheld here:\n{report}"
+        !run.all.contains("[withheld]"),
+        "nothing is being withheld here:\n{}",
+        run.all
     );
     assert!(
         f.lock_text().contains(r#"name = "acmeextra""#),
         "the added member must enter the resolve, which only the generator \
-         can do:\n{report}"
+         can do:\n{}",
+        run.all
     );
 }
 
-/// `rwv add` said nothing about drift at all and settled it anyway. The
-/// manifest change is not what is withheld — it lands, because the verb wrote
-/// it before it regenerated and un-writing it is not the repair.
+/// `rwv add` said nothing about drift at all and settled it anyway.
+///
+/// Also the shape of the window the withholding leaves behind, since that is
+/// what the operator has to act on: the manifest entry and the managed member
+/// list both move, and only the generated lock stays where it was. Withholding
+/// the regeneration is not withholding the verb, and un-writing what already
+/// landed is not the repair.
 #[test]
 fn add_withholds_the_generator_over_unsettled_drift() {
     if which::which("cargo").is_err() {
@@ -386,22 +430,33 @@ fn add_withholds_the_generator_over_unsettled_drift() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let (ok, report) = f.rwv(&["add", "github/acme/extra"]);
-    assert!(ok, "the manifest change still lands:\n{report}");
+    let run = f.rwv(&["add", "github/acme/extra"]);
+    assert!(run.ok, "the manifest change still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),
-        "the drift must still be UNACCEPTED afterwards:\n{report}"
+        "the drift must still be UNACCEPTED afterwards:\n{}",
+        run.all
     );
-    assert_named_both_consents(&report, "add");
+    assert_the_operator_was_told(&run, "add");
     assert!(
         !f.lock_text().contains(r#"name = "acmeextra""#),
         "and the generator must not have run — the control shows this same \
-         member entering the resolve when nothing is in the way:\n{report}"
+         member entering the resolve when nothing is in the way:\n{}",
+        run.all
     );
+
     let manifest = std::fs::read_to_string(f.ws.join("projects/app/rwv.toml")).unwrap();
     assert!(
         manifest.contains("github/acme/extra"),
-        "withholding the regeneration is not withholding the verb:\n{manifest}"
+        "the manifest entry is landed:\n{manifest}"
+    );
+    let managed = std::fs::read_to_string(f.ws.join("projects/app/Cargo.toml")).unwrap();
+    assert!(
+        managed.contains("github/acme/extra"),
+        "and so is the managed member list, which the authoring half wrote \
+         before the hooks were reached — so the window is a workspace whose \
+         members moved and whose lock did not, which is the fact the message \
+         has to carry:\n{managed}"
     );
 }
 
@@ -420,16 +475,18 @@ fn remove_withholds_the_generator_over_unsettled_drift() {
         "fixture: the member being removed is in the resolve to start with"
     );
 
-    let (ok, report) = f.rwv(&["remove", "github/acme/lib"]);
-    assert!(ok, "the manifest change still lands:\n{report}");
+    let run = f.rwv(&["remove", "github/acme/lib"]);
+    assert!(run.ok, "the manifest change still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),
-        "the drift must still be UNACCEPTED afterwards:\n{report}"
+        "the drift must still be UNACCEPTED afterwards:\n{}",
+        run.all
     );
-    assert_named_both_consents(&report, "remove");
+    assert_the_operator_was_told(&run, "remove");
     assert!(
         f.lock_text().contains(r#"name = "acmelib""#),
-        "and the generator must not have run:\n{report}"
+        "and the generator must not have run:\n{}",
+        run.all
     );
 }
 
@@ -448,13 +505,14 @@ fn update_withholds_the_generator_over_unsettled_drift() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let (ok, report) = f.rwv(&["update"]);
-    assert!(ok, "the lock re-snapshot still lands:\n{report}");
+    let run = f.rwv(&["update"]);
+    assert!(run.ok, "the lock re-snapshot still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),
-        "the drift must still be UNACCEPTED afterwards:\n{report}"
+        "the drift must still be UNACCEPTED afterwards:\n{}",
+        run.all
     );
-    assert_named_both_consents(&report, "update");
+    assert_the_operator_was_told(&run, "update");
 }
 
 /// The consent-carrying verb is the one this must not touch: `materialize`
@@ -469,17 +527,19 @@ fn materialize_with_a_consent_still_reaches_the_generator() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let (ok, report) = f.rwv(&["materialize", "--regenerate-drifted"]);
-    assert!(ok, "the consent must be honoured:\n{report}");
+    let run = f.rwv(&["materialize", "--regenerate-drifted"]);
+    assert!(run.ok, "the consent must be honoured:\n{}", run.all);
     assert!(
-        !report.contains("[withheld]"),
-        "a verb that was told which way must not be withheld from:\n{report}"
+        !run.all.contains("[withheld]"),
+        "a verb that was told which way must not be withheld from:\n{}",
+        run.all
     );
     assert_eq!(
         locked_pinnable_version(&f.lock_text()).as_deref(),
         Some("0.1.1"),
         "and discarding the operator's resolve then re-resolving is what \
          `--regenerate-drifted` means — a pin still at 0.1.0 here says the \
-         generator never ran:\n{report}"
+         generator never ran:\n{}",
+        run.all
     );
 }

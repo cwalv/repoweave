@@ -424,7 +424,10 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
          (clean stdout:\n{stdout_clean}\ndrift stdout:\n{stdout_drift})"
     );
 
-    // ---- Step 5: the ACCEPT exit — re-activation re-stamps → clean ----
+    // ---- Step 5: re-activation is NOT an exit ----
+    // It re-stamps whatever the hook produced, so clearing the finding this
+    // way is the adopt exit taken without anyone asking for it. The three the
+    // finding names are the three there are.
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("re-activate should succeed");
@@ -436,8 +439,32 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
         .expect("rwv doctor should run");
     let stdout_restamped = String::from_utf8_lossy(&out_restamped.stdout).to_string();
     assert!(
-        !stdout_restamped.contains("rwv-accepted generation"),
-        "re-activation must re-stamp and clear the finding:\n{stdout_restamped}"
+        stdout_restamped.contains("rwv-accepted generation"),
+        "re-activation must not settle the finding — the operator never chose \
+         between the exits it names:\n{stdout_restamped}"
+    );
+
+    // ---- Step 6: the ACCEPT exit the finding actually names ----
+    let out_adopt = common::rwv()
+        .args(["materialize", "--adopt-drifted"])
+        .current_dir(root)
+        .output()
+        .expect("rwv materialize should run");
+    assert!(
+        out_adopt.status.success(),
+        "the remedy the finding names must run:\n{}\n{}",
+        String::from_utf8_lossy(&out_adopt.stdout),
+        String::from_utf8_lossy(&out_adopt.stderr)
+    );
+    let out_adopted = common::rwv()
+        .arg("doctor")
+        .current_dir(root)
+        .output()
+        .expect("rwv doctor should run");
+    let stdout_adopted = String::from_utf8_lossy(&out_adopted.stdout).to_string();
+    assert!(
+        !stdout_adopted.contains("rwv-accepted generation"),
+        "and taking it must clear the finding that named it:\n{stdout_adopted}"
     );
 }
 

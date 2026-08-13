@@ -654,6 +654,13 @@ fn activate_at(
 /// they regenerate, so a bail here would exit non-zero over a change that
 /// already landed. The manifest change stands, the operator is told what did
 /// not happen, and the two consents that unblock it are named.
+///
+/// The unit is the workspace, not the integration whose file drifted: one
+/// drifted lock withholds every integration's hooks. Narrowing it to the
+/// declaring integration would let the others re-run over a membership the
+/// drifted one does not share, which is a partially regenerated workspace no
+/// verb afterwards can name. The cost is a `npm install` withheld over a
+/// `Cargo.lock`, and it is the accepted one.
 fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
     let drifted = drifted_attested_owned_files(output_dir);
     if drifted.is_empty() {
@@ -668,6 +675,9 @@ fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
          generator and record what it produces as accepted, which would settle \
          the content rwv never accepted on disk for {} generated file(s) it \
          attests, without the consent that says which way:{listed}\n\
+         Everything else this command does has already happened, so any \
+         manifest or managed-file change it made is landed while the file(s) \
+         above have NOT been re-derived from it.\n\
          Choose it: `rwv materialize --adopt-drifted` records the current \
          content as the accepted generation, `rwv materialize \
          --regenerate-drifted` discards it and regenerates from the current \
