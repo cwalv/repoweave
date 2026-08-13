@@ -3703,11 +3703,19 @@ replace example.com/legacy => ./vendor/legacy
                 !i.safe_to_fix,
                 "digest mismatch must NOT be auto-fixed — operator chooses an exit"
             );
-            // House pattern: name the file, the state, and both exits.
+            // House pattern: name the file, the state, and both exits — each
+            // spelled as it is invoked, and each runnable in a workweave,
+            // which is where a carried attestation puts this finding.
             assert!(i.message.contains("Cargo.lock"));
             assert!(i.message.contains("last rwv-accepted generation"));
-            assert!(i.message.contains("accept the new content"));
+            assert!(i.message.contains("rwv materialize --adopt-drifted"));
+            assert!(i.message.contains("rwv materialize --regenerate-drifted"));
             assert!(i.message.contains("restore the file"));
+            assert!(
+                !i.message.contains("rwv activate"),
+                "a workweave refuses that verb, so naming it is the dead end \
+                 this finding used to be"
+            );
         }
     }
 }
