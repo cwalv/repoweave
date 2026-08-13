@@ -834,6 +834,149 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
     );
 }
 
+/// When the CWD project repo's committed `.gitattributes` carries BOTH the
+/// current `rwv.lock merge=rwv-ours` line and the legacy `rwv.lock
+/// merge=ours` line, the invariant must still bail — the current spelling
+/// being present is not enough, because which line git honours is decided
+/// by attribute reading order and the legacy name stays live either way.
+/// The bail must name the both-lines state explicitly (not the generic
+/// "not configured" message), and `rwv doctor --fix` must actually resolve
+/// it: this test runs `--fix` against the fixture and then re-runs the same
+/// sync, asserting it now succeeds.
+#[test]
+fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
+    let tmp = common::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Build a primary workspace by hand with BOTH `.gitattributes` lines
+    // committed. Mirrors `make_primary` structurally so a workweave can be
+    // created from it.
+    let ws = tmp.path().join("ws");
+    let manifest_repo = ws.join(MANIFEST_REPO_PATH);
+    let initial_sha = init_repo(&manifest_repo);
+
+    let project_dir = ws.join("projects").join(PROJECT);
+    init_repo(&project_dir);
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\nrwv.lock merge=ours\n",
+    )
+    .unwrap();
+
+    let manifest = format!(
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        path = MANIFEST_REPO_PATH,
+        repo = manifest_repo.display()
+    );
+    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    // Round-trips through the real parser + `lock::write_lock`: a
+    // hand-formatted string that differs only in whitespace from what
+    // `rwv lock` itself would emit still diffs against a real relock.
+    let repo_url = format!("file://{}", manifest_repo.display());
+    let raw_lock = format!(
+        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
+        path = MANIFEST_REPO_PATH,
+        sha = initial_sha
+    );
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    git(
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+        &project_dir,
+    );
+    git(
+        &["commit", "-m", "lock: initial (both attrs lines)"],
+        &project_dir,
+    );
+    std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    let primary = PrimaryWorkspace {
+        root: ws.clone(),
+        project_dir: project_dir.clone(),
+        manifest_repo: manifest_repo.clone(),
+    };
+
+    // Create a workweave; workweaves inherit the primary's .gitattributes.
+    let ww = create_workweave(&primary, &weaveroot, "ww");
+
+    // Advance ww so a rebase has actual work to do.
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
+    rwv_lock_commit(&ww.root);
+
+    // Advance primary via a sibling workweave so ww's rebase has a
+    // divergence point.
+    let wa = create_workweave(&primary, &weaveroot, "wa");
+    commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
+    rwv_lock_commit(&wa.root);
+    // Land wa via ff (does not require the invariant).
+    rwv()
+        .args(["sync", &wa.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // From ww: attempt rebase sync onto primary. Must FAIL, naming the
+    // both-lines state.
+    let assert = rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("BOTH that line and the legacy `rwv.lock merge=ours`"),
+        "bail must name the both-lines state explicitly, not just \
+         \"not configured\"; got stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv doctor --fix"),
+        "bail must direct the operator at `rwv doctor --fix`; got stderr:\n{stderr}"
+    );
+
+    // The remedy claim: `rwv doctor --fix` actually resolves this state.
+    // Both checkouts inherited the both-lines commit independently (each
+    // worktree carries its own branch), so both need the migration commit
+    // before a clean rebase: ww's own committed HEAD is sync's precondition,
+    // and primary's committed HEAD is what git checks out as the rebase
+    // base — an unmigrated base still resolves `rwv.lock`'s driver to the
+    // legacy (undefined) name by attribute reading order and conflicts on
+    // the very first replayed pick.
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&primary.root)
+        .output()
+        .expect("rwv doctor --fix failed to spawn");
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv doctor --fix failed to spawn");
+
+    for (label, dir) in [("primary", &primary.project_dir), ("ww", &ww.project_dir)] {
+        let committed_attrs = git_out(&["show", "HEAD:.gitattributes"], dir);
+        assert!(
+            committed_attrs
+                .lines()
+                .any(|l| l.trim() == "rwv.lock merge=rwv-ours"),
+            "doctor --fix must leave the current spelling committed in {label}; got:\n{committed_attrs}"
+        );
+        assert!(
+            !committed_attrs
+                .lines()
+                .any(|l| l.trim() == "rwv.lock merge=ours"),
+            "doctor --fix must drop the legacy line in {label}; got:\n{committed_attrs}"
+        );
+    }
+
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}
+
 // ---------------------------------------------------------------------------
 // BARE git rebase — planted config alone must carry the exclusion
 // ---------------------------------------------------------------------------

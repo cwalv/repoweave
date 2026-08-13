@@ -1161,7 +1161,12 @@ fn per_conflict_bail_message(
 /// message directing the operator at `rwv doctor --fix` — which rewrites
 /// AND commits the .gitattributes migration. If neither the new nor the
 /// legacy line is present, the invariant bails with the classic
-/// "add-the-line" message.
+/// "add-the-line" message. If BOTH lines are committed, the invariant bails
+/// too, even though the current spelling is present: which line git honours
+/// is decided by attribute reading order, so the legacy name — and whatever
+/// `merge.ours.driver` the operator's global config binds — stays live
+/// either way. `rwv doctor --fix` resolves this state by dropping the
+/// legacy line.
 ///
 /// The .gitattributes assignment itself is NOT written by this function
 /// — that's `rwv doctor --fix`'s job, and requires a commit which sync
@@ -1183,15 +1188,36 @@ fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> a
     let has_new = vcs
         .has_committed_replay_exclusion(cwd_project_dir, Path::new(LockFile::FILE_NAME))
         .unwrap_or(false);
-    if has_new {
-        return Ok(());
-    }
-
     let has_legacy = crate::git::has_committed_legacy_replay_exclusion(
         cwd_project_dir,
         Path::new(LockFile::FILE_NAME),
     )
     .unwrap_or(false);
+
+    if has_new && has_legacy {
+        anyhow::bail!(
+            "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
+             in the project repo's committed .gitattributes, but {ga} carries \
+             BOTH that line and the legacy `rwv.lock merge=ours` spelling. \
+             Which one git honours is decided by attribute reading order, and \
+             the legacy name stays live either way: an unrelated \
+             `merge.ours.driver` in the operator's global git config would \
+             silently activate on rwv.lock during a bare `git rebase \
+             --continue` — the collision the rename closed.\n\
+             \n\
+             To fix: run `rwv doctor --fix` from this workspace. It drops \
+             the legacy line, leaving only `rwv.lock merge=rwv-ours`, and \
+             commits the change:\n\
+               cd {dir}\n\
+               rwv doctor --fix",
+            ga = cwd_project_dir.join(".gitattributes").display(),
+            dir = cwd_project_dir.display(),
+        )
+    }
+
+    if has_new {
+        return Ok(());
+    }
 
     if has_legacy {
         anyhow::bail!(
