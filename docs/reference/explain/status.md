@@ -132,7 +132,7 @@ Schema:
       ]
     },
     "OpPhase": {
-      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order; the driver loop persists the phase before entering it so a crash re-enters the same phase on resume.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
         {
           "description": "Manifest repos + project repo strategy phase (today's Phase 2 + 1').",
