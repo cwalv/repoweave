@@ -5765,11 +5765,16 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
                     }
                 }
             }
+        }
 
-            // Coverage: every manifest repo should have a lock entry.
-            // Distinct from the freshness comparison above — a repo absent
-            // from the lock is invisible to it (`lock.iter_entries()` never
-            // produces it).
+        // Coverage: every manifest repo should have a lock entry. Distinct
+        // from the freshness comparison above — a repo absent from the lock is
+        // invisible to it — and answered against the raw lock. Two states make
+        // `resolve_versions` drop an entry: its repo is absent from disk, or
+        // its revision will not resolve in this clone. Against the resolved
+        // lock both read as no entry at all, and earn a finding whose remedy
+        // is to write a line `rwv.lock` already carries.
+        if let Some(lock) = &project.lock {
             for repo_path in project.manifest.iter_repo_paths() {
                 if !lock.contains_repo(repo_path) {
                     violations.push(CheckViolation::IncompleteLock {

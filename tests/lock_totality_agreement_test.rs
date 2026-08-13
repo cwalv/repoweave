@@ -12,9 +12,11 @@
 //!   lock, where the two forms differ.
 //!
 //! - `--locked` walks the raw lock, so a lock entry whose repo is absent from
-//!   disk is one of its findings. The pipeline walks the resolved lock, which
-//!   `LockFile::resolve_versions` builds by dropping exactly those entries, and
-//!   `find_violations` is pure — it cannot re-read disk to recover them. The
+//!   disk is one of its findings. The pipeline's freshness comparison walks the
+//!   resolved lock, which `LockFile::resolve_versions` builds by dropping
+//!   exactly those entries, and `find_violations` is pure — it cannot re-read
+//!   disk to recover them, so no `stale-lock` is reachable there. Its coverage
+//!   check reads the raw lock and finds the entry, so it stays quiet too. The
 //!   divergence is structural, not a spelling difference, and the second test
 //!   pins the whole finding set on that fixture so either side changing shows up
 //!   here.
@@ -29,6 +31,7 @@ const DRIFTED: &str = "github/acme/drifted";
 const CLEAN: &str = "github/acme/clean";
 const SERVER: &str = "github/acme/server";
 const ABSENT: &str = "github/acme/absent-reference";
+const UNLOCKED: &str = "github/acme/unlocked-reference";
 const TAG: &str = "v1.0.0";
 
 fn rwv_cmd() -> Command {
@@ -256,26 +259,33 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
 }
 
 /// A lock entry whose repo is absent from disk is `--locked`'s finding and the
-/// pipeline's blind spot.
+/// pipeline's silence, and the silence is deliberate.
 ///
 /// `resolve_versions` drops the entry before `find_violations` runs, so no
 /// `stale-lock` is reachable for it. The role is `reference`, which is exempt
-/// from `dangling-reference` because a reference clone is allowed to be absent —
-/// that exemption is what leaves the pipeline with nothing correct to say.
+/// from `dangling-reference` because a reference clone is allowed to be absent.
+/// Coverage reads the raw lock, which carries the entry, so it is quiet — a
+/// coverage check reading the resolved lock instead would call the entry missing
+/// and tell the operator to write one `rwv.lock` already has.
 ///
-/// What it says instead is `incomplete-lock`, whose remedy is to add a lock
-/// entry that this fixture's `rwv.lock` already has. That is wrong, and the
-/// assertion below pins it as measured rather than intended: giving the pipeline
-/// a diagnosis for an absent-on-disk lock entry, or narrowing the coverage check
-/// to the raw lock, reddens this test and the pin is what should change.
+/// The two `reference` repos differ in exactly one fact: whether the lock names
+/// them. Without the second, "the pipeline reports nothing" is equally true of a
+/// pipeline whose coverage check does nothing at all.
 #[test]
-fn locked_reports_an_absent_lock_entry_the_pipeline_cannot_see() {
+fn locked_reports_an_absent_lock_entry_the_pipeline_stays_quiet_about() {
     let tmp = common::tempdir().unwrap();
     let (root, project_dir) = make_workspace(tmp.path());
 
     let server_tip = init_repo(&root.join(SERVER));
 
-    write_manifest(&project_dir, &[(SERVER, "owned"), (ABSENT, "reference")]);
+    write_manifest(
+        &project_dir,
+        &[
+            (SERVER, "owned"),
+            (ABSENT, "reference"),
+            (UNLOCKED, "reference"),
+        ],
+    );
     write_lock(
         &project_dir,
         &[(SERVER, &server_tip), (ABSENT, &server_tip)],
@@ -288,9 +298,15 @@ fn locked_reports_an_absent_lock_entry_the_pipeline_cannot_see() {
         "fixture is vacuous: the lock must carry an entry for the absent repo"
     );
     assert!(
-        !root.join(ABSENT).exists(),
-        "fixture is vacuous: the absent repo must not be on disk"
+        !lock_text.contains(UNLOCKED),
+        "fixture is vacuous: the control repo must have no lock entry"
     );
+    for repo in [ABSENT, UNLOCKED] {
+        assert!(
+            !root.join(repo).exists(),
+            "fixture is vacuous: {repo} must not be on disk"
+        );
+    }
 
     let (stdout, ok) = run_locked(&root);
     assert!(
@@ -319,8 +335,14 @@ fn locked_reports_an_absent_lock_entry_the_pipeline_cannot_see() {
     );
     assert_eq!(
         kinds(&violations_for(&doc, ABSENT)),
+        Vec::<String>::new(),
+        "an absent-on-disk `reference` repo the lock does name is a state the \
+         pipeline has nothing correct to say about; got:\n{doc}"
+    );
+    assert_eq!(
+        kinds(&violations_for(&doc, UNLOCKED)),
         vec!["incomplete-lock".to_owned()],
-        "the pipeline has one thing to say about an absent-on-disk lock entry \
-         and it contradicts the lock file; got:\n{doc}"
+        "the same repo without a lock entry is what `incomplete-lock` is for, \
+         so the silence above is about this lock and not a dead check; got:\n{doc}"
     );
 }

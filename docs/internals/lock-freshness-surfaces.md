@@ -28,10 +28,17 @@ enumeration that decides what each can and cannot report.
 ## Why `--locked` is not a renderer over `StaleLock`
 
 `--locked` is **lock-total**: it iterates the raw lock, so every entry gets a
-verdict. The pipeline is **manifest-total** and consumes the resolved lock,
-which `LockFile::resolve_versions` builds by dropping any entry whose repo
-directory is absent from disk. `find_violations` is pure by construction — the
+verdict. The pipeline is **manifest-total**, and its freshness comparison
+consumes the resolved lock, which `LockFile::resolve_versions` builds by
+dropping any entry whose repo directory is absent from disk or whose revision
+this clone cannot resolve. `find_violations` is pure by construction — the
 filesystem reads happen before it — so it cannot recover a dropped entry.
+
+Coverage is the one part of the pipeline that reads the **raw** lock, because
+"does the lock name this repo" is a question about the file and not about what
+resolved. Answered against the resolved lock, both of the states
+`resolve_versions` drops read as no entry at all, and each earns an
+`incomplete-lock` telling the operator to write a line `rwv.lock` already has.
 
 That makes one condition unreachable through `StaleLock` rather than merely
 spelled differently: **a lock entry whose repo is not on disk.** `--locked`
@@ -78,15 +85,17 @@ claim the reference pages make is true, and this is its size.
   coincide under a SHA-form lock — which is the only form the older per-surface
   tests use, so they cannot see a surface that switches to the other form.
 - On a fixture with a `reference`-role lock entry absent from disk, the whole
-  violation set for that repo is pinned.
+  violation set for that repo is pinned — empty. A second `reference`-role repo,
+  absent from disk and absent from the lock, is pinned to `incomplete-lock` in
+  the same fixture, so the emptiness distinguishes a lock that covers the repo
+  from a coverage check that reports nothing at all.
 
 ## Residue
 
-- The second test pins `incomplete-lock` as the pipeline's only finding for an
-  absent-on-disk lock entry. That finding is **wrong**: its remedy is to add a
-  lock entry the fixture's `rwv.lock` already carries. It is pinned as measured,
-  not as intended. Narrowing the coverage check to the raw lock fixes it and
-  reddens that assertion; the pin is what should change.
+- The pipeline has nothing to say about an absent-on-disk `reference`-role lock
+  entry, and that is the whole of what it says. `--locked` is the surface that
+  covers the state; a pipeline finding for it would be a new `kind` on the
+  committed schema, which is the change the section above declines.
 - `--locked` fails on an absent `reference`-role repo. `rwv sync`'s own gate
   skips reference aliases and absent repos entirely, so `--locked` refuses
   where `rwv sync` proceeds — which the reference pages' "the precondition
