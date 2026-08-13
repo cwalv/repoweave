@@ -1191,6 +1191,17 @@ fn pull_destination_anomalous_lock_refuses_and_names_the_follow_on_strategy() {
         "the refusal must name the strategy its own remedy then requires, or the \
          operator lands at a second refusal caused by the first one's fix; got:\n{stderr}"
     );
+    // The landed relock commit is a clean linear addition the replay
+    // reapplies rather than merges away, so it survives every subsequent
+    // rebase the same way an auto-relock does (see
+    // second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges).
+    // This remedy must not read as a one-time fix either.
+    assert!(
+        stderr.contains("recurs on every subsequent fast-forward sync")
+            && stderr.contains("sync-to"),
+        "the relock remedy must warn that it recurs until the relock reaches the source, \
+         and name `sync-to` as the way to land it there; got:\n{stderr}"
+    );
 }
 
 // ===========================================================================

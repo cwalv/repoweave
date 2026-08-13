@@ -4047,6 +4047,12 @@ fn classify_lock_relations(
 /// relock leaves the operator at a second refusal caused by the first one's
 /// remedy. The source half has no such cost — the ancestry gate measures the
 /// destination.
+///
+/// That follow-on is also not a one-time toll: the landed relock commit is a
+/// clean linear addition the replay reapplies rather than merges away, so it
+/// survives every subsequent rebase and the destination is again exactly one
+/// bookkeeping commit ahead. The destination arm says so, matching
+/// `check_phase1_ancestor`'s own refusal for the same recurring shape.
 fn relock_recovery(side: Side, project_name: &str) -> String {
     match side {
         Side::Source => format!(
@@ -4057,7 +4063,9 @@ fn relock_recovery(side: Side, project_name: &str) -> String {
             "Run `rwv lock --commit --project {project_name}` to refresh, then rerun with \
              `--strategy rebase` — that relock lands a commit in the destination's project repo \
              which a bare (fast-forward) `sync` cannot advance past, and `rebase` replays the \
-             destination's project commits with `rwv.lock` excluded"
+             destination's project commits with `rwv.lock` excluded. That commit then recurs \
+             on every subsequent fast-forward sync until it reaches the source workspace too \
+             — via `rwv sync-to`, or by syncing the other direction"
         ),
     }
 }
