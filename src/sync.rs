@@ -916,7 +916,11 @@ fn check_phase1_ancestor(
          To land them: rerun with `--strategy rebase`.\n\
          To bring source in sync first: sync the other direction.\n\
          To discard them (recoverable via `rwv abort`): rerun with `--discard-local-commits` \
-         (pre-sync state preserved under {savepoints}).",
+         (pre-sync state preserved under {savepoints}).\n\
+         \n\
+         This recurs on every fast-forward sync until the commits above reach the source \
+         workspace — land them with `rwv sync-to`, or close the loop by syncing the other \
+         direction.",
         blocking = blocking_commits_block(vcs, cwd_project_dir, source_tip, cwd_tip),
         savepoints = vcs.savepoint_namespace(),
     );

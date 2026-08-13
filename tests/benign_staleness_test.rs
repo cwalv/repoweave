@@ -1098,6 +1098,14 @@ fn second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges(
         stderr.contains("--strategy rebase"),
         "the refusal must name the strategy that lands the relock commit; got:\n{stderr}"
     );
+    // The refusal must not read as a one-time flag: assertion 5 below proves
+    // the remedy does not retire the shape, and this is what tells the
+    // operator that ahead of time, plus the terminating condition.
+    assert!(
+        stderr.contains("recurs on every fast-forward sync") && stderr.contains("sync-to"),
+        "the refusal must warn that it recurs until the relock reaches the source, and \
+         name `sync-to` as the way to land it there; got:\n{stderr}"
+    );
 
     rwv()
         .args(["sync", "primary", "--strategy", "rebase"])
