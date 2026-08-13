@@ -1517,6 +1517,32 @@
         {
           "type": "object",
           "required": [
+            "error",
+            "index_path",
+            "kind",
+            "project"
+          ],
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "index_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unreadable-workweave-index"
+              ]
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "kind",
             "manifest_path",
             "message",

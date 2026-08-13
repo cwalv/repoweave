@@ -102,6 +102,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         },
         CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker".into(),
         CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index".into(),
+        CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
         CheckViolation::UnparseableProject { .. } => "unparseable-project".into(),
         CheckViolation::WorkweaveTreeIntegrity { sub_kind, .. } => {
             let tail = match sub_kind {
@@ -320,6 +321,11 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::LegacyWorkweaveIndex {
             project: project(),
             index_path: path("/ws/projects/proj/.rwv-workweave-index"),
+        },
+        CheckViolation::UnreadableWorkweaveIndex {
+            project: project(),
+            index_path: path("/ws/projects/proj/.rwv-workweave-index"),
+            error: "expected value at line 1 column 1".into(),
         },
         CheckViolation::UnparseableProject {
             project: project(),

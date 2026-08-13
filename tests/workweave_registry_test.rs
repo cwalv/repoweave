@@ -349,6 +349,106 @@ fn doctor_fix_adopts_unregistered_workweave() {
     );
 }
 
+/// Every `kind` `rwv doctor --json` raises in `ws`, sorted, with the sub-kind
+/// key appended for the findings that carry one — the token an operator would
+/// key a remedy off.
+fn doctor_kinds(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .expect("rwv should run");
+    let doc: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("`--json` must emit parseable JSON");
+    let mut kinds: Vec<String> = doc["violations"]
+        .as_array()
+        .expect("`violations` must be present")
+        .iter()
+        .map(|v| {
+            let kind = v["kind"].as_str().expect("a violation carries a kind");
+            match v["sub_kind"].as_object().and_then(|o| o.keys().next()) {
+                Some(sub) => format!("{kind}/{sub}"),
+                None => kind.to_owned(),
+            }
+        })
+        .collect();
+    kinds.sort();
+    kinds
+}
+
+/// A `.rwv-workweave-index` that does not parse is reported as itself, not as
+/// the `unregistered-workweave` whose named repair reads the same file.
+///
+/// Two arms over one fixture, differing only in whether the index parses. The
+/// first is the control: the same workweave, the same empty registry, an index
+/// that parses — `unregistered-workweave`, and `--fix` performs the adoption
+/// it names. Without it a scan that reported nothing at all would satisfy the
+/// second arm's absence assertion.
+#[test]
+fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "feat"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let idx_p = index_path(&ws, "web-app");
+    let recorded = std::fs::read_to_string(&idx_p).unwrap();
+
+    let mut emptied: serde_json::Value = serde_json::from_str(&recorded).unwrap();
+    emptied["workweaves"] = serde_json::json!({});
+    std::fs::write(&idx_p, serde_json::to_string_pretty(&emptied).unwrap()).unwrap();
+
+    let control = doctor_kinds(&ws);
+    assert!(
+        control.contains(&"workweave-tree-integrity/unregistered-workweave".to_string()),
+        "an index that parses and records nothing must report the orphan: {control:?}"
+    );
+    assert!(
+        !control.contains(&"unreadable-workweave-index".to_string()),
+        "and must not report an unreadable index: {control:?}"
+    );
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .assert()
+        .stdout(predicate::str::contains("[fixed] core: adopted workweave"));
+
+    std::fs::write(&idx_p, "{ this is not json").unwrap();
+
+    let kinds = doctor_kinds(&ws);
+    assert!(
+        kinds.contains(&"unreadable-workweave-index".to_string()),
+        "an index that does not parse must name the parse failure: {kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&"workweave-tree-integrity/unregistered-workweave".to_string()),
+        "and must not also report the orphan, whose repair reads the same file: {kinds:?}"
+    );
+
+    rwv().args(["doctor"]).current_dir(&ws).assert().stdout(
+        predicate::str::contains("workweave index does not parse")
+            .and(predicate::str::contains("not recorded in `.rwv-workweave-index`").not()),
+    );
+
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .assert()
+        .stdout(predicate::str::contains("[fixed] core: adopted workweave").not());
+    assert_eq!(
+        std::fs::read_to_string(&idx_p).unwrap(),
+        "{ this is not json",
+        "--fix must not rewrite an index it cannot read"
+    );
+}
+
 #[test]
 fn doctor_flags_tracked_index() {
     let tmp = common::tempdir().unwrap();

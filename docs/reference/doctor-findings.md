@@ -344,6 +344,27 @@ its own, because it holds no receipts and so nothing in it is destroyable.
 
 **What to do:** `rwv doctor --fix` adds the field.
 
+### `unreadable-workweave-index`
+
+**Error. Report-only.** A `.rwv-workweave-index` that exists and does not
+parse. Everything derived from it is unevaluated: the recorded placements, the
+ownership receipts, and whether the file needs the `legacy-workweave-index`
+migration.
+
+Reported at error severity rather than warning because the alternative is
+worse than silence. Without this finding every marker-bearing workweave in the
+project surfaces as `unregistered-workweave` — "run `rwv doctor --fix` to
+adopt it" — and that repair reads the same file and dies on the same parse
+error. While the index does not parse, `unregistered-workweave` and
+`stale-registry-entry` are not reported for the project at all; this finding
+replaces them, because neither is a fact about a registry rwv cannot read.
+
+**What to do:** repair the file by hand, or delete it and re-run `rwv doctor
+--fix`, which re-adopts the workweaves on disk into a fresh index. `--fix`
+never rewrites it for you: a corrupt index gives no way to tell which entries
+it meant to hold, and the ownership receipts in it are the only record of
+which refs are rwv's to delete.
+
 ### `workweave-tree-integrity`
 
 Anomalies in the `.rwv-workweave` marker tree and the registry that records

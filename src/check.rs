@@ -217,6 +217,28 @@ pub enum CheckViolation {
         index_path: PathBuf,
     },
 
+    /// A `.rwv-workweave-index` that exists but does not parse, so nothing
+    /// derived from it is evaluated: the recorded placements, the ownership
+    /// receipts, and the migration state
+    /// ([`LegacyWorkweaveIndex`](Self::LegacyWorkweaveIndex)) alike.
+    ///
+    /// Reported so the state names itself. Without it every marker-bearing
+    /// workweave in the project reads as
+    /// [`UnregisteredWorkweave`](WorkweaveTreeIntegrityKind::UnregisteredWorkweave)
+    /// — a finding whose repair reads the same file and dies on the same
+    /// parse error, so the operator is handed a remedy that cannot run.
+    ///
+    /// No repair: the file is either hand-edited or truncated by a crashed
+    /// writer, and rwv cannot tell which entries a corrupt one meant to hold.
+    UnreadableWorkweaveIndex {
+        /// The project whose index does not parse.
+        project: ProjectName,
+        /// Absolute path to the index file.
+        index_path: PathBuf,
+        /// Rendered read/parse error chain.
+        error: String,
+    },
+
     /// A project directory exists but does not load: either its `rwv.toml`
     /// or its `rwv.lock` failed to parse.
     ///
@@ -591,6 +613,7 @@ impl CheckViolation {
             | CheckViolation::HeadUnreadable { .. }
             | CheckViolation::ProjectsDirUnreadable { .. }
             | CheckViolation::UnresolvableLockEntry { .. }
+            | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
             CheckViolation::MissingMergeDriverConfig { .. }
@@ -1466,6 +1489,11 @@ pub enum ViolationOutput {
         project: String,
         index_path: String,
     },
+    UnreadableWorkweaveIndex {
+        project: String,
+        index_path: String,
+        error: String,
+    },
     UnparseableProject {
         project: String,
         manifest_path: String,
@@ -1829,6 +1857,15 @@ impl ViolationOutput {
             } => Self::LegacyWorkweaveIndex {
                 project: project.to_string(),
                 index_path: index_path.to_string_lossy().into_owned(),
+            },
+            CheckViolation::UnreadableWorkweaveIndex {
+                project,
+                index_path,
+                error,
+            } => Self::UnreadableWorkweaveIndex {
+                project: project.to_string(),
+                index_path: index_path.to_string_lossy().into_owned(),
+                error,
             },
             CheckViolation::UnparseableProject {
                 project,
@@ -2415,7 +2452,7 @@ pub(crate) fn commit_replay_exclusion_migration(
 
 /// Reconcile every project's `.rwv-workweave-index` against on-disk state.
 ///
-/// Emits three registry-specific finding kinds:
+/// Emits four registry-specific finding kinds:
 ///
 /// * `stale-registry-entry` — a recorded name → path whose validation fails
 ///   (missing directory, missing / foreign / cross-project marker). Prunable
@@ -2427,6 +2464,11 @@ pub(crate) fn commit_replay_exclusion_migration(
 /// * `tracked-index` — the `.rwv-workweave-index` file is tracked by the
 ///   project repo's VCS. The design tolerates this (reads route to primary;
 ///   the index is advisory) but tracks it as a hygiene finding.
+/// * `unreadable-workweave-index` — the file exists and does not parse. This
+///   is the read that decides the other three, so it is also the read that
+///   reports its own failure: a project whose index does not parse is
+///   excluded from pass 2 rather than having every workweave on disk
+///   reported as `unregistered-workweave`, whose repair reads this same file.
 ///
 /// The scan iterates every project's recorded container so per-workweave
 /// placement overrides (a workweave living outside the default container)
@@ -2443,12 +2485,23 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
     // ones the operator already recorded.
     let mut recorded_valid_paths: std::collections::HashSet<(String, PathBuf)> =
         std::collections::HashSet::new();
+    let mut unreadable_index_projects: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     for project in crate::workweave_index::projects_on_disk(ws_root) {
         let index = match crate::workweave_index::read(ws_root, &project) {
-            Ok(Some(idx)) => idx,
-            _ => continue,
+            Ok(Some(idx)) => Some(idx),
+            Ok(None) => None,
+            Err(e) => {
+                unreadable_index_projects.insert(project.as_str().to_string());
+                violations.push(CheckViolation::UnreadableWorkweaveIndex {
+                    project: project.clone(),
+                    index_path: crate::workweave_index::index_path(ws_root, &project),
+                    error: format!("{e:#}"),
+                });
+                None
+            }
         };
-        for (name, path) in &index.workweaves {
+        for (name, path) in index.iter().flat_map(|idx| idx.workweaves.iter()) {
             let validation = crate::workweave::validate_registry_entry(ws_root, &project, path);
             match validation {
                 crate::workweave::RegistryEntryValidation::Valid => {
@@ -2509,10 +2562,15 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
     // Pass 2 — every marker-bearing workweave on disk (from any container)
     // that is not in the validated set is an orphan. Uses
     // `doctor_scan_container` for the shape-parse, iterating every unique
-    // container so per-workweave overrides are covered.
+    // container so per-workweave overrides are covered. A project whose index
+    // did not parse has no validated set to be absent from, so "orphan" is
+    // not a fact about it — `unreadable-workweave-index` above is.
     let mut seen_orphans: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for container in workweave_containers_for_scan(ws_root) {
         for (project, name, dir) in crate::workweave::doctor_scan_container(ws_root, &container) {
+            if unreadable_index_projects.contains(project.as_str()) {
+                continue;
+            }
             let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
             let key = (project.as_str().to_string(), canonical.clone());
             if recorded_valid_paths.contains(&key) {
@@ -6058,6 +6116,21 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         index_path.display()
                     ),
                 ),
+                CheckViolation::UnreadableWorkweaveIndex {
+                    project,
+                    index_path,
+                    error,
+                } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "{}: workweave index does not parse ({error}); the recorded \
+                         workweaves and ownership receipts for project `{project}` are \
+                         unevaluated, and every `rwv doctor --fix` arm that writes this \
+                         file fails until it parses — repair or delete the file, then \
+                         re-run `rwv doctor --fix` to re-adopt the workweaves on disk",
+                        index_path.display()
+                    ),
+                ),
                 // Relayed, not narrated: the loader states which file failed
                 // and what to do about it, and this arm cannot know either.
                 CheckViolation::UnparseableProject {
@@ -8281,13 +8354,18 @@ fn collect_doctor_violations(
                 continue;
             }
         }
-        if let Ok(Some(index_path)) =
-            crate::workspace::pending_index_migration(ctx.primary_path(), &project)
-        {
-            violations.push(CheckViolation::LegacyWorkweaveIndex {
+        match crate::workspace::pending_index_migration(ctx.primary_path(), &project) {
+            Ok(Some(index_path)) => violations.push(CheckViolation::LegacyWorkweaveIndex {
                 project,
                 index_path,
-            });
+            }),
+            Ok(None) => {}
+            // An index that does not parse has no shape to classify, and this
+            // loop is `project_scope`-narrowed where the read that suppresses
+            // the findings a parse failure invalidates is not. Reporting it
+            // here too would let a narrowed scan suppress and stay silent, so
+            // `scan_registry_reconciliation` owns the whole state.
+            Err(_) => {}
         }
     }
 
