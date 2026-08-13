@@ -8,8 +8,8 @@ use crate::integration_runner::enabled_integrations;
 use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
-    project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath, Role,
-    WorkweaveName, WorkweaveNameError,
+    project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath,
+    ResolvedLockFile, Role, WorkweaveName, WorkweaveNameError,
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
@@ -1155,25 +1155,51 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
 // the shared SHA; reference repos stay in the lock for reproducibility and
 // `rwv fetch`. Only sync's *advancement / mutation* skips them.
 
-/// Whether a sync/abort phase may operate on the checkout at `abs`.
+/// Why a sync/abort phase may or may not operate on the checkout at `abs`,
+/// decided by ONE classification read.
 ///
-/// True iff `abs` is an on-disk **worktree** checkout. This combines the two
-/// conditions every mutating site needs:
-/// - it must exist (an absent checkout has nothing to mutate / restore), and
-/// - it must not be a [`CheckoutKind::ReferenceAlias`] — a symlink aliasing the
-///   shared canonical store, which is read-only and must never be mutated.
+/// A caller that both skips a checkout and names why it skipped it consumes
+/// this one value for both. Asking [`classify_checkout`] a second time for the
+/// label reads the filesystem at a second instant, so the reason printed can
+/// describe a state other than the one the skip decision was made on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckoutSyncability {
+    /// An on-disk worktree checkout: phases may operate on it.
+    Syncable,
+    /// A symlink aliasing the shared canonical store — read-only, and
+    /// byte-identical across workweaves, so there is nothing to sync.
+    ReferenceAlias,
+    /// No checkout at this path: nothing to mutate or restore.
+    NotOnDisk,
+}
+
+/// Classify the checkout at `abs` for the sync/abort phases.
 ///
 /// This is the single chokepoint for the reference-repo exclusion: every
 /// savepoint / replay / advance-target / abort / materialize / prune loop gates
-/// the checkout it is about to touch through this predicate, so the canonical
-/// store is unreachable from all of them. Keyed on alias-ness, never on role,
-/// so `--worktree-references` reference repos (real worktrees) sync normally.
+/// the checkout it is about to touch through this classification, so the
+/// canonical store is unreachable from all of them. Keyed on alias-ness, never
+/// on role, so `--worktree-references` reference repos (real worktrees) sync
+/// normally.
 ///
-/// Note `classify_checkout` returns [`CheckoutKind::Worktree`] for a
-/// non-existent path, so the `abs.exists()` term is load-bearing and cannot be
-/// folded away.
+/// [`classify_checkout`] returns [`CheckoutKind::Worktree`] for a non-existent
+/// path, so existence is a second term rather than something the classification
+/// already answers.
+fn checkout_syncability(abs: &Path) -> CheckoutSyncability {
+    match classify_checkout(abs) {
+        CheckoutKind::ReferenceAlias => CheckoutSyncability::ReferenceAlias,
+        CheckoutKind::Worktree if abs.exists() => CheckoutSyncability::Syncable,
+        CheckoutKind::Worktree => CheckoutSyncability::NotOnDisk,
+    }
+}
+
+/// Whether a sync/abort phase may operate on the checkout at `abs`.
+///
+/// True iff `abs` is an on-disk **worktree** checkout: it exists (an absent
+/// checkout has nothing to mutate / restore) and it is not a
+/// [`CheckoutKind::ReferenceAlias`].
 fn checkout_is_syncable(abs: &Path) -> bool {
-    abs.exists() && classify_checkout(abs) == CheckoutKind::Worktree
+    checkout_syncability(abs) == CheckoutSyncability::Syncable
 }
 
 // ---------------------------------------------------------------------------
@@ -2716,38 +2742,37 @@ fn guard_and_mark<'a>(
     // Runs AFTER savepoints so abort can roll the relock commit back with the
     // rest of the op. When CWD's manifest repos have a lock behind HEAD (relation
     // `Ahead` — new commits since the last relock, the benign landing shape),
-    // emit one LOUD line per repo INCLUDING the commit count, then
     // regenerate+commit CWD's `rwv.lock` so the landing never propagates a lock
-    // that mismatches the tips it lands. Phase 3 re-runs relock at op end
-    // idempotently; doing it here surfaces the surprising number at the moment it
-    // matters (the ancestry-gate guardrail). Best-effort: a relock-commit failure
-    // here does not abort the op — Phase 3 will still regenerate the lock
-    // post-replay.
+    // that mismatches the tips it lands, then emit one LOUD line per repo naming
+    // what the commit pinned. Phase 3 re-runs relock at op end idempotently;
+    // doing it here surfaces the surprising number at the moment it matters (the
+    // ancestry-gate guardrail). Best-effort: a relock-commit failure here does
+    // not abort the op — Phase 3 will still regenerate the lock post-replay.
     if !cwd_lock_behind.is_empty() {
-        if emit_text {
-            for r in &cwd_lock_behind {
-                let n = r
-                    .ahead_count
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "?".to_string());
-                eprintln!(
-                    "{cwd_workspace_name_str}/{}: lock behind HEAD by {n} commits — auto-relocked",
-                    r.repo_path,
-                );
-            }
-        }
-        if let Err(e) = regenerate_lock_phase3(
+        let relocked = regenerate_lock_phase3(
             project_vcs.as_ref(),
             cwd_ctx,
             &cwd_project_dir,
             &cwd_project,
             &source_workspace_name,
-        ) {
+        );
+        if let Err(ref e) = relocked {
             if emit_text {
                 eprintln!(
                     "warning: op-start relock could not commit ({e}); Phase 3 will retry \
                      post-replay"
                 );
+            }
+        }
+        if emit_text {
+            for line in op_start_relock_lines(
+                &cwd_lock_behind,
+                relocked.as_ref().ok().and_then(Option::as_ref),
+                &cwd_workspace_dir,
+                &cwd_project.manifest,
+                &cwd_workspace_name_str,
+            ) {
+                eprintln!("{line}");
             }
         }
     }
@@ -3470,6 +3495,10 @@ struct RepoRelation {
     ahead_count: Option<usize>,
     /// The checkout's HEAD at classification time; `None` when unreadable.
     tip: Option<ResolvedRevisionId>,
+    /// The committed lock's revision for this repo, resolved against the
+    /// workspace — the baseline `relation` and `ahead_count` were computed
+    /// against. `None` when the project carries no lock entry for it.
+    lock_pin: Option<ResolvedRevisionId>,
 }
 
 /// Result of classifying a workspace's committed lock against its repos: the
@@ -3543,6 +3572,7 @@ fn classify_lock_relations(
             relation,
             ahead_count,
             tip,
+            lock_pin: lock_sha,
         });
     }
     LockClassification {
@@ -3708,6 +3738,66 @@ fn target_lock_behind_refusal(
     ))
 }
 
+/// The op-start auto-relock's per-repo lines, derived from the commit's own
+/// result.
+///
+/// `committed` is the lock the relock commit landed, `None` when no commit
+/// happened — nothing was staged, or the commit failed. Without a commit there
+/// is no relock to announce and no fresh pin to name, so the line states what
+/// still holds: the committed lock is behind HEAD by what the classification
+/// measured. With a commit, the count spans the entry the classification read
+/// to the entry the commit wrote, so a repo that took another commit during the
+/// op-start window reports the tips the lock now pins rather than the ones it
+/// was behind by when the op began.
+fn op_start_relock_lines(
+    behind: &[RepoRelation],
+    committed: Option<&ResolvedLockFile>,
+    workspace_dir: &Path,
+    manifest: &Manifest,
+    workspace_name: &str,
+) -> Vec<String> {
+    behind
+        .iter()
+        .map(|r| {
+            let pinned = committed
+                .and_then(|lock| lock.get_entry(&r.repo_path))
+                .map(|entry| &entry.version);
+            let Some(pinned) = pinned else {
+                let n = display_count(r.ahead_count);
+                return format!(
+                    "{workspace_name}/{}: lock behind HEAD by {n} commits — not relocked; the \
+                     committed lock still pins the older tips",
+                    r.repo_path,
+                );
+            };
+            let relocked_over = manifest
+                .get_entry(&r.repo_path)
+                .zip(r.lock_pin.as_ref())
+                .and_then(|(entry, from)| {
+                    vcs_for(entry.vcs_type)
+                        .count_commits_in_range(
+                            &workspace_dir.join(r.repo_path.as_path()),
+                            from,
+                            pinned,
+                        )
+                        .ok()
+                });
+            format!(
+                "{workspace_name}/{}: lock behind HEAD by {n} commits — auto-relocked to {pin}",
+                r.repo_path,
+                n = display_count(relocked_over),
+                pin = short_sha(pinned.as_str()),
+            )
+        })
+        .collect()
+}
+
+/// A commit count for an operator line, or `?` when the count could not be
+/// taken.
+fn display_count(n: Option<usize>) -> String {
+    n.map_or_else(|| "?".to_owned(), |c| c.to_string())
+}
+
 // ---------------------------------------------------------------------------
 // Phase: replay
 // ---------------------------------------------------------------------------
@@ -3770,7 +3860,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // returns false) must never be replaced by a `git worktree add` against
         // the shared canonical store. `classify_checkout` keys on `is_symlink`,
         // which does not follow the link, so it catches the dangling case.
-        if abs.exists() || classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
+        if checkout_syncability(&abs) != CheckoutSyncability::NotOnDisk {
             continue;
         }
         let entry = match snapshot.source_manifest.get_entry(repo_path) {
@@ -3807,7 +3897,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             // against the shared canonical store. Unlinking a reference alias
             // is the workweave-delete path's job, not sync's.
             let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-            if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
+            if checkout_syncability(&abs) == CheckoutSyncability::ReferenceAlias {
                 continue;
             }
             // The lock named this path and no longer does, so there is no
@@ -3869,16 +3959,20 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // the shared canonical store, so it never becomes a sync task. Without
         // a task it is never rebased/ff'd and never gets a planned-target write,
         // so replay Phase 2 cannot move the canonical's branch.
-        if !checkout_is_syncable(&abs) {
-            if emit_text {
-                let reason = if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
-                    "reference (read-only alias)"
-                } else {
-                    "not on disk"
-                };
-                println!("  {repo_path}: skipped ({reason})");
+        match checkout_syncability(&abs) {
+            CheckoutSyncability::Syncable => {}
+            CheckoutSyncability::ReferenceAlias => {
+                if emit_text {
+                    println!("  {repo_path}: skipped (reference (read-only alias))");
+                }
+                continue;
             }
-            continue;
+            CheckoutSyncability::NotOnDisk => {
+                if emit_text {
+                    println!("  {repo_path}: skipped (not on disk)");
+                }
+                continue;
+            }
         }
         if unresolvable.contains(repo_path) {
             if emit_text {
@@ -5029,13 +5123,18 @@ fn apply_project_strategy(
 
 /// Phase 3: regenerate `rwv.lock` from the current manifest tips. Commit it
 /// if it differs from what's currently in the project repo.
+///
+/// Returns the lock the commit landed, or `None` when the regenerated lock
+/// matched the committed one and nothing was staged. A caller that announces
+/// the relock derives both its tense and the revisions it names from that
+/// return, never from the classification that decided to call it.
 fn regenerate_lock_phase3(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     cwd_project_dir: &Path,
     cwd_project: &Project,
     source_workspace_name: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<ResolvedLockFile>> {
     let workweave_pair = match &ctx.checkout {
         Checkout::Workweave { name, dir, .. } => Some((name, dir.as_path())),
         Checkout::Primary { .. } => None,
@@ -5053,10 +5152,11 @@ fn regenerate_lock_phase3(
     crate::lock::write_lock(&new_lock, &lock_path)?;
 
     let message = auto_relock_commit_message(source_workspace_name);
-    if commit_lock_file_with_message(vcs, cwd_project_dir, &message)? {
-        eprintln!("  (project): re-locked after sync from {source_workspace_name}");
+    if !commit_lock_file_with_message(vcs, cwd_project_dir, &message)? {
+        return Ok(None);
     }
-    Ok(())
+    eprintln!("  (project): re-locked after sync from {source_workspace_name}");
+    Ok(Some(new_lock))
 }
 
 // ---------------------------------------------------------------------------
@@ -7188,6 +7288,7 @@ mod tests {
             relation: LockRelation::Behind,
             ahead_count: None,
             tip: None,
+            lock_pin: None,
         };
         for side in [Side::Source, Side::Destination] {
             let msg = lock_relation_refusal(side, "ws", "app", &[&offending])
@@ -7212,6 +7313,7 @@ mod tests {
             relation: LockRelation::Diverged,
             ahead_count: None,
             tip: None,
+            lock_pin: None,
         };
         let msg = lock_relation_refusal(Side::Source, "ws", "app", &[&diverged])
             .expect("non-empty offending set yields a refusal");
