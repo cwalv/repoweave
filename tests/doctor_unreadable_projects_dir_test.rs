@@ -3,13 +3,23 @@
 //! `discover_project_paths` swallows exactly that read error, and nothing
 //! downstream told the two states apart. `rwv doctor` now reports a
 //! `projects-dir-unreadable` finding (Error severity) instead.
+//!
+//! SKIPPED ON WINDOWS, whole file. The finding is portable; the fixture is
+//! not. Every test here builds its precondition by taking a directory's read
+//! permission away with a mode bit, and Windows has no attribute that denies
+//! a listing — the read-only one denies neither reading nor creating. Making
+//! `projects/` genuinely unlistable there takes an ACL deny entry, which is
+//! different machinery rather than a different call, so a port would go red
+//! against correct code. The gate is file-level because nothing in this file
+//! is reachable without that fixture: gating the tests alone leaves their
+//! helpers, and then the helpers' imports, dead on Windows.
+
+#![cfg(unix)]
 
 mod common;
 
-use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 fn make_workspace(parent: &Path) -> PathBuf {
     let ws = parent.join("ws");
@@ -25,7 +35,6 @@ fn make_workspace(parent: &Path) -> PathBuf {
 /// Probed behaviorally rather than by checking the effective uid: this crate
 /// carries no dependency that reads it, and behavior is what the test's
 /// precondition actually needs.
-#[cfg(unix)]
 fn permissions_are_enforced(parent: &Path) -> bool {
     let probe = parent.join(".rwv-permission-probe");
     std::fs::create_dir(&probe).unwrap();
@@ -49,7 +58,6 @@ fn permissions_are_enforced(parent: &Path) -> bool {
 /// directory, find it empty, and report nothing — leaving the callers below
 /// red against correct code. An ACL deny entry is the Windows mechanism, and
 /// it is different machinery rather than a different call.
-#[cfg(unix)]
 fn run_with_unreadable_dir(ws: &Path, dir: &Path, args: &[&str]) -> std::process::Output {
     let original = std::fs::metadata(dir).unwrap().permissions();
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -64,10 +72,7 @@ fn run_with_unreadable_dir(ws: &Path, dir: &Path, args: &[&str]) -> std::process
     out
 }
 
-/// Gated on the fixture, not the subject: an unreadable `projects/` is built
-/// with a mode bit, and Windows has no attribute that denies a listing.
 #[test]
-#[cfg(unix)]
 fn doctor_reports_an_unreadable_projects_dir() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
@@ -99,10 +104,7 @@ fn doctor_reports_an_unreadable_projects_dir() {
     );
 }
 
-/// Gated on the fixture, not the subject: an unreadable `projects/` is built
-/// with a mode bit, and Windows has no attribute that denies a listing.
 #[test]
-#[cfg(unix)]
 fn doctor_json_includes_projects_dir_unreadable() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());

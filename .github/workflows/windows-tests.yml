@@ -40,23 +40,34 @@
 #
 # WHAT A GREEN RUN HERE WOULD MEAN, AND WHAT IT WOULD NOT
 #
-# It would not mean the tests pass on Windows. 61 tests do not EXIST there —
-# `#[cfg(unix)]` on the test, or a file-level `#![cfg(unix)]` — so they neither
-# run nor report, and a suite is green over their absence exactly as it is over
-# their success. Each states its reason at its own site. At the time of writing:
+# It would not mean the tests pass on Windows, for two separate reasons.
+#
+# FIRST, 52 tests do not EXIST there — `#[cfg(unix)]` on the test, or a
+# file-level `#![cfg(unix)]` — so they neither run nor report, and a suite is
+# green over their absence exactly as it is over their success. Each states its
+# reason at its own site. At the time of writing:
 #
 #   41  plugin discovery and dispatch. Windows has no executable bit and
 #       lookup selects on PATHEXT, so what a discoverable plugin is even NAMED
 #       there is an undecided product question, not a porting task.
-#   10  symlink semantics, plus one #[ignore]d static-files placeholder.
-#   10  hook, permission and rename fixtures. The two that were settled are
-#       pinned by tests/hook_fixture_portability_test.rs; the rest are gated on
-#       an ACL deny entry, a PATH shim Windows will not spawn, or an inode
-#       instrument NTFS may not honour.
+#   10  hook, permission and rename fixtures. The settled ones are pinned by
+#       tests/hook_fixture_portability_test.rs; the rest are gated on an ACL
+#       deny entry, a PATH shim Windows will not spawn, or an inode instrument
+#       NTFS may not honour.
+#    1  an #[ignore]d static-files placeholder, which runs on no platform.
 #
-# Read that as a floor. It counts only tests that are absent by `cfg`; a test
-# that exists here and fails for a reason nobody has predicted is what this
-# workflow is for.
+# SECOND, and this is the harder one to see: a test can be PRESENT here,
+# EXECUTED here, and GREEN here while proving nothing, because its fixture
+# never engaged. That is not hypothetical. `ledger_anchors_to_the_named_
+# directory` in src/integrations/merge.rs was measurably vacuous until it was
+# given a read-back assertion: the code under test read the ledger file and
+# never joined the directory onto it, so no assertion in the old body ever
+# resolved the symlink its fixture built. No-op the symlink creation with the
+# new assertion present and it goes red; remove that assertion and the same
+# mutation passes. Absent tests can at least be counted. These cannot.
+#
+# Read the 52 as a floor. It counts only tests absent by `cfg`; a test that
+# exists here and fails for a reason nobody predicted is what this job is for.
 #
 # Symlink CREATION is not among the reasons, which is worth recording because
 # it was the obstacle most expected. GitHub's Windows runner images enable
@@ -93,15 +104,26 @@ jobs:
           git config --global user.name "CI"
 
       - name: Run the test suite
-        # Tests only. clippy, rustfmt, rustdoc and the explain-artifact drift
-        # check ask questions whose answers do not vary by platform, and
-        # ci-checks.yml already answers them on two.
+        # Tests only. rustfmt, rustdoc and the explain-artifact drift check ask
+        # questions whose answers do not vary by platform, and ci-checks.yml
+        # already answers them on two.
+        #
+        # Clippy is left out for a reason that outlives that one. A test skipped
+        # on this platform strands its helpers as unreferenced code here, which
+        # is a warning rather than an error only because no job on this runner
+        # denies warnings. scripts/ci-local.sh does deny them, so adding clippy
+        # here would turn every stated skip into a hard failure and make the
+        # honest thing — leaving a test out with its reason at the site — the
+        # expensive one.
         #
         # Debug rather than the release profile scripts/ci-local.sh uses: this
         # run exists to find out WHICH tests fail, and the debug build reaches
-        # that answer sooner. A divergence from ci-local.sh is normally a defect
-        # — that script exists so local and CI cannot drift — but nothing
-        # releasable is decided here, so the profile is free to be the one that
-        # answers the question fastest.
+        # that answer sooner. Two consequences worth stating rather than
+        # discovering. A divergence from ci-local.sh is normally a defect —
+        # that script exists so local and CI cannot drift — and it is tolerable
+        # only because nothing releasable is decided here. And a red list
+        # gathered in debug is not authoritative for release: overflow checks
+        # are on here and off there, and timing differs, so a test that fails
+        # one way may not fail the other.
         shell: bash
         run: cargo test --locked
