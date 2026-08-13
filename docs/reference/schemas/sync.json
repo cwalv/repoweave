@@ -127,7 +127,7 @@
       }
     },
     "Step3AdvanceOutput": {
-      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer. Omitted (`skip_serializing_if = \"Option::is_none\"`) in two cases: (a) no-op advance — target was already at CWD's tip; or (b) the pre-advance HEAD read failed (`head_revision` returned `Err`) — in that case `target_tip_before` is `None` and no record is emitted even if the ff succeeded.",
+      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
       "type": "object",
       "required": [
         "from_sha",

@@ -354,10 +354,11 @@ impl From<&SyncFailure> for SyncFailureOutput {
 /// Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.
 ///
 /// Present in a per-repo outcome iff step 3 (advance-target) actually advanced
-/// that repo's branch pointer. Omitted (`skip_serializing_if = "Option::is_none"`)
-/// in two cases: (a) no-op advance — target was already at CWD's tip; or (b) the
-/// pre-advance HEAD read failed (`head_revision` returned `Err`) — in that case
-/// `target_tip_before` is `None` and no record is emitted even if the ff succeeded.
+/// that repo's branch pointer, and carrying the revisions that advance read
+/// and wrote. Omitted (`skip_serializing_if = "Option::is_none"`) on a no-op
+/// advance — the target was already at CWD's tip — which is the same condition
+/// under which the text line reads `already at <sha>`, because both render one
+/// outcome.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 pub struct Step3AdvanceOutput {
     /// Target repo's HEAD SHA before the fast-forward.
@@ -484,10 +485,10 @@ pub struct SyncJsonOutput {
 /// Top-level envelope for `rwv sync-to --json` (serial mode).
 ///
 /// Extends [`SyncJsonOutput`] with sync-to-specific observability fields:
-/// - `source_workweave` — the workweave the command was invoked from (null
-///   when invoked from the primary weave).
+/// - `source_workweave` — the workweave the op is rooted in (null when that is
+///   the primary weave).
 /// - `target` — the absolute path of the target workspace that was advanced.
-/// - `retired` — true iff `--retire` was passed AND the workweave was deleted.
+/// - `retired` — true iff the workweave was deleted.
 /// - `project_repo_advance` — step-3 advance of `projects/<project>/.git`;
 ///   omitted when the project repo was already at CWD's tip (no-op advance).
 /// - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest
@@ -499,14 +500,16 @@ pub struct SyncJsonOutput {
 pub struct SyncToJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
-    /// The workweave name the command was invoked from; null when invoked from
-    /// the primary weave.
+    /// The workweave the op is rooted in; null when that is the primary weave.
+    /// On a resumed op this is the workspace that owns the op record, which is
+    /// not necessarily the one `--continue` was invoked from.
     pub source_workweave: Option<String>,
-    /// Absolute path of the target workspace that step-3 fast-forwarded.
+    /// Absolute path of the target workspace that step-3 fast-forwarded, as
+    /// the machine resolved it.
     pub target: String,
-    /// True iff `--retire` was passed AND retire actually fired (the workweave
-    /// was deleted). False when `--retire` was not passed, or when retire was
-    /// skipped (e.g. invoked from the primary weave).
+    /// True iff retire deleted the workweave. False when `--retire` was not
+    /// passed, when retire refused, and when retire was skipped (the op is
+    /// rooted in the primary weave, where there is no workweave to delete).
     pub retired: bool,
     pub outcomes: Vec<SyncOutcomeOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
@@ -1571,6 +1574,50 @@ pub trait OutputHandler: Send + Sync {
     /// handlers whose envelope carries no `advisories` field (sync-to,
     /// NDJSON — no envelope to place it in) have nothing to buffer it into.
     fn record_advisory(&self, _advisory: AdvisoryOutput) {}
+
+    /// Record the coordinates the machine resolved for this op. Called once,
+    /// as soon as the context exists and before any phase runs.
+    ///
+    /// Default implementation is a no-op: only the sync-to envelope reports
+    /// them.
+    fn record_coordinates(&self, _coordinates: OpCoordinates) {}
+
+    /// Record that retire deleted the workweave. Called with the delete's own
+    /// witness, so nothing else can report a retire.
+    ///
+    /// Default implementation is a no-op: only the sync-to envelope reports it.
+    fn record_retired(&self, _retired: &RetiredWorkweave) {}
+}
+
+/// Where an op is running and what it is landing into, as the machine
+/// resolved them.
+///
+/// The invocation's own arguments answer neither on a `--continue`: the
+/// target comes from the op record, and the workspace the operator typed the
+/// command in may be the leased target rather than the workspace that owns
+/// the op. Anything reporting these facts consumes the machine's values.
+pub struct OpCoordinates {
+    /// The workweave the op is rooted in — `None` when the owner is the
+    /// primary weave.
+    pub source_workweave: Option<String>,
+    /// The workspace advance-target lands into.
+    pub target: PathBuf,
+}
+
+/// Witness that `--retire` deleted a workweave.
+///
+/// Produced by the delete's own return in [`retire_workweave_after_sync_to`]
+/// and nowhere else, so a `retired` claim cannot be assembled from the flags
+/// the operator passed.
+pub struct RetiredWorkweave {
+    name: WorkweaveName,
+}
+
+impl RetiredWorkweave {
+    /// The workweave this op deleted.
+    pub fn name(&self) -> &WorkweaveName {
+        &self.name
+    }
 }
 
 /// Text-mode handler: prints one line per repo to stdout/stderr and discards
@@ -1697,11 +1744,25 @@ pub struct JsonEnvelopeSyncToHandler<'a> {
     /// project repo). Only populated when the target's branch pointer actually
     /// moved.
     step3_advances: &'a Mutex<std::collections::HashMap<String, Step3AdvanceOutput>>,
+    /// The machine's coordinates for this op, `None` until it has a context.
+    coordinates: &'a Mutex<Option<OpCoordinates>>,
+    /// The workweave retire deleted, `None` when retire did not delete one.
+    retired: &'a Mutex<Option<WorkweaveName>>,
 }
 
 impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
     fn emit_text(&self) -> bool {
         false
+    }
+
+    fn record_coordinates(&self, coordinates: OpCoordinates) {
+        let mut guard = self.coordinates.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(coordinates);
+    }
+
+    fn record_retired(&self, retired: &RetiredWorkweave) {
+        let mut guard = self.retired.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(retired.name.clone());
     }
 
     fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
@@ -1970,6 +2031,17 @@ fn run_machine(
     } else {
         guard_and_mark(verb, cwd_ctx, request, handler)?
     };
+
+    // Reported before the first phase, so a run that fails partway still
+    // describes the op it was running rather than the arguments it was
+    // invoked with.
+    handler.record_coordinates(OpCoordinates {
+        source_workweave: match &ctx.cwd_ctx.checkout {
+            Checkout::Workweave { name, .. } => Some(name.as_str().to_owned()),
+            Checkout::Primary { .. } => None,
+        },
+        target: ctx.dest_workspace_dir.clone(),
+    });
 
     drive(&ctx)
 }
@@ -4490,26 +4562,18 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 continue;
             }
         };
-        // Read target tip BEFORE the advance so we can report from_sha.
-        let target_tip_before = vcs.head_revision(&target_repo).ok();
         match ff_advance_repo(vcs.as_ref(), &target_repo, &cwd_repo, &cwd_tip) {
-            Ok(advanced) => {
+            Ok(advance) => {
                 if emit_text {
-                    println!(
-                        "  {}: {}",
-                        repo_path,
-                        ff_advance_line(advanced.as_ref(), &cwd_tip)
-                    );
+                    println!("  {}: {}", repo_path, ff_advance_line(&advance, &cwd_tip));
                 }
                 // Record step-3 advance iff the branch pointer actually moved.
-                if let Some(ref before) = target_tip_before {
-                    if before != &cwd_tip {
-                        ctx.handler.record_step3_advance(
-                            repo_path.as_str(),
-                            before.as_str(),
-                            cwd_tip.as_str(),
-                        );
-                    }
+                if advance.onto.is_some() {
+                    ctx.handler.record_step3_advance(
+                        repo_path.as_str(),
+                        advance.from.as_str(),
+                        cwd_tip.as_str(),
+                    );
                 }
             }
             Err(e) => {
@@ -4546,30 +4610,26 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD for advance-target")?;
 
-    // Read project target tip BEFORE the advance so we can report from_sha.
-    let project_target_tip_before = ctx.project_vcs.head_revision(&ctx.dest_project_dir).ok();
     match ff_advance_repo(
         ctx.project_vcs.as_ref(),
         &ctx.dest_project_dir,
         &ctx.cwd_project_dir,
         &cwd_project_tip,
     ) {
-        Ok(advanced) => {
+        Ok(advance) => {
             if emit_text {
                 println!(
                     "  (project): {}",
-                    ff_advance_line(advanced.as_ref(), &cwd_project_tip)
+                    ff_advance_line(&advance, &cwd_project_tip)
                 );
             }
             // Record step-3 advance for the project repo iff it actually moved.
-            if let Some(ref before) = project_target_tip_before {
-                if before != &cwd_project_tip {
-                    ctx.handler.record_step3_advance(
-                        project_repo_key(),
-                        before.as_str(),
-                        cwd_project_tip.as_str(),
-                    );
-                }
+            if advance.onto.is_some() {
+                ctx.handler.record_step3_advance(
+                    project_repo_key(),
+                    advance.from.as_str(),
+                    cwd_project_tip.as_str(),
+                );
             }
         }
         Err(e) => {
@@ -4614,15 +4674,20 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     match &ctx.cwd_ctx.checkout {
         Checkout::Workweave {
             dir, name, project, ..
-        } => retire_workweave_after_sync_to(
-            ctx.project_vcs.as_ref(),
-            &ctx.cwd_ctx,
-            dir,
-            name,
-            project,
-            &ctx.cwd_project_dir,
-            &ctx.dest_workspace_dir,
-        ),
+        } => {
+            let retired = retire_workweave_after_sync_to(
+                ctx.project_vcs.as_ref(),
+                &ctx.cwd_ctx,
+                dir,
+                name,
+                project,
+                &ctx.cwd_project_dir,
+                &ctx.dest_workspace_dir,
+            )?;
+            eprintln!("retired workweave {}", retired.name().as_str());
+            ctx.handler.record_retired(&retired);
+            Ok(())
+        }
         Checkout::Primary { .. } => {
             if emit_text {
                 eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
@@ -4873,6 +4938,10 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// spec describes. Manifest tip equality is the honest "work has converged"
 /// signal: Phase 2 advances both sides to the same SHAs, so post-sync the
 /// manifest repos should be byte-equal.
+///
+/// The [`RetiredWorkweave`] returned is the only evidence a retire happened:
+/// every path that does not reach the delete returns `Err`, and the primary
+/// weave never calls this at all.
 fn retire_workweave_after_sync_to(
     project_vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
@@ -4881,7 +4950,7 @@ fn retire_workweave_after_sync_to(
     project: &crate::manifest::ProjectName,
     cwd_project_dir: &Path,
     target_workspace_dir: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<RetiredWorkweave> {
     let resume = op_state::resume_command(op_state::OpVerb::SyncTo);
 
     // Reload manifest post-Phase 3 so we see any repos newly added by sync.
@@ -4969,8 +5038,9 @@ fn retire_workweave_after_sync_to(
     )
     .context("--retire: workweave delete failed")?;
 
-    eprintln!("retired workweave {}", workweave_name.as_str());
-    Ok(())
+    Ok(RetiredWorkweave {
+        name: workweave_name.clone(),
+    })
 }
 
 /// Truncate a SHA to 12 chars for display (matches workweave.rs convention).
@@ -5861,27 +5931,11 @@ pub fn run_sync_to(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Resu
 /// `project_repo_advance`. These fields are absent from the plain
 /// `rwv sync --json` envelope ([`SyncJsonOutput`]).
 pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
-    // Derive source_workweave from the CWD context before running the machine.
-    // This mirrors what guard_and_mark computes internally.
-    let source_workweave: Option<String> = match &ctx.checkout {
-        Checkout::Workweave { name, .. } => Some(name.as_str().to_owned()),
-        Checkout::Primary { .. } => None,
-    };
-
-    // Derive the target path: the resolved destination workspace directory.
-    // For sync-to the operator-supplied arg is the target; resolve it the same
-    // way guard_and_mark does (SyncSource::resolve against the CWD context).
-    let target_path: String = match &request.source {
-        Some(src) => src
-            .resolve(ctx)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        None => String::new(),
-    };
-
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
+    let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
+    let retired: Mutex<Option<WorkweaveName>> = Mutex::new(None);
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
@@ -5900,6 +5954,8 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
         let handler = JsonEnvelopeSyncToHandler {
             records: &records,
             step3_advances: &step3_advances,
+            coordinates: &coordinates,
+            retired: &retired,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
@@ -5908,6 +5964,8 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
     let mut step3_map = step3_advances
         .into_inner()
         .unwrap_or_else(|e| e.into_inner());
+    let coordinates = coordinates.into_inner().unwrap_or_else(|e| e.into_inner());
+    let retired = retired.into_inner().unwrap_or_else(|e| e.into_inner());
 
     // If we never reached the per-repo loop (project-level precondition
     // failure), propagate the error so main prints it via anyhow.
@@ -5935,19 +5993,18 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
 
         let project_repo_advance = step3_map.remove(project_repo_key());
 
-        // `retired` is true iff --retire was passed AND retire actually fired
-        // (i.e., CWD was a workweave, not a primary weave) AND the machine
-        // completed without error. When invoked from a primary weave, run_retire
-        // returns Ok(()) without deleting anything (warns instead), so we gate
-        // on source_workweave being Some() to distinguish the two cases.
-        let actually_retired =
-            request.retire && source_workweave.is_some() && project_level_result.is_ok();
+        // The machine records its coordinates before its first phase, and
+        // every record above is written by a phase. Nothing here means the op
+        // refused before it started, and the refusal is the whole story.
+        let Some(coordinates) = coordinates else {
+            return project_level_result;
+        };
 
         let payload = SyncToJsonOutput {
             schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
-            source_workweave,
-            target: target_path,
-            retired: actually_retired,
+            source_workweave: coordinates.source_workweave,
+            target: coordinates.target.to_string_lossy().into_owned(),
+            retired: retired.is_some(),
             outcomes,
             project_repo_advance,
             resolution: ctx.resolution(),
@@ -5960,10 +6017,27 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
     json_exit_tail(any_failure, project_level_result)
 }
 
+/// What one repo's step-3 fast-forward did, taken from the reads the advance
+/// itself made.
+///
+/// The line the operator reads and the `step3_advance` record a `--json`
+/// consumer reads are two renderings of this one value. Derived separately —
+/// the text from the move, the record from a second HEAD read taken beside it
+/// — they could disagree about whether the same repo advanced, and about what
+/// it advanced from.
+#[derive(Debug)]
+struct FfAdvance {
+    /// The target's HEAD the ff decision was taken against.
+    from: ResolvedRevisionId,
+    /// The branch that received the landing; `None` when the target was
+    /// already at CWD's tip and nothing moved.
+    onto: Option<AttachedRef>,
+}
+
 /// Per-repo advance-target line, naming the branch that received the landing.
-fn ff_advance_line(advanced: Option<&AttachedRef>, tip: &ResolvedRevisionId) -> String {
+fn ff_advance_line(advance: &FfAdvance, tip: &ResolvedRevisionId) -> String {
     let short = &tip.as_str()[..8.min(tip.as_str().len())];
-    match advanced {
+    match &advance.onto {
         Some(branch) => format!("ff-advanced {branch} to {short}"),
         None => format!("already at {short}"),
     }
@@ -6006,7 +6080,7 @@ fn ff_advance_repo(
     target_repo: &Path,
     cwd_repo: &Path,
     cwd_tip: &ResolvedRevisionId,
-) -> anyhow::Result<Option<AttachedRef>> {
+) -> anyhow::Result<FfAdvance> {
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
     let target_tip = vcs
@@ -6014,7 +6088,10 @@ fn ff_advance_repo(
         .context("failed to read target HEAD")?;
 
     if target_tip == *cwd_tip {
-        return Ok(None); // already at the right tip
+        return Ok(FfAdvance {
+            from: target_tip,
+            onto: None,
+        }); // already at the right tip
     }
 
     // Landing must name the ref it lands on. `merge --ff-only` against a
@@ -6102,7 +6179,10 @@ fn ff_advance_repo(
     vcs.advance_attached_ref(&on, cwd_tip)
         .context("fast-forward advance failed in target")?;
 
-    Ok(Some(on))
+    Ok(FfAdvance {
+        from: target_tip,
+        onto: Some(on),
+    })
 }
 
 #[cfg(test)]
@@ -6191,8 +6271,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
-        let landed = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
-            .expect("an attached target accepts the landing")
+        let advance = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
+            .expect("an attached target accepts the landing");
+        let landed = advance
+            .onto
             .expect("the target moved, so a branch received it");
 
         assert_eq!(
@@ -6259,7 +6341,7 @@ mod tests {
         let landed = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
             .expect("an already-converged target is a no-op, detached or not");
         assert!(
-            landed.is_none(),
+            landed.onto.is_none(),
             "nothing moved, so no branch received anything"
         );
     }

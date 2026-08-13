@@ -183,7 +183,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the command was invoked from (null when invoked from the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff `--retire` was passed AND the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -224,18 +224,18 @@ Schema:
       ]
     },
     "retired": {
-      "description": "True iff `--retire` was passed AND retire actually fired (the workweave was deleted). False when `--retire` was not passed, or when retire was skipped (e.g. invoked from the primary weave).",
+      "description": "True iff retire deleted the workweave. False when `--retire` was not passed, when retire refused, and when retire was skipped (the op is rooted in the primary weave, where there is no workweave to delete).",
       "type": "boolean"
     },
     "source_workweave": {
-      "description": "The workweave name the command was invoked from; null when invoked from the primary weave.",
+      "description": "The workweave the op is rooted in; null when that is the primary weave. On a resumed op this is the workspace that owns the op record, which is not necessarily the one `--continue` was invoked from.",
       "type": [
         "string",
         "null"
       ]
     },
     "target": {
-      "description": "Absolute path of the target workspace that step-3 fast-forwarded.",
+      "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it.",
       "type": "string"
     }
   },
@@ -292,7 +292,7 @@ Schema:
       }
     },
     "Step3AdvanceOutput": {
-      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer. Omitted (`skip_serializing_if = \"Option::is_none\"`) in two cases: (a) no-op advance — target was already at CWD's tip; or (b) the pre-advance HEAD read failed (`head_revision` returned `Err`) — in that case `target_tip_before` is `None` and no record is emitted even if the ff succeeded.",
+      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
       "type": "object",
       "required": [
         "from_sha",

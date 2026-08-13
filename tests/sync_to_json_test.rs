@@ -242,6 +242,7 @@ fn sync_to_retire_json_round_trip() {
     let workweave_name = "sample-weave";
     let (primary, ww, primary_server, _ww_server, _primary_project, _ww_project, advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), workweave_name);
+    let target_server_before = git_out(&["rev-parse", "HEAD"], &primary_server);
 
     let assert = rwv()
         .args([
@@ -275,9 +276,10 @@ fn sync_to_retire_json_round_trip() {
         .get("target")
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("target must be present; got:\n{stdout}"));
-    assert!(
-        !target.is_empty(),
-        "target must be a non-empty path; got:\n{stdout}"
+    assert_eq!(
+        Path::new(target).canonicalize().ok(),
+        primary.canonicalize().ok(),
+        "target must name the workspace step 3 advanced; got:\n{stdout}"
     );
 
     // --- retired ---
@@ -323,6 +325,15 @@ fn sync_to_retire_json_round_trip() {
     assert_eq!(
         to_sha, advance_sha,
         "step3_advance.to_sha must equal the workweave's tip (== primary server HEAD after sync)"
+    );
+    let from_sha = step3
+        .get("from_sha")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("step3_advance.from_sha must be a string; got:\n{stdout}"));
+    assert_eq!(
+        from_sha, target_server_before,
+        "step3_advance.from_sha must be the tip the fast-forward moved off, which \
+         is the target's HEAD before the op"
     );
 
     // --- project_repo_advance ---
@@ -483,6 +494,68 @@ fn sync_to_json_retired_false_without_retire_flag() {
 }
 
 // ===========================================================================
+// `retired` reports the delete, not the flag
+// ===========================================================================
+
+/// `--retire --json` whose retire refuses: the envelope must say the
+/// workweave was not retired, because it was not.
+///
+/// An untracked file passes the op-start dirt preflight (tracked changes
+/// only) and fails retire's delete gate (any uncommitted state), so every
+/// phase up to retire lands and retire is the one that refuses. What a
+/// consumer reads then has to match what is on disk: `retired: false`, and a
+/// workweave still standing.
+#[test]
+fn sync_to_json_retired_false_when_the_retire_check_refuses() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, primary_server, ww_server, _primary_project, _ww_project, advance_sha) =
+        make_workweave_ahead_fixture(tmp.path(), "refused-ww");
+
+    std::fs::write(ww_server.join("scratch.txt"), "not committed\n").unwrap();
+
+    let assert = rwv()
+        .args([
+            "sync-to",
+            &primary.to_string_lossy(),
+            "--strategy=rebase",
+            "--retire",
+            "--json",
+        ])
+        .current_dir(&ww)
+        .assert()
+        .failure();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("--retire: workweave has uncommitted changes"),
+        "the fixture must reach retire and be refused there; got stderr:\n{stderr}"
+    );
+    // The landing itself happened, so the envelope below describes an op that
+    // did everything except the retire it is being asked about.
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary_server),
+        advance_sha,
+        "advance-target must have landed the workweave's tip in the target"
+    );
+    assert!(
+        ww.exists(),
+        "the refused retire must leave the workweave standing"
+    );
+
+    let parsed: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("the envelope must still be emitted ({e}):\n{stdout}"));
+    let retired = parsed
+        .get("retired")
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("retired must be a bool; got:\n{stdout}"));
+    assert!(
+        !retired,
+        "retired must be false when the workweave is still on disk; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
 // step3_advance is absent for repos already at the target tip (no-op advance)
 // ===========================================================================
 
@@ -590,14 +663,13 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     );
 }
 
-/// Regression: `rwv sync-to <target> --json` from a directory that is not
-/// inside any repoweave workspace must NOT panic. Before the fix, the
-/// `target_path` derivation block called
-/// `WorkspaceContext::resolve(cwd, None).expect("cwd must be resolvable")` as
-/// its error fallback — which panicked with a backtrace instead of surfacing
-/// the real "no repoweave workspace found" error.
+/// `rwv sync-to <target> --json` from a directory that is not inside any
+/// repoweave workspace refuses with the workspace-resolution error, and
+/// nothing on the way there panics: no envelope field is worth resolving a
+/// workspace for a second time, with an `expect` standing in for the refusal
+/// the operator should be reading.
 ///
-/// After the fix the binary must:
+/// The binary must:
 ///   - exit non-zero,
 ///   - emit the normal no-workspace anyhow error on stderr,
 ///   - produce NO panic / backtrace output anywhere.
