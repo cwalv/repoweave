@@ -1108,9 +1108,22 @@ fn abandon_refuses_when_the_pre_abort_ref_no_longer_holds_the_observed_tip() {
         Some(first_foreign.as_str()),
         "first-write-wins still holds — the refusal must not rewrite the capture"
     );
+    // "It refused" is not the claim. The claim is that it refused FOR THIS
+    // REASON and said which tip the reference actually holds — without that
+    // SHA the operator cannot tell which commits are already safe, and a
+    // message naming the observed tip instead would read as if nothing were
+    // wrong. So the assertion is on the line, not on the transcript: the
+    // whole-stderr `contains` it replaces was green for any SHA at all.
+    let consent_line = stderr
+        .lines()
+        .find(|line| line.contains("--abandon-foreign-tip named this repo"))
+        .unwrap_or_else(|| {
+            panic!("a refusal that arrives despite consent must say why.\nstderr:\n{stderr}")
+        });
     assert!(
-        stderr.contains("--abandon-foreign-tip named this repo"),
-        "a refusal that arrives despite consent must say why.\nstderr:\n{stderr}"
+        consent_line.contains(&first_foreign),
+        "the refusal must name the stale capture ({first_foreign}) as the cause, \
+         not merely report a refusal.\nconsent line: {consent_line}"
     );
     assert!(
         ws.root.join(".rwv-op").exists(),
