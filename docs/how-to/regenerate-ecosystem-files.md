@@ -10,6 +10,7 @@ The normal paths (`rwv add`, `rwv remove`) run activation hooks automatically, s
 - You edited `rwv.toml` directly (e.g., to adjust an integration config) and want the generated files to reflect the change.
 - A workweave was created or switched and the ecosystem files at the weave root are symlinked to the wrong project.
 - `rwv lock` noted: "to refresh ecosystem files after membership changes, run `rwv activate`."
+- You are inside a workweave, where `rwv activate` is refused — see [Inside a workweave](#inside-a-workweave-rwv-materialize) below.
 
 ## Regenerate with `rwv activate`
 
@@ -30,6 +31,27 @@ rwv activate <project> --no-materialize
 ```
 
 Re-activating a project that is already active is valid and idempotent — it re-runs the activation hooks and install without switching projects.
+
+## Inside a workweave: `rwv materialize`
+
+`rwv activate` is refused inside a workweave: activation also *selects* a project, and a workweave's project is fixed at creation. Materialization carries no such restriction, and it is its own verb:
+
+```bash
+rwv materialize
+```
+
+It takes no project argument — it materializes the project the checkout already presents. Reach for it wherever you would have re-activated purely to re-run installs, and after `rwv sync` delivers changes that touch a materialized input.
+
+Like activation, it never advances a version an existing lock file pins.
+
+Generated files rwv attests but whose current content it never accepted **stop the run** rather than being overwritten. The refusal lists every path at stake, so running once with no flag is how you see it; the two ways out destroy opposite things, so each is asked for explicitly:
+
+```bash
+rwv materialize --regenerate-drifted   # discard the current content, re-derive from inputs
+rwv materialize --adopt-drifted        # record the current content as the accepted generation
+```
+
+What `--regenerate-drifted` discards is not recoverable through rwv — copy anything you mean to keep out of the tree first.
 
 ## Verify the result
 
@@ -74,3 +96,4 @@ If you need to regenerate a file that is fully rwv-owned (like a `gita/` CSV), `
 - [workspace lens](../explanation/lenses/workspace.md) — what activation does and why it runs an install step
 - [reference/integrations](../reference/integrations/index.md) — per-integration generated-file format
 - [CLI reference: `rwv activate`](../reference/cli.md#rwv-activate-project)
+- [CLI reference](../reference/cli.md) — `rwv materialize` and its drift-consent flags
