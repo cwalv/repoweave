@@ -283,11 +283,15 @@ Coordinated cross-repo push. Default scope: `owned` and `fork` repos (the roles 
 
 Anchored by `tests/doc_claims_push_test.rs` and `tests/push_json_test.rs`. See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
-### `rwv abort`
+### `rwv abort [--abandon-foreign-tip <repo>]`
 
 Restore CWD's workspace to its pre-sync state using savepoint refs at `refs/rwv/pre-op/<op-id>`. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`).
 
-Errors if no sync operation is in progress.
+| Flag | Effect |
+|---|---|
+| `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `(project)`. The abandoned commits stay reachable at `refs/rwv/pre-abort/<op-id>`; where that reference does not already hold the tip, abort refuses even with the flag. |
+
+Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset.
 
 ### `rwv status [--json] [...]`
 

@@ -106,7 +106,9 @@ rwv abort
 ```
 
 `rwv abort` reads the `.rwv-op` file to identify the operation and the
-involved workspaces. No flags are required or accepted.
+involved workspaces. No flags are required. The one it accepts,
+`--abandon-foreign-tip`, is for a refusal you have not hit yet — see
+[below](#if-rwv-abort-reports-a-foreign-tip-violation).
 
 Before restoring any repo, `rwv abort` writes a durable pre-abort reference at
 `refs/rwv/pre-abort/<op-id>` in that repo (first-write-wins across abort

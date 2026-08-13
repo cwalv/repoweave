@@ -66,6 +66,18 @@ Each named override is narrow — it bypasses one named precondition at a
 time. It does not turn into "disable all checks" — each precondition
 that an override bypasses is enumerated at the call site.
 
+`abort --abandon-foreign-tip=<repo>` shows how narrow "narrow" is meant
+to be. It waives one precondition (the tip must be attributable to the
+op) for one repo per occurrence, and has no all-repos form — whether a
+particular repo's foreign commits are expendable is a judgement about
+those commits, so a blanket spelling would answer it for repos the
+operator never looked at. It is also the case where rule 3 does the
+naming: the flag says *abandon*, not *discard*, because the pre-abort
+ref written before the move keeps the commits reachable. Where that ref
+does not already hold the tip in question, the override does not apply
+and the refusal stands — an override buys a waiver of the precondition
+it names, never of rule 3.
+
 `push --force` is the deliberate exception to the naming rule: it is
 not a precondition waiver but a **mode switch** — git's own vocabulary
 for which of two operations `rwv push` is performing. Renaming it would

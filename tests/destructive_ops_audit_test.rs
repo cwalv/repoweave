@@ -321,9 +321,16 @@ const ALLOWLIST: &[Allowed] = &[
             --discard-local-commits and the guard is the warrant.) \
             (2) reset_and_drop_savepoint(): \
             shared helper factored from verified_restore_savepoint(); called \
-            only from the mid-op, intent, and converged branches — each \
-            gated on their respective attributable-tip precondition before \
-            the helper is reached (design § 5). The unverified \
+            from the mid-op, intent, and converged branches — each gated on \
+            their respective attributable-tip precondition before the helper \
+            is reached (design § 5) — and from the foreign-tip branch under \
+            ForeignTipPolicy::Abandon, which is the operator's \
+            --abandon-foreign-tip naming that one repo. That fourth branch \
+            waives the attributability precondition and no other: it is \
+            still gated on the pre-abort ref already resolving to the \
+            observed tip, so the commits it moves the branch off remain \
+            reachable and the flag consents to abandonment rather than \
+            loss. The unverified \
             restore_savepoint() that used to sit between these two — a bare \
             `reset --hard` on the public trait, gated by nothing — was \
             deleted, so verified_restore_savepoint is the only way to reach \
