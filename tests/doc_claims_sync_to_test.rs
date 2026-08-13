@@ -584,11 +584,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
 
     // Target holds an untracked file at that exact path — the collision.
-    std::fs::write(
-        primary.server_dir.join("newfile.txt"),
-        "primary scratch\n",
-    )
-    .unwrap();
+    std::fs::write(primary.server_dir.join("newfile.txt"), "primary scratch\n").unwrap();
 
     let primary_project_tip_before = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
     let primary_server_tip_before = git_out(&["rev-parse", "HEAD"], &primary.server_dir);

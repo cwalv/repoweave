@@ -6379,11 +6379,15 @@ fn ff_advance_repo(
     // incoming path, which the `UntrackedCollision` arm below names.
     if let Err(e) = vcs.advance_attached_ref(&on, cwd_tip) {
         if let VcsError::UntrackedCollision { repo, paths } = &e {
+            // advance-target is sync-to only (see the module comment above
+            // `run_advance_target`), so the resume command is fixed rather
+            // than read off a `verb` this leaf has no context to carry.
+            let resume = op_state::resume_command(OpVerb::SyncTo);
             anyhow::bail!(
                 "target repo at {} has untracked file(s) that collide with paths this \
                  fast-forward would write:\n  {}\n\
                  \n\
-                 Move or remove them in the target, then `rwv sync-to --continue`.",
+                 Move or remove them in the target, then `{resume}`.",
                 repo.display(),
                 paths.join("\n  "),
             );

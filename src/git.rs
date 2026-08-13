@@ -905,6 +905,15 @@ impl GitVcs {
     /// `None` when `stderr` isn't shaped like that refusal, so a caller falls
     /// back to the raw [`VcsError::CommandFailed`] instead of misreading an
     /// unrelated ff-only failure (real divergence, an unknown ref) as a file list.
+    ///
+    /// **English-only.** [`git_command`] pins no `LC_ALL`/`LANG`, so a
+    /// translated git prints different wording and this returns `None` —
+    /// the caller falls back to the raw error, which still refuses (the
+    /// safety is git's own, not this parse's) but loses the named path list
+    /// and the `--continue` hint. Pinning the locale would make the match
+    /// unconditional, but it means changing what every git subprocess in
+    /// this codebase inherits, not just this one call site; that is a
+    /// wider change than this refusal justifies on its own.
     fn untracked_collision_paths(stderr: &str) -> Option<Vec<String>> {
         let after_header = stderr.split("would be overwritten by merge:").nth(1)?;
         let before_trailer = after_header.split("Please move or remove them").next()?;
