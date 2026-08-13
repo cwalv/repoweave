@@ -1059,6 +1059,93 @@ fn pull_destination_lock_behind_head_syncs_and_performs_the_relock_itself() {
     );
 }
 
+/// The trap's second act. The relaxed pull's own relock leaves the
+/// destination's project repo one commit ahead of the source, so a second bare
+/// pull refuses at the ancestry gate — over rwv's own bookkeeping. The gate is
+/// correct to refuse (a bare pull fast-forwards, and ff cannot advance past a
+/// destination-only commit without discarding it), so what carries the
+/// operator is the refusal's evidence: it must quote the relock commit's
+/// subject, making the blocking commit recognisable as rwv's own, and the
+/// strategy it names must then converge rather than manufacture a third
+/// refusal.
+#[test]
+fn second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges() {
+    let f = fixture();
+    let ww_tip = commit_file(&f.ww.manifest_repo, "f.txt", "f\n", "ww: feature");
+    rwv()
+        .args(["sync", "primary"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+
+    let assert = rwv()
+        .args(["sync", "primary"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("strictly ahead of source workspace") && stderr.contains("by 1 commit"),
+        "the second pull's refusal must state the destination's relation to the source; \
+         got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("lock: auto-relock after sync from"),
+        "the evidence block must quote the relock commit's subject, so the operator can \
+         recognise the blocking commit as rwv's own bookkeeping; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--strategy rebase"),
+        "the refusal must name the strategy that lands the relock commit; got:\n{stderr}"
+    );
+
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    // DELIVERED — the named remedy converged: the lock still pins the
+    // destination's member tip and the member work survived.
+    let lock = repoweave::manifest::LockFile::from_json_str(
+        &std::fs::read_to_string(f.ww.project_dir.join("rwv.lock")).unwrap(),
+    )
+    .unwrap();
+    let pinned = lock
+        .iter_entries()
+        .find(|(p, _)| p.as_str() == MANIFEST_REPO_PATH)
+        .expect("the fixture's one manifest repo must be in the lock")
+        .1
+        .version
+        .as_str()
+        .to_owned();
+    assert_eq!(
+        pinned, ww_tip,
+        "after the remedy the destination's lock must still pin the destination's member tip"
+    );
+    assert_eq!(
+        head(&f.ww.manifest_repo),
+        ww_tip,
+        "the remedy must not rewind the destination's own committed member work"
+    );
+    // The remedy cannot retire the shape: the relock survives the replay, so
+    // the destination is again exactly one bookkeeping commit ahead and the
+    // NEXT bare pull wants the flag again, until the relock lands in the
+    // source. The refusal's evidence block is what carries the operator
+    // through each round.
+    let ahead = git_out(
+        &[
+            "log",
+            "--oneline",
+            &format!("{}..HEAD", head(&f.main.project_dir)),
+        ],
+        &f.ww.project_dir,
+    );
+    assert!(
+        ahead.lines().count() == 1 && ahead.contains("lock: auto-relock after sync from"),
+        "after the remedy the destination must be ahead by exactly its own relock; got:\n{ahead}"
+    );
+}
+
 /// The relaxation is scoped to `Ahead`. A destination whose lock records a
 /// commit HEAD lacks is still anomalous and still refuses — and because the
 /// remedy it names lands a project-repo commit, the refusal must also name the
