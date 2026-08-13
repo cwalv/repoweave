@@ -934,6 +934,16 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
         stderr.contains("rwv doctor --fix"),
         "bail must direct the operator at `rwv doctor --fix`; got stderr:\n{stderr}"
     );
+    // primary (the rebase base) independently inherited the same both-lines
+    // commit — the refusal must say so and name primary's own directory, not
+    // just ww's, or the operator fixes ww alone, retries, and meets a raw git
+    // conflict instead of a second actionable refusal.
+    assert!(
+        stderr.contains("the same kind of problem")
+            && stderr.contains(&primary.project_dir.display().to_string()),
+        "bail must ALSO name the rebase-base workspace's directory when it \
+         independently has the same problem; got stderr:\n{stderr}"
+    );
 
     // The remedy claim: `rwv doctor --fix` actually resolves this state.
     // Both checkouts inherited the both-lines commit independently (each
@@ -975,6 +985,80 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
         .current_dir(&ww.root)
         .assert()
         .success();
+}
+
+/// The precondition must also check the workspace a rebase replays ONTO, not
+/// just the CWD workspace running the sync: that other workspace's committed
+/// `.gitattributes` is the tree git checks out as the rebase base, so it
+/// governs `rwv.lock`'s driver for every early pick regardless of what CWD's
+/// own `.gitattributes` says. A CWD-only check would pass here (ww's is
+/// clean), the rebase would proceed, and the operator would meet a raw git
+/// merge conflict instead of an actionable refusal.
+#[test]
+fn sync_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory() {
+    let tmp = common::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let primary = make_primary(tmp.path());
+    let ww = create_workweave(&primary, &weaveroot, "ww");
+
+    // ww: bump the manifest repo + lock. ww's own .gitattributes stays the
+    // clean single-line form `make_primary` wrote — never touched.
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
+    rwv_lock_commit(&ww.root);
+
+    // Corrupt PRIMARY's committed .gitattributes to the both-lines state,
+    // directly (not through rwv) — simulating a state that arose some other
+    // way, e.g. a hand edit.
+    std::fs::write(
+        primary.project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\nrwv.lock merge=ours\n",
+    )
+    .unwrap();
+    git(&["add", ".gitattributes"], &primary.project_dir);
+    git(
+        &["commit", "-m", "corrupt: both attrs lines"],
+        &primary.project_dir,
+    );
+
+    // Advance primary further via a sibling workweave, landed via ff (ff
+    // does not consult the invariant), so ww's rebase has a divergence to
+    // replay onto.
+    let wa = create_workweave(&primary, &weaveroot, "wa");
+    commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
+    rwv_lock_commit(&wa.root);
+    rwv()
+        .args(["sync", &wa.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // From ww: attempt rebase sync onto primary. ww's OWN committed
+    // .gitattributes is clean, so this must fail on primary's state, not
+    // ww's — and the refusal must name primary's directory, not ww's.
+    let assert = rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("the workspace this rebase replays onto")
+            && stderr.contains(&primary.project_dir.display().to_string()),
+        "the refusal must name the rebase-base workspace's directory, not just cwd's; \
+         got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv doctor --fix"),
+        "the refusal must direct the operator at `rwv doctor --fix`; got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains(&ww.project_dir.display().to_string()),
+        "the refusal must not blame ww's directory — ww's own .gitattributes is clean; \
+         got:\n{stderr}"
+    );
 }
 
 // ---------------------------------------------------------------------------

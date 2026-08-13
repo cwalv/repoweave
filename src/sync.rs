@@ -1172,10 +1172,22 @@ fn per_conflict_bail_message(
 /// either way. `rwv doctor --fix` resolves this state by dropping the
 /// legacy line.
 ///
+/// The same three states are also checked against `source_project_dir` —
+/// the tree git checks out as the rebase base, so ITS committed
+/// `.gitattributes` governs `rwv.lock`'s driver for every commit replayed
+/// before this workspace's own tip is reached, regardless of what this
+/// workspace's `.gitattributes` says. A remedy that only names `cwd_project_dir`
+/// can leave the operator fixing one side, retrying, and meeting a raw git
+/// merge conflict instead of a second, equally actionable refusal.
+///
 /// The .gitattributes assignment itself is NOT written by this function
 /// — that's `rwv doctor --fix`'s job, and requires a commit which sync
 /// must not silently make on the operator's behalf.
-fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> anyhow::Result<()> {
+fn verify_replay_exclusion_invariant(
+    vcs: &dyn Vcs,
+    cwd_project_dir: &Path,
+    source_project_dir: &Path,
+) -> anyhow::Result<()> {
     // Plant the durable config first — regardless of whether the
     // .gitattributes assignment is present, having the driver defined
     // makes any downstream `git rebase --continue` safe against the
@@ -1198,6 +1210,19 @@ fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> a
     )
     .unwrap_or(false);
 
+    // A self-sync (cwd and the rebase base are literally the same checkout)
+    // has nothing more to say about "the other side" — skip it rather than
+    // have the same directory's problem echoed back as if it were a second one.
+    let source_problem = if source_project_dir == cwd_project_dir {
+        None
+    } else {
+        committed_replay_exclusion_problem(vcs, source_project_dir)
+    };
+    let also_broken = source_problem
+        .as_ref()
+        .map(|p| replay_exclusion_also_broken_note(source_project_dir, p))
+        .unwrap_or_default();
+
     if has_new && has_legacy {
         anyhow::bail!(
             "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
@@ -1213,14 +1238,20 @@ fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> a
              the legacy line, leaving only `rwv.lock merge=rwv-ours`, and \
              commits the change:\n\
                cd {dir}\n\
-               rwv doctor --fix",
+               rwv doctor --fix{also_broken}",
             ga = cwd_project_dir.join(".gitattributes").display(),
             dir = cwd_project_dir.display(),
         )
     }
 
     if has_new {
-        return Ok(());
+        return match source_problem {
+            None => Ok(()),
+            Some(problem) => anyhow::bail!(replay_exclusion_source_only_refusal(
+                source_project_dir,
+                &problem,
+            )),
+        };
     }
 
     if has_legacy {
@@ -1237,7 +1268,7 @@ fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> a
              rewrites the `.gitattributes` line to the new spelling AND \
              commits the change:\n\
                cd {dir}\n\
-               rwv doctor --fix",
+               rwv doctor --fix{also_broken}",
             ga = cwd_project_dir.join(".gitattributes").display(),
             dir = cwd_project_dir.display(),
         )
@@ -1254,9 +1285,97 @@ fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> a
          To fix: run `rwv doctor --fix` from this workspace, then commit the result:\n\
            cd {dir}\n\
            rwv doctor --fix\n\
-           git add .gitattributes && git commit -m \"chore: add rwv.lock replay-exclusion\"",
+           git add .gitattributes && git commit -m \"chore: add rwv.lock replay-exclusion\"{also_broken}",
         ga = cwd_project_dir.join(".gitattributes").display(),
         dir = cwd_project_dir.display(),
+    )
+}
+
+/// Which committed replay-exclusion problem (if any) `project_dir` has, using
+/// the same three-state classification `verify_replay_exclusion_invariant`
+/// applies to `cwd_project_dir` — reused so a second call site cannot drift
+/// from the first's notion of "broken".
+enum ReplayExclusionCommittedProblem {
+    Both,
+    LegacyOnly,
+    Absent,
+}
+
+fn committed_replay_exclusion_problem(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+) -> Option<ReplayExclusionCommittedProblem> {
+    let has_new = vcs
+        .has_committed_replay_exclusion(project_dir, Path::new(LockFile::FILE_NAME))
+        .unwrap_or(false);
+    let has_legacy = crate::git::has_committed_legacy_replay_exclusion(
+        project_dir,
+        Path::new(LockFile::FILE_NAME),
+    )
+    .unwrap_or(false);
+    match (has_new, has_legacy) {
+        (true, true) => Some(ReplayExclusionCommittedProblem::Both),
+        (true, false) => None,
+        (false, true) => Some(ReplayExclusionCommittedProblem::LegacyOnly),
+        (false, false) => Some(ReplayExclusionCommittedProblem::Absent),
+    }
+}
+
+fn replay_exclusion_problem_summary(problem: &ReplayExclusionCommittedProblem) -> &'static str {
+    match problem {
+        ReplayExclusionCommittedProblem::Both => {
+            "it carries both the current `rwv.lock merge=rwv-ours` line and the legacy \
+             `rwv.lock merge=ours` spelling"
+        }
+        ReplayExclusionCommittedProblem::LegacyOnly => {
+            "it still carries only the legacy `rwv.lock merge=ours` spelling"
+        }
+        ReplayExclusionCommittedProblem::Absent => {
+            "it has no `rwv.lock merge=rwv-ours` entry at all"
+        }
+    }
+}
+
+/// Appended to a `cwd_project_dir` refusal when `source_project_dir` — the
+/// tree the rebase checks out as its base — has the same kind of problem.
+/// Both fixes are named up front rather than discovered one at a time across
+/// two failed sync attempts, the second of which would otherwise be a raw
+/// git merge conflict instead of an actionable refusal.
+fn replay_exclusion_also_broken_note(
+    source_project_dir: &Path,
+    problem: &ReplayExclusionCommittedProblem,
+) -> String {
+    format!(
+        "\n\nThe workspace this rebase replays onto, at {dir}, has the same kind of \
+         problem: {summary}. Fix it there too, separately, before this converges:\n\
+           cd {dir}\n\
+           rwv doctor --fix",
+        dir = source_project_dir.display(),
+        summary = replay_exclusion_problem_summary(problem),
+    )
+}
+
+/// Refusal for the case `cwd_project_dir` is clean but `source_project_dir`
+/// — the rebase base — is not: the invariant's own committed-file check
+/// would otherwise pass while the replay still conflicts on the first
+/// `rwv.lock`-touching pick, because the base's `.gitattributes` (not this
+/// workspace's) governs which driver git resolves during that pick.
+fn replay_exclusion_source_only_refusal(
+    source_project_dir: &Path,
+    problem: &ReplayExclusionCommittedProblem,
+) -> String {
+    format!(
+        "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` in the committed \
+         .gitattributes of the workspace this rebase replays onto — {dir} — not just this \
+         one's: {summary}. That tree is what git checks out as the rebase base, so it \
+         governs rwv.lock's driver for every pick before this workspace's own tip is \
+         reached, regardless of what this workspace's own .gitattributes says.\n\
+         \n\
+         To fix: run `rwv doctor --fix` there:\n\
+           cd {dir}\n\
+           rwv doctor --fix",
+        dir = source_project_dir.display(),
+        summary = replay_exclusion_problem_summary(problem),
     )
 }
 
@@ -2644,7 +2763,7 @@ fn run_preconditions_after_acquire(
         }
     }
     if matches!(strategy, SyncStrategy::Rebase) {
-        verify_replay_exclusion_invariant(project_vcs, cwd_project_dir)?;
+        verify_replay_exclusion_invariant(project_vcs, cwd_project_dir, source_project_dir)?;
     }
     let cwd_project_tip = project_vcs
         .head_revision(cwd_project_dir)
