@@ -2903,18 +2903,25 @@ mod branch_model_tests {
     /// Silence is the point: git contributes no mention of a hook to its own
     /// output, so a hook that also says nothing leaves the word absent from
     /// every byte an operator or a matcher could read.
-    #[cfg(unix)]
+    ///
+    /// A caller must assert that the add FAILED before it asserts how the
+    /// failure was classified. That assertion is what proves the hook fired.
     fn plant_silent_refusing_hook(repo: &Path) {
-        use std::os::unix::fs::PermissionsExt;
         let hooks = repo.join(".git/hooks");
         std::fs::create_dir_all(&hooks).unwrap();
         let hook = hooks.join("post-checkout");
         std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Nothing to set on Windows: git's own `access()` there masks off
+        // X_OK, so a hook file that exists is one git runs, and git resolves
+        // the shebang itself rather than leaving it to the OS.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
     }
 
     #[test]
-    #[cfg(unix)]
     fn a_refusing_hook_is_reported_as_a_hook_rejection() {
         let store = repo();
         let start = GitVcs.head_revision(store.path()).unwrap();

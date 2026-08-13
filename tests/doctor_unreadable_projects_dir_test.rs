@@ -42,6 +42,13 @@ fn permissions_are_enforced(parent: &Path) -> bool {
 /// (rather than in a guard the caller must remember) keeps a panicking
 /// assertion from leaving the fixture directory locked for whatever cleans
 /// up the temp dir afterward.
+///
+/// This is the half that does not port. Mode `0o000` denies a directory
+/// listing on Unix; on Windows the read-only attribute is the nearest
+/// spelling and it does not deny one at all, so `rwv doctor` would read the
+/// directory, find it empty, and report nothing — leaving the callers below
+/// red against correct code. An ACL deny entry is the Windows mechanism, and
+/// it is different machinery rather than a different call.
 #[cfg(unix)]
 fn run_with_unreadable_dir(ws: &Path, dir: &Path, args: &[&str]) -> std::process::Output {
     let original = std::fs::metadata(dir).unwrap().permissions();
@@ -57,6 +64,8 @@ fn run_with_unreadable_dir(ws: &Path, dir: &Path, args: &[&str]) -> std::process
     out
 }
 
+/// Gated on the fixture, not the subject: an unreadable `projects/` is built
+/// with a mode bit, and Windows has no attribute that denies a listing.
 #[test]
 #[cfg(unix)]
 fn doctor_reports_an_unreadable_projects_dir() {
@@ -90,6 +99,8 @@ fn doctor_reports_an_unreadable_projects_dir() {
     );
 }
 
+/// Gated on the fixture, not the subject: an unreadable `projects/` is built
+/// with a mode bit, and Windows has no attribute that denies a listing.
 #[test]
 #[cfg(unix)]
 fn doctor_json_includes_projects_dir_unreadable() {

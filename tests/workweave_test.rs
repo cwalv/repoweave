@@ -3061,14 +3061,24 @@ fn create_workweave_succeeds_when_all_repos_have_commits() {
 /// registered the worktree before running the hook.
 /// The returned hook path is the installed executable so the test can remove
 /// or modify it later if needed.
-#[cfg(unix)]
+///
+/// A caller must assert that the operation it drives FAILED before it asserts
+/// anything about residue. That assertion is what proves the hook fired; drop
+/// it and every residue assertion below holds just as well against a create
+/// that never rolled back.
 fn plant_failing_post_checkout_hook(repo: &Path) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let hooks_dir = repo.join(".git/hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let hook_path = hooks_dir.join("post-checkout");
     std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Nothing to set on Windows: git's own `access()` there masks off X_OK, so
+    // a hook file that exists is one git runs, and git resolves the shebang
+    // itself rather than leaving it to the OS.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     hook_path
 }
 
@@ -3091,15 +3101,7 @@ fn assert_no_branches_with_prefix(repo: &Path, prefix: &str) {
 /// This is the end-to-end test of the R25 rollback contract: the operator
 /// should be able to fix the hook, rerun `rwv workweave create`, and succeed
 /// without any manual `git worktree prune` or `git branch -D` steps.
-///
-/// Not gated because its subject is Unix — the rollback contract is portable.
-/// Gated because whether Git for Windows executes a `#!/bin/sh` post-checkout
-/// hook is unestablished, and this test needs the hook to FIRE. If it does not,
-/// the create succeeds and every residue assertion below passes against a
-/// rollback that never ran. The `.failure()` assertion on the create is what
-/// makes the rest non-vacuous, and it is exactly what would stop holding.
 #[test]
-#[cfg(unix)]
 fn hook_rejected_create_leaves_no_registration_and_no_branch() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproject");
@@ -3145,15 +3147,7 @@ fn hook_rejected_create_leaves_no_registration_and_no_branch() {
 /// not only prune the worktree registration.
 ///
 /// This exercises the "earlier repos' state cleaned up too" requirement.
-///
-/// Not gated because its subject is Unix — the rollback contract is portable.
-/// Gated because whether Git for Windows executes a `#!/bin/sh` post-checkout
-/// hook is unestablished, and this test needs the hook to FIRE. If it does not,
-/// the create succeeds and every residue assertion below passes against a
-/// rollback that never ran. The `.failure()` assertion on the create is what
-/// makes the rest non-vacuous, and it is exactly what would stop holding.
 #[test]
-#[cfg(unix)]
 fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
@@ -3240,14 +3234,14 @@ role = "owned"
 /// NOTE: `CreateRollbackGuard` is private; the test drives `create_workweave`
 /// via the public API and inspects the returned error string.
 ///
-/// Not gated because its subject is Unix — the rollback contract is portable.
-/// Gated because whether Git for Windows executes a `#!/bin/sh` post-checkout
-/// hook is unestablished, and this test needs the hook to FIRE. If it does not,
-/// the create succeeds and every residue assertion below passes against a
-/// rollback that never ran. The `.failure()` assertion on the create is what
-/// makes the rest non-vacuous, and it is exactly what would stop holding.
-/// It also drops a directory's write permission to force the cleanup failure,
-/// which a Windows read-only attribute does not do — that half needs an ACL.
+/// Not gated because its subject is Unix — the rollback contract is portable —
+/// and not gated because of the hook, which runs anywhere git does. Gated on
+/// the obstruction the hook installs: `chmod 500` on `refs/heads`. On Windows
+/// a read-only directory attribute does not stop a file being created or
+/// removed inside it, so `git branch -D` would succeed, no cleanup failure
+/// would occur, and the assertions below would look for a manual-cleanup note
+/// that correct code had no reason to emit. Denying that write there takes an
+/// ACL deny entry, which is a different fixture, not a different spelling.
 #[test]
 #[cfg(unix)]
 fn cleanup_failure_preserves_original_error_with_manual_note() {

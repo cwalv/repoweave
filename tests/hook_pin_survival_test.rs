@@ -716,6 +716,14 @@ fn materialize_leaves_a_pin_byte_identical() {
 
 /// Shim `name` into `bin_dir` so it records its argv in `log` and otherwise
 /// does as little as it can get away with.
+///
+/// The shim is a shebang script that `rwv` must find on `PATH` and spawn
+/// itself. That is a strictly harder thing to ask for than a git hook: git
+/// reads the `#!` line and looks the interpreter up on its own, whereas an
+/// ordinary process spawn on Windows does not, and an extensionless file is
+/// not a candidate there at all because lookup selects on `PATHEXT`. So this
+/// fixture needs both a Windows spelling for the script and a decision about
+/// what an executable's name means there before it can port.
 #[cfg(unix)]
 fn write_shim(bin_dir: &Path, name: &str, log: &Path, body: &str) {
     use std::os::unix::fs::PermissionsExt;
@@ -741,6 +749,10 @@ fn write_shim(bin_dir: &Path, name: &str, log: &Path, body: &str) {
 /// `npm update`, `pnpm update`, `uv lock --upgrade` and a `cargo
 /// generate-lockfile` over an existing lock are the shapes it exists to keep
 /// out.
+///
+/// Gated on the fixture, not the subject: which commands an activation may run
+/// is a portable contract, but the instrument that observes them is a shebang
+/// shim on `PATH`, which Windows will neither find nor spawn.
 #[cfg(unix)]
 #[test]
 fn a_hooked_activation_runs_only_materializing_commands() {

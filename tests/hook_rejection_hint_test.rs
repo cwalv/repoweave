@@ -45,14 +45,22 @@ fn write_manifest(project_dir: &Path, repo_path: &Path) {
 
 /// A `post-checkout` hook that refuses and prints nothing, so the word "hook"
 /// appears nowhere in what git hands back.
-#[cfg(unix)]
+///
+/// A caller must assert that the create FAILED before it asserts anything
+/// about the operator text. That assertion is what proves the hook fired.
 fn plant_silent_refusing_hook(repo: &Path) {
-    use std::os::unix::fs::PermissionsExt;
     let hooks = repo.join(".git/hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     let hook = hooks.join("post-checkout");
     std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // Nothing to set on Windows: git's own `access()` there masks off X_OK, so
+    // a hook file that exists is one git runs, and git resolves the shebang
+    // itself rather than leaving it to the OS.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
 }
 
 /// Fail loudly if a fixture smuggles the word in by way of a path, which would
@@ -67,12 +75,7 @@ fn assert_word_absent_from_paths(paths: &[&Path]) {
     }
 }
 
-/// Unix-gated for the same reason the rollback suite is: whether Git for
-/// Windows runs a `#!/bin/sh` hook is unestablished, and this test needs the
-/// hook to FIRE. If it did not, the create would succeed and the assertion
-/// would fail for a reason that is not the invariant.
 #[test]
-#[cfg(unix)]
 fn a_silent_hook_refusing_a_manifest_repo_is_still_named_to_the_operator() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
@@ -110,7 +113,6 @@ fn a_silent_hook_refusing_a_manifest_repo_is_still_named_to_the_operator() {
 }
 
 #[test]
-#[cfg(unix)]
 fn a_silent_hook_refusing_the_project_repo_is_still_named_to_the_operator() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");

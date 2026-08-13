@@ -158,6 +158,14 @@ fn git_init_with_commit(dir: &Path) {
 /// unsound under a parallel test runner because it mutates process-wide
 /// state, this only ever changes the `PATH` of one subprocess this test
 /// starts itself.
+///
+/// The shim is a shebang script the child must find on `PATH` and spawn
+/// itself. That is a strictly harder thing to ask for than a git hook: git
+/// reads the `#!` line and looks the interpreter up on its own, whereas an
+/// ordinary process spawn on Windows does not, and an extensionless file is
+/// not a candidate there at all because lookup selects on `PATHEXT`. So this
+/// fixture needs both a Windows spelling for the script and a decision about
+/// what an executable's name means there before it can port.
 #[cfg(unix)]
 fn write_exit_code_shim(bin_dir: &Path, name: &str, exit_code: i32) {
     use std::os::unix::fs::PermissionsExt;
@@ -7743,6 +7751,10 @@ mod activate_hooks {
     /// so a real binary earlier on that `PATH` is what makes the failure
     /// happen, rather than a string this test builds and checks against
     /// itself.
+    ///
+    /// Gated on the fixture, not the subject: the hint text is portable, but a
+    /// `cargo` that reliably fails is a shebang shim on `PATH`, which Windows
+    /// will neither find nor spawn.
     #[cfg(unix)]
     #[test]
     fn cargo_activate_hook_failure_names_exclude_and_members_hints() {
@@ -7842,6 +7854,10 @@ mod activate_hooks {
     /// before exiting 0 — to prove the check downstream of that state is
     /// still live, independent of whether today's cargo happens to trigger
     /// it on this host.
+    ///
+    /// Gated on the fixture, not the subject: the orphan check is portable,
+    /// but a `cargo` that replaces the symlink on cue is a shebang shim on
+    /// `PATH`, which Windows will neither find nor spawn.
     #[cfg(unix)]
     #[test]
     fn cargo_activate_hook_names_the_orphan_when_cargo_replaces_the_symlink() {

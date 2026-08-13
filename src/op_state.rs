@@ -1693,6 +1693,13 @@ mod tests {
     /// already-existing, already-permitted file needs no directory
     /// permission at all, so the pre-fix `std::fs::write` would sail through
     /// this and clobber the record instead of failing.
+    ///
+    /// Not gated because its subject is Unix — a failed write must not damage
+    /// the prior record on any platform. Gated on the obstruction: a Windows
+    /// read-only directory attribute does not stop a file being created inside
+    /// it, so the write would succeed, and this would go red against correct
+    /// code rather than pass vacuously. Denying that creation takes an ACL deny
+    /// entry, which is a different fixture, not a different spelling.
     #[test]
     #[cfg(unix)]
     fn write_owner_failure_leaves_prior_record_recoverable() {
