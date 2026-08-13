@@ -3,6 +3,7 @@
 pub mod compile_probe;
 pub mod contract;
 pub mod doctor_corpus;
+pub mod json_schema;
 pub mod src_scan;
 
 use std::path::PathBuf;

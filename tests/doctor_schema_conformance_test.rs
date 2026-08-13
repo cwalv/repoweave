@@ -1,6 +1,5 @@
 //! The bytes `rwv doctor --json` emits must satisfy the schema operators are
-//! told to read them with — `docs/reference/schemas/doctor.json`, embedded
-//! here at compile time.
+//! told to read them with — `docs/reference/schemas/doctor.json`.
 //!
 //! The regression this exists for: the envelope was described in two places
 //! that were never compared. The committed schema was derived from a struct
@@ -10,33 +9,18 @@
 //! file is what notices a re-fork, because it reads the committed artifact
 //! rather than asserting which type the generator happens to point at.
 //!
-//! # What the validator covers, and what it refuses to
-//!
-//! It implements the draft-07 keyword subset schemars actually emits:
-//! `$ref`, `type`, `enum`, `required`, `properties`, `additionalProperties`,
-//! `items`, `oneOf`, `anyOf`, `allOf`. Every other keyword is **reported as an
-//! error**, not ignored. A validator that skips what it does not understand
-//! green-lights the part it looked at and reads as green over the part it did
-//! not — so if schemars ever starts emitting `format`, `pattern` or
-//! `minItems` here, this stops the tree until someone implements it.
-//!
-//! Two deliberate departures from draft-07 semantics, both tightening:
-//!
-//!   1. An object schema is treated as closed whenever it declares
-//!      `properties` or `additionalProperties`. Draft-07 would allow undeclared
-//!      keys through, and an added key is precisely the shape a re-forked
-//!      hand-minted envelope takes. Every object in this schema comes from a
-//!      Rust struct or enum variant, so nothing legitimate is rejected: a new
-//!      field moves the schema artifact and the artifact is what this reads.
-//!   2. A boolean schema (`true` / `false` in schema position) is an error
-//!      rather than always-pass / always-fail. schemars does not emit them.
+//! The validator lives in `tests/common/json_schema.rs`, which documents the
+//! draft-07 subset it implements and the two places it is deliberately
+//! stricter. It is shared because every `--json` verb needs this question
+//! asked, and a second validator is the same fork one level up.
 //!
 //! # Residue
 //!
-//!   - Coverage of `ViolationOutput` variants is only as wide as [`corpus`],
-//!     which samples the envelope's neighbours rather than every variant.
-//!     `tests/doctor_render_parity_test.rs` is what pins every variant
-//!     reaching `--json` at all; this file pins the shape of what comes out.
+//!   - The corpus here samples the envelope's neighbours rather than every
+//!     `ViolationOutput` variant. Every-variant coverage is
+//!     `tests/schema_conformance_test.rs`, which drives the same envelope from
+//!     `tests/common/doctor_corpus.rs`; `tests/doctor_render_parity_test.rs`
+//!     is what pins every variant reaching `--json` at all.
 //!   - Coverage of the `issues` array is two entries: one fieldless kind and
 //!     the one carrying an observation, which is what exercises both `kind`
 //!     shapes and the `MemberIncompatibilityOutput` definition. Every other
@@ -56,282 +40,24 @@ use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::plugins::PluginRecord;
 use repoweave::vcs::ResolvedRevisionId;
 use repoweave::workspace::Resolution;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-const COMMITTED_SCHEMA_PATH: &str = "docs/reference/schemas/doctor.json";
-const COMMITTED_SCHEMA: &str = include_str!("../docs/reference/schemas/doctor.json");
+mod common;
+
+use common::json_schema::{self, Walk};
 
 fn schema() -> Value {
-    serde_json::from_str(COMMITTED_SCHEMA).expect("committed doctor schema is valid JSON")
+    json_schema::committed_schema("doctor")
 }
 
-// ---------------------------------------------------------------------------
-// A draft-07 validator over the keyword subset schemars emits
-// ---------------------------------------------------------------------------
-
-/// Keywords that constrain nothing. Anything absent from both this list and
-/// the match in [`apply_keyword`] is reported rather than skipped.
-const ANNOTATIONS: &[&str] = &[
-    "$schema",
-    "$id",
-    "title",
-    "description",
-    "default",
-    "examples",
-    "definitions",
-];
-
-/// Evidence that the walk did work. A validator whose traversal breaks reports
-/// no errors, which is indistinguishable from a clean document unless the walk
-/// itself is asserted.
-#[derive(Default, Debug)]
-struct Walk {
-    keywords_applied: usize,
-    refs_resolved: usize,
-    properties_checked: usize,
-    branches_taken: usize,
-}
-
-impl Walk {
-    fn absorb(&mut self, other: &Walk) {
-        self.keywords_applied += other.keywords_applied;
-        self.refs_resolved += other.refs_resolved;
-        self.properties_checked += other.properties_checked;
-        self.branches_taken += other.branches_taken;
-    }
-}
-
-fn type_matches(instance: &Value, name: &str) -> Option<bool> {
-    Some(match name {
-        "object" => instance.is_object(),
-        "array" => instance.is_array(),
-        "string" => instance.is_string(),
-        "boolean" => instance.is_boolean(),
-        "null" => instance.is_null(),
-        "integer" => instance.is_i64() || instance.is_u64(),
-        "number" => instance.is_number(),
-        _ => return None,
-    })
-}
-
-fn validate(
-    instance: &Value,
-    schema: &Value,
-    root: &Value,
-    at: &str,
-    walk: &mut Walk,
-) -> Vec<String> {
-    let Some(obj) = schema.as_object() else {
-        return vec![format!("{at}: schema is not an object: {schema}")];
-    };
-
-    let mut errors = Vec::new();
-    for (keyword, argument) in obj {
-        if ANNOTATIONS.contains(&keyword.as_str()) {
-            continue;
-        }
-        walk.keywords_applied += 1;
-        errors.extend(apply_keyword(keyword, argument, instance, root, at, walk));
-    }
-    errors.extend(closed_object_errors(obj, instance, at));
-    errors
-}
-
-fn apply_keyword(
-    keyword: &str,
-    argument: &Value,
-    instance: &Value,
-    root: &Value,
-    at: &str,
-    walk: &mut Walk,
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    match keyword {
-        "$ref" => {
-            let target = argument
-                .as_str()
-                .and_then(|r| r.strip_prefix("#/definitions/"))
-                .and_then(|name| root.get("definitions")?.get(name));
-            match target {
-                Some(target) => {
-                    walk.refs_resolved += 1;
-                    let hop = format!("{at} -> {argument}");
-                    errors.extend(validate(instance, target, root, &hop, walk));
-                }
-                None => errors.push(format!("{at}: unresolvable $ref {argument}")),
-            }
-        }
-        "type" => {
-            let names: Vec<&str> = match argument {
-                Value::String(s) => vec![s.as_str()],
-                Value::Array(items) => items.iter().filter_map(|i| i.as_str()).collect(),
-                _ => {
-                    errors.push(format!("{at}: `type` is neither string nor array"));
-                    Vec::new()
-                }
-            };
-            let mut matched = false;
-            for name in &names {
-                match type_matches(instance, name) {
-                    Some(true) => matched = true,
-                    Some(false) => {}
-                    None => errors.push(format!("{at}: unsupported `type` value `{name}`")),
-                }
-            }
-            if !names.is_empty() && !matched {
-                errors.push(format!(
-                    "{at}: expected type {} but found {}",
-                    names.join("|"),
-                    describe(instance)
-                ));
-            }
-        }
-        "enum" => {
-            let allowed = argument.as_array().cloned().unwrap_or_default();
-            if !allowed.iter().any(|a| a == instance) {
-                errors.push(format!("{at}: value {instance} is not one of {argument}"));
-            }
-        }
-        "required" => {
-            for name in argument.as_array().cloned().unwrap_or_default() {
-                let Some(name) = name.as_str() else { continue };
-                let present = instance.as_object().is_some_and(|o| o.contains_key(name));
-                if !present {
-                    errors.push(format!("{at}: required property `{name}` is missing"));
-                }
-            }
-        }
-        "properties" => {
-            let Some(instance) = instance.as_object() else {
-                return errors;
-            };
-            for (name, subschema) in argument.as_object().cloned().unwrap_or_default() {
-                let Some(value) = instance.get(&name) else {
-                    continue;
-                };
-                walk.properties_checked += 1;
-                errors.extend(validate(
-                    value,
-                    &subschema,
-                    root,
-                    &format!("{at}/{name}"),
-                    walk,
-                ));
-            }
-        }
-        "additionalProperties" => {
-            if argument != &Value::Bool(false) {
-                errors.push(format!(
-                    "{at}: unsupported `additionalProperties` value {argument} \
-                     — only `false` is implemented"
-                ));
-            }
-        }
-        "items" => match argument {
-            Value::Object(_) => {
-                for (i, element) in instance
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .iter()
-                    .enumerate()
-                {
-                    errors.extend(validate(
-                        element,
-                        argument,
-                        root,
-                        &format!("{at}[{i}]"),
-                        walk,
-                    ));
-                }
-            }
-            _ => errors.push(format!(
-                "{at}: unsupported tuple-form `items` — only a single subschema is implemented"
-            )),
-        },
-        "oneOf" | "anyOf" | "allOf" => {
-            let branches = argument.as_array().cloned().unwrap_or_default();
-            let mut matching = Vec::new();
-            let mut failures = Vec::new();
-            for (i, branch) in branches.iter().enumerate() {
-                let mut probe = Walk::default();
-                let branch_errors = validate(
-                    instance,
-                    branch,
-                    root,
-                    &format!("{at}#{keyword}[{i}]"),
-                    &mut probe,
-                );
-                if branch_errors.is_empty() {
-                    matching.push((i, probe));
-                } else {
-                    failures.extend(branch_errors);
-                }
-            }
-            let satisfied = match keyword {
-                "oneOf" => matching.len() == 1,
-                "anyOf" => !matching.is_empty(),
-                _ => matching.len() == branches.len(),
-            };
-            if satisfied {
-                walk.branches_taken += matching.len();
-                for (_, probe) in &matching {
-                    walk.absorb(probe);
-                }
-            } else {
-                errors.push(format!(
-                    "{at}: `{keyword}` unsatisfied — {} of {} branches matched",
-                    matching.len(),
-                    branches.len()
-                ));
-                errors.extend(failures);
-            }
-        }
-        other => errors.push(format!(
-            "{at}: unsupported schema keyword `{other}` — it constrains the artifact and this \
-             validator would silently ignore it"
-        )),
-    }
-    errors
-}
-
-/// Undeclared keys, which draft-07 would let through. See this file's header
-/// for why they are rejected here.
-fn closed_object_errors(schema: &Map<String, Value>, instance: &Value, at: &str) -> Vec<String> {
-    let declares_shape =
-        schema.contains_key("properties") || schema.contains_key("additionalProperties");
-    let Some(instance) = instance.as_object() else {
-        return Vec::new();
-    };
-    if !declares_shape {
-        return Vec::new();
-    }
-    let declared = schema.get("properties").and_then(|p| p.as_object());
-    instance
-        .keys()
-        .filter(|key| !declared.is_some_and(|d| d.contains_key(key.as_str())))
-        .map(|key| format!("{at}: undeclared property `{key}`"))
-        .collect()
-}
-
-fn describe(instance: &Value) -> &'static str {
-    match instance {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
+fn schema_path() -> String {
+    json_schema::schema_path("doctor")
 }
 
 fn check(instance: &Value) -> (Vec<String>, Walk) {
-    let schema = schema();
-    let mut walk = Walk::default();
-    let errors = validate(instance, &schema, &schema, "", &mut walk);
-    (errors, walk)
+    json_schema::conform(instance, &schema())
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +224,8 @@ fn emitted_output_validates_against_the_committed_schema() {
     let (errors, walk) = check(&populated());
     assert!(
         errors.is_empty(),
-        "`rwv doctor --json` output does not satisfy {COMMITTED_SCHEMA_PATH}:\n  {}",
+        "`rwv doctor --json` output does not satisfy {}:\n  {}",
+        schema_path(),
         errors.join("\n  ")
     );
 
@@ -523,7 +250,8 @@ fn empty_envelope_validates_against_the_committed_schema() {
     let (errors, walk) = check(&emit(Vec::new(), Vec::new(), None, Vec::new(), Vec::new()));
     assert!(
         errors.is_empty(),
-        "clean-workspace output does not satisfy {COMMITTED_SCHEMA_PATH}:\n  {}",
+        "clean-workspace output does not satisfy {}:\n  {}",
+        schema_path(),
         errors.join("\n  ")
     );
     assert!(
@@ -538,7 +266,7 @@ fn schema_url_on_the_wire_names_the_artifact_validated_here() {
     let url = doc["$schema"].as_str().expect("$schema is a string");
     assert_eq!(url, DOCTOR_SCHEMA_URL);
     assert!(
-        url.ends_with(&format!("/{COMMITTED_SCHEMA_PATH}")),
+        url.ends_with(&format!("/{}", schema_path())),
         "the emitted $schema URL points somewhere other than the artifact this test validates \
          against; got {url}"
     );
@@ -647,65 +375,11 @@ fn a_drifted_leaf_type_is_reported() {
 fn an_unimplemented_keyword_is_reported() {
     let schema = json!({ "type": "string", "pattern": "^a+$" });
     let mut walk = Walk::default();
-    let errors = validate(&json!("bbb"), &schema, &schema, "", &mut walk);
+    let errors = json_schema::validate(&json!("bbb"), &schema, &schema, "", &mut walk);
     assert!(
         errors
             .iter()
             .any(|e| e.contains("unsupported schema keyword `pattern`")),
         "an unimplemented keyword must be reported, got {errors:?}"
-    );
-}
-
-/// The committed artifact must stay inside the subset above. This is the check
-/// that turns "schemars emitted something new" into a failure here rather than
-/// into silent under-validation of the real output.
-#[test]
-fn the_committed_schema_uses_no_keyword_the_validator_ignores() {
-    let implemented = [
-        "$ref",
-        "type",
-        "enum",
-        "required",
-        "properties",
-        "additionalProperties",
-        "items",
-        "oneOf",
-        "anyOf",
-        "allOf",
-    ];
-    let mut seen = 0usize;
-    let mut unknown = Vec::new();
-    let mut stack = vec![(schema(), String::new(), false)];
-    while let Some((node, at, is_schema_map)) = stack.pop() {
-        match node {
-            Value::Object(map) => {
-                for (key, value) in map {
-                    let child = format!("{at}/{key}");
-                    if is_schema_map {
-                        stack.push((value, child, false));
-                        continue;
-                    }
-                    seen += 1;
-                    if !implemented.contains(&key.as_str()) && !ANNOTATIONS.contains(&key.as_str())
-                    {
-                        unknown.push(child.clone());
-                    }
-                    let holds_schema_map = key == "properties" || key == "definitions";
-                    stack.push((value, child, holds_schema_map));
-                }
-            }
-            Value::Array(items) => {
-                for (i, item) in items.into_iter().enumerate() {
-                    stack.push((item, format!("{at}[{i}]"), false));
-                }
-            }
-            _ => {}
-        }
-    }
-    assert!(seen > 100, "the keyword walk read almost nothing: {seen}");
-    assert!(
-        unknown.is_empty(),
-        "{COMMITTED_SCHEMA_PATH} uses keywords this validator does not implement, so the \
-         emitted output is only partly checked: {unknown:?}"
     );
 }
