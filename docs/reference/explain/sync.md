@@ -718,6 +718,31 @@ Schema:
         {
           "type": "object",
           "required": [
+            "kind",
+            "paths",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "untracked-collision"
+              ]
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "ctx",
             "kind",
             "message"

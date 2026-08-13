@@ -80,6 +80,14 @@ is no branch there to advance, so the landing would be recorded nowhere.
 Reference symlinks are excluded from both checks. `rwv fetch` and `rwv update`
 leave repos detached; check out the receiving branch in the target and re-run.
 
+Untracked files in the target are not scanned by this preflight — a
+fast-forward only overwrites a path the incoming commits write, so an
+unrelated untracked file survives it untouched. The exact set of incoming
+paths doesn't exist until step 1 has rebased CWD, so this preflight cannot
+ask the narrower question up front; step 3 catches an actual collision at
+fast-forward time instead, naming the colliding path and leaving op-state in
+place — move or remove the file, then `rwv sync-to --continue`.
+
 ### Op-start auto-relock
 
 If one or more of CWD's manifest repos has new commits since the last lock
@@ -744,6 +752,31 @@ Schema:
               "type": "string"
             },
             "stderr": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "paths",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "untracked-collision"
+              ]
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "repo": {
               "type": "string"
             }
           }
