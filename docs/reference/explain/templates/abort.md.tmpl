@@ -37,6 +37,7 @@ classification:
 | Equal to the recorded converged tip (`converged_tips[repo]`) | `restored (from recorded converged tip)` — op converged repo before crash; reset to savepoint |
 | Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored (from mid-op state)` — mid-op cancelled; reset to savepoint |
 | Anything else | `foreign-tip violation` — restore refused; violation reported |
+| Anything else, in a repo named on `--abandon-foreign-tip` | `restored (abandoned foreign tip)` — reset to savepoint; the foreign tip stays reachable at the rail-1 reference |
 
 The `advanced_tips` map is the op's **advancement-intent journal**: written
 during the replay phase, it records the planned target tip for genuine
@@ -84,6 +85,36 @@ This can happen if:
 cannot be attributed to the op. In that case op-state is retained so the
 operator can re-run after reconciling.
 
+### Abandoning a foreign tip on purpose
+
+`--abandon-foreign-tip=<repo>` is the operator's answer to "these foreign
+commits are not wanted". It waives rail 2 for the repo it names — abort resets
+that repo to the savepoint even though the tip is unattributable — and waives
+nothing anywhere else. Repeat it per repo. **There is no all-repos form**, by
+design: whether abandoning a repo's foreign commits is acceptable is a
+judgement about those specific commits, and a blanket spelling would answer it
+for repos the operator never looked at. `abort` with no flag still refuses.
+
+The flag is named for the consequence it permits, and the name is accurate
+because rail 1 runs first: the pre-abort reference already holds the tip being
+left behind, so the commits remain reachable at `refs/rwv/pre-abort/<op-id>`
+after the branch moves off them. Recovering them is `git reset --hard` onto
+that ref.
+
+Spell `<repo>` as abort's own per-repo output does — the workspace-relative
+path (`github/foo/bar`) or `(project)` for the project repo. A `sync-to` op
+consults the consent once per side, so naming a repo covers that repo in both
+the source and the target workspace. Naming a repo that is not refused does
+nothing.
+
+**Abort refuses even with the flag** when the pre-abort reference does not
+already hold the observed tip. This happens when the branch advanced between
+two abort runs: the reference is first-write-wins, so it still holds the
+earlier run's capture, and resetting would leave the commits made since that
+capture reachable from nothing. The flag consents to abandoning commits, not
+to destroying them, so the refusal stands and names this as its reason.
+Re-point or copy off the newer commits before re-running.
+
 ### After `--discard-local-commits` sync
 
 When `rwv sync --discard-local-commits` discards a project repo's committed
@@ -103,9 +134,12 @@ repo tombstone is preserved.
 
 ```
 rwv abort
+rwv abort --abandon-foreign-tip=<repo> [--abandon-foreign-tip=<repo> ...]
 ```
 
-No flags. `abort` reads everything it needs from `.rwv-op`.
+`abort` reads everything else it needs from `.rwv-op`. The one flag is the
+per-repo waiver described above; without it `abort` never moves a branch off
+commits it cannot attribute to the op.
 
 Run `rwv --help abort` for the full clap surface.
 
@@ -117,7 +151,12 @@ Per-repo restoration lines to stdout. Each line names the outcome:
   <repo-path>: restored (from recorded intent tip)
   <repo-path>: restored (from recorded converged tip)
   <repo-path>: restored (from mid-op state)
+  <repo-path>: restored (abandoned foreign tip, per --abandon-foreign-tip)
 ```
+
+The abandoned-tip line is followed by the tip that was left behind and the
+reference it stays reachable at, so the abandonment is recoverable from the
+transcript alone.
 
 Non-actionable outcomes (`untouched` and `no savepoint`) are demoted to a
 single aggregate summary line printed at the end:
@@ -136,8 +175,9 @@ diverged from the savepoint.
 The recovery-options block is printed exactly once at the end (to stderr)
 when at least one repo refused, with only the operator-facing choices:
 
-- if a foreign agent advanced the branch after the crash: move the branch
-  back and re-run `rwv abort`.
+- if the foreign commits are wanted: move the branch back to them and re-run
+  `rwv abort`.
+- if they are not: re-run as `rwv abort --abandon-foreign-tip=<repo>`.
 - if you want to keep the foreign tip and discard the op: move the branch
   off the pre-abort ref and delete the savepoint manually.
 
@@ -169,17 +209,19 @@ rwv sync-to primary
 rwv abort
 ```
 
-Recover from a foreign-tip violation (another agent advanced the branch):
+Recover from a foreign-tip violation (another agent advanced the branch)
+when the foreign commits are not wanted:
 
 ```
 rwv abort
 # ... foreign-tip violation for github/foo/bar ...
-# Manually move the branch back to the savepoint SHA shown in the message:
-cd github/foo/bar
-git update-ref refs/heads/<branch> <savepoint-sha>
-cd ...
-rwv abort   # re-run; op-state was retained
+rwv abort --abandon-foreign-tip=github/foo/bar   # op-state was retained
+# ... github/foo/bar: restored (abandoned foreign tip) ...
+# the abandoned commits remain at refs/rwv/pre-abort/<op-id>
 ```
+
+When they ARE wanted, put the branch back on them yourself and re-run with no
+flag, so the tip abort sees is one it can attribute to the op.
 
 ## Common errors
 
@@ -192,7 +234,13 @@ rwv abort   # re-run; op-state was retained
   sub-second window between a rebase completing and its tip being persisted
   (the documented one-write-window floor). See the violation message for
   recovery options; the pre-abort ref captures the tip for later recovery.
-  Op-state is retained so you can re-run `rwv abort` after reconciling.
+  Op-state is retained so you can re-run `rwv abort` after reconciling, or
+  with `--abandon-foreign-tip=<repo>` if the foreign commits are unwanted.
+- *foreign-tip violation on a repo named by `--abandon-foreign-tip`* — the
+  pre-abort reference holds an earlier tip than the observed one, so the
+  consent could not be honoured without destroying the commits in between.
+  The message names the captured tip. Re-point or copy off those commits,
+  then re-run.
 - *create pre-abort ref failed* — abort could not write the pre-abort reference
   before attempting restore. The restore is not attempted when this fails, since
   information-preservation is the first obligation.

@@ -39,7 +39,9 @@ rwv doctor --locked && echo "lock clean"
 For repos that are `ahead` (local commits exist beyond the lock), the correct response depends on intent:
 
 - **The local commits are deliberate and the lock should catch up:** run `rwv lock --commit` to re-derive the lock from current tips. See [lock-as-derived](../explanation/joints/lock-as-derived.md) for why this is always safe.
-- **The local commits are unintended:** `rwv fetch --detach-checkouts` puts the checkout on the locked revision without moving or discarding the branch — enough to build and test against the lock. Plain `rwv fetch` refuses, and no verb rewinds the branch itself: that would destroy commits held nowhere else, so it stays a deliberate act of yours (`git reset --hard <lock-sha>` in the affected repo). Re-run `rwv doctor --locked` afterwards to confirm.
+- **The local commits are unintended:** `rwv fetch --detach-checkouts` puts the checkout on the locked revision without moving or discarding the branch — enough to build and test against the lock. Plain `rwv fetch` refuses, and no verb rewinds the branch itself: that stays a deliberate act of yours (`git reset --hard <lock-sha>` in the affected repo). Re-run `rwv doctor --locked` afterwards to confirm.
+
+  The absence of a verb there is a decision, and the reason is that rwv's destructive verbs are all paired with a savepoint — `rwv abort` can undo itself because `rwv sync` wrote one first, and `rwv sync --discard-local-commits` savepoints what it discards. A rewind-to-lock verb has no such pairing: it is reached from a resting workspace, with no operation in flight to have recorded a pre-op tip, so it would destroy commits held nowhere else and offer nothing to recover them from. `sync --discard-local-commits` is the near-verb for the case that actually recurs — divergence found during a sync, where the savepoint exists — and it is the one to reach for where it fits. Raw `git reset --hard` here is not a gap in the command surface; it is the operation staying where its consequences are visible.
 
 ## Repair — re-materialize missing or deleted clones
 

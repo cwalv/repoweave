@@ -902,9 +902,14 @@ pub fn run() -> anyhow::Result<()> {
             )?;
             status::run_status(&ctx, json)?;
         }
-        Some(Commands::Abort) => {
+        Some(Commands::Abort {
+            abandon_foreign_tip,
+        }) => {
             let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
-            sync::run_abort(&ctx)?;
+            sync::run_abort(
+                &ctx,
+                &crate::cli::consent::AbandonForeignTipConsent::from_flag(&abandon_foreign_tip),
+            )?;
         }
         Some(Commands::Sync {
             source,

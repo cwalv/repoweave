@@ -2,10 +2,10 @@
 
 use crate::manifest::Role;
 use crate::vcs::{
-    CommitSummary, ConflictOp, DerivedContentPolicy, DerivedContentResolution, HeadAttachment,
-    HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName, RawRevisionId, RefName,
-    RemoteDefaultBranch, ReplayExclusionState, ResolvedRevisionId, UniqueDiff, Vcs, VcsError,
-    VerifiedRestoreOutcome,
+    CommitSummary, ConflictOp, DerivedContentPolicy, DerivedContentResolution, ForeignTipPolicy,
+    HeadAttachment, HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName,
+    RawRevisionId, RefName, RemoteDefaultBranch, ReplayExclusionState, ResolvedRevisionId,
+    UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1965,6 +1965,7 @@ impl Vcs for GitVcs {
         op_id: &str,
         recorded_intent_tip: Option<&str>,
         recorded_converged_tip: Option<&str>,
+        foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         // Resolve the savepoint first: no savepoint → nothing to do.
         let savepoint = match self.resolve_savepoint(repo, op_id) {
@@ -2026,7 +2027,8 @@ impl Vcs for GitVcs {
         // written by the caller (run_abort writes it for every repo before
         // calling this), so the tip is preserved either way; we surface
         // the label so the refusal message can name it.
-        let pre_abort = self.resolve_pre_abort_ref(repo, op_id).unwrap_or_else(|| {
+        let resolved_pre_abort = self.resolve_pre_abort_ref(repo, op_id);
+        let pre_abort = resolved_pre_abort.clone().unwrap_or_else(|| {
             // Should not happen: run_abort writes the pre-abort ref before
             // every verified_restore_savepoint call. Synthesise a label so
             // the refusal still names a recovery anchor.
@@ -2035,6 +2037,28 @@ impl Vcs for GitVcs {
                 revision: head.clone(),
             }
         });
+
+        // Consent widens the classification only where the tip about to be
+        // moved off is already named by a reference that outlives the move.
+        // `create_pre_abort_ref` is first-write-wins, so a re-run can hand
+        // back a reference holding an earlier tip; resetting then would drop
+        // the commits between it and HEAD with nothing left pointing at them.
+        let captured_by_pre_abort_ref = resolved_pre_abort
+            .as_ref()
+            .is_some_and(|r| r.revision.as_str() == head_sha);
+        if foreign_tip_policy == ForeignTipPolicy::Abandon && captured_by_pre_abort_ref {
+            return self.reset_and_drop_savepoint(
+                repo,
+                op_id,
+                &savepoint,
+                VerifiedRestoreOutcome::AbandonedForeignTip {
+                    abandoned_tip: head_sha.to_owned(),
+                    savepoint: savepoint.as_str().to_owned(),
+                    pre_abort_ref: pre_abort,
+                },
+            );
+        }
+
         Ok(VerifiedRestoreOutcome::ForeignTip {
             observed_tip: head_sha.to_owned(),
             savepoint: savepoint.as_str().to_owned(),

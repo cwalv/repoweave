@@ -492,6 +492,7 @@ impl Vcs for FakeVcs {
         _op_id: &str,
         _recorded_intent_tip: Option<&str>,
         _recorded_converged_tip: Option<&str>,
+        _foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         unsupported("verified_restore_savepoint")
     }

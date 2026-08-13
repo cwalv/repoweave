@@ -237,7 +237,11 @@ pub enum Commands {
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
     /// Restore CWD workspace to its pre-sync state using savepoint refs
-    Abort,
+    Abort {
+        /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `(project)`); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits stay reachable through the pre-abort ref, which abort writes before it moves anything; where that ref does not already hold the tip, abort refuses even with this flag rather than destroy it.
+        #[arg(long = "abandon-foreign-tip", value_name = "REPO")]
+        abandon_foreign_tip: Vec<String>,
+    },
     /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
     ///
     /// Absorbs `<source>`'s committed lock and advances each manifest repo to the locked SHA.
@@ -763,5 +767,59 @@ pub mod consent {
     pub enum DriftConsent {
         Regenerate(RegenerateDriftedConsent),
         Adopt(AdoptDriftedConsent),
+    }
+
+    /// Proof that the operator consented to `rwv abort` moving a branch off
+    /// commits the operation did not create — in the repos named here and no
+    /// others. Minted from `--abandon-foreign-tip`.
+    ///
+    /// The one token in this module carrying data rather than being a
+    /// zero-sized proof, and the module's opening house rule is why. The
+    /// consequence being waived is per-repo: whether abandoning THIS repo's
+    /// foreign commits is acceptable is a judgement about those commits, and
+    /// a blanket spelling would answer it for repos the operator never
+    /// looked at. So the flag names a repo, there is no all-repos form to
+    /// mint from, and the empty set — the operator passing nothing — covers
+    /// nothing rather than everything.
+    #[derive(Debug, Clone, Default)]
+    pub struct AbandonForeignTipConsent(std::collections::BTreeSet<String>);
+
+    impl AbandonForeignTipConsent {
+        // No `granted()`: see [`AdoptDetachedConsent`]. The tests that
+        // exercise this token drive the binary, so they mint through the
+        // flag like an operator does.
+
+        /// Mint from the parsed `--abandon-foreign-tip` values — one entry
+        /// per occurrence of the flag. `pub(in crate::cli)`: see
+        /// [`DetachConsent::from_flag`]'s doc comment.
+        ///
+        /// Each value is read as a repo key in the spelling abort's own
+        /// per-repo output uses: a manifest repo's workspace-relative path,
+        /// or `(project)` for the project repo. Shell completion routinely
+        /// appends a separator and prefixes `./` on a path typed from the
+        /// workspace root, so both are stripped before matching — an
+        /// operator who pasted the path abort printed and let the shell
+        /// complete it means the same repo either way.
+        pub(in crate::cli) fn from_flag(abandon_foreign_tip: &[String]) -> Self {
+            Self(
+                abandon_foreign_tip
+                    .iter()
+                    .map(|raw| {
+                        raw.trim()
+                            .trim_start_matches("./")
+                            .trim_end_matches('/')
+                            .to_string()
+                    })
+                    .collect(),
+            )
+        }
+
+        /// Whether the operator named this repo. `repo_key` is the same key
+        /// abort's per-repo maps use, so a `sync-to` op consults it once per
+        /// side: consent is given for a repo, and both workspaces' copies of
+        /// that repo are covered by it.
+        pub fn covers(&self, repo_key: &str) -> bool {
+            self.0.contains(repo_key)
+        }
     }
 }

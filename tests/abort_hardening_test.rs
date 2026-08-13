@@ -252,6 +252,68 @@ fn savepoint_sha(repo: &Path, op_id: &str) -> Option<String> {
     Some(String::from_utf8(out.stdout).ok()?.trim().to_string())
 }
 
+/// A workspace with `repo_paths.len()` manifest repos instead of
+/// [`make_fixture`]'s one, for the cases that must show consent given for one
+/// repo doing nothing to another.
+struct MultiRepoFixture {
+    root: PathBuf,
+    project_dir: PathBuf,
+    /// Manifest repo directories, in the order `repo_paths` named them.
+    repo_dirs: Vec<PathBuf>,
+}
+
+fn make_multi_repo_fixture(parent: &Path, name: &str, repo_paths: &[&str]) -> MultiRepoFixture {
+    let root = parent.join(name);
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+
+    let mut repo_dirs = Vec::new();
+    let mut shas = Vec::new();
+    for path in repo_paths {
+        let dir = root.join(path);
+        std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+        shas.push(init_repo(&dir));
+        repo_dirs.push(dir);
+    }
+
+    let project_dir = root.join("projects/web-app");
+    init_repo(&project_dir);
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+
+    let urls: Vec<String> = repo_paths
+        .iter()
+        .map(|p| format!("https://example.invalid/{p}.git"))
+        .collect();
+    let manifest_rows: Vec<(&str, &str)> = repo_paths
+        .iter()
+        .zip(urls.iter())
+        .map(|(p, u)| (*p, u.as_str()))
+        .collect();
+    write_manifest(&project_dir, &manifest_rows);
+    let lock_rows: Vec<(&str, &str, &str)> = repo_paths
+        .iter()
+        .zip(urls.iter())
+        .zip(shas.iter())
+        .map(|((p, u), s)| (*p, u.as_str(), s.as_str()))
+        .collect();
+    write_lock(&project_dir, &lock_rows);
+    git(
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+        &project_dir,
+    );
+    git(&["commit", "-m", "lock: initial"], &project_dir);
+    std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+
+    MultiRepoFixture {
+        root,
+        project_dir,
+        repo_dirs,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Case 1: Untouched — repo tip == savepoint
 // ---------------------------------------------------------------------------
@@ -818,5 +880,311 @@ fn abort_foreign_tip_shows_blocking_commits() {
     assert!(
         stderr.contains("ahead"),
         "shape description must appear in stderr.\nstderr:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `--abandon-foreign-tip`: the named, per-repo waiver of rail 2
+// ---------------------------------------------------------------------------
+
+/// The flag's happy path, and the ordering proof that makes "abandon" the
+/// honest word for it.
+///
+/// After abort restores over the foreign tip, the pre-abort ref must hold the
+/// FOREIGN tip — not the savepoint. That single assertion is what separates
+/// abandonment from destruction: rail 1 writing after the reset, or not at
+/// all, leaves the ref at the savepoint (or absent) and the foreign commits
+/// named by nothing.
+#[test]
+fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000020Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let foreign_tip = make_commit(
+        &ws.server_dir,
+        "foreign.txt",
+        "foreign\n",
+        "foreign: another agent advanced this branch",
+    );
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "relock", &[]);
+
+    rwv()
+        .arg("abort")
+        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("abandoned foreign tip"));
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        server_savepoint,
+        "consent must let the restore proceed to the savepoint"
+    );
+
+    // The ordering pin. Rail 1 runs before the move, so the ref names the tip
+    // the branch was moved OFF; a ref holding `server_savepoint` here would
+    // mean the capture happened after the reset and the foreign commit is
+    // unreachable.
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(foreign_tip.as_str()),
+        "the abandoned tip must stay reachable through the pre-abort ref"
+    );
+    assert!(
+        try_git(&["cat-file", "-e", &format!("{foreign_tip}^{{commit}}")], &ws.server_dir),
+        "the abandoned commit object must survive the abort"
+    );
+
+    // A resolved repo is not a refusal: op-state clears and the savepoint goes.
+    assert!(
+        !ws.root.join(".rwv-op").exists(),
+        "op-state must clear once every repo is resolved"
+    );
+    assert_eq!(
+        savepoint_sha(&ws.server_dir, op_id),
+        None,
+        "the savepoint is consumed by a completed restore"
+    );
+}
+
+/// Per-repo means per-repo: consent naming one repo must not reach another
+/// whose tip is foreign in exactly the same way. The unnamed repo keeps its
+/// tip, abort still fails, and op-state is still retained.
+///
+/// This is the pin for "no bare all-repos form" at the level that matters —
+/// not the absence of a spelling, but the absence of the behaviour.
+#[test]
+fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
+    let tmp = common::tempdir().unwrap();
+    let named_path = "github/chatly/server";
+    let unnamed_path = "github/chatly2/server";
+    let fx = make_multi_repo_fixture(tmp.path(), "ws", &[named_path, unnamed_path]);
+    let (named_dir, unnamed_dir) = (&fx.repo_dirs[0], &fx.repo_dirs[1]);
+
+    let op_id = "20991231T000021Z";
+
+    let named_savepoint = git_out(&["rev-parse", "HEAD"], named_dir);
+    make_commit(named_dir, "foreign.txt", "foreign\n", "foreign: named repo");
+    plant_savepoint(named_dir, op_id, &named_savepoint);
+
+    let unnamed_savepoint = git_out(&["rev-parse", "HEAD"], unnamed_dir);
+    let unnamed_foreign = make_commit(
+        unnamed_dir,
+        "foreign.txt",
+        "foreign\n",
+        "foreign: unnamed repo",
+    );
+    plant_savepoint(unnamed_dir, op_id, &unnamed_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &fx.project_dir);
+    plant_savepoint(&fx.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&fx.root, op_id, "relock", &[]);
+
+    let output = rwv()
+        .arg("abort")
+        .arg(format!("--abandon-foreign-tip={named_path}"))
+        .current_dir(&fx.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], named_dir),
+        named_savepoint,
+        "the named repo must be restored"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], unnamed_dir),
+        unnamed_foreign,
+        "consent for one repo must not move another repo's branch"
+    );
+    assert!(
+        stderr.contains(unnamed_path) && stderr.contains("foreign-tip"),
+        "the unnamed repo must still be refused.\nstderr:\n{stderr}"
+    );
+    assert!(
+        fx.root.join(".rwv-op").exists(),
+        "op-state must be retained while any repo is still refused"
+    );
+}
+
+/// The flag cannot be spelled as a blanket. Its bare form is a parse error
+/// (clap requires the value), and the two obvious all-repos spellings do not
+/// exist.
+#[test]
+fn abandon_foreign_tip_has_no_all_repos_spelling() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    // Bare: no repo named, so nothing is consented to.
+    rwv()
+        .arg("abort")
+        .arg("--abandon-foreign-tip")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--abandon-foreign-tip"));
+
+    for blanket in ["--abandon-foreign-tips", "--abandon-all-foreign-tips"] {
+        rwv()
+            .arg("abort")
+            .arg(blanket)
+            .current_dir(&ws.root)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected argument"));
+    }
+}
+
+/// The guard that keeps the consent from becoming destruction.
+///
+/// `create_pre_abort_ref` is first-write-wins, so a second abort run gets back
+/// the ref an earlier run wrote. If the branch has advanced since, that ref no
+/// longer names the tip about to be left behind — restoring would strand the
+/// commits in between with nothing pointing at them. Consent does not buy
+/// that, so abort refuses and says why.
+#[test]
+fn abandon_refuses_when_the_pre_abort_ref_no_longer_holds_the_observed_tip() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000022Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let first_foreign = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "relock", &[]);
+
+    // Run 1, no consent: refuses and captures the tip as it stands.
+    rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("foreign-tip"));
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(first_foreign.as_str()),
+    );
+
+    // The foreign agent keeps going.
+    let second_foreign = make_commit(&ws.server_dir, "f2.txt", "f2\n", "foreign: second");
+
+    // Run 2, with consent: the ref still holds the FIRST tip, so restoring
+    // would lose the second. Refuse.
+    let output = rwv()
+        .arg("abort")
+        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        second_foreign,
+        "a stale capture must not be treated as consent to destroy the tip past it"
+    );
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(first_foreign.as_str()),
+        "first-write-wins still holds — the refusal must not rewrite the capture"
+    );
+    assert!(
+        stderr.contains("--abandon-foreign-tip named this repo"),
+        "a refusal that arrives despite consent must say why.\nstderr:\n{stderr}"
+    );
+    assert!(
+        ws.root.join(".rwv-op").exists(),
+        "op-state must be retained on this refusal like any other"
+    );
+}
+
+/// The project repo is reachable through the flag under the same key abort
+/// prints for it — the one repo whose spelling an operator would otherwise
+/// have to guess, since it is not a path.
+#[test]
+fn abandon_foreign_tip_accepts_the_project_repo_key() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000023Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_foreign = make_commit(&ws.project_dir, "foreign.txt", "foreign\n", "foreign: proj");
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "relock", &[]);
+
+    rwv()
+        .arg("abort")
+        .arg("--abandon-foreign-tip=(project)")
+        .current_dir(&ws.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ws.project_dir),
+        project_savepoint,
+        "`(project)` must name the project repo"
+    );
+    assert_eq!(
+        pre_abort_ref_sha(&ws.project_dir, op_id).as_deref(),
+        Some(project_foreign.as_str()),
+        "the abandoned project-repo tip must stay reachable"
+    );
+}
+
+/// The gap this flag closes: the refusal used to hand the operator a raw
+/// `git update-ref` because no verb did the job. It must now name the verb,
+/// and must not teach the raw command as the way through.
+#[test]
+fn foreign_tip_recovery_options_name_the_flag_not_raw_git() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000024Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    make_commit(&ws.server_dir, "foreign.txt", "foreign\n", "foreign: agent");
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "relock", &[]);
+
+    let output = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("rwv abort --abandon-foreign-tip=<repo>"),
+        "the recovery options must name the verb that does this.\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("git update-ref"),
+        "the raw command must no longer be the documented path.\nstderr:\n{stderr}"
     );
 }

@@ -636,6 +636,22 @@ pub struct PreAbortRef {
     pub revision: ResolvedRevisionId,
 }
 
+/// Whether a caller has consented to restoring over a foreign tip.
+///
+/// A foreign tip is one [`Vcs::verified_restore_savepoint`] cannot attribute
+/// to the op. [`Self::Refuse`] is the default everywhere; [`Self::Abandon`]
+/// is reached only from an operator flag naming one repo at a time, and even
+/// then the restore proceeds only when the pre-abort reference already holds
+/// the tip being moved off — the consent buys abandonment, never destruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForeignTipPolicy {
+    /// Report [`VerifiedRestoreOutcome::ForeignTip`] and leave HEAD alone.
+    Refuse,
+    /// Restore to the savepoint anyway, provided the foreign tip is already
+    /// captured by the pre-abort reference.
+    Abandon,
+}
+
 /// Outcome of a [`Vcs::verified_restore_savepoint`] call.
 ///
 /// Encodes the classification of the repo's current tip *before* any
@@ -681,6 +697,24 @@ pub enum VerifiedRestoreOutcome {
         /// (written by [`Vcs::create_pre_abort_ref`] before this call).
         /// Surfaced in the refusal so operators can locate the tip if it
         /// is later determined safe to keep.
+        ///
+        /// First-write-wins means a re-run can return a reference holding an
+        /// EARLIER tip than `observed_tip`; a caller that passed
+        /// [`ForeignTipPolicy::Abandon`] and still received this variant can
+        /// tell the two apart by comparing `revision` against `observed_tip`.
+        pre_abort_ref: PreAbortRef,
+    },
+    /// The repo's tip was foreign, the caller consented via
+    /// [`ForeignTipPolicy::Abandon`], and the pre-abort reference already
+    /// held that tip — so the repo was reset back to the savepoint and the
+    /// foreign commits remain reachable through `pre_abort_ref`.
+    AbandonedForeignTip {
+        /// The foreign tip the branch was moved off, now named only by
+        /// `pre_abort_ref`.
+        abandoned_tip: String,
+        /// The savepoint the repo was reset to.
+        savepoint: String,
+        /// The reference the abandoned tip stays reachable through.
         pre_abort_ref: PreAbortRef,
     },
 }
@@ -2526,6 +2560,15 @@ pub trait Vcs: Send + Sync {
     ///   The destructive primitive is fenced behind this enumerable set
     ///   of attributable states.
     ///
+    /// `foreign_tip_policy` widens that last case and nothing else. Under
+    /// [`ForeignTipPolicy::Abandon`] a foreign tip is restored over and
+    /// reported as [`VerifiedRestoreOutcome::AbandonedForeignTip`] — but
+    /// only when [`Vcs::resolve_pre_abort_ref`] already resolves to exactly
+    /// the observed tip. Where it does not, the outcome is
+    /// [`VerifiedRestoreOutcome::ForeignTip`] as if no consent had been
+    /// given: moving off a tip nothing else names is destruction, which no
+    /// flag on this call can authorise.
+    ///
     /// `recorded_intent_tip` is the SHA the owner record's `advanced_tips`
     /// map holds for this repo (written at replay entry), or `None` when no
     /// entry exists (op predates the field, or the op had not yet reached
@@ -2547,6 +2590,7 @@ pub trait Vcs: Send + Sync {
         op_id: &str,
         recorded_intent_tip: Option<&str>,
         recorded_converged_tip: Option<&str>,
+        foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
 
     /// Return the in-flight VCS operation `repo` is currently mid-way

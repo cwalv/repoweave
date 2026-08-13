@@ -138,18 +138,36 @@ ordinary per-repo git work: no rwv verb undoes an abort.
 A foreign-tip violation means a repo's HEAD does not match any state the op
 recorded (savepoint, converged tip, or a VCS-native mid-op marker). This
 happens when another agent or manual git operation advanced the branch after
-the crash. Abort reports the violation, preserves op-state, and exits non-zero
-so you can re-run after reconciling:
+the crash. Abort reports the violation, preserves op-state, and exits non-zero.
+
+The question the refusal is asking you is whether those foreign commits are
+wanted. Only you can answer it, which is why abort will not guess.
+
+**If they are not wanted**, re-run naming the repo:
 
 ```bash
 rwv abort
 # ... foreign-tip violation for github/foo/bar ...
-# Manually move the branch back to the savepoint SHA shown in the message:
-cd github/foo/bar
-git update-ref refs/heads/<branch> <savepoint-sha>
-cd <workspace-root>
-rwv abort   # re-run; op-state was retained
+rwv abort --abandon-foreign-tip=github/foo/bar   # op-state was retained
 ```
+
+The branch returns to the savepoint and the abandoned commits stay reachable
+at the pre-abort ref the first run wrote (`refs/rwv/pre-abort/<op-id>`, named
+in the refusal). Repeat the flag per repo — it consents for the repo it names
+and no other, and there is no all-repos form. Spell the repo as abort's own
+output does: the workspace-relative path, or `(project)` for the project repo.
+
+**If they are wanted**, move the branch back to them yourself and re-run
+`rwv abort` with no flag, so the tip abort sees is one it can attribute to
+the op.
+
+Abort refuses even with `--abandon-foreign-tip` when the pre-abort ref does
+not already hold the tip being left behind — which happens when the branch
+advanced again between two abort runs, since the ref is written first-write-
+wins and still holds the earlier run's capture. Abandoning then would leave
+the commits since that capture reachable from nothing, and the flag consents
+to abandoning commits, not to destroying them. The refusal says so; re-point
+or copy off the newer commits yourself first.
 
 ### If `rwv abort` reports "no operation in progress"
 
