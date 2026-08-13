@@ -2269,13 +2269,16 @@ pub fn generation_inputs(
     project: &crate::manifest::ProjectName,
 ) -> BTreeMap<String, String> {
     let project_rel = crate::workspace::project_rel_path(project.as_str());
-    ["rwv.toml", "rwv.lock"]
-        .into_iter()
-        .filter_map(|name| {
-            let content = std::fs::read(project_dir.join(name)).ok()?;
-            Some((format!("{project_rel}/{name}"), owned_digest(&content)))
-        })
-        .collect()
+    [
+        crate::manifest::Manifest::FILE_NAME,
+        crate::manifest::LockFile::FILE_NAME,
+    ]
+    .into_iter()
+    .filter_map(|name| {
+        let content = std::fs::read(project_dir.join(name)).ok()?;
+        Some((format!("{project_rel}/{name}"), owned_digest(&content)))
+    })
+    .collect()
 }
 
 /// Drop `file_name`'s entry from `dir`'s state file, leaving the other
