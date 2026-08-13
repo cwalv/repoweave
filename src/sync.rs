@@ -2011,8 +2011,30 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             None => {
                 cleanup(ctx)?;
+                announce_completion(ctx);
                 return Ok(());
             }
+        }
+    }
+}
+
+/// The op-scope completion claim, made where the machine is terminal for this
+/// invocation's phase set: the last phase returned no successor and cleanup is
+/// done.
+///
+/// No phase function can make this claim. Reaching the end of advance-target
+/// says nothing about whether `--retire` still has retire scheduled, and
+/// retire's merged- and dirty-checks can refuse after everything above them
+/// succeeded. Phase functions announce their own phase's outcome; the claim
+/// that the op is complete belongs to the only place that knows it.
+fn announce_completion(ctx: &OpContext<'_>) {
+    if !ctx.handler.emit_text() {
+        return;
+    }
+    match ctx.verb {
+        op_state::OpVerb::Sync => {}
+        op_state::OpVerb::SyncTo => {
+            eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
         }
     }
 }
@@ -4565,9 +4587,6 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    if ctx.handler.emit_text() {
-        eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
-    }
     Ok(())
 }
 

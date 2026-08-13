@@ -1317,3 +1317,110 @@ fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
         .success();
     assert!(!child_ww.exists());
 }
+
+// ===========================================================================
+// The completion claim is terminal-only
+//
+// "sync-to complete" is an OP-scope claim. Under `--retire` the op is not
+// complete when advance-target returns: retire is still scheduled, its
+// merged- and dirty-checks can refuse, and cleanup has not run. These two
+// tests pin the outcome on both sides — a refused retire has emitted no
+// completion claim at all, and a completed op emits exactly one, after its
+// last phase.
+// ===========================================================================
+
+/// Land the child's work in the parent, leaving the child ready to retire.
+fn child_work_ready_to_retire(child_ww: &Path) -> String {
+    let c2 = make_commit(
+        &child_ww.join(SERVER_PATH),
+        "feature.txt",
+        "child work\n",
+        "child: feature",
+    );
+    let child_project = child_ww.join("projects/web-app");
+    write_lock(&child_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &child_project);
+    git(&["commit", "-m", "lock: child advance"], &child_project);
+    c2
+}
+
+#[test]
+fn a_retire_that_refuses_leaves_no_completion_claim_behind() {
+    let tmp = common::tempdir().unwrap();
+    let (_primary, _weaveroot, parent_ww, child_ww, _initial_sha) =
+        make_nested_workweaves(tmp.path());
+    let c2 = child_work_ready_to_retire(&child_ww);
+
+    // An untracked file passes the op-start dirt preflight (which refuses on
+    // tracked changes only) and fails retire's delete gate, which refuses on
+    // any uncommitted state. So every phase up to retire succeeds and retire
+    // is the one that refuses.
+    std::fs::write(
+        child_ww.join(SERVER_PATH).join("scratch.txt"),
+        "not committed\n",
+    )
+    .unwrap();
+
+    let assert = rwv()
+        .args(["sync-to", "--retire"])
+        .current_dir(&child_ww)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("--retire: workweave has uncommitted changes"),
+        "the fixture must reach retire and be refused there; got stderr:\n{stderr}"
+    );
+    // The phases below retire DID their work — so the absent claim is absent
+    // because the op did not complete, not because nothing happened.
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &parent_ww.join(SERVER_PATH)),
+        c2,
+        "advance-target must have landed the child's work in the parent"
+    );
+    assert!(
+        child_ww.exists(),
+        "the refused retire must leave the workweave standing"
+    );
+
+    assert!(
+        !stderr.contains("sync-to complete"),
+        "an op whose retire refused has not completed and must claim nothing of \
+         the sort; got stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
+    let tmp = common::tempdir().unwrap();
+    let (_primary, _weaveroot, _parent_ww, child_ww, _initial_sha) =
+        make_nested_workweaves(tmp.path());
+    child_work_ready_to_retire(&child_ww);
+
+    let assert = rwv()
+        .args(["sync-to", "--retire"])
+        .current_dir(&child_ww)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(!child_ww.exists(), "the op must have retired the workweave");
+    assert_eq!(
+        stderr.matches("sync-to complete").count(),
+        1,
+        "a completed op claims completion exactly once; got stderr:\n{stderr}"
+    );
+
+    let retired_at = stderr
+        .find("retired workweave")
+        .unwrap_or_else(|| panic!("retire must announce its own outcome; got stderr:\n{stderr}"));
+    let complete_at = stderr
+        .find("sync-to complete")
+        .expect("claim counted above");
+    assert!(
+        retired_at < complete_at,
+        "the completion claim must follow the last phase's own outcome, not \
+         precede it; got stderr:\n{stderr}"
+    );
+}
