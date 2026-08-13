@@ -21,12 +21,36 @@
 //!
 //! # Adding a field to an envelope
 //!
-//! The corpus builds each envelope with struct literals, so a new field is a
-//! compile error here naming the file and line. That is the intended cost: the
-//! alternative is a corpus that silently never samples the new field, which
-//! validates and proves nothing about it. Add the field to the sample, and to
-//! the second sample if the field is optional — an `Option` wants both
+//! Six of the seven envelopes are built here with struct literals, so a new
+//! field is a compile error naming the file and line. That is the intended
+//! cost: the alternative is a corpus that silently never samples the new field,
+//! which validates and proves nothing about it. Add the field to the sample,
+//! and to the second sample if the field is optional — an `Option` wants both
 //! settings, since `skip_serializing_if` makes them different wire shapes.
+//!
+//! **`doctor` is the exception, and it is the gap in that property.** Its
+//! documents come from `build_doctor_json`, so a new field on
+//! `DoctorJsonOutput` — or on `ViolationOutput`, which that function also mints
+//! — leaves this file compiling. Such a field is sampled at whatever the
+//! builder yields from the inputs below, which for an `Option` is plausibly the
+//! absent shape and nothing else. Calling the production builder is what makes
+//! doctor's envelope a real emission rather than a test's guess at one, so the
+//! exchange is deliberate; it is not free.
+//!
+//! [`every_corpus_carries_every_envelope_field_its_schema_declares`] narrows
+//! that exception to nested fields: a new *envelope* field on any verb,
+//! doctor included, cannot reach the regenerated artifact and stay unsampled.
+//! A new field on a nested type doctor mints inside the builder still can.
+//!
+//! Two neighbouring shapes do *not* widen the gap, both checked rather than
+//! assumed. A new *variant* is caught by
+//! [`every_corpus_exercises_every_member_its_schema_declares`], which reads the
+//! regenerated artifact. And no envelope reaches a type through
+//! `#[serde(flatten)]`: every flatten in `src/` sits on an NDJSON record
+//! (`fetch.rs`, `push.rs`, `update.rs`, `sync.rs`), and no committed artifact
+//! describes one — each is `schema_for!(<Verb>JsonOutput)`. The `allOf` in
+//! `docs/reference/schemas/update.json` and `doctor.json` is schemars wrapping
+//! a single `$ref` beside a description, not a flattened struct.
 //!
 //! # Residue
 //!
@@ -747,6 +771,44 @@ fn every_corpus_document_validates_against_its_committed_schema() {
                 case.verb
             );
         }
+    }
+}
+
+/// An envelope field no document carries is unvalidated in its present shape,
+/// and `skip_serializing_if` makes present and absent two different wire
+/// shapes. This is what narrows doctor's exception to the struct-literal rule:
+/// a new optional field on `DoctorJsonOutput` compiles here, but it cannot
+/// reach the artifact and stay unsampled.
+///
+/// Top-level only. A nested optional field is a much larger space and this
+/// would reject corpora that are reasonable; the envelope is where a field is
+/// added.
+#[test]
+fn every_corpus_carries_every_envelope_field_its_schema_declares() {
+    for case in cases() {
+        let schema = json_schema::committed_schema(case.verb);
+        let declared: BTreeSet<String> = schema["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{}: the artifact declares no properties", case.verb))
+            .keys()
+            .cloned()
+            .collect();
+        let mut observed = BTreeSet::new();
+        for (_, doc) in (case.corpus)() {
+            observed.extend(
+                doc.as_object()
+                    .expect("every envelope is an object")
+                    .keys()
+                    .cloned(),
+            );
+        }
+        let unsampled: Vec<&String> = declared.difference(&observed).collect();
+        assert!(
+            unsampled.is_empty(),
+            "{} declares envelope fields no document in its corpus carries, so their presence \
+             on the wire is unvalidated: {unsampled:?}",
+            case.verb
+        );
     }
 }
 
