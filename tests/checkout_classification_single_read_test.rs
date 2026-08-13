@@ -19,7 +19,9 @@
 //! are left unpinned. A second read added to any of those call sites is
 //! invisible to this test. It also counts calls per enclosing function, so a
 //! function holding one call that moves to a different path within it still
-//! reads as one.
+//! reads as one — and a caller and a callee that each classify the same
+//! checkout once apiece would satisfy every count this test takes; that split
+//! is not examined here.
 
 mod common;
 
