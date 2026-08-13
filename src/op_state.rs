@@ -226,8 +226,7 @@ impl std::fmt::Display for OpVerb {
 
 /// Current phase of the in-flight operation (schema v2).
 ///
-/// Phases are listed in execution order; the driver loop persists the phase
-/// before entering it so a crash re-enters the same phase on resume.
+/// Phases are listed in execution order.
 ///
 /// ```text
 /// guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
@@ -398,7 +397,7 @@ pub struct OwnerRecord {
     pub target: PathBuf,
     /// Whether `--retire` was passed.
     pub retire: bool,
-    /// Current phase. The driver persists this before entering each phase.
+    /// Current phase.
     pub phase: OpPhase,
     /// The op's per-repo tip table, scoped to exactly one lifecycle half at a
     /// time (see [`PhaseTips`]). Replay-phase intent during replay; converged

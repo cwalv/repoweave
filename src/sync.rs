@@ -1707,14 +1707,8 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
 //                                                 (sync-to only)   (--retire only)
 //
 // guard + mark + savepoint happen once, before the loop, in `guard_and_mark`.
-// The persisted record's phase starts at `Replay`. The driver loop is:
-//
-//   loop {
-//       op_state::set_phase(owner, state.phase);   // one persistence point
-//       state.phase = run_phase(ctx, state.phase)?;
-//       if state.terminal { break }
-//   }
-//   cleanup(ctx);                                       // drop savepoints + clear record
+// The persisted record's phase starts at `Replay`; `drive` owns the loop and
+// the persistence-ordering invariant.
 //
 // **Invariant:** the persisted phase is the phase in progress, and every
 // phase is idempotent and re-runnable from the record alone.
@@ -1957,11 +1951,17 @@ fn run_machine(
 /// The phase-machine driver. Reads the persisted phase, runs it, persists the
 /// transition to the next phase, loops.
 ///
-/// Invariant: the persisted phase is the phase in progress. The owner record's
-/// `phase` field is the SINGLE source of truth and the persistence point is
-/// the post-transition `set_phase` write — entry into the loop relies on
-/// either `guard_and_mark`'s initial write (fresh start: phase=replay) or the
-/// prior iteration's post-transition write (resume: phase=whatever crashed).
+/// Direction-of-motion invariant: the persisted phase never runs ahead of
+/// completed work. The owner record's `phase` field is the SINGLE source of
+/// truth; entry into the loop relies on either `guard_and_mark`'s initial
+/// write (fresh start: phase=replay) or the prior iteration's write (resume:
+/// phase=whatever crashed). This loop's own write is post-transition — it
+/// commits only after `run_phase` returns, so a crash mid-phase leaves the
+/// record exactly where the loop found it. `load_continuing_context`'s
+/// resume-entry write upholds the same invariant from the other direction:
+/// it only ever moves the record backward or laterally, to
+/// `resume_entry_phase`'s idempotent re-entry point, never ahead of what
+/// this loop has itself completed.
 ///
 /// Crash semantics:
 ///   - Inside `run_phase`: record stays at the phase that was running →
@@ -1977,9 +1977,9 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let next = run_phase(ctx, phase)?;
         match next {
             Some(p) => {
-                // Post-transition write: the canonical (and only) persistence
-                // point. Until this commits, a crash leaves the record at the
-                // just-completed phase, which re-runs idempotently on resume.
+                // Post-transition write. Until this commits, a crash leaves
+                // the record at the just-completed phase, which re-runs
+                // idempotently on resume.
                 op_state::set_phase(&ctx.owner_workspace_dir, p)
                     .context("failed to advance phase between iterations")?;
             }

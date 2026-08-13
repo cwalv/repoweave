@@ -79,8 +79,7 @@ informational status/reporting.
 The diagram shows the states a sync operation can be in. The grey box
 (`guard → mark → savepoint`) runs once before the driver loop and is not
 persisted; a crash there leaves no trace. The white states (`replay`
-onward) are the phases the driver persists in `.rwv-op` before entering
-each one.
+onward) are the phases the driver persists in `.rwv-op`.
 
 ```mermaid
 stateDiagram-v2
@@ -149,9 +148,10 @@ stateDiagram-v2
 
 The guard, mark, and savepoint steps run once before the driver loop.
 The persisted record then names which phase the driver is in — the
-single source of truth for op state. The driver writes the phase before
-entering it, so a crash at any instruction re-enters the same phase on
-resume (idempotent by construction). `--continue` for both verbs is:
+single source of truth for op state. The record never runs ahead of
+completed work, so a crash at any instruction resumes at a phase that
+is safe to re-run (idempotent by construction). `--continue` for both
+verbs is:
 load the owner record (following a lease pointer if invoked from a
 non-owner workspace), enter the driver loop.
 
