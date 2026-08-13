@@ -124,7 +124,10 @@ fn workflows_inside_the_gated_run() -> Vec<String> {
 #[test]
 fn both_release_gates_key_on_the_ci_workflow_file() {
     for (label, path) in [
-        ("pre-push hook", repo_root().join(".githooks").join("pre-push")),
+        (
+            "pre-push hook",
+            repo_root().join(".githooks").join("pre-push"),
+        ),
         (
             "release-artifact gate",
             workflow_dir().join("require-green-ci.yml"),
