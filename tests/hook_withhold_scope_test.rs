@@ -4,9 +4,19 @@
 //! One drifted `Cargo.lock` withholds `npm install` too. That is a chosen cost
 //! rather than an oversight, and the asymmetry is exactly what a later reader
 //! tidies: moving the question inside the per-integration loop looks like
-//! precision and produces a workspace where some ecosystems regenerated against
-//! a new membership and others did not — a half-derived state no verb
-//! afterwards can name, reached without anyone deciding to.
+//! precision, and what it buys is a workspace where some ecosystems regenerated
+//! against a new membership and others did not.
+//!
+//! Membership is why the coarse unit is the right one. The verbs that reach
+//! this gate are the ones that CHANGE membership, and every integration derives
+//! its files from that same membership — so scoping the withholding to the
+//! integration whose file drifted does not confine the damage, it distributes
+//! it. Nothing afterwards can name the result: each ecosystem is internally
+//! consistent, so every per-integration check passes and `rwv doctor` reports a
+//! healthy workspace that no single member set explains. Withholding everything
+//! keeps one fact true of the whole workspace instead — nothing has regenerated
+//! since the drift arrived — and that is a state a verb can both describe and
+//! repair.
 //!
 //! The claim is an arity, so the pin is one: the question is asked once, and
 //! the hooks are run once, and the ask guards the run. Narrowing the scope
