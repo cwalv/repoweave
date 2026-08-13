@@ -1890,12 +1890,16 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
     );
 }
 
-/// `allow-stale-lock` override is recorded in the op record when used.
-/// Verified indirectly: the sync succeeds (no lock-freshness refusal) and
-/// the op record file is gone after cleanup (op completed, overrides persisted
-/// through to cleanup).
+/// `--allow-stale-lock` suppresses the lock-freshness refusal and the op runs
+/// to completion.
+///
+/// This does not read the record's `overrides` array — it only sees the
+/// flag's effect on THIS invocation, not that the consent survives a
+/// `--continue`. `a_resumed_pull_carrying_allow_stale_lock_still_targets_the_lock`
+/// (benign_staleness_test.rs) owns that assertion, reading the record back
+/// directly.
 #[test]
-fn sync_allow_stale_lock_override_recorded_and_op_completes() {
+fn sync_allow_stale_lock_flag_accepted_and_op_completes() {
     let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
