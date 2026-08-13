@@ -351,6 +351,176 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
     ws
 }
 
+/// A weave whose owned member depends, via a `path =` dependency, on a
+/// directory that is not itself a member: not registry-shaped
+/// (`<registry>/<owner>/<repo>`), so `rwv.lock` pins nothing for it and
+/// `scan_repos_on_disk` never walks it.
+fn weave_with_a_path_dep(root: &Path) -> (PathBuf, PathBuf) {
+    let ws = root.join("ws");
+    let project_dir = ws.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let outside = root.join("outside-helper");
+    std::fs::create_dir_all(outside.join("src")).unwrap();
+    std::fs::write(
+        outside.join("Cargo.toml"),
+        "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(outside.join("src/lib.rs"), "").unwrap();
+
+    let member = ws.join("github/acme/lib");
+    std::fs::create_dir_all(member.join("src")).unwrap();
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nhelper = { path = \"../../../../outside-helper\" }\n",
+    )
+    .unwrap();
+    std::fs::write(member.join("src/lib.rs"), "").unwrap();
+    git_init_with_commit(&member);
+
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    git_init_with_commit(&project_dir);
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        "app",
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author the workspace manifest");
+
+    (ws, outside)
+}
+
+/// `generation_inputs`' argument for excluding member manifests is that every
+/// route from an edit to a quiet report passes through a moved `rwv.lock` —
+/// the member's own commit is what the lock pins, so there is always a join
+/// point. A `path =` dependency into a directory that is not a member has no
+/// such pin: `rwv.lock` names nothing there, and the directory is not
+/// registry-shaped, so no scan walks it either. Driven through the shipped
+/// binary: the edit is invisible on every axis until something rewrites
+/// `Cargo.lock`, and `rwv materialize` — the sanctioned way that happens —
+/// regenerates and re-stamps in the same call, so it is never visible even
+/// then.
+#[test]
+fn a_path_dependency_into_a_non_member_directory_has_no_join_point() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let (ws, outside) = weave_with_a_path_dep(tmp.path());
+    let project_dir = ws.join("projects/app");
+
+    let (ok, first) = rwv(&["materialize"], &ws);
+    assert!(
+        ok,
+        "first materialize should resolve the path dep for real:\n{first}"
+    );
+
+    let lock_text = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
+    assert!(
+        lock_text.contains("name = \"helper\"") && lock_text.contains("version = \"0.1.0\""),
+        "the generated lock must carry the path dep's real resolve:\n{lock_text}"
+    );
+    assert!(
+        advisories(&ws).is_empty(),
+        "precondition: the generation is current"
+    );
+    let (_, clean) = rwv(&["doctor"], &ws);
+    assert!(
+        !clean.contains("generated file has drift"),
+        "precondition: no drift:\n{clean}"
+    );
+
+    // Edit the non-member directory. No commit: it carries no git repo at
+    // all, and it is not registry-shaped, so nothing in a weave scans it.
+    let helper_manifest = outside.join("Cargo.toml");
+    let declared = std::fs::read_to_string(&helper_manifest).unwrap();
+    std::fs::write(&helper_manifest, declared.replace("0.1.0", "0.2.0")).unwrap();
+
+    // `Cargo.lock`'s bytes have not moved yet — nothing has regenerated it —
+    // so silence here is not yet the finding; it is the same "nothing has
+    // happened on disk" silence any check gives.
+    assert!(
+        advisories(&ws).is_empty(),
+        "bytes have not moved yet: {:?}",
+        advisories(&ws)
+    );
+    let (_, still_quiet) = rwv(&["doctor"], &ws);
+    assert!(
+        !still_quiet.contains("generated file has drift"),
+        "precondition: on-disk Cargo.lock is unchanged so far:\n{still_quiet}"
+    );
+
+    // The measured gap: `rwv materialize` is the sanctioned way this edit
+    // ever reaches `Cargo.lock`, and it regenerates and re-stamps within one
+    // call.
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "{materialized}");
+    let lock_text = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
+    assert!(
+        lock_text.contains("version = \"0.2.0\""),
+        "the edit did reach Cargo.lock: {lock_text}"
+    );
+    assert!(
+        advisories(&ws).is_empty(),
+        "and rwv materialize absorbed it with nothing to show: {:?}",
+        advisories(&ws)
+    );
+    let (_, absorbed) = rwv(&["doctor"], &ws);
+    assert!(
+        !absorbed.contains("generated file has drift"),
+        "no drift either — the stamp and the regeneration are the same call:\n{absorbed}"
+    );
+}
+
+/// The one route that does catch it: something other than `rwv materialize`
+/// touching `Cargo.lock` first. Confirms the recorded-digest DRIFT axis is
+/// live for this file even though nothing upstream of it is watching the
+/// path dependency.
+#[test]
+fn a_bare_cargo_run_after_the_edit_is_caught_by_drift() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let (ws, outside) = weave_with_a_path_dep(tmp.path());
+
+    let (ok, first) = rwv(&["materialize"], &ws);
+    assert!(ok, "{first}");
+
+    let helper_manifest = outside.join("Cargo.toml");
+    let declared = std::fs::read_to_string(&helper_manifest).unwrap();
+    std::fs::write(&helper_manifest, declared.replace("0.1.0", "0.2.0")).unwrap();
+
+    // Out-of-band: an operator building the workspace directly instead of
+    // going through rwv.
+    let status = std::process::Command::new("cargo")
+        .arg("fetch")
+        .current_dir(&ws)
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo fetch should resolve the bump");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        report.contains("generated file has drift"),
+        "the reactive axis is what catches it once materialize is bypassed:\n{report}"
+    );
+}
+
 /// A2 and A3 compose rather than deadlock. A stale entry on a drifted file
 /// still refuses, because drift is the more specific condition and its consents
 /// are the ones that describe the loss — and taking either consent clears both,

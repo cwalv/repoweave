@@ -2272,6 +2272,13 @@ pub fn stamp_owned_generation(
 /// re-hash every member on every doctor run, and still miss an edit to a
 /// source file — so the axis stops at the join point every route passes
 /// through.
+///
+/// The join point is specific to members: a `path =` dependency from a member
+/// into a directory that is not itself a member has no lock entry to move, so
+/// the argument above does not cover it. Doctor is silent through every state
+/// up to the moment `Cargo.lock`'s bytes actually change, and `rwv
+/// materialize` — regenerate and re-stamp in one call — is the one thing that
+/// can make that happen without a preceding warning.
 pub fn generation_inputs(
     project_dir: &Path,
     project: &crate::manifest::ProjectName,
