@@ -1,0 +1,107 @@
+# Runs the test suite on Windows. Advisory: nothing in this repository gates on
+# its result, and it must stay that way until the expected-failure list is
+# empty.
+#
+# WHY THIS IS A WORKFLOW OF ITS OWN, WHICH IS THE WHOLE DESIGN
+#
+# Two gates refuse a release unless CI concluded `success` on the exact commit,
+# and both ask for it by workflow FILE name:
+#
+#   .githooks/pre-push                      refuses to push a version tag
+#   .github/workflows/require-green-ci.yml  refuses to build release artifacts
+#
+# Both query `workflows/ci.yml/runs?head_sha=...` and read
+# `.workflow_runs[0].conclusion`. And .github/workflows/ci.yml is a thin
+# caller — its only job is `uses: ./.github/workflows/ci-checks.yml` — so a job
+# added to ci-checks.yml lands inside the run those two gates read.
+#
+# That is not an accident to work around; it is a property those files were
+# written to have. require-green-ci.yml says so above its own query: keyed on
+# the workflow file and its overall conclusion rather than on job names, so a
+# new platform in ci-checks.yml is covered without that file hearing about it.
+# Marking a job there `continue-on-error` would not be using an escape hatch,
+# it would be defeating the one property the gate was built for — and it would
+# rest on a claim about how GitHub concludes a run that no file here states.
+# A separate workflow file produces a separate run, which neither query names.
+# That is provable by reading the two gates.
+#
+# It has to be outside their reach because this job is EXPECTED to be red at
+# first. A job likely red on its first run, placed where pre-push can see it,
+# blocks every release until someone fixes it — which is the failure that hook
+# exists to prevent, and its provenance is v0.15.0 and v0.16.0 shipping with
+# macOS red.
+#
+# DO NOT add this workflow to required status checks, and do not reference it
+# from either gate, until the list below is empty and a run has been green on a
+# commit nobody special-cased. Required status checks are a repository SETTING
+# and are not tracked in this tree, so whether a red run here can block a merge
+# is not answerable by reading the repository. That is why this runs on pushes
+# to main and on demand, and not on pull requests.
+#
+# WHAT A GREEN RUN HERE WOULD MEAN, AND WHAT IT WOULD NOT
+#
+# It would not mean the tests pass on Windows. 61 tests do not EXIST there —
+# `#[cfg(unix)]` on the test, or a file-level `#![cfg(unix)]` — so they neither
+# run nor report, and a suite is green over their absence exactly as it is over
+# their success. Each states its reason at its own site. At the time of writing:
+#
+#   41  plugin discovery and dispatch. Windows has no executable bit and
+#       lookup selects on PATHEXT, so what a discoverable plugin is even NAMED
+#       there is an undecided product question, not a porting task.
+#   10  symlink semantics, plus one #[ignore]d static-files placeholder.
+#   10  hook, permission and rename fixtures. The two that were settled are
+#       pinned by tests/hook_fixture_portability_test.rs; the rest are gated on
+#       an ACL deny entry, a PATH shim Windows will not spawn, or an inode
+#       instrument NTFS may not honour.
+#
+# Read that as a floor. It counts only tests that are absent by `cfg`; a test
+# that exists here and fails for a reason nobody has predicted is what this
+# workflow is for.
+#
+# Symlink CREATION is not among the reasons, which is worth recording because
+# it was the obstacle most expected. GitHub's Windows runner images enable
+# Developer Mode at image build time and the runner user is an administrator
+# with UAC disabled, while Rust's symlink_file/symlink_dir pass
+# SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE — so both sufficient conditions
+# hold. That is documentation-derived, not observed. This workflow is the thing
+# that would observe it.
+name: Windows tests (advisory)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows-tests:
+    name: Test suite on Windows (advisory, not a gate)
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        run: rustup show
+
+      - name: Install uv (required by uv-workspace e2e tests)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Configure git identity (required by sync merge/rebase tests)
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - name: Run the test suite
+        # Tests only. clippy, rustfmt, rustdoc and the explain-artifact drift
+        # check ask questions whose answers do not vary by platform, and
+        # ci-checks.yml already answers them on two.
+        #
+        # Debug rather than the release profile scripts/ci-local.sh uses: this
+        # run exists to find out WHICH tests fail, and the debug build reaches
+        # that answer sooner. A divergence from ci-local.sh is normally a defect
+        # — that script exists so local and CI cannot drift — but nothing
+        # releasable is decided here, so the profile is free to be the one that
+        # answers the question fastest.
+        shell: bash
+        run: cargo test --locked

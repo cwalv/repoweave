@@ -55,10 +55,12 @@ jobs:
     # success, so compiling the test surface is what keeps the tests that
     # cover such a block from silently ceasing to exist.
     #
-    # It does NOT establish that anything PASSES on Windows: nothing in this
-    # repository has ever been executed there. Tests skipped `#[cfg(unix)]`
-    # for a stated reason are absent from this job too — compiling them is not
-    # running them, and a skipped test compiles trivially.
+    # It does NOT establish that anything PASSES on Windows. Executing the
+    # suite there is windows-tests.yml's job, which is advisory and deliberately
+    # outside this run, so a green run of THIS workflow still says nothing about
+    # behaviour. Tests skipped `#[cfg(unix)]` for a stated reason are absent
+    # from this job too — compiling them is not running them, and a skipped test
+    # compiles trivially.
     name: Windows compile check
     runs-on: windows-latest
 
