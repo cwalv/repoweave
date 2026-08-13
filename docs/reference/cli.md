@@ -165,6 +165,8 @@ Hooks materialize; they never move a pin. A lock file gains what a new member re
 
 It takes no project name, because naming one would be a selection. At a primary with no active project it refuses and names `rwv activate`.
 
+An integration disabled in `rwv.toml` implies the absence of what it authored, and this verb is where that absence is made real: a marked region is stripped out of the file you co-own, a file rwv wrote whole is removed, and the weave-root symlinks go with them. `rwv doctor` reports them under `disabled-integration-artifact` and has no `--fix` arm for it — deletion stays behind the explicit verb.
+
 A generated file rwv attests whose content differs from the generation rwv accepted stops the run: the two exits destroy opposite things, so the operator picks.
 
 | Flag | Effect |

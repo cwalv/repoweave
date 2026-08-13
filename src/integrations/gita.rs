@@ -1,4 +1,4 @@
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -122,6 +122,16 @@ impl Integration for Gita {
             });
         }
         Ok(issues)
+    }
+
+    /// The two CSVs, when they are there. gita's generated set is content rwv
+    /// writes outright, so presence is the whole of the ownership evidence.
+    fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        self.generated_files(ctx)
+            .into_iter()
+            .filter(|name| ctx.output_dir.join(name).is_file())
+            .map(OwnedPath::WholeFile)
+            .collect()
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {

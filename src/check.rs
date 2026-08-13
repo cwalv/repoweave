@@ -2017,6 +2017,7 @@ pub enum IssueKindOutput {
     Surfacing,
     ConfigRejected,
     MemberIncompatibility(MemberIncompatibilityOutput),
+    DisabledIntegrationArtifact,
     IntegrationFailed,
     CoreFinding,
 }
@@ -2055,6 +2056,7 @@ impl IssueKindOutput {
                     required_by: observation.required_by().to_owned(),
                 })
             }
+            IssueKind::DisabledIntegrationArtifact => Self::DisabledIntegrationArtifact,
             IssueKind::IntegrationFailed => Self::IntegrationFailed,
             IssueKind::CoreFinding => Self::CoreFinding,
         }
@@ -7541,6 +7543,66 @@ enum Repair {
     Apply,
 }
 
+/// One finding per disabled integration whose content is still on disk.
+///
+/// **Report only, and there is deliberately no `--fix` arm.** Reaching the state
+/// a disabled integration implies means deleting what it authored, and the edit
+/// that disables an integration is a one-character change in `rwv.toml` — a
+/// typo that put artifact deletion one `--fix` away would be a repair verb with
+/// a blast radius nobody asked for. The named remedy is `rwv materialize`,
+/// which is the operator saying it in as many words.
+fn disabled_integration_issues(
+    workspace_dir: &Path,
+    project: &crate::manifest::ProjectName,
+    integrations: &[&dyn crate::integration::Integration],
+    manifest: &crate::manifest::Manifest,
+    ctx_base: &crate::integration_runner::IntegrationContextBase,
+) -> Vec<Issue> {
+    use crate::integration::{OwnedPath, Severity};
+
+    crate::integration_runner::disabled_integration_artifacts(integrations, manifest, ctx_base)
+        .into_iter()
+        .map(|found| {
+            let described = found
+                .paths
+                .iter()
+                .map(|path| {
+                    let shape = match path {
+                        OwnedPath::WholeFile(_) => "generated file",
+                        OwnedPath::MarkedRegion(_) => "managed region",
+                    };
+                    format!(
+                        "{} ({shape})",
+                        ctx_base.output_dir.join(path.name()).display()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let names: Vec<String> = found.paths.iter().map(|p| p.name().to_string()).collect();
+            let surfaced = crate::activate::surfaced_names(workspace_dir, &names);
+            let also = if surfaced.is_empty() {
+                String::new()
+            } else {
+                format!(", surfaced at the weave root as {}", surfaced.join(", "))
+            };
+            Issue {
+                integration: found.integration.clone(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{} is disabled for project `{project}`, so nothing here is its \
+                     to keep, but content it authored is still on disk: {described}{also}. \
+                     Run `rwv materialize` to remove it. `rwv doctor --fix` will not — \
+                     removal is not a repair, and disabling an integration is one \
+                     character in rwv.toml",
+                    found.integration
+                ),
+                kind: IssueKind::DisabledIntegrationArtifact,
+                safe_to_fix: false,
+            }
+        })
+        .collect()
+}
+
 /// Every finding an integration raised, for one pass over the loaded projects.
 ///
 /// The counterpart of [`collect_doctor_violations`] on the other channel, and
@@ -7578,6 +7640,13 @@ fn collect_doctor_issues(
             project.manifest.workweave.as_ref(),
         );
         issues.extend(run_checks(&integrations, &project.manifest, &ctx_base));
+        issues.extend(disabled_integration_issues(
+            workspace_dir,
+            &project.name,
+            &integrations,
+            &project.manifest,
+            &ctx_base,
+        ));
 
         // The integrations' `verify()` pass reports drift between on-disk
         // managed content and what `activate()` would produce. USER-HELD

@@ -1,7 +1,8 @@
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate,
-    JsonDoc, ManagedDoc, OwnedValue, Ownership, StripOutcome, XRepoweaveMarker,
+    drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
+    orphaned_region_issues, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, Ownership,
+    StripOutcome, XRepoweaveMarker,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -289,6 +290,23 @@ impl Integration for NpmWorkspaces {
     }
 
     /// `package-lock.json` is fully-owned — gitignore-eligible, whole-deletable.
+    /// `package.json`'s marked `workspaces` region, and the
+    /// `package-lock.json` that workspace resolved — the same marker gate
+    /// [`NpmWorkspaces::deactivate`] already applies before removing the lock.
+    fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        if !holds_owned_region::<JsonDoc<XRepoweaveMarker>>(
+            &ctx.output_dir.join("package.json"),
+            &deactivate_owned_keys(),
+        ) {
+            return vec![];
+        }
+        let mut paths = vec![OwnedPath::MarkedRegion("package.json".to_string())];
+        if ctx.output_dir.join("package-lock.json").is_file() {
+            paths.push(OwnedPath::WholeFile("package-lock.json".to_string()));
+        }
+        paths
+    }
+
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
         if ctx.detect_repos_with_manifest("package.json").is_empty() {
             return vec![];

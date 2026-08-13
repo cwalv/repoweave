@@ -830,6 +830,7 @@ Schema:
             "managed-file-user-held",
             "surfacing",
             "config-rejected",
+            "disabled-integration-artifact",
             "integration-failed",
             "core-finding"
           ]

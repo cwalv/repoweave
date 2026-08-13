@@ -141,12 +141,12 @@
 //! Opt-out keys that don't match any active Rust repo are silently ignored
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
     check_owned_digest, drift_issues, fully_owned_digest_mismatch_issue,
-    fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue, orphaned_region_issues,
-    stamp_owned_digest, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult,
-    OwnedDigestCheck, OwnedValue, Ownership, TomlDoc,
+    fully_owned_parse_fail_issue, holds_owned_region, keypath, merge_activate, missing_issue,
+    orphaned_region_issues, stamp_owned_digest, strip_deactivate, toml_array_strings, KeyPath,
+    ManagedDoc, MergeResult, OwnedDigestCheck, OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use anyhow::Context;
@@ -888,6 +888,27 @@ impl Integration for CargoWorkspace {
             return vec![];
         }
         vec!["Cargo.lock".to_string()]
+    }
+
+    /// `Cargo.toml`'s marked `[workspace]` region, and the `Cargo.lock` that
+    /// region's workspace resolved.
+    ///
+    /// The lock rides on the manifest's marker rather than on its own presence:
+    /// an unmarked `Cargo.toml` means the operator authored the workspace, and
+    /// the lock of a workspace rwv did not author is not rwv's to name. Same
+    /// gate `NpmWorkspaces` applies to `package-lock.json`.
+    fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        if !holds_owned_region::<TomlDoc>(
+            &ctx.output_dir.join("Cargo.toml"),
+            &Self::deactivate_owned_keys(),
+        ) {
+            return vec![];
+        }
+        let mut paths = vec![OwnedPath::MarkedRegion("Cargo.toml".to_string())];
+        if ctx.output_dir.join("Cargo.lock").is_file() {
+            paths.push(OwnedPath::WholeFile("Cargo.lock".to_string()));
+        }
+        paths
     }
 
     /// Verify that the on-disk managed and generated files reflect the current

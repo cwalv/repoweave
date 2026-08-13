@@ -331,6 +331,19 @@ pub fn merge_activate<D: ManagedDoc>(
     Ok(result)
 }
 
+/// Whether `path` carries rwv's ownership marker over `owned_keys` — the
+/// evidence that rwv, and not the operator, wrote the region there.
+///
+/// The read-only half of [`strip_deactivate`]'s first decision, and the same
+/// answer: `false` for a missing file, an unparseable one, and an unmarked one
+/// alike. A caller acting on `true` is acting on rwv's own mark.
+pub fn holds_owned_region<D: ManagedDoc>(path: &Path, owned_keys: &[KeyPath]) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| D::parse(&text).ok())
+        .is_some_and(|doc| doc.has_marker(owned_keys))
+}
+
 /// Deactivate the managed region of a hybrid file.
 ///
 /// Semantics:
@@ -2163,6 +2176,24 @@ pub fn stamp_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> anyhow
     // of VCS. Best effort — an ignore failure must never fail the stamp itself.
     let _ = workweave_index::ensure_ignored_in_dir(dir, OWNED_DIGESTS_FILE);
     Ok(())
+}
+
+/// Drop `file_name`'s entry from `dir`'s state file, leaving the other
+/// entries. A no-op when there is no entry to drop.
+///
+/// The counterpart of [`stamp_owned_digest`], for the moment the attested file
+/// stops existing: an attestation of what is not there describes nothing, and
+/// left behind it is a drift report on a file no verb can produce.
+pub fn forget_owned_digest(dir: &Path, file_name: &str) -> anyhow::Result<()> {
+    let mut map = read_owned_digests(dir);
+    if map.remove(file_name).is_none() {
+        return Ok(());
+    }
+    let path = dir.join(OWNED_DIGESTS_FILE);
+    let json = serde_json::to_string_pretty(&map)
+        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("writing owned-digest state {}", path.display()))
 }
 
 /// Compare `content` against the digest `dir`'s state file records for

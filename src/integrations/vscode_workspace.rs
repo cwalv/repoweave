@@ -13,9 +13,10 @@
 //! and `verify` go through it — regeneration and drift detection cannot
 //! disagree about what the region should hold.
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc, RwvGeneratedMarker,
+    drift_issues, holds_owned_region, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc,
+    RwvGeneratedMarker,
 };
 use crate::registry::split_canonical_local_path;
 use crate::workspace::{project_rel_path, ContainerKind};
@@ -637,6 +638,17 @@ impl Integration for VscodeWorkspace {
 
     /// No fully-owned files — the `.code-workspace` file itself is hybrid
     /// (see `managed_files`), never gitignore-eligible or whole-deletable.
+    /// The project's `.code-workspace`, when it carries the `rwv.generated`
+    /// marker `strip_workspace_file` keys on.
+    fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        let name = format!("{}.code-workspace", ctx.project.as_str());
+        if holds_owned_region::<JsonDoc<RwvGeneratedMarker>>(&ctx.output_dir.join(&name), &[]) {
+            vec![OwnedPath::MarkedRegion(name)]
+        } else {
+            vec![]
+        }
+    }
+
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
         vec![]
     }

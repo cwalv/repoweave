@@ -37,18 +37,41 @@ materializing. One word names the operation on both sides.
 
 ### What it touches
 
-1. **Drift settlement.** Generated files rwv attests are compared against what
+1. **Disabled-integration cleanup.** An integration turned off in `rwv.toml`
+   implies the absence of what it authored, so this is where that absence is
+   made real (see below).
+2. **Drift settlement.** Generated files rwv attests are compared against what
    it accepted, and content it never accepted stops the run (see below).
-2. **Surfacing repair.** The weave root's symlinks onto the project's owned
+3. **Surfacing repair.** The weave root's symlinks onto the project's owned
    files are re-created if missing, scoped to this project's own files. The
    root's shared names are not moved — the root already presents this project,
    so there is nothing to move.
-3. **Install hooks.** Each enabled integration's hook runs against the
+4. **Install hooks.** Each enabled integration's hook runs against the
    now-in-place symlinks.
 
 It does **not** author managed content. If an integration's managed file is
 missing, its hook refuses and names `rwv doctor --fix`, which is the verb that
 authors.
+
+### Removing what a disabled integration left
+
+Disabling an integration withdraws the justification for its content, not the
+content. `rwv doctor` reports every artifact still on disk under
+`disabled-integration-artifact`, names this verb, and has no `--fix` arm for it
+— a one-character edit to `rwv.toml` must not put deletion one flag away. This
+verb is that deletion, said in as many words:
+
+- a **marked region** in a file you co-own is stripped out; everything else in
+  the file stays, and the file itself survives unless nothing was left in it;
+- a file rwv wrote **whole** is removed, along with its entry in the
+  accepted-generation record;
+- the weave-root symlinks that surfaced them are unlinked.
+
+Each removal is printed as it happens. Nothing you authored is touched:
+attribution runs off rwv's own ownership marker, so a hand-authored workspace
+file — and the lock beside it — is never named or removed. Re-enabling the
+integration and running `rwv doctor --fix` regenerates everything except the
+ecosystem lock, whose next generation belongs to the ecosystem tool.
 
 ### Arriving at drift
 

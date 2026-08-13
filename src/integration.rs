@@ -169,6 +169,10 @@ pub enum IssueKind {
     /// An `Ownership::DefaultOnly` value that is incompatible with what the
     /// members require. Carries the observation the predicate made.
     MemberIncompatibility(Box<crate::integrations::merge::MemberIncompatibility>),
+    /// Content an integration authored is still on disk while that integration
+    /// is disabled. Reported, never repaired: the implied state is absence, and
+    /// reaching it means deleting.
+    DisabledIntegrationArtifact,
     /// An integration's hook returned an error and the runner captured it so
     /// the remaining integrations could still run.
     IntegrationFailed,
@@ -197,8 +201,33 @@ impl IssueKind {
             Self::Surfacing => "surfacing",
             Self::ConfigRejected => "config-rejected",
             Self::MemberIncompatibility(_) => Self::MEMBER_INCOMPATIBILITY,
+            Self::DisabledIntegrationArtifact => "disabled-integration-artifact",
             Self::IntegrationFailed => "integration-failed",
             Self::CoreFinding => "core-finding",
+        }
+    }
+}
+
+/// One path an integration's ownership is written onto, and the cleanup shape
+/// that ends it.
+///
+/// The distinction is what keeps cleanup from becoming data loss: removing a
+/// file the operator co-owns would take their content with it, and stripping a
+/// file rwv wrote whole would leave an empty shell behind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnedPath {
+    /// rwv wrote the whole file. Cleanup is removal.
+    WholeFile(String),
+    /// rwv wrote a marked region inside a file the operator also holds.
+    /// Cleanup is the integration's own strip, which keeps their content.
+    MarkedRegion(String),
+}
+
+impl OwnedPath {
+    /// The path, relative to `output_dir`.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::WholeFile(name) | Self::MarkedRegion(name) => name,
         }
     }
 }
@@ -368,6 +397,32 @@ pub trait Integration {
     /// integration starts owning hybrid content.
     fn verify(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         Ok(Vec::new())
+    }
+
+    /// Where this integration's ownership is written under `output_dir`
+    /// **right now**, and which cleanup shape ends each one. Read-only.
+    ///
+    /// The one hook that is meaningful for an integration that is **not
+    /// enabled**. Every other read hook answers "does the on-disk state match
+    /// what this integration would author", which a disabled integration has no
+    /// answer to; this one answers "is anything of mine still here", which is
+    /// exactly the question disablement raises. Nothing here consults
+    /// membership or history — an artifact is attributed by the ownership
+    /// evidence on disk, so no record of a previous enablement is needed.
+    ///
+    /// The set `deactivate` acts on, stated without acting. An entry here is a
+    /// removal or a strip an operator can be asked to authorize, so an
+    /// integration that returns a path it did not author is proposing to
+    /// destroy someone else's file.
+    ///
+    /// **Default: empty**, and that is the safe answer rather than a stub.
+    /// Declaring a file in [`Integration::generated_files`] means "symlink this
+    /// from the weave root", not "rwv wrote this": `static-files` declares the
+    /// operator's own committed files and `go-work` declares `go.sum`, which
+    /// the go tool writes. An integration that authors content overrides this
+    /// and states its own ownership evidence.
+    fn owned_paths_on_disk(&self, _ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        Vec::new()
     }
 
     /// Report an `Ownership::DefaultOnly` value on this integration's managed

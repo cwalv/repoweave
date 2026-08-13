@@ -163,6 +163,52 @@ pub fn enabled_integrations<'a>(
     })
 }
 
+/// What a disabled integration's ownership is still written onto in this
+/// checkout, per integration that has anything left.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisabledIntegrationArtifacts {
+    pub integration: String,
+    /// Non-empty, in the integration's own order.
+    pub paths: Vec<crate::integration::OwnedPath>,
+}
+
+/// The integrations `manifest` disables that still have content on disk.
+///
+/// The complement of [`enabled_integrations`], and the only caller that asks a
+/// disabled integration anything. Disablement withdraws the justification for
+/// the content but not the content, and the answer comes from ownership
+/// evidence present right now — so nothing has to have recorded which
+/// integrations were enabled last time.
+pub fn disabled_integration_artifacts(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> Vec<DisabledIntegrationArtifacts> {
+    let default_config = IntegrationConfig::default();
+    integrations
+        .iter()
+        .filter(|integration| {
+            let config = manifest
+                .integrations
+                .get(integration.name())
+                .unwrap_or(&default_config);
+            !is_enabled(**integration, config)
+        })
+        .filter_map(|integration| {
+            let config = manifest
+                .integrations
+                .get(integration.name())
+                .unwrap_or(&default_config);
+            let ctx = ctx_base.build_context(config, manifest);
+            let paths = integration.owned_paths_on_disk(&ctx);
+            (!paths.is_empty()).then(|| DisabledIntegrationArtifacts {
+                integration: integration.name().to_string(),
+                paths,
+            })
+        })
+        .collect()
+}
+
 /// Iterate over enabled integrations, calling `f` for each one. Errors
 /// returned by `f` are captured as `Issue`s with `Severity::Error` so that
 /// one failing integration does not prevent others from running.

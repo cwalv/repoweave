@@ -1,7 +1,7 @@
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
-    drift_issues, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate, KeyPath,
-    ManagedDoc, OwnedValue, Ownership, YamlDoc,
+    drift_issues, holds_owned_region, merge_activate, missing_issue, orphaned_region_issues,
+    strip_deactivate, KeyPath, ManagedDoc, OwnedValue, Ownership, YamlDoc,
 };
 use anyhow::Context;
 use saphyr::{LoadableYamlNode, YamlOwned};
@@ -213,6 +213,25 @@ impl Integration for PnpmWorkspaces {
         }
 
         Ok(())
+    }
+
+    /// `pnpm-workspace.yaml`'s marked `packages:` block, and the
+    /// `pnpm-lock.yaml` that workspace resolved. The lock rides on the
+    /// workspace file's marker — see [`CargoWorkspace::owned_paths_on_disk`].
+    ///
+    /// [`CargoWorkspace::owned_paths_on_disk`]: crate::integrations::CargoWorkspace
+    fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        if !holds_owned_region::<YamlDoc>(
+            &ctx.output_dir.join("pnpm-workspace.yaml"),
+            &[packages_key()],
+        ) {
+            return vec![];
+        }
+        let mut paths = vec![OwnedPath::MarkedRegion("pnpm-workspace.yaml".to_string())];
+        if ctx.output_dir.join("pnpm-lock.yaml").is_file() {
+            paths.push(OwnedPath::WholeFile("pnpm-lock.yaml".to_string()));
+        }
+        paths
     }
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {

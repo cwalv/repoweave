@@ -37,13 +37,15 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::cli::consent::DriftConsent;
-use crate::integration::{Integration, Severity};
+use crate::integration::{Integration, OwnedPath, Severity};
 use crate::integration_runner::{
-    build_detection_cache, enabled_integrations, run_activate_hooks, run_activations, run_checks,
-    run_deactivations, run_verifications,
+    build_detection_cache, disabled_integration_artifacts, enabled_integrations,
+    run_activate_hooks, run_activations, run_checks, run_deactivations, run_verifications,
 };
 use crate::integrations::builtin_integrations;
-use crate::integrations::merge::{drifted_attested_owned_files, stamp_owned_digest};
+use crate::integrations::merge::{
+    drifted_attested_owned_files, forget_owned_digest, stamp_owned_digest,
+};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::symlink::LinkTarget;
 use crate::workspace::{
@@ -227,6 +229,96 @@ pub fn materialize(ctx: &WorkspaceContext, consent: Option<DriftConsent>) -> any
         ActivateOptions::default(),
         ActivationMode::Materialize(consent),
     )
+}
+
+/// Remove what a disabled integration authored: the state disablement implies
+/// is absence, and this is the verb that makes an implied state real.
+///
+/// Runs before [`settle_arrived_drift`], and the order is the answer to a
+/// question neither rule settles alone. Drift asks which of two futures an
+/// attested file should have — accept these bytes, or discard them and generate
+/// again. A file whose author is disabled has neither future, so both consents
+/// would misdescribe what happens to it, and `--adopt-drifted` would read as
+/// "record this content" while the file is deleted. Stripping first means the
+/// fork is never reached for a file that is going away, and the ledger entry
+/// goes with the file, since an attestation of something absent is stale by
+/// construction.
+///
+/// Each removal is announced. Doctor's finding is the loss list an operator
+/// reads before choosing this verb, but an operator who never ran doctor still
+/// gets one — from the operation itself, as it acts.
+fn strip_disabled_integrations(
+    root: &Path,
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &crate::integration_runner::IntegrationContextBase,
+) -> anyhow::Result<()> {
+    let found = disabled_integration_artifacts(integrations, manifest, ctx_base);
+    if found.is_empty() {
+        return Ok(());
+    }
+    let output_dir = ctx_base.output_dir.as_path();
+    let default_config = IntegrationConfig::default();
+
+    for artifacts in &found {
+        let Some(integration) = integrations
+            .iter()
+            .find(|i| i.name() == artifacts.integration)
+        else {
+            continue;
+        };
+        // The integration's own cleanup shape, which is the only thing that
+        // knows how to take rwv's region out of a file the operator co-owns.
+        integration.deactivate(output_dir).with_context(|| {
+            format!(
+                "{}: stripping the content of a disabled integration",
+                artifacts.integration
+            )
+        })?;
+
+        for path in &artifacts.paths {
+            let OwnedPath::WholeFile(name) = path else {
+                continue;
+            };
+            let file = output_dir.join(name);
+            if file.is_file() {
+                std::fs::remove_file(&file)
+                    .with_context(|| format!("removing {}", file.display()))?;
+            }
+            forget_owned_digest(output_dir, name)?;
+        }
+
+        let names: Vec<String> = artifacts
+            .paths
+            .iter()
+            .map(|p| p.name().to_string())
+            .collect();
+        unsurface_names(root, &names)?;
+        let config = manifest
+            .integrations
+            .get(artifacts.integration.as_str())
+            .unwrap_or(&default_config);
+        let ctx = ctx_base.build_context(config, manifest);
+        let remaining = integration.owned_paths_on_disk(&ctx);
+        eprintln!(
+            "[stripped] {}: disabled, removed {}",
+            artifacts.integration,
+            names.join(", ")
+        );
+        if !remaining.is_empty() {
+            anyhow::bail!(
+                "{}: strip left {} behind; the finding that named this verb would \
+                 fire again",
+                artifacts.integration,
+                remaining
+                    .iter()
+                    .map(|p| p.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Settle attested generated files in `output_dir` whose content rwv never
@@ -415,6 +507,7 @@ fn activate_at(
             }
         }
         ActivationMode::Materialize(consent) => {
+            strip_disabled_integrations(root, &integrations, &manifest, &ctx_base)?;
             settle_arrived_drift(&ctx_base.output_dir, consent)?;
         }
     }
@@ -529,6 +622,33 @@ fn report_and_check_activate_hook_issues(
 /// up if they become empty.
 fn remove_activation_symlinks(root: &Path, owned_files: &BTreeSet<String>) -> anyhow::Result<()> {
     remove_activation_symlinks_in(root, root, owned_files)
+}
+
+/// Which of `names` the weave root currently surfaces out of a project, in
+/// `names` order. Read-only.
+///
+/// Owner-scoped by the same predicate the removal path uses, so a root entry
+/// that is a real file, a dangling name, or a link pointing somewhere else is
+/// not counted as surfacing.
+pub fn surfaced_names(root: &Path, names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| {
+            std::fs::read_link(root.join(name))
+                .is_ok_and(|target| target_resolves_to_projects(Path::new(name), &target))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Unlink the weave-root symlinks surfacing `names`, and prune directories the
+/// removal empties.
+///
+/// Owner-scoped: this is [`remove_activation_symlinks`] pointed at one name set
+/// rather than at a whole activation's, and it removes nothing the predicate
+/// above would not have counted.
+pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
+    remove_activation_symlinks(root, &names.iter().cloned().collect())
 }
 
 /// True if `target` (the `read_link` output of a symlink at `link_path`,

@@ -55,10 +55,11 @@
 //! declared.  Tests set it to `true` to guarantee the hand-parse path is
 //! taken regardless of whether `go` happens to be on PATH in the test runner.
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, merge_activate, missing_issue, orphaned_region_issues, strip_deactivate,
-    GoWorkDoc, KeyPath, ManagedDoc, MemberIncompatibility, OwnedValue, Ownership,
+    drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
+    orphaned_region_issues, strip_deactivate, GoWorkDoc, KeyPath, ManagedDoc,
+    MemberIncompatibility, OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;
@@ -336,6 +337,17 @@ impl Integration for GoWork {
     /// `generated_files()` is for fully-rwv-owned files
     /// (whole-deletable, gitignore-ok); `managed_files()` is for hybrid files
     /// that are symlinked but never gitignored or whole-deleted.
+    /// `go.work`'s marked `use` block, and nothing else. `go.sum` is declared
+    /// generated so it is surfaced, but the go tool writes it and rwv has never
+    /// authored a byte of one.
+    fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
+        if holds_owned_region::<GoWorkDoc>(&ctx.output_dir.join("go.work"), &Self::owned_keys()) {
+            vec![OwnedPath::MarkedRegion("go.work".to_string())]
+        } else {
+            vec![]
+        }
+    }
+
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
         // go.sum is still fully-generated (tool-managed), so it stays here.
         // go.work itself moves to managed_files().

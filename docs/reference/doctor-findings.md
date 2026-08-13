@@ -882,8 +882,32 @@ a file region you hold the pen on, which `--fix` reports and never overwrites.
 | `surfacing` | A weave-root symlink onto an owned file is absent, occupied by real content, or resolves into a different project. |
 | `config-rejected` | `rwv.toml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
 | `member-incompatibility` | A value you hold is incompatible with what the members require. Carries the observation as fields, below. |
+| `disabled-integration-artifact` | An integration is disabled for this project, but content it authored is still on disk. Reported only — see below. |
 | `integration-failed` | An integration's hook returned an error; the runner captured it so the remaining integrations could still run. |
 | `core-finding` | Raised by doctor itself while driving the integrations. On the wire this appears only under `--fix`, which `--json` has no form of — see the disjointness rule above. |
+
+`disabled-integration-artifact` is the one kind `--fix` has no arm for at all,
+and the omission is the design rather than a gap. Disabling an integration
+withdraws the justification for what it authored but not the content: the marked
+region in your hybrid file, the lock file it generated, and the weave-root
+symlinks that surfaced both are all still there. The state disablement implies
+is their absence, and reaching it means deleting — so the finding names
+`rwv materialize`, which removes each artifact by its own cleanup shape (a
+marked region is stripped out of the file and your content stays; a file rwv
+wrote whole is removed; the surfacing symlinks go with them). `--fix` stays out
+because disabling an integration is a one-character edit to `rwv.toml`, and a
+typo must not put deletion one flag away.
+
+Nothing you authored is ever named here. An artifact is attributed to an
+integration by rwv's own ownership evidence on disk — the `managed by rwv`
+marker for a region, and for a lock file the marker on the workspace file that
+made rwv its author — so a hand-authored `Cargo.toml`, and the lock beside it,
+are yours and stay yours. `static-files` never appears: it surfaces files you
+committed and authors none.
+
+**What to do:** re-enable the integration if the disablement was a mistake, or
+run `rwv materialize` to remove what it left. Doing nothing is also stable —
+the finding is a warning and does not change doctor's exit status.
 
 `member-incompatibility` is the one kind that carries fields rather than only
 a tag, because the four facts its predicate established are what the remedy

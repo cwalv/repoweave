@@ -375,7 +375,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "activate.rs",
         pattern: "remove_file",
-        count: 3,
+        count: 4,
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
             (2) foreign-shared-name cleanup: only top-level symlinks whose \
@@ -395,7 +395,21 @@ const ALLOWLIST: &[Allowed] = &[
             only in cli::dispatch and unforgeable elsewhere. NOT recoverable \
             by rwv: the discarded bytes are content rwv never accepted, so no \
             digest, savepoint or copy of them exists — `rwv explain \
-            materialize` says so at the flag.",
+            materialize` says so at the flag. \
+            (4) strip_disabled_integrations. Precondition: the integration is \
+            disabled in rwv.toml AND the file is one its own \
+            `owned_paths_on_disk` reports as WholeFile — rwv wrote all of it, \
+            proven by the ownership marker on the workspace file that made rwv \
+            the author, never by the file merely being present. A hybrid file \
+            the operator co-owns is never removed here; it goes through the \
+            integration's strip, which keeps their content. The consent is the \
+            verb: `rwv doctor` reports the finding with every path it would \
+            remove and has NO --fix arm, so `rwv materialize` is the operator \
+            re-running against that list, and the strip names each path as it \
+            acts. Recoverable by re-enabling the integration and running \
+            `rwv doctor --fix`, which regenerates every artifact removed here \
+            except the ecosystem lock, whose next generation is the ecosystem \
+            tool's to produce.",
     },
     Allowed {
         file: "op_state.rs",
