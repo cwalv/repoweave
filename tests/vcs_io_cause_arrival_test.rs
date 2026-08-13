@@ -140,7 +140,11 @@ fn doctor_fix_defers_to_the_same_report_only_finding_as_plain_doctor() {
     let root = make_workspace(tmp.path(), "ws");
     workspace_with_unreadable_gitattributes(&root);
 
-    let plain = common::rwv().arg("doctor").current_dir(&root).output().unwrap();
+    let plain = common::rwv()
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .unwrap();
     assert!(
         plain.status.success(),
         "plain doctor should exit 0 on a report-only finding:\n{}",
