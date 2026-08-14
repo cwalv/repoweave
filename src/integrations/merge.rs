@@ -2429,10 +2429,7 @@ fn workspace_members(doc: &toml_edit::DocumentMut) -> Vec<String> {
 /// Absolute paths to `Cargo.toml` files named by `path = "<rel>"` entries in
 /// `doc`, across the standard dep tables and their `[target.<cfg>.<key>]`
 /// variants. Missing / non-string `path` values are dropped.
-fn path_dep_targets(
-    doc: &toml_edit::DocumentMut,
-    manifest_dir: &Path,
-) -> Vec<std::path::PathBuf> {
+fn path_dep_targets(doc: &toml_edit::DocumentMut, manifest_dir: &Path) -> Vec<std::path::PathBuf> {
     const DEP_KEYS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
     let mut targets = Vec::new();
 
@@ -2493,11 +2490,7 @@ fn canonicalize_or_owned(path: &Path) -> std::path::PathBuf {
 /// paths outside are spelled with the leading `..` segments that get from
 /// `workspace_root` to `target`. Always forward-slash for cross-platform
 /// determinism (matches the rest of the ledger's key format).
-fn workspace_relative_key(
-    ws_root_canon: &Path,
-    ws_root_raw: &Path,
-    target_canon: &Path,
-) -> String {
+fn workspace_relative_key(ws_root_canon: &Path, ws_root_raw: &Path, target_canon: &Path) -> String {
     // Prefer the canonicalized workspace root for stripping, so a symlinked
     // workspace root does not double-render its own segments.
     if let Ok(rel) = target_canon.strip_prefix(ws_root_canon) {
