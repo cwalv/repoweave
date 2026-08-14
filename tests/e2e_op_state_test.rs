@@ -550,6 +550,29 @@ fn sync_force_flag_is_removed_and_produces_friendly_error() {
     );
 }
 
+/// Plain `sync`'s `--json` still conflicts with `--continue`. The sync-to
+/// side relaxed this (its envelope reports the machine's own coordinates and
+/// a `resumed` disclosure); the sync envelope carries no such disclosure, so
+/// its conflict stands until it grows one. This pin is what a relaxer must
+/// consciously remove.
+#[test]
+fn sync_continue_with_json_flag_is_rejected() {
+    let tmp = common::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    let assertion = rwv()
+        .args(["sync", "--json", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        "expected clap exclusivity error for sync --json + --continue; got: {stderr}"
+    );
+}
+
 /// --allow-stale-lock alongside --continue must be rejected (conflicts_with).
 #[test]
 fn continue_with_allow_stale_lock_flag_is_rejected() {

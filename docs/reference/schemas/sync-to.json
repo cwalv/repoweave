@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends [`SyncJsonOutput`] with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends [`SyncJsonOutput`] with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -35,6 +35,17 @@
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resumed": {
+      "description": "The phase the interrupted op had reached when `--continue` resumed it; absent on a fresh run. Presence encodes \"this envelope describes a resumed op\", the same way `resolution.workweave`'s presence encodes the checkout kind.\n\nDecides what `outcomes` below describes. `replay` means replay re-ran in this invocation, so `outcomes` carries every repo (already-converged ones as `no-op`). Any later phase means replay had already completed before the interruption: this invocation re-entered downstream of it, and `outcomes` is empty — not because no repos were synced, but because the syncing happened in the interrupted invocation. A per-repo `step3_advance` performed by such a resume has no outcome to ride on and is not reported; the target's tips remain readable via `rwv status --json` in the target workspace.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/OpPhase"
         },
         {
           "type": "null"
@@ -192,6 +203,39 @@
               ]
             }
           }
+        }
+      ]
+    },
+    "OpPhase": {
+      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "oneOf": [
+        {
+          "description": "Manifest repos + project repo strategy phase (today's Phase 2 + 1').",
+          "type": "string",
+          "enum": [
+            "replay"
+          ]
+        },
+        {
+          "description": "Regenerate and commit `rwv.lock` (today's Phase 3). On completion, converged tips are written into the owner record.",
+          "type": "string",
+          "enum": [
+            "relock"
+          ]
+        },
+        {
+          "description": "FF-advance every target repo to its converged tip (sync-to only).",
+          "type": "string",
+          "enum": [
+            "advance-target"
+          ]
+        },
+        {
+          "description": "Merged-check then workweave removal (`--retire` only).",
+          "type": "string",
+          "enum": [
+            "retire"
+          ]
         }
       ]
     },

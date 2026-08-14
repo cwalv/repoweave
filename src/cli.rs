@@ -336,8 +336,11 @@ pub enum Commands {
         /// manifest repos converged with target after sync-to completes).
         #[arg(long, conflicts_with = "do_continue")]
         retire: bool,
-        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync-to`.
-        #[arg(long, conflicts_with = "do_continue")]
+        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`).
+        /// May be combined with `--continue`: the resumed op's envelope reports the
+        /// machine's own coordinates and carries a `resumed` field naming the phase the
+        /// interrupted op had reached. See `rwv explain sync-to`.
+        #[arg(long)]
         json: bool,
         /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
         /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
@@ -349,7 +352,8 @@ pub enum Commands {
         /// Resume a sync-to that was interrupted mid-op (e.g. after resolving a conflict).
         /// All parameters (target, strategy, retire, overrides, etc.) are read from the
         /// in-progress op-state file. No other flags may be passed alongside `--continue`
-        /// (except `--project`). To change parameters mid-op, run `rwv abort` and re-invoke.
+        /// (except `--project` and `--json`). To change parameters mid-op, run `rwv abort`
+        /// and re-invoke.
         #[arg(long = "continue")]
         do_continue: bool,
     },

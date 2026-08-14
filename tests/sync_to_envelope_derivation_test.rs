@@ -4,19 +4,22 @@
 //! what the machine DID. Every one of them used to be recomputed at envelope
 //! assembly from what the invocation ASKED FOR — the flags on the command
 //! line, the workspace the operator typed it in, a second HEAD read taken
-//! beside the fast-forward. Those answers agree with the machine's only
-//! because of conditions held elsewhere: `--json` and `--continue` are
-//! mutually exclusive at the CLI, so the invocation happens to be the op; and
-//! the second HEAD read happens microseconds from the first. Neither is a
-//! property of this code, and the failure mode when one lapses is an envelope
-//! that reports a retire that did not happen, or an empty target, in a
-//! machine-readable field a consumer cannot second-guess.
+//! beside the fast-forward. Those answers agreed with the machine's only
+//! because of conditions held elsewhere: `--json` and `--continue` were
+//! mutually exclusive at the CLI (they no longer are — `rwv sync-to
+//! --continue --json` is a supported invocation, which is precisely why the
+//! envelope must derive from the machine), and the second HEAD read happens
+//! microseconds from the first. Neither is a property of this code, and the
+//! failure mode when one lapses is an envelope that reports a retire that did
+//! not happen, or an empty target, in a machine-readable field a consumer
+//! cannot second-guess.
 //!
-//! Both pins are structural because the defect is: with the guards standing,
-//! recomputation and threading produce identical bytes, so no fixture
-//! distinguishes them. What a fixture would have to arrange — a resumed op
-//! emitting JSON, or a repo whose HEAD moves between two adjacent reads — is
-//! respectively unreachable and a race.
+//! Both pins are structural because the defect is: on a fresh run,
+//! recomputation and threading produce identical bytes, so a fresh-run
+//! fixture cannot distinguish them, and the read whose two candidates are
+//! separated only by timing — a repo's HEAD moving between two adjacent
+//! reads — is a race no fixture can arrange. The resumed-op path, where the
+//! candidates hold different values, has behavioural tests; see below.
 //!
 //! Residue: these are token scans, and a token scan catches the recomputation
 //! only in the spelling it left in. Reading the checkout off some other

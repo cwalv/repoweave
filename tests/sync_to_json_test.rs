@@ -696,22 +696,24 @@ fn sync_to_json_outside_workspace_no_panic() {
 }
 
 // ===========================================================================
-// A resumed op's envelope, on the one path that reaches it
+// A resumed op's envelope
 //
-// `--json` and `--continue` are mutually exclusive at the CLI, so no
-// invocation of the binary emits an envelope for an op it did not itself
-// start. A library caller reaches one: `do_continue` sends the machine to the
-// op record, whose owner workspace, target and retire flag are not what the
-// request carries. Each identity field then has two candidate answers that
-// differ — the machine's and the invocation's — which is what makes the
-// assertions below behavioural rather than a statement about how the
-// derivation is spelled.
+// `rwv sync-to --continue --json` emits an envelope for an op the invocation
+// did not itself start: `do_continue` sends the machine to the op record,
+// whose owner workspace, target and retire flag are not what the request
+// carries. Each identity field then has two candidate answers that differ —
+// the machine's and the invocation's — which is what makes the assertions
+// below behavioural rather than a statement about how the derivation is
+// spelled.
 //
 // One resume is not enough to separate all three. The invocation answers
 // `source_workweave` and `target` wrongly only when the caller is somewhere
 // other than the owner, and answers `retired` wrongly only when it IS a
 // workweave — a workweave-rooted op reporting a retire it did not run. So the
-// two tests below drive the same stranded op from the two sides of it.
+// two library-level tests below drive the same stranded op from the two sides
+// of it. The binary-level test after them drives a real conflict-interrupted
+// op through `rwv sync-to --continue --json` and validates the envelope
+// against the committed schema artifact.
 // ===========================================================================
 
 const RESUMED_OP_ID: &str = "envelope-identity-resume";
@@ -810,6 +812,20 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
         primary.canonicalize().ok(),
         "target must be the workspace the op recorded; the request carries none"
     );
+    // The record was planted at advance-target and the resume RE-ENTERS
+    // relock (`resume_entry_phase`), so this assertion holds only if the
+    // disclosure carries the phase the record stood at, not the re-entry
+    // point the machine computed from it.
+    assert_eq!(
+        envelope.resumed,
+        Some(repoweave::op_state::OpPhase::AdvanceTarget),
+        "resumed must name the phase the interrupted op had reached"
+    );
+    assert!(
+        envelope.outcomes.is_empty(),
+        "a resume downstream of replay records no per-repo outcomes; the \
+         `resumed` field above is what makes that emptiness interpretable"
+    );
 }
 
 #[test]
@@ -838,4 +854,115 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
         primary.canonicalize().ok(),
         "target must be the workspace the op recorded; the request carries none"
     );
+}
+
+// ===========================================================================
+// Binary-level: a conflict-interrupted sync-to finished via --continue --json
+// ===========================================================================
+
+/// Drive a real interrupted sync-to to completion through the binary: a
+/// step-1 rebase conflict parks the op; the resolution is staged; then
+/// `rwv sync-to --continue --json` finishes it and emits the envelope.
+///
+/// The envelope is validated against the committed artifact its own `$schema`
+/// names, and the `resumed` disclosure is pinned: the op stranded during
+/// replay, so `resumed` is `"replay"` and `outcomes` carries every repo.
+#[test]
+fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
+    let tmp = common::tempdir().unwrap();
+    let workweave_name = "sample-weave";
+    let (primary, ww, primary_server, ww_server, primary_project, ww_project, _advance_sha) =
+        make_workweave_ahead_fixture(tmp.path(), workweave_name);
+
+    // Target advances on `shared.txt` and relocks, so step 1 has a tip to
+    // replay onto...
+    let c2 = make_commit(
+        &primary_server,
+        "shared.txt",
+        "primary version\n",
+        "primary: add shared.txt",
+    );
+    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary_project);
+    git(&["commit", "-m", "lock: primary advance"], &primary_project);
+
+    // ...and the workweave advances on the same file, so the replay conflicts.
+    let c_ww = make_commit(
+        &ww_server,
+        "shared.txt",
+        "ww version\n",
+        "ww: add shared.txt",
+    );
+    write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww_project);
+    git(
+        &["commit", "-m", "lock: ww conflicting advance"],
+        &ww_project,
+    );
+
+    // The op parks at replay on the conflict.
+    rwv()
+        .args(["sync-to", &primary.to_string_lossy(), "--json"])
+        .current_dir(&ww)
+        .assert()
+        .failure();
+    assert!(
+        ww.join(".rwv-op").exists(),
+        "the interrupted op must leave its record for --continue to find"
+    );
+
+    // Resolve and stage; the resume performs the VCS-native continue itself.
+    std::fs::write(ww_server.join("shared.txt"), "resolved\n").unwrap();
+    git(&["add", "shared.txt"], &ww_server);
+
+    let assert = rwv()
+        .args(["sync-to", "--continue", "--json"])
+        .current_dir(&ww)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    let doc: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("--continue --json must emit one envelope ({e}):\n{stdout}"));
+
+    // The envelope satisfies the artifact its own bytes name.
+    let url = doc["$schema"].as_str().expect("envelope carries $schema");
+    assert!(
+        url.ends_with("/docs/reference/schemas/sync-to.json"),
+        "envelope must point consumers at the sync-to artifact; got {url}"
+    );
+    let schema = common::json_schema::committed_schema("sync-to");
+    let (errors, walk) = common::json_schema::conform(&doc, &schema);
+    assert!(
+        errors.is_empty(),
+        "the resumed envelope does not satisfy docs/reference/schemas/sync-to.json:\n  {}\n\n\
+         emitted:\n{doc:#}",
+        errors.join("\n  ")
+    );
+    assert!(
+        walk.properties_checked >= 3,
+        "the walk never reached the envelope's properties — vacuous pass: {walk:?}"
+    );
+
+    // The resumed disclosure: the op stranded during replay, so replay re-ran
+    // and outcomes carries the repo.
+    assert_eq!(doc["resumed"], "replay", "envelope:\n{doc:#}");
+    let outcomes = doc["outcomes"].as_array().expect("outcomes array");
+    assert!(
+        !outcomes.is_empty(),
+        "a replay-resumed envelope carries per-repo outcomes:\n{doc:#}"
+    );
+
+    // Identity fields are the machine's own answers.
+    assert_eq!(
+        doc["source_workweave"], workweave_name,
+        "envelope:\n{doc:#}"
+    );
+    assert_eq!(
+        Path::new(doc["target"].as_str().expect("target is a string"))
+            .canonicalize()
+            .ok(),
+        primary.canonicalize().ok(),
+    );
+    assert_eq!(doc["retired"], false, "envelope:\n{doc:#}");
 }

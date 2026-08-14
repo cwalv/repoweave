@@ -164,7 +164,9 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
 - `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
   resolving a conflict). The recorded parameters must match — mismatch is an error.
   A resume recorded at `advance-target` re-enters `relock` first, so the lock it
-  lands pins the tips it lands.
+  lands pins the tips it lands. May be combined with `--json` (see below); every
+  other flag except `--project` conflicts with `--continue`, because the resumed
+  op's parameters come from its op-state record, not the invocation.
 
 Run `rwv --help sync-to` for the full clap surface.
 
@@ -184,6 +186,18 @@ pretty-printed envelope:
 
 Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
 — only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
+
+`--continue --json` resumes an interrupted op and emits the same envelope, so a
+consumer that drove the op through `--json` can finish it without falling back
+to text. The envelope's identity fields (`source_workweave`, `target`,
+`retired`) report the machine's own answers read from the op record, and a
+`resumed` field names the phase the interrupted op had reached. `resumed:
+"replay"` — the common interruption, a step-1 conflict — means `outcomes`
+carries every repo, exactly as on a fresh run. A later `resumed` value means
+replay had already completed before the interruption, so `outcomes` is empty;
+read the target's state with `rwv status --json` if per-repo confirmation is
+needed. (`-j` still conflicts with `--continue`, so a resumed `--json` run is
+always the serial envelope, never NDJSON.)
 
 Schema:
 
@@ -225,6 +239,12 @@ Resume after resolving a conflict:
 ```
 # (resolve conflicts in the relevant repos)
 rwv sync-to --continue
+```
+
+Resume with the machine-readable envelope (note `resumed`):
+
+```
+rwv sync-to --continue --json | jq '{resumed, outcomes: [.outcomes[] | {path, kind}]}'
 ```
 
 Roll back after a failed sync-to:

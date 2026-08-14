@@ -164,7 +164,9 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
 - `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
   resolving a conflict). The recorded parameters must match — mismatch is an error.
   A resume recorded at `advance-target` re-enters `relock` first, so the lock it
-  lands pins the tips it lands.
+  lands pins the tips it lands. May be combined with `--json` (see below); every
+  other flag except `--project` conflicts with `--continue`, because the resumed
+  op's parameters come from its op-state record, not the invocation.
 
 Run `rwv --help sync-to` for the full clap surface.
 
@@ -185,13 +187,25 @@ pretty-printed envelope:
 Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
 — only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
 
+`--continue --json` resumes an interrupted op and emits the same envelope, so a
+consumer that drove the op through `--json` can finish it without falling back
+to text. The envelope's identity fields (`source_workweave`, `target`,
+`retired`) report the machine's own answers read from the op record, and a
+`resumed` field names the phase the interrupted op had reached. `resumed:
+"replay"` — the common interruption, a step-1 conflict — means `outcomes`
+carries every repo, exactly as on a fresh run. A later `resumed` value means
+replay had already completed before the interruption, so `outcomes` is empty;
+read the target's state with `rwv status --json` if per-repo confirmation is
+needed. (`-j` still conflicts with `--continue`, so a resumed `--json` run is
+always the serial envelope, never NDJSON.)
+
 Schema:
 
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -225,6 +239,17 @@ Schema:
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resumed": {
+      "description": "The phase the interrupted op had reached when `--continue` resumed it; absent on a fresh run. Presence encodes \"this envelope describes a resumed op\", the same way `resolution.workweave`'s presence encodes the checkout kind.\n\nDecides what `outcomes` below describes. `replay` means replay re-ran in this invocation, so `outcomes` carries every repo (already-converged ones as `no-op`). Any later phase means replay had already completed before the interruption: this invocation re-entered downstream of it, and `outcomes` is empty — not because no repos were synced, but because the syncing happened in the interrupted invocation. A per-repo `step3_advance` performed by such a resume has no outcome to ride on and is not reported; the target's tips remain readable via `rwv status --json` in the target workspace.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/OpPhase"
         },
         {
           "type": "null"
@@ -382,6 +407,39 @@ Schema:
               ]
             }
           }
+        }
+      ]
+    },
+    "OpPhase": {
+      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "oneOf": [
+        {
+          "description": "Manifest repos + project repo strategy phase (today's Phase 2 + 1').",
+          "type": "string",
+          "enum": [
+            "replay"
+          ]
+        },
+        {
+          "description": "Regenerate and commit `rwv.lock` (today's Phase 3). On completion, converged tips are written into the owner record.",
+          "type": "string",
+          "enum": [
+            "relock"
+          ]
+        },
+        {
+          "description": "FF-advance every target repo to its converged tip (sync-to only).",
+          "type": "string",
+          "enum": [
+            "advance-target"
+          ]
+        },
+        {
+          "description": "Merged-check then workweave removal (`--retire` only).",
+          "type": "string",
+          "enum": [
+            "retire"
+          ]
         }
       ]
     },
@@ -1038,6 +1096,12 @@ Resume after resolving a conflict:
 ```
 # (resolve conflicts in the relevant repos)
 rwv sync-to --continue
+```
+
+Resume with the machine-readable envelope (note `resumed`):
+
+```
+rwv sync-to --continue --json | jq '{resumed, outcomes: [.outcomes[] | {path, kind}]}'
 ```
 
 Roll back after a failed sync-to:

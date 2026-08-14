@@ -655,6 +655,7 @@ pub struct SyncJsonOutput {
 ///   the primary weave).
 /// - `target` — the absolute path of the target workspace that was advanced.
 /// - `retired` — true iff the workweave was deleted.
+/// - `resumed` — the phase a `--continue` resumed from; absent on a fresh run.
 /// - `project_repo_advance` — step-3 advance of `projects/<project>/.git`;
 ///   omitted when the project repo was already at CWD's tip (no-op advance).
 /// - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest
@@ -677,6 +678,22 @@ pub struct SyncToJsonOutput {
     /// passed, when retire refused, and when retire was skipped (the op is
     /// rooted in the primary weave, where there is no workweave to delete).
     pub retired: bool,
+    /// The phase the interrupted op had reached when `--continue` resumed it;
+    /// absent on a fresh run. Presence encodes "this envelope describes a
+    /// resumed op", the same way `resolution.workweave`'s presence encodes the
+    /// checkout kind.
+    ///
+    /// Decides what `outcomes` below describes. `replay` means replay re-ran
+    /// in this invocation, so `outcomes` carries every repo (already-converged
+    /// ones as `no-op`). Any later phase means replay had already completed
+    /// before the interruption: this invocation re-entered downstream of it,
+    /// and `outcomes` is empty — not because no repos were synced, but because
+    /// the syncing happened in the interrupted invocation. A per-repo
+    /// `step3_advance` performed by such a resume has no outcome to ride on
+    /// and is not reported; the target's tips remain readable via
+    /// `rwv status --json` in the target workspace.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumed: Option<op_state::OpPhase>,
     pub outcomes: Vec<SyncOutcomeOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
@@ -1960,6 +1977,14 @@ pub trait OutputHandler: Send + Sync {
     ///
     /// Default implementation is a no-op: only the sync-to envelope reports it.
     fn record_retired(&self, _retired: &RetiredWorkweave) {}
+
+    /// Record that this invocation resumed a parked op whose record stood at
+    /// `phase`. Called once, from the resume loader, and never on a fresh run
+    /// — so an envelope's "resumed" claim can only come from the op record
+    /// the resume actually read, not from the invocation's own flags.
+    ///
+    /// Default implementation is a no-op: only the sync-to envelope reports it.
+    fn record_resumed(&self, _phase: op_state::OpPhase) {}
 }
 
 /// Where an op is running and what it is landing into, as the machine
@@ -2149,6 +2174,8 @@ pub struct JsonEnvelopeSyncToHandler<'a> {
     coordinates: &'a Mutex<Option<OpCoordinates>>,
     /// The workweave retire deleted, `None` when retire did not delete one.
     retired: &'a Mutex<Option<WorkweaveName>>,
+    /// The phase the resumed op's record stood at, `None` on a fresh run.
+    resumed: &'a Mutex<Option<op_state::OpPhase>>,
 }
 
 impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
@@ -2164,6 +2191,11 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
     fn record_retired(&self, retired: &RetiredWorkweave) {
         let mut guard = self.retired.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(retired.name.clone());
+    }
+
+    fn record_resumed(&self, phase: op_state::OpPhase) {
+        let mut guard = self.resumed.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(phase);
     }
 
     fn record(
@@ -3358,6 +3390,14 @@ fn load_continuing_context<'a>(
             resume = op_state::resume_command(record.verb),
         );
     }
+
+    // The resumed-op disclosure, taken from the record BEFORE the entry-phase
+    // rewrite below: the phase the op had reached is what the operator's
+    // strand left behind, and the wire reports that fact rather than the
+    // re-entry point this session computes from it (`resume_entry_phase` maps
+    // a strand at advance-target to a relock re-entry, and reporting the
+    // computed value would make `advance-target` unreachable on the wire).
+    handler.record_resumed(record.phase.clone());
 
     // Persist the re-entered phase before the driver reads it: the record stays
     // the single source of truth, so a crash inside the re-entered phase resumes
@@ -6665,9 +6705,12 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         Mutex::new(std::collections::HashMap::new());
     let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
     let retired: Mutex<Option<WorkweaveName>> = Mutex::new(None);
+    let resumed: Mutex<Option<op_state::OpPhase>> = Mutex::new(None);
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
+    // A resumed op cannot reach NDJSON: `-j` conflicts with `--continue` at
+    // the CLI, so a resume always resolves to serial envelope mode.
     let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs).is_ndjson();
     let project_level_result = if ndjson {
         // NDJSON mode: use the standard NDJSON handler (step3 SHAs are not
@@ -6685,6 +6728,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             step3_advances: &step3_advances,
             coordinates: &coordinates,
             retired: &retired,
+            resumed: &resumed,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
@@ -6695,6 +6739,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         .unwrap_or_else(|e| e.into_inner());
     let coordinates = coordinates.into_inner().unwrap_or_else(|e| e.into_inner());
     let retired = retired.into_inner().unwrap_or_else(|e| e.into_inner());
+    let resumed = resumed.into_inner().unwrap_or_else(|e| e.into_inner());
 
     let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
 
@@ -6705,6 +6750,10 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         None
     } else {
         // Splice step3_advance into each per-outcome record.
+        //
+        // A resume that re-entered downstream of replay records no outcomes,
+        // so an advance it performs has no record to ride on and stays in the
+        // map — the `resumed` field's doc names this limit for consumers.
         let mut outcomes: Vec<SyncOutcomeOutput> = records;
         for outcome in &mut outcomes {
             // Match by path field to look up the advance record.
@@ -6729,6 +6778,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             source_workweave: coordinates.source_workweave,
             target: coordinates.target.to_string_lossy().into_owned(),
             retired: retired.is_some(),
+            resumed,
             outcomes,
             project_repo_advance,
             resolution: ctx.resolution(),

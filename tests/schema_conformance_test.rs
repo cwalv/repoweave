@@ -719,6 +719,8 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: Some("feat-a".to_owned()),
                 target: "/ws".to_owned(),
                 retired: true,
+                // Fresh run: the absent shape of the `resumed` disclosure.
+                resumed: None,
                 outcomes: sync_outcomes(true),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
@@ -731,9 +733,55 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: None,
                 target: "/ws".to_owned(),
                 retired: false,
+                // Resumed at replay (the common interruption, a step-1
+                // conflict): replay re-ran, so outcomes carries every repo.
+                resumed: Some(OpPhase::Replay),
                 outcomes: sync_outcomes(false),
                 project_repo_advance: None,
                 resolution: None,
+            }),
+        ),
+        // The three post-replay resume shapes: replay had completed before the
+        // interruption, so the resumed invocation re-entered downstream of it
+        // and `outcomes` is empty by construction — the `resumed` value is
+        // what tells a consumer the emptiness is a resume, not a zero-repo op.
+        (
+            "resumed-downstream-of-replay-at-relock",
+            value(SyncToJsonOutput {
+                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+                source_workweave: Some("feat-a".to_owned()),
+                target: "/ws".to_owned(),
+                retired: false,
+                resumed: Some(OpPhase::Relock),
+                outcomes: Vec::new(),
+                project_repo_advance: Some(advance()),
+                resolution: Some(resolution()),
+            }),
+        ),
+        (
+            "resumed-mid-advance-target",
+            value(SyncToJsonOutput {
+                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+                source_workweave: Some("feat-a".to_owned()),
+                target: "/ws".to_owned(),
+                retired: false,
+                resumed: Some(OpPhase::AdvanceTarget),
+                outcomes: Vec::new(),
+                project_repo_advance: None,
+                resolution: Some(resolution()),
+            }),
+        ),
+        (
+            "resumed-at-retire-after-clearing-the-refusal",
+            value(SyncToJsonOutput {
+                schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+                source_workweave: Some("feat-a".to_owned()),
+                target: "/ws".to_owned(),
+                retired: true,
+                resumed: Some(OpPhase::Retire),
+                outcomes: Vec::new(),
+                project_repo_advance: None,
+                resolution: Some(resolution()),
             }),
         ),
     ]
