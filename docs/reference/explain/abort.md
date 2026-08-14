@@ -22,9 +22,11 @@ applies a two-rail verified-restore:
 
 **Rail 1 — pre-abort reference.** Before restoring any repo, a durable
 reference at the repo's current tip is written at `refs/rwv/pre-abort/<op-id>`
-(first-write-wins — if the ref already exists from a prior abort attempt, the
-earlier capture is preserved). This reference is never deleted by abort's
-cleanup; abort is itself undoable via that ref.
+(first-write-wins-along-divergence — an existing capture from a prior abort
+attempt is preserved, EXCEPT under `--abandon-foreign-tip` where an ancestor
+capture is advanced to the current tip; the earlier captured commits stay
+reachable through the advanced ref, so nothing is orphaned). This reference is
+never deleted by abort's cleanup; abort is itself undoable via that ref.
 
 **Rail 2 — HEAD-verified restore.** The destructive reset to the savepoint
 happens only when the repo's current tip is attributable to the op. The
@@ -107,13 +109,21 @@ consults the consent once per side, so naming a repo covers that repo in both
 the source and the target workspace. Naming a repo that is not refused does
 nothing.
 
-**Abort refuses even with the flag** when the pre-abort reference does not
-already hold the observed tip. This happens when the branch advanced between
-two abort runs: the reference is first-write-wins, so it still holds the
-earlier run's capture, and resetting would leave the commits made since that
-capture reachable from nothing. The flag consents to abandoning commits, not
-to destroying them, so the refusal stands and names this as its reason.
-Re-point or copy off the newer commits before re-running.
+**Abort refuses even with the flag** when the pre-abort reference has DIVERGED
+from the observed tip. This happens when a foreign rebase or reset between two
+abort runs moved the branch onto a history that does not include the earlier
+capture — the captured commits are reachable only through the reference, and
+moving the branch off would orphan them. The flag consents to abandoning
+commits, not to destroying them, so the refusal stands and names the
+divergence as its reason. The refusal names a path forward: reconcile the
+foreign branch by hand first (move HEAD to a commit whose history includes the
+captured tip, or delete the pre-abort reference if the captured commits are
+safe to lose), then re-run.
+
+The ancestor case (foreign agent linearly committed on top between abort runs)
+is NOT this refusal — under `--abandon-foreign-tip` the capture is advanced to
+the observed tip automatically, ancestry keeping the earlier capture reachable
+through the advanced ref.
 
 ### After `--discard-local-commits` sync
 

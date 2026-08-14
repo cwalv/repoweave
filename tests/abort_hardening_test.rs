@@ -1188,8 +1188,7 @@ fn abandon_refuses_when_capture_has_diverged_from_observed_tip() {
     // savepoint and commits a different line of work. first_foreign is no
     // longer reachable from HEAD — the capture and HEAD have diverged.
     git(&["reset", "--hard", &server_savepoint], &ws.server_dir);
-    let diverged_foreign =
-        make_commit(&ws.server_dir, "d1.txt", "d1\n", "foreign: diverged line");
+    let diverged_foreign = make_commit(&ws.server_dir, "d1.txt", "d1\n", "foreign: diverged line");
     assert!(
         !try_git(
             &[

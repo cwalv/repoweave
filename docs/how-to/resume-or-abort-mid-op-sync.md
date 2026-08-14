@@ -111,10 +111,12 @@ involved workspaces. No flags are required. The one it accepts,
 [below](#if-rwv-abort-reports-a-foreign-tip-violation).
 
 Before restoring any repo, `rwv abort` writes a durable pre-abort reference at
-`refs/rwv/pre-abort/<op-id>` in that repo (first-write-wins across abort
-re-runs — a prior capture is preserved). This means **abort is itself
-undoable**: even after `rwv abort` completes, the pre-abort ref is there and
-you can recover the tip manually.
+`refs/rwv/pre-abort/<op-id>` in that repo (first-write-wins-along-divergence
+across abort re-runs — a prior capture is preserved, except under
+`--abandon-foreign-tip` where an ancestor capture is advanced to the current
+tip; the earlier captured commits stay reachable through the advanced ref).
+This means **abort is itself undoable**: even after `rwv abort` completes, the
+pre-abort ref is there and you can recover the tip manually.
 
 For each repo, abort then performs a HEAD-verified restore:
 
@@ -163,13 +165,22 @@ output does: the workspace-relative path, or `(project)` for the project repo.
 `rwv abort` with no flag, so the tip abort sees is one it can attribute to
 the op.
 
-Abort refuses even with `--abandon-foreign-tip` when the pre-abort ref does
-not already hold the tip being left behind — which happens when the branch
-advanced again between two abort runs, since the ref is written first-write-
-wins and still holds the earlier run's capture. Abandoning then would leave
-the commits since that capture reachable from nothing, and the flag consents
-to abandoning commits, not to destroying them. The refusal says so; re-point
-or copy off the newer commits yourself first.
+Abort refuses even with `--abandon-foreign-tip` when the pre-abort ref has
+DIVERGED from the tip being left behind — which happens when a foreign rebase
+or reset between two abort runs moved the branch onto a history that does not
+include the earlier capture. The captured commits are reachable only through
+the reference, so moving the branch off would orphan them; the flag consents
+to abandoning commits, not to destroying them. The refusal names the
+divergence and points at the seat-runnable path: reconcile the foreign branch
+by hand first (move HEAD to a commit whose history includes the captured tip,
+or delete the pre-abort ref if the captured commits are safe to lose), then
+re-run.
+
+The linear case (a foreign agent committed on top of the earlier capture
+between abort runs) does NOT hit this refusal — under
+`--abandon-foreign-tip` the capture is advanced to the observed tip
+automatically, ancestry keeping the earlier capture reachable through the
+advanced ref.
 
 ### If `rwv abort` reports "no operation in progress"
 
