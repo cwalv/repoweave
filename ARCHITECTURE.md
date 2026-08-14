@@ -115,10 +115,13 @@ plugins found on `PATH` (§6.4).
 order:
 
 - *Workspace origin.* With no `-C`, `workspace::acquire_origin_dir()`
-  (`src/workspace.rs:48`) — documented as the single sanctioned
-  `std::env::current_dir()` call site in the CLI. With `-C`, the canonicalized
-  override. **The process never `chdir`s** (`dispatch.rs:517-520`); every path
-  is absolute from here on.
+  (`src/workspace.rs:52`) — the only cwd read that feeds resolution; the one
+  other reader is `workweave delete`'s step-out probe, which treats the cwd
+  as an open handle to release, never as an origin. With `-C`, the
+  canonicalized override. **Resolution never `chdir`s** (`dispatch.rs:517-520`);
+  every path is absolute from here on. The one `chdir` in the tree is that
+  same step-out, long after resolution, releasing the deleting process's own
+  handle on a workweave it is about to remove.
 - *Workweave selection.* `-w <project>--<name>` is resolved against the
   primary-side index and validated against the target's `.rwv-workweave`
   marker; the resulting path replaces the origin.

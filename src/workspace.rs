@@ -37,10 +37,13 @@ use std::path::{Component, Path, PathBuf};
 
 /// Acquire the origin directory for the invocation.
 ///
-/// **This is the single sanctioned `std::env::current_dir()` call site in
-/// the rwv CLI.** All resolution flows through here and then
+/// **This is the only `std::env::current_dir()` read whose result feeds
+/// resolution.** All resolution flows through here and then
 /// [`WorkspaceContext::resolve_invocation`]; handlers must receive an already-resolved
-/// context and must not consult the process cwd on their own.
+/// context and must not consult the process cwd on their own. The one
+/// other reader in the tree is `workweave delete`'s step-out probe, which
+/// asks whether this process holds an open handle inside the tree being
+/// removed and derives no path from the answer.
 ///
 /// The distinction between *acquire* and *resolve* is load-bearing: `-C
 /// <path>` and `-w <name>` inject a different origin dir into the same

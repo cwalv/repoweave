@@ -2980,7 +2980,8 @@ fn delete_workweave_inner_at(
     // stays where it is. Both sides are canonicalized so `starts_with`
     // compares one spelling; a working directory that cannot be read or
     // canonicalized cannot be proven outside, and stepping out of it is
-    // harmless.
+    // harmless. The live cwd — not the resolved origin — is the subject on
+    // purpose: `-C` points the origin elsewhere while the handle stays put.
     if workweave_dir.exists() {
         let cwd_inside = match (
             std::env::current_dir().and_then(|d| d.canonicalize()),
