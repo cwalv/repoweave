@@ -687,6 +687,57 @@ impl CheckViolation {
             },
         }
     }
+
+    /// The `kind` tag this violation serializes under in `rwv doctor --json`.
+    ///
+    /// [`ViolationOutput`] mirrors this enum variant-for-variant and tags
+    /// with the kebab-cased variant name; this method states the same
+    /// mapping for the internal type, so a filter can ask a violation's
+    /// wire name without converting it. The agreement is pinned by a test
+    /// that serializes every corpus violation and compares the emitted tag
+    /// against this method — a variant added to one enum and not the other
+    /// already fails to compile in [`ViolationOutput::from_violation`].
+    pub fn wire_kind(&self) -> &'static str {
+        match self {
+            CheckViolation::OrphanedClone { .. } => "orphaned-clone",
+            CheckViolation::DanglingReference { .. } => "dangling-reference",
+            CheckViolation::MissingRole { .. } => "missing-role",
+            CheckViolation::StaleLock { .. } => "stale-lock",
+            CheckViolation::IncompleteLock { .. } => "incomplete-lock",
+            CheckViolation::WorkweaveDrift { .. } => "workweave-drift",
+            CheckViolation::IndexDrift { .. } => "index-drift",
+            CheckViolation::WorkingTreeDrift { .. } => "working-tree-drift",
+            CheckViolation::MissingReplayExclusion { .. } => "missing-replay-exclusion",
+            CheckViolation::ReplayExclusionUnreadable { .. } => "replay-exclusion-unreadable",
+            CheckViolation::MissingMergeDriverConfig { .. } => "missing-merge-driver-config",
+            CheckViolation::MergeDriverConfigUnreadable { .. } => "merge-driver-config-unreadable",
+            CheckViolation::HeadUnreadable { .. } => "head-unreadable",
+            CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable",
+            CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry",
+            CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format",
+            CheckViolation::DanglingActiveProject { .. } => "dangling-active-project",
+            CheckViolation::WeaveRootIdentityConflict { .. } => "weave-root-identity-conflict",
+            CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker",
+            CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index",
+            CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index",
+            CheckViolation::UnparseableProject { .. } => "unparseable-project",
+            CheckViolation::WorkweaveTreeIntegrity { .. } => "workweave-tree-integrity",
+            CheckViolation::Provenance { .. } => "provenance",
+            CheckViolation::CloneTopology { .. } => "clone-topology",
+            CheckViolation::BranchDiscipline { .. } => "branch-discipline",
+            CheckViolation::StaleWorktreeRegistration { .. } => "stale-worktree-registration",
+            CheckViolation::StaleOpState { .. } => "stale-op-state",
+            CheckViolation::DeadOpLease { .. } => "dead-op-lease",
+            CheckViolation::DanglingRefReceipt { .. } => "dangling-ref-receipt",
+            CheckViolation::PreFlatRefReceipt { .. } => "pre-flat-ref-receipt",
+            CheckViolation::OrphanedSavepoint { .. } => "orphaned-savepoint",
+            CheckViolation::CargoVersionSkew { .. } => "cargo-version-skew",
+            CheckViolation::CargoPatchShadowing { .. } => "cargo-patch-shadowing",
+            CheckViolation::MissingCanonicalClone { .. } => "missing-canonical-clone",
+            CheckViolation::UninitializedSubmodule { .. } => "uninitialized-submodule",
+            CheckViolation::PhantomMergeDriver { .. } => "phantom-merge-driver",
+        }
+    }
 }
 
 /// Classification of an orphaned savepoint, controlling `--fix` policy.
@@ -8414,6 +8465,90 @@ fn collect_doctor_issues(
 ///
 /// Scans registry directories for repos on disk, loads all project manifests,
 /// runs convention checks and integration check hooks, then displays issues.
+/// The `--kind` report filter: a validated set of finding kinds the doctor
+/// report is narrowed to, text and `--json` both.
+///
+/// Kind names are the wire spellings — the `kind` tag each violation
+/// serializes under in `rwv doctor --json`, the same names the per-class
+/// count lines and the published schema carry.
+///
+/// **An unknown name refuses, naming the valid set.** A filter that
+/// silently matched nothing would render an empty report, and an empty
+/// doctor report reads as "clean" — the one thing a typo must never
+/// produce. The valid set is derived from the wire type's own JSON schema
+/// ([`ViolationOutput`] via schemars) rather than maintained beside it, so
+/// the refusal message cannot drift from what `--json` actually emits.
+///
+/// **The filtered view is the drill-down.** Kinds whose classes normally
+/// collapse to a per-class count line render itemized under the filter —
+/// `--kind` exists so triage does not require `--json | jq`, so it shows
+/// the records the count line summarized. Integration issues are not
+/// violations of any kind and are absent from a kind-filtered view, and
+/// the exit code reflects the filtered view: an error outside the named
+/// kinds does not fail a `--kind` run.
+pub struct KindFilter {
+    kinds: std::collections::BTreeSet<String>,
+}
+
+impl KindFilter {
+    /// Every `kind` name `rwv doctor --json` can emit, sorted — read off
+    /// the wire type's schema, which is generated from the serialized type
+    /// and therefore is the register.
+    pub fn valid_kinds() -> Vec<String> {
+        let schema = schemars::schema_for!(ViolationOutput);
+        let mut kinds: Vec<String> = schema
+            .schema
+            .subschemas
+            .as_ref()
+            .and_then(|s| s.one_of.as_ref())
+            .map(|variants| {
+                variants
+                    .iter()
+                    .filter_map(|v| {
+                        let schemars::schema::Schema::Object(obj) = v else {
+                            return None;
+                        };
+                        obj.object
+                            .as_ref()?
+                            .properties
+                            .get("kind")
+                            .and_then(|k| {
+                                let schemars::schema::Schema::Object(k) = k else {
+                                    return None;
+                                };
+                                k.enum_values.as_ref()?.first()?.as_str().map(String::from)
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        kinds.sort();
+        kinds
+    }
+
+    /// Build a filter from `--kind` values, refusing any name the wire
+    /// vocabulary does not contain.
+    pub fn new(names: &[String]) -> anyhow::Result<Self> {
+        let valid: std::collections::BTreeSet<String> = Self::valid_kinds().into_iter().collect();
+        let mut kinds = std::collections::BTreeSet::new();
+        for name in names {
+            if !valid.contains(name) {
+                anyhow::bail!(
+                    "`--kind={name}` names no doctor finding kind. Valid kinds:\n  {}",
+                    valid.iter().cloned().collect::<Vec<_>>().join("\n  ")
+                );
+            }
+            kinds.insert(name.clone());
+        }
+        Ok(Self { kinds })
+    }
+
+    /// Whether `v` belongs to one of the named kinds.
+    fn admits(&self, v: &CheckViolation) -> bool {
+        self.kinds.contains(v.wire_kind())
+    }
+}
+
 /// When `fix` is `true`, the repairable subset is remediated in place before
 /// the report is rendered, so a repaired workspace reports healthy.
 ///
@@ -8451,6 +8586,7 @@ pub fn run_check(
     scope_all: bool,
     reattach: Option<crate::cli::consent::ReattachConsent>,
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
+    kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<bool> {
     use crate::integration::Severity;
 
@@ -8478,7 +8614,21 @@ pub fn run_check(
         violations
     };
 
-    let mut all_issues = violations_to_issues(violations);
+    let mut all_issues = match kind_filter {
+        // The filtered view is the drill-down: the named kinds render
+        // ITEMIZED, bypassing the per-class count collapse — `--kind` is
+        // what replaces `--json | jq` for triage, so it must show the
+        // records, not the count line that pointed here. Integration
+        // issues are not violations of any kind and are out of a
+        // kind-filtered view entirely.
+        Some(filter) => itemized_violations_to_issues(
+            violations
+                .into_iter()
+                .filter(|v| filter.admits(v))
+                .collect(),
+        ),
+        None => violations_to_issues(violations),
+    };
 
     for msg in fix_errors {
         all_issues.push(Issue {
@@ -8490,11 +8640,13 @@ pub fn run_check(
         });
     }
 
-    all_issues.extend(collect_doctor_issues(
-        ctx,
-        &world,
-        if fix { Repair::Apply } else { Repair::Report },
-    ));
+    if kind_filter.is_none() {
+        all_issues.extend(collect_doctor_issues(
+            ctx,
+            &world,
+            if fix { Repair::Apply } else { Repair::Report },
+        ));
+    }
 
     let mut has_errors = false;
     for issue in &all_issues {
@@ -9118,6 +9270,7 @@ fn collect_doctor_violations(
 pub fn run_check_json(
     ctx: &crate::workspace::WorkspaceContext,
     scope_all: bool,
+    kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<bool> {
     let world = load_doctor_world(ctx, scope_all)?;
     let DoctorFindings {
@@ -9125,7 +9278,20 @@ pub fn run_check_json(
         workweave_dirs,
         ..
     } = collect_doctor_violations(ctx, &world, ScanProgress::Silent);
-    let issues = collect_doctor_issues(ctx, &world, Repair::Report);
+    // Filtering selects a SUBSET of the records — each surviving record is
+    // byte-identical to its unfiltered self, so consumers reading
+    // `violations[]` (the per-class baseline capture among them) see the
+    // same shapes whether or not a filter is active. Integration issues
+    // are not violations of any kind and are absent from a filtered view.
+    let violations: Vec<CheckViolation> = match kind_filter {
+        Some(filter) => violations.into_iter().filter(|v| filter.admits(v)).collect(),
+        None => violations,
+    };
+    let issues = if kind_filter.is_none() {
+        collect_doctor_issues(ctx, &world, Repair::Report)
+    } else {
+        Vec::new()
+    };
     let has_violations = !violations.is_empty()
         || issues
             .iter()

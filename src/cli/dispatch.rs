@@ -849,6 +849,7 @@ pub fn run() -> anyhow::Result<()> {
             all,
             reattach_checkouts,
             adopt_detached_checkouts,
+            kind,
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
@@ -866,19 +867,32 @@ pub fn run() -> anyhow::Result<()> {
             // for giving up a legacy branch's name to make room for it.
             let adopt_detached_checkouts =
                 consent::AdoptDetachedConsent::from_flag(adopt_detached_checkouts);
+            // Validated at the boundary: an unknown kind refuses here,
+            // before any scan runs, naming the valid set.
+            let kind_filter = if kind.is_empty() {
+                None
+            } else {
+                Some(check::KindFilter::new(&kind)?)
+            };
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
                 if has_drift {
                     std::process::exit(1);
                 }
             } else if json {
-                let has_errors = check::run_check_json(&ctx, all)?;
+                let has_errors = check::run_check_json(&ctx, all, kind_filter.as_ref())?;
                 if has_errors {
                     std::process::exit(1);
                 }
             } else {
-                let has_errors =
-                    check::run_check(&ctx, fix, all, reattach_checkouts, adopt_detached_checkouts)?;
+                let has_errors = check::run_check(
+                    &ctx,
+                    fix,
+                    all,
+                    reattach_checkouts,
+                    adopt_detached_checkouts,
+                    kind_filter.as_ref(),
+                )?;
                 if has_errors {
                     std::process::exit(1);
                 }

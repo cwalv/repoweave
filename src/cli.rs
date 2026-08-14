@@ -209,6 +209,9 @@ pub enum Commands {
         /// flag, `--fix` reports both tips and leaves the checkout alone.
         #[arg(long)]
         adopt_detached_checkouts: bool,
+        /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits (e.g. `branch-discipline`, `orphaned-savepoint`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view.
+        #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
+        kind: Vec<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
