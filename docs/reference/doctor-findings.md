@@ -650,6 +650,25 @@ the others, leaving at most one ref under the namespace; then re-run `rwv
 doctor --fix` to migrate it. Never auto-fixed: which ref is which is not
 derivable from the refs.
 
+#### `blocked-detached-namespace`
+
+**Warning. Report-only.** The workweave checkout is in detached-HEAD state AND
+two or more refs share its namespace in one store. The same guard that skips
+`fix_branch_model_migration` when the namespace is blocked also prevents the
+`--adopt-detached-checkouts` arm from running — the guard fires before any arm
+is reached.
+
+Reported *in place of* `detached`, not beside it: the `detached` finding
+promises `--adopt-detached-checkouts`, and that flag's arm cannot run while the
+namespace is blocked. The principle is consent-tier-independent: a consented
+remedy that cannot run misleads the operator exactly as an auto remedy does —
+consent changes who acts, not whether the named action works.
+
+**What to do:** decide which ref is this workweave's branch and move or delete
+the others, leaving at most one ref under the namespace; then re-run `rwv
+doctor` to get the ordinary `detached` finding with a remedy that will actually
+run. Never auto-fixed: which ref is which is not derivable from the refs.
+
 #### `unrecorded-ephemeral-branch`
 
 **Warning. Auto-fixable.** The workweave's flat ref exists in the canonical
