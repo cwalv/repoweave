@@ -28,11 +28,7 @@ mod common;
 
 /// Return `true` if the given binary is on PATH.
 fn tool_available(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    which::which(name).is_ok()
 }
 
 /// Return the major version of a tool, or 0 if it can't be determined.
@@ -307,7 +303,7 @@ fn npm_workspace_checks_version_mismatch() {
     );
 
     // ---- Step 1: baseline (lib = 1.0.0) should succeed ----
-    let baseline = Command::new("npm")
+    let baseline = Command::new(common::node_tool("npm"))
         .args(["install"])
         .current_dir(root)
         .output()
@@ -327,7 +323,7 @@ fn npm_workspace_checks_version_mismatch() {
     );
 
     // ---- Step 3: npm install should FAIL ----
-    let mismatch = Command::new("npm")
+    let mismatch = Command::new(common::node_tool("npm"))
         .args(["install"])
         .current_dir(root)
         .output()

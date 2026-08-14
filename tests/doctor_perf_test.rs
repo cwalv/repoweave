@@ -73,7 +73,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
 
         manifest.push_str(&format!(
             "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            abs.display()
+            common::url_path(&abs)
         ));
     }
     std::fs::write(root.join("projects/app/rwv.toml"), manifest).unwrap();

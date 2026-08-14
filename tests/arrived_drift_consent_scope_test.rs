@@ -222,11 +222,11 @@ fn fixture() -> Fixture {
         let sha = git_run(&canonical, &["rev-parse", "HEAD"]);
         manifest.push_str(&format!(
             "[repositories.\"github/acme/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            bare.display()
+            common::file_url(&bare)
         ));
         lock_entries.push(format!(
             "\"github/acme/{name}\": {{\"type\": \"git\", \"url\": {:?}, \"version\": {sha:?}}}",
-            bare.to_str().unwrap()
+            common::file_url(&bare)
         ));
     }
 

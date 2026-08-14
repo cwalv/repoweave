@@ -37,7 +37,7 @@ fn write_manifest(project_dir: &Path, repo_path: &Path) {
         format!(
             "[repositories.\"github/org/repo\"]\ntype = \"git\"\n\
              url = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            repo_path.display()
+            common::url_path(repo_path)
         ),
     )
     .unwrap();

@@ -342,7 +342,7 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
     // no longer forces.
     let npm_install = |member: &str| {
         write_file(&root, "github/acme/server/package.json", member);
-        let out = std::process::Command::new("npm")
+        let out = std::process::Command::new(common::node_tool("npm"))
             .args(["install"])
             .current_dir(&root)
             .output()
@@ -386,7 +386,7 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
 
     // Control: the fixture can show movement.
     assert!(
-        std::process::Command::new("npm")
+        std::process::Command::new(common::node_tool("npm"))
             .args(["update"])
             .current_dir(&root)
             .output()

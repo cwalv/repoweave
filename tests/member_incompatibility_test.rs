@@ -93,11 +93,7 @@ fn which(name: &str) -> Option<PathBuf> {
 /// stub. A machine without `go` runs the fallback path, which the
 /// `rwv_without_go()` tests cover on every machine including that one.
 fn go_is_installed() -> bool {
-    std::process::Command::new("which")
-        .arg("go")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    which::which("go").is_ok()
 }
 
 /// Surface `<ws>/<file>` the way rwv does: a symlink with a **relative**

@@ -327,3 +327,15 @@ pub fn rwv() -> assert_cmd::Command {
     cmd.env("GIT_CONFIG_VALUE_0", "main");
     cmd
 }
+
+/// The spelling `CreateProcess` can execute — the same fact
+/// `integrations::node_tool` states for production: npm-family tools install
+/// `.cmd` shims on Windows, and `Command` runs a script through the
+/// interpreter only when the name spells its extension.
+pub fn node_tool(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        name.to_string()
+    }
+}

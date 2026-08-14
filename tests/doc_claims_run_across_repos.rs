@@ -54,12 +54,7 @@ fn run_recipe(recipe: &str, cwd: &Path) -> std::process::Output {
 }
 
 fn ensure_tool(name: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(name)
-        .stdout(process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    which::which(name).is_ok()
 }
 
 fn setup_two_repo_workspace() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {

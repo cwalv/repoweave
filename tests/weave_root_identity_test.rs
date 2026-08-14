@@ -102,7 +102,7 @@ fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            repo_path.display()
+            common::url_path(&repo_path)
         ),
     )
     .unwrap();
@@ -149,7 +149,7 @@ fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (Pa
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            upstream.display()
+            common::url_path(&upstream)
         ),
     )
     .unwrap();
@@ -572,7 +572,7 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
         proj_b.join("rwv.toml"),
         format!(
             "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            repo_b.display()
+            common::url_path(&repo_b)
         ),
     )
     .unwrap();

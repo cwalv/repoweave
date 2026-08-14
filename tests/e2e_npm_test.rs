@@ -57,12 +57,7 @@ fn git_init(path: &Path) {
 #[test]
 fn npm_workspace_wiring_e2e() {
     // Skip if npm is not available.
-    if process::Command::new("which")
-        .arg("npm")
-        .output()
-        .map(|o| !o.status.success())
-        .unwrap_or(true)
-    {
+    if which::which("npm").is_err() {
         eprintln!("SKIP: npm not found on PATH");
         return;
     }
@@ -196,7 +191,7 @@ role = "owned"
     // -------------------------------------------------------------------------
     // Step 3: npm install from weave root
     // -------------------------------------------------------------------------
-    let npm_install = process::Command::new("npm")
+    let npm_install = process::Command::new(common::node_tool("npm"))
         .args(["install", "--prefer-offline"])
         .current_dir(ws)
         .output()
@@ -229,12 +224,7 @@ role = "owned"
 #[test]
 fn npm_release_version_pin_workflow() {
     // Skip if npm is not available.
-    if process::Command::new("which")
-        .arg("npm")
-        .output()
-        .map(|o| !o.status.success())
-        .unwrap_or(true)
-    {
+    if which::which("npm").is_err() {
         eprintln!("SKIP: npm not found on PATH");
         return;
     }
@@ -334,7 +324,7 @@ role = "owned"
     // -------------------------------------------------------------------------
     // Step 2: verify npm install + require works (workspace mode baseline)
     // -------------------------------------------------------------------------
-    let npm_install = process::Command::new("npm")
+    let npm_install = process::Command::new(common::node_tool("npm"))
         .args(["install", "--prefer-offline"])
         .current_dir(ws)
         .output()
@@ -392,7 +382,7 @@ role = "owned"
     // -------------------------------------------------------------------------
     // Step 6: npm install from server directory
     // -------------------------------------------------------------------------
-    let npm_install_server = process::Command::new("npm")
+    let npm_install_server = process::Command::new(common::node_tool("npm"))
         .args(["install", "--prefer-offline"])
         .current_dir(&server_dir)
         .output()

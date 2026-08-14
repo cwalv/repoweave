@@ -63,7 +63,7 @@ fn make_workspace(root: &Path, project: &str) -> PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
         "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-        repo_path.display()
+        common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();

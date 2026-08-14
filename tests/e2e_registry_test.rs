@@ -35,12 +35,7 @@ macro_rules! require_registry_e2e {
 /// Skip the test if `tool` is not on PATH.
 macro_rules! require_tool {
     ($tool:expr) => {
-        if Command::new("which")
-            .arg($tool)
-            .output()
-            .map(|o| !o.status.success())
-            .unwrap_or(true)
-        {
+        if which::which($tool).is_err() {
             eprintln!("SKIP: `{}` not found on PATH", $tool);
             return;
         }
@@ -202,7 +197,7 @@ fn npm_registry_release_workflow() {
     // 2. `npm install` — resolves @cwalv/rwv-test-types from the real npm registry.
     //    This is the release-pin analogue of `npm install @chatly/shared-types@1.3.0`.
     // -----------------------------------------------------------------------
-    let install_output = Command::new("npm")
+    let install_output = Command::new(common::node_tool("npm"))
         .args(["install"])
         .current_dir(dir)
         .output()

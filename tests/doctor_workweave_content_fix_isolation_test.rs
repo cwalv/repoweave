@@ -139,7 +139,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::{self};
 
 mod common;
 
@@ -149,12 +149,7 @@ mod common;
 /// during the fix) is not.
 macro_rules! require_go {
     () => {
-        if Command::new("which")
-            .arg("go")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
+        if which::which("go").is_ok() {
             // go is available, continue
         } else {
             eprintln!("skipping test: `go` not found on PATH");
