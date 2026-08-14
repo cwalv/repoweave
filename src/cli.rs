@@ -294,9 +294,12 @@ pub enum Commands {
         #[arg(long)]
         project: Option<String>,
         /// Resume a sync that was interrupted mid-op (e.g. after resolving a conflict).
-        /// All parameters (source, strategy, overrides, etc.) are read from the in-progress
-        /// op-state file. No other flags may be passed alongside `--continue` (except
-        /// `--project`). To change parameters mid-op, run `rwv abort` and re-invoke.
+        /// All parameters (source, strategy, project, overrides, etc.) are read from the
+        /// in-progress op-state file. No other flags may be passed alongside `--continue`
+        /// (except `--project`, which asserts rather than rebinds: it must name the project
+        /// the op was started for, and a value contradicting the record is refused — the
+        /// phases already run are bound to it). To change parameters mid-op, run
+        /// `rwv abort` and re-invoke.
         #[arg(long = "continue")]
         do_continue: bool,
     },
@@ -353,10 +356,12 @@ pub enum Commands {
         #[arg(long)]
         project: Option<String>,
         /// Resume a sync-to that was interrupted mid-op (e.g. after resolving a conflict).
-        /// All parameters (target, strategy, retire, overrides, etc.) are read from the
-        /// in-progress op-state file. No other flags may be passed alongside `--continue`
-        /// (except `--project` and `--json`). To change parameters mid-op, run `rwv abort`
-        /// and re-invoke.
+        /// All parameters (target, strategy, retire, project, overrides, etc.) are read from
+        /// the in-progress op-state file. No other flags may be passed alongside `--continue`
+        /// (except `--json`, and `--project`, which asserts rather than rebinds: it must name
+        /// the project the op was started for, and a value contradicting the record is
+        /// refused — the phases already run are bound to it). To change parameters mid-op,
+        /// run `rwv abort` and re-invoke.
         #[arg(long = "continue")]
         do_continue: bool,
     },

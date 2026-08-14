@@ -166,7 +166,9 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   A resume recorded at `advance-target` re-enters `relock` first, so the lock it
   lands pins the tips it lands. May be combined with `--json` (see below); every
   other flag except `--project` conflicts with `--continue`, because the resumed
-  op's parameters come from its op-state record, not the invocation.
+  op's parameters come from its op-state record, not the invocation. `--project`
+  asserts against that record rather than rebinding it: it must name the project
+  the op was started for, and a contradicting value is refused.
 
 Run `rwv --help sync-to` for the full clap surface.
 

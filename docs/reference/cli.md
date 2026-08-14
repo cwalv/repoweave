@@ -227,7 +227,7 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 | `--strategy ff\|rebase` | Default `ff`. Applies uniformly to project and manifest repos; `rwv.lock` is excluded from the per-commit merge inputs git uses during rebase replay and regenerated in Phase 3. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from source, hard-resetting the project repo to source's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
-| `--continue` | Resume a sync interrupted mid-op. All parameters are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`) |
+| `--continue` | Resume a sync interrupted mid-op. All parameters, the project included, are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`, which asserts rather than rebinds — naming a project other than the recorded one is refused) |
 | `--json` / `-j N` | Structured output / parallel sync (NDJSON when N > 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 

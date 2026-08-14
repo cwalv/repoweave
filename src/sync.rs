@@ -3393,6 +3393,24 @@ fn load_continuing_context<'a>(
         );
     }
 
+    // The record is authoritative for a resumed op, so `--project` can only
+    // assert what it already says. Every phase that already ran used the
+    // recorded project; rebinding here would land the remaining phases in a
+    // different project than the completed ones. Refused before the
+    // entry-phase write below, so a contradicted resume leaves op-state as it
+    // found it.
+    if let Some(flag) = &project_override {
+        if flag != &record.project {
+            anyhow::bail!(
+                "op was started for project `{recorded}`; `--project {flag}` contradicts the \
+                 record — a half-completed op cannot be rebound. Re-run `{resume}` without \
+                 `--project`, or `rwv abort` to discard the op and start over.",
+                recorded = record.project,
+                resume = op_state::resume_command(record.verb),
+            );
+        }
+    }
+
     // The resumed-op disclosure, taken from the record BEFORE the entry-phase
     // rewrite below: the phase the op had reached is what the operator's
     // strand left behind, and the wire reports that fact rather than the
@@ -3445,7 +3463,7 @@ fn load_continuing_context<'a>(
     let cwd_ctx = if owner_workspace_dir == invocation_workspace_dir {
         invocation_ctx.clone()
     } else {
-        WorkspaceContext::resolve(&owner_workspace_dir, project_override.clone())?
+        WorkspaceContext::resolve(&owner_workspace_dir, Some(record.project.clone()))?
     };
     let cwd_workspace_dir = owner_workspace_dir.clone();
 
@@ -3456,7 +3474,10 @@ fn load_continuing_context<'a>(
     //   sync-to:        engine.source = record.target (replay pulls from target),
     //                   engine.dest   = record.target (advance-target writes target).
     //                   record.source (owner CWD) is tracked separately via cwd_project_dir.
-    let cwd_project_name = find_project_name(&cwd_ctx)?;
+    // The op's binding comes off the record, never off the owner workspace's
+    // pointer: an operator may have activated another project while the op sat
+    // parked, and the phases already run are bound to the recorded one.
+    let cwd_project_name = record.project.clone();
     let cwd_project_dir = project_dir(&owner_workspace_dir, cwd_project_name.as_str());
 
     let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
