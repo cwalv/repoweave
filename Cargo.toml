@@ -61,6 +61,16 @@ sha2 = "0.10"
 # `default-features = false` drops its encoding-detection feature, which is
 # moot once the file is already decoded to a UTF-8 `&str`.
 saphyr = { version = "0.0.11", default-features = false }
+# Strips the `\\?\` extended-length prefix off the paths rwv hands `git` as
+# arguments. Windows `canonicalize` always returns that form, every path
+# derived from the canonicalized weave root inherits it, and `git worktree
+# add` refuses a destination spelled `//?/C:/...`. Chosen over a hand-rolled
+# strip because the whole correctness of one lives in the predicate for when
+# the prefix must be KEPT — over the legacy length limit, a UNC share, a
+# reserved device name — which is knowledge about Windows that no run on a
+# Unix host can exercise. `dunce::simplified` is also the identity on
+# non-Windows, so the call sites take no `cfg` pair. No dependencies, no I/O.
+dunce = "1.0.5"
 
 [dev-dependencies]
 tempfile = "3"

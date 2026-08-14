@@ -58,6 +58,31 @@ pub(crate) fn git_command_in_test() -> Command {
     git_command()
 }
 
+/// The one conversion from a path to a `git` argument, and the reason it is
+/// one: on Windows `std::fs::canonicalize` always answers in the `\\?\`
+/// extended-length form, and git refuses an argument spelled that way —
+/// `git worktree add //?/C:/…` fails outright. rwv derives every path it
+/// hands git from a canonicalized weave root, so the prefix rides along to
+/// argv unless it comes off here.
+///
+/// `dunce::simplified` drops the prefix only where Windows itself accepts the
+/// short form — not over the legacy length limit, not a UNC share, not a
+/// reserved device name — and is the identity on every other platform, so a
+/// caller states no `cfg`.
+///
+/// `subject` names the path to the operator when it is not valid UTF-8.
+fn path_as_git_arg<'a>(path: &'a Path, subject: &str) -> Result<&'a str, VcsError> {
+    dunce::simplified(path)
+        .to_str()
+        .ok_or_else(|| VcsError::Io {
+            ctx: format!("{subject} {} is not valid UTF-8", path.display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("non-utf8 {subject}"),
+            ),
+        })
+}
+
 /// Remote name every [`Role`] clones to, resolves against, and pushes to.
 /// [`Vcs::clone_with_role`] and [`Vcs::resolve_branch_on_remote`] do not
 /// vary this by role; other production sites that need the same remote
@@ -254,16 +279,7 @@ pub fn read_committed_gitattributes(repo: &Path) -> Result<Option<String>, VcsEr
 /// so its bail message can direct the operator at `rwv doctor --fix` for
 /// migration rather than the generic "add the line" fix.
 pub fn has_committed_legacy_replay_exclusion(repo: &Path, path: &Path) -> Result<bool, VcsError> {
-    let path_str = path.to_str().ok_or_else(|| VcsError::Io {
-        ctx: format!(
-            "replay-exclusion path {} is not valid UTF-8",
-            path.display()
-        ),
-        source: std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "non-utf8 replay-exclusion path",
-        ),
-    })?;
+    let path_str = path_as_git_arg(path, "replay-exclusion path")?;
     let legacy = legacy_rwv_replay_exclusion_needle(path_str);
     let content = match read_committed_gitattributes(repo)? {
         Some(c) => c,
@@ -1241,13 +1257,7 @@ impl Vcs for GitVcs {
     }
 
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
-        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("destination path {} is not valid UTF-8", dest.display()),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 destination path",
-            ),
-        })?;
+        let dest_str = path_as_git_arg(dest, "destination path")?;
         Self::run(&["clone", url, dest_str], Path::new("."))?;
         Ok(())
     }
@@ -1258,13 +1268,7 @@ impl Vcs for GitVcs {
         dest: &Path,
         remote_name: &str,
     ) -> Result<(), VcsError> {
-        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("destination path {} is not valid UTF-8", dest.display()),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 destination path",
-            ),
-        })?;
+        let dest_str = path_as_git_arg(dest, "destination path")?;
         Self::run(
             &["clone", "--origin", remote_name, url, dest_str],
             Path::new("."),
@@ -1345,13 +1349,7 @@ impl Vcs for GitVcs {
     }
 
     fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError> {
-        let wt_str = worktree_path.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!(
-                "worktree path {} is not valid UTF-8",
-                worktree_path.display()
-            ),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 worktree path"),
-        })?;
+        let wt_str = path_as_git_arg(worktree_path, "worktree path")?;
         Self::run(&["worktree", "remove", "--force", wt_str], repo)?;
         Ok(())
     }
@@ -1424,10 +1422,7 @@ impl Vcs for GitVcs {
     }
 
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
-        let path = path.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("path {} is not valid UTF-8", path.display()),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 path"),
-        })?;
+        let path = path_as_git_arg(path, "path")?;
         match Self::run(&["ls-files", "--error-unmatch", path], repo) {
             Ok(_) => Ok(true),
             // `--error-unmatch` exits non-zero for every "no" this question
@@ -1675,16 +1670,7 @@ impl Vcs for GitVcs {
 
     fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError> {
         let attrs_path = repo.join(".gitattributes");
-        let path_str = path.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!(
-                "replay-exclusion path {} is not valid UTF-8",
-                path.display()
-            ),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 replay-exclusion path",
-            ),
-        })?;
+        let path_str = path_as_git_arg(path, "replay-exclusion path")?;
         let needle = rwv_replay_exclusion_needle(path_str);
         let legacy_needle = legacy_rwv_replay_exclusion_needle(path_str);
 
@@ -1772,16 +1758,7 @@ impl Vcs for GitVcs {
         path: &Path,
     ) -> Result<ReplayExclusionState, VcsError> {
         let attrs_path = repo.join(".gitattributes");
-        let path_str = path.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!(
-                "replay-exclusion path {} is not valid UTF-8",
-                path.display()
-            ),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 replay-exclusion path",
-            ),
-        })?;
+        let path_str = path_as_git_arg(path, "replay-exclusion path")?;
         let needle = rwv_replay_exclusion_needle(path_str);
         let legacy_needle = legacy_rwv_replay_exclusion_needle(path_str);
 
@@ -1813,16 +1790,7 @@ impl Vcs for GitVcs {
     }
 
     fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
-        let path_str = path.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!(
-                "replay-exclusion path {} is not valid UTF-8",
-                path.display()
-            ),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 replay-exclusion path",
-            ),
-        })?;
+        let path_str = path_as_git_arg(path, "replay-exclusion path")?;
         let needle = rwv_replay_exclusion_needle(path_str);
         let content = match read_committed_gitattributes(repo)? {
             Some(c) => c,
@@ -2143,14 +2111,17 @@ impl Vcs for GitVcs {
     }
 
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path) {
-        let src_path = src_repo.to_string_lossy().into_owned();
         // Errors are swallowed by design — for sibling worktrees that
         // share an object store the fetch may fail (FETCH_HEAD unavailable)
         // and yet the objects are already reachable. A real problem
         // surfaces at the subsequent operation (e.g. the ff merge in
-        // sync-to step 3) which inspects the same objects.
+        // sync-to step 3) which inspects the same objects. A source path git
+        // could not name is the same shape of nothing-to-report.
+        let Ok(src_path) = path_as_git_arg(src_repo, "source repo path") else {
+            return;
+        };
         let _ = git_command()
-            .args(["fetch", &src_path, "HEAD"])
+            .args(["fetch", src_path, "HEAD"])
             .current_dir(dst_repo)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -2302,10 +2273,7 @@ impl Vcs for GitVcs {
         revision: &ResolvedRevisionId,
         file_path: &Path,
     ) -> Result<String, VcsError> {
-        let path_str = file_path.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("file path {} is not valid UTF-8", file_path.display()),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 file path"),
-        })?;
+        let path_str = path_as_git_arg(file_path, "file path")?;
         // `git show <rev>:<path>` prints the blob at the given revision.
         // Non-zero exit when the revision is missing or the file doesn't
         // exist at that revision; both surface as CommandFailed and the
@@ -2457,10 +2425,7 @@ impl Vcs for GitVcs {
         start_point: &ResolvedRevisionId,
     ) -> Result<bool, VcsError> {
         let store = Self::work_dir_for_store(store);
-        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("worktree path {} is not valid UTF-8", dest.display()),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 worktree path"),
-        })?;
+        let dest_str = path_as_git_arg(dest, "worktree path")?;
         let start = start_point.as_str();
         let branch = name.as_str();
         let registered_before = self.is_registered_worktree(&store, dest);
@@ -2501,13 +2466,7 @@ impl Vcs for GitVcs {
         at: &RawRevisionId,
     ) -> Result<ResolvedRevisionId, VcsError> {
         let _ = role; // role label kept for signal value; all clones use `origin`
-        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("destination path {} is not valid UTF-8", dest.display()),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 destination path",
-            ),
-        })?;
+        let dest_str = path_as_git_arg(dest, "destination path")?;
         // `--no-checkout`: the working tree is never materialized at the
         // remote tip. Cloning still writes the remote's default branch as a
         // local ref — git offers no way to decline that — but no working
@@ -3874,5 +3833,47 @@ mod merge_driver_vocabulary_tests {
     #[test]
     fn the_driver_name_falls_under_its_own_scan_prefix() {
         assert!(RWV_MERGE_DRIVER_NAME.starts_with(RWV_MERGE_DRIVER_PREFIX));
+    }
+}
+
+#[cfg(test)]
+mod git_argument_path_tests {
+    //! What [`path_as_git_arg`] does to the extended-length prefix.
+    //!
+    //! The prefix exists only on Windows, so the assertion that matters is
+    //! compiled everywhere and executed on one platform — the advisory Windows
+    //! workflow is the only thing that runs it. The other direction is what
+    //! every platform can state, and it is the half that goes wrong if this
+    //! seam ever reaches for `canonicalize` instead: a path handed to git must
+    //! come back the path that was handed in, not a resolved one.
+
+    use super::*;
+
+    #[test]
+    fn a_path_with_no_extended_length_prefix_is_handed_over_unchanged() {
+        let absolute = if cfg!(windows) {
+            r"C:\weave\member"
+        } else {
+            "/weave/member"
+        };
+        assert_eq!(
+            path_as_git_arg(Path::new(absolute), "path").unwrap(),
+            absolute
+        );
+
+        let relative = "nested/entry";
+        assert_eq!(
+            path_as_git_arg(Path::new(relative), "path").unwrap(),
+            relative
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_letter_path_loses_the_prefix_git_refuses() {
+        assert_eq!(
+            path_as_git_arg(Path::new(r"\\?\C:\weave\member"), "path").unwrap(),
+            r"C:\weave\member"
+        );
     }
 }
