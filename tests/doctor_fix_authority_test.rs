@@ -41,15 +41,20 @@
 //! **Residue** — what these do *not* cover:
 //!
 //!   - The register is a declaration, not a recording of what the repair
-//!     functions do. `apply_finding_repairs` is held to it (it cannot act on
-//!     a finding the register calls report-only), but the two passes that
-//!     repair workspace state before collection name no finding at all, so
-//!     nothing here reads them. Adding a repair arm without declaring it
-//!     makes the arm dead rather than making this file red.
+//!     functions do. `apply_finding_repairs` is held to it at runtime (it
+//!     cannot act on a finding the register calls report-only). The two
+//!     passes that repair workspace state before collection name no finding
+//!     at all — instrument 4 below is what binds their repair announcements
+//!     to the register, so an arm added there for a report-only finding is a
+//!     red test rather than dead code. What instrument 4 keys on is the
+//!     `[fixed]` announcement, so an arm that repairs *silently* is invisible
+//!     to it — the announcement is the operator-visible claim of repair, and
+//!     a repair without one is a different defect than the one bound here.
 //!   - Findings with no `CheckViolation` variant — surfacing symlinks,
 //!     integration-content drift, member incompatibilities — carry no
 //!     disposition here. The page documents them under its own heading and
-//!     that section is unchecked.
+//!     that section is unchecked; their two repair announcements are bound
+//!     in instrument 4 as explicit no-variant boundaries.
 //!   - A doc comment that describes a repair without naming a disposition
 //!     ("`--fix` retracts it") is not read as a claim, so it cannot be
 //!     reported as a wrong one.
@@ -823,5 +828,426 @@ fn the_explain_page_points_at_the_findings_page() {
         cli_md.contains("doctor-findings.md"),
         "the `--fix` row of docs/reference/cli.md must send the operator to the one \
          enumeration"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Instrument 4: every repair announcement against the register
+// ---------------------------------------------------------------------------
+//
+// The register instruments above compare what is SAID about the set — the
+// page, the doc comments — against the register. This one compares what is
+// DONE: every `[fixed]` announcement in `src/check.rs` must be bound to a
+// finding the register marks Auto or Consented, or declared a no-variant
+// boundary. The two pre-collection passes (`apply_prelude_repairs`,
+// `apply_workspace_repairs`) repair workspace state before findings are
+// collected and name no `CheckViolation`, so the runtime disposition gate in
+// `apply_finding_repairs` never sees them — a repair arm added there for a
+// report-only finding would be dead code with no witness. The announcement is
+// the observable every arm carries, and this walk is what turns that dead arm
+// into a red test.
+//
+// The binding table is hand-maintained, and the walk is what forces it
+// complete: an announcement with no binding is reported (so a new arm cannot
+// land unmapped), a binding whose needle matches nothing is reported (so an
+// entry cannot outlive its arm), and a bound token the register calls
+// report-only is reported (the self-contradiction this instrument exists
+// for). A binding may cover several announcements (one migration message
+// family) and several tokens (one pass repairing a set of findings).
+
+/// What one repair announcement is bound to.
+enum Binding {
+    /// The register tokens for the finding(s) this arm repairs or pre-empts.
+    /// Every token must exist in the register and be Auto or Consented.
+    Findings(&'static [&'static str]),
+    /// The repair acts on state with no `CheckViolation` variant, so the
+    /// register cannot govern it. The reason is stated so the boundary is a
+    /// checked artifact rather than an unread comment.
+    NoVariant(&'static str),
+}
+
+/// Needle → binding. The needle must appear on the same source line as the
+/// `[fixed]` literal it binds (format strings put the discriminating text
+/// there), and must match exactly one table entry per announcement.
+fn repair_bindings() -> Vec<(&'static str, Binding)> {
+    use Binding::{Findings, NoVariant};
+    vec![
+        // --- apply_prelude_repairs -------------------------------------
+        (
+            "migrated legacy workweave marker",
+            Findings(&["legacy-workweave-marker"]),
+        ),
+        // --- apply_workspace_repairs -----------------------------------
+        (
+            "cleared `.rwv-active`",
+            Findings(&["dangling-active-project"]),
+        ),
+        (
+            "deleted `.rwv-active` at",
+            Findings(&["weave-root-identity-conflict/registered-workweave"]),
+        ),
+        (
+            "retracted dangling ownership receipt",
+            Findings(&["dangling-ref-receipt"]),
+        ),
+        (
+            "retracted the ownership receipt",
+            Findings(&["pre-flat-ref-receipt"]),
+        ),
+        (
+            "added the ref-ownership registry",
+            Findings(&["legacy-workweave-index"]),
+        ),
+        (
+            "reattached detached canonical",
+            Findings(&["branch-discipline/canonical-detached"]),
+        ),
+        // The branch-model migration announces through one relayed message,
+        // covering the rename, adopt-receipt, and consented-adoption arms.
+        (
+            "core: {msg}",
+            Findings(&[
+                "branch-discipline/unmigrated-ephemeral-branch",
+                "branch-discipline/unrecorded-ephemeral-branch",
+                "branch-discipline/detached",
+            ]),
+        ),
+        // One message family for the two legacy-spelling migrations (with
+        // and without a commit), matched by their shared prefix.
+        (
+            "{migration} in {}/.gitattributes",
+            Findings(&[
+                "missing-replay-exclusion/legacy-spelling",
+                "missing-replay-exclusion/legacy-alongside-current",
+            ]),
+        ),
+        (
+            "wrote `rwv.lock merge=rwv-ours`",
+            Findings(&["missing-replay-exclusion/absent"]),
+        ),
+        (
+            "planted `{}` config",
+            Findings(&["missing-merge-driver-config"]),
+        ),
+        // --- apply_finding_repairs -------------------------------------
+        (
+            "deleted safe-class stale ephemeral branch",
+            Findings(&["branch-discipline/stale-ephemeral-branch-safe"]),
+        ),
+        (
+            "re-pointed dangling parent",
+            Findings(&["workweave-tree-integrity/dangling-parent"]),
+        ),
+        (
+            "pruned stale registry entry",
+            Findings(&["workweave-tree-integrity/stale-registry-entry"]),
+        ),
+        (
+            "adopted workweave",
+            Findings(&["workweave-tree-integrity/unregistered-workweave"]),
+        ),
+        (
+            "index refreshed for",
+            Findings(&["index-drift/safe-to-fix"]),
+        ),
+        (
+            "working tree refreshed for",
+            Findings(&["working-tree-drift/safe-to-fix"]),
+        ),
+        (
+            "core: {kind_label}",
+            Findings(&[
+                "stale-worktree-registration",
+                "orphaned-savepoint/redundant",
+            ]),
+        ),
+        (
+            "dead-op-lease for",
+            Findings(&[
+                "dead-op-lease/owner-record-absent",
+                "dead-op-lease/owner-op-id-mismatch",
+            ]),
+        ),
+        // --- collect_doctor_issues (integration pass) ------------------
+        (
+            "regenerated integration content",
+            NoVariant(
+                "integration-content drift is an integration Issue, not a CheckViolation; \
+                 it carries no disposition for the register to state",
+            ),
+        ),
+        (
+            "re-surfaced symlinks",
+            NoVariant(
+                "surfacing symlinks are an integration Issue, not a CheckViolation; \
+                 they carry no disposition for the register to state",
+            ),
+        ),
+    ]
+}
+
+/// One `[fixed]` announcement in production code: the enclosing top-level
+/// function, the 1-based line, and the line text.
+struct Announcement {
+    function: String,
+    line: usize,
+    text: String,
+}
+
+/// Every `[fixed]` announcement in `source`, comment lines dropped.
+fn fixed_announcements(source: &str) -> Vec<Announcement> {
+    let mut out = Vec::new();
+    let mut function = String::from("<module scope>");
+    for (i, line) in source.lines().enumerate() {
+        if !line.starts_with(char::is_whitespace) {
+            let rest = line
+                .strip_prefix("pub(crate) ")
+                .or_else(|| line.strip_prefix("pub "))
+                .unwrap_or(line);
+            if let Some(rest) = rest.strip_prefix("fn ") {
+                if let Some(name) = rest.split(['(', '<', ' ']).next() {
+                    function = name.to_string();
+                }
+            }
+        }
+        if line.trim_start().starts_with("//") {
+            continue;
+        }
+        if line.contains("[fixed]") {
+            out.push(Announcement {
+                function: function.clone(),
+                line: i + 1,
+                text: line.to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// Every way the announcements and the bindings disagree with each other or
+/// with the register; empty means the invariant holds.
+fn repair_arm_gaps(
+    source: &str,
+    bindings: &[(&'static str, Binding)],
+    register: &BTreeMap<String, FixDisposition>,
+) -> Vec<String> {
+    let announcements = fixed_announcements(source);
+    let mut gaps = Vec::new();
+    let mut used: BTreeSet<usize> = BTreeSet::new();
+
+    if announcements.len() < 18 {
+        gaps.push(format!(
+            "the walk found only {} `[fixed]` announcements in src/check.rs — it has \
+             stopped seeing the repair arms, and every binding below it holds vacuously",
+            announcements.len()
+        ));
+    }
+
+    for a in &announcements {
+        let matched: Vec<usize> = bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, (needle, _))| a.text.contains(needle))
+            .map(|(i, _)| i)
+            .collect();
+        match matched.as_slice() {
+            [] => gaps.push(format!(
+                "src/check.rs:{}: a repair announced in `{}` is bound to nothing — add \
+                 it to the binding table with the finding it repairs (which the register \
+                 must mark Auto or Consented), or it is a repair the register never \
+                 authorised",
+                a.line, a.function
+            )),
+            [one] => {
+                used.insert(*one);
+                match &bindings[*one].1 {
+                    Binding::NoVariant(_) => {}
+                    Binding::Findings(tokens) => {
+                        for token in *tokens {
+                            match register.get(*token) {
+                                None => gaps.push(format!(
+                                    "src/check.rs:{}: bound to `{token}`, which the register \
+                                     does not carry — the token has a typo or the finding \
+                                     is gone",
+                                    a.line
+                                )),
+                                Some(FixDisposition::ReportOnly) => gaps.push(format!(
+                                    "src/check.rs:{}: `{}` repairs `{token}`, and the \
+                                     register says {} — the arm and the declaration \
+                                     contradict each other; align the register or remove \
+                                     the arm",
+                                    a.line,
+                                    a.function,
+                                    describe(FixDisposition::ReportOnly)
+                                )),
+                                Some(_) => {}
+                            }
+                        }
+                    }
+                }
+            }
+            many => gaps.push(format!(
+                "src/check.rs:{}: {} binding needles match one announcement — the walk \
+                 cannot tell which binding governs it: {:?}",
+                a.line,
+                many.len(),
+                many.iter().map(|i| bindings[*i].0).collect::<Vec<_>>()
+            )),
+        }
+    }
+
+    for (i, (needle, _)) in bindings.iter().enumerate() {
+        if !used.contains(&i) {
+            gaps.push(format!(
+                "binding `{needle}` matched no announcement — the arm it bound has gone; \
+                 remove the entry"
+            ));
+        }
+    }
+
+    gaps
+}
+
+#[test]
+fn every_repair_announcement_is_bound_to_a_repairable_finding() {
+    let gaps = repair_arm_gaps(CHECK_RS, &repair_bindings(), &register());
+    assert!(
+        gaps.is_empty(),
+        "the repair arms in src/check.rs and `CheckViolation::fix_disposition` \
+         disagree:\n  {}",
+        gaps.join("\n  ")
+    );
+}
+
+/// The vacuity this instrument is one broken scanner away from: a walk that
+/// sees no announcements binds nothing and reports nothing.
+#[test]
+fn the_repair_walk_actually_reads_the_arms() {
+    let announcements = fixed_announcements(CHECK_RS);
+    let per_fn = |name: &str| announcements.iter().filter(|a| a.function == name).count();
+    assert!(
+        per_fn("apply_prelude_repairs") >= 1,
+        "the walk sees no repair announcement in `apply_prelude_repairs`"
+    );
+    assert!(
+        per_fn("apply_workspace_repairs") >= 8,
+        "the walk sees only {} repair announcements in `apply_workspace_repairs` — the \
+         pre-collection pass this instrument exists for has gone dark to it",
+        per_fn("apply_workspace_repairs")
+    );
+    assert!(
+        per_fn("apply_finding_repairs") >= 6,
+        "the walk sees only {} repair announcements in `apply_finding_repairs`",
+        per_fn("apply_finding_repairs")
+    );
+    // The doc-comment mentions of `[fixed]` in src/check.rs must not be read
+    // as announcements — a walk that counts prose overstates its coverage.
+    assert!(
+        announcements.iter().all(|a| a.text.contains('"')),
+        "an announcement without a string literal on its line is a comment the \
+         filter missed"
+    );
+    // At least one bound token is consent-gated, so the walk demonstrably
+    // accepts Consented alongside Auto rather than only ever seeing Auto.
+    let register = register();
+    let consented_bound = repair_bindings().iter().any(|(_, b)| match b {
+        Binding::Findings(tokens) => tokens
+            .iter()
+            .any(|t| matches!(register.get(*t), Some(FixDisposition::Consented(_)))),
+        Binding::NoVariant(_) => false,
+    });
+    assert!(
+        consented_bound,
+        "no binding covers a consented finding — the Consented arm of the check is \
+         never exercised"
+    );
+    // A no-variant boundary is a claim of absence — that no `CheckViolation`
+    // exists for the state the arm repairs. The claim must be stated, and
+    // must name the type it claims absent, or the boundary is an entry
+    // someone can extend without saying what they are exempting.
+    for (needle, binding) in repair_bindings() {
+        if let Binding::NoVariant(reason) = binding {
+            assert!(
+                reason.contains("CheckViolation"),
+                "the no-variant boundary for `{needle}` does not state what it \
+                 exempts the arm from; got: {reason:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_repair_walk_reports_a_dead_arm_and_a_report_only_binding() {
+    let register = register();
+    let bindings = repair_bindings();
+
+    // A repair arm added in the pre-collection pass with no binding: the
+    // shape this instrument exists for. Seeded by injecting an announcement
+    // into `apply_workspace_repairs`' source text.
+    let anchor = "    let (retracted, retract_errs) = fix_dangling_receipts";
+    let seeded = CHECK_RS.replace(
+        anchor,
+        "    println!(\"[fixed] core: refreshed the stale lock\");\n\
+         \x20   let (retracted, retract_errs) = fix_dangling_receipts",
+    );
+    assert_ne!(seeded, CHECK_RS, "the seeded edit matched nothing");
+    let gaps = repair_arm_gaps(&seeded, &bindings, &register);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("apply_workspace_repairs") && g.contains("bound to nothing")),
+        "an unbound repair announcement in a pre-collection pass must be reported; \
+         got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    // The same arm bound to a finding the register calls report-only: the
+    // contributor mapped their dead arm, and the register contradicts them.
+    let mut contradicted = repair_bindings();
+    contradicted.push((
+        "refreshed the stale lock",
+        Binding::Findings(&["stale-lock"]),
+    ));
+    let gaps = repair_arm_gaps(&seeded, &contradicted, &register);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("stale-lock") && g.contains("Report-only")),
+        "a repair arm bound to a report-only finding must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    // A binding token the register does not carry.
+    let mut typoed = repair_bindings();
+    typoed.push((
+        "refreshed the stale lock",
+        Binding::Findings(&["stale-lok"]),
+    ));
+    let gaps = repair_arm_gaps(&seeded, &typoed, &register);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("stale-lok") && g.contains("does not carry")),
+        "a bound token missing from the register must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    // A binding whose arm is gone.
+    let mut stale = repair_bindings();
+    stale.push((
+        "a message no arm prints",
+        Binding::Findings(&["stale-lock"]),
+    ));
+    let gaps = repair_arm_gaps(CHECK_RS, &stale, &register);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("a message no arm prints") && g.contains("matched no announcement")),
+        "a binding that outlived its arm must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    // A source the scanner cannot see into must say so rather than pass.
+    let gaps = repair_arm_gaps("fn apply_finding_repairs() {}\n", &bindings, &register);
+    assert!(
+        gaps.iter().any(|g| g.contains("vacuously")),
+        "a walk that reads nothing must say so; got:\n  {}",
+        gaps.join("\n  ")
     );
 }

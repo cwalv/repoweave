@@ -7584,6 +7584,12 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
 /// Repairs that have to land before the workspace is read. A legacy marker
 /// leaves a workweave unusable, so migrating it is what lets the rest of the
 /// run resolve context at all.
+///
+/// The `[fixed]` announcement each arm prints is a checked surface, not
+/// chatter: tests/doctor_fix_authority_test.rs binds every announcement in
+/// this file to a finding [`CheckViolation::fix_disposition`] marks Auto or
+/// Consented. An arm added here for a report-only finding fails there
+/// instead of running unsanctioned.
 fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &mut Vec<String>) {
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         match fix_legacy_workweave_marker(&finding) {
@@ -7612,6 +7618,13 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
 /// refs they describe live in the one physical refdb every linked worktree
 /// shares — so they take `primary_path()` and ignore which weave invoked
 /// doctor. Arms repairing per-weave state must take `active_path()` instead.
+///
+/// This pass runs before collection and names no [`CheckViolation`], so the
+/// runtime disposition gate in [`apply_finding_repairs`] never sees it. What
+/// holds it to the register instead is the `[fixed]` announcement each arm
+/// prints: tests/doctor_fix_authority_test.rs binds every announcement to a
+/// finding the register marks Auto or Consented, so an arm added here for a
+/// report-only finding is a red test rather than dead code.
 fn apply_workspace_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
