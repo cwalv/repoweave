@@ -831,8 +831,13 @@ fn remove_activation_symlinks_in(
                     Ok(r) => r,
                     Err(_) => continue,
                 };
-                let rel_str = rel_from_root.to_string_lossy();
-                let in_owned_set = owned_files.contains(rel_str.as_ref());
+                // The owned set is keyed by the integrations' declared
+                // names, whose separators are `/` by contract; the walk
+                // renders this path with the platform's, so the lookup
+                // converts spelling at the boundary or a nested link is
+                // never recognized as owned where the platform writes `\`.
+                let rel_str = rel_from_root.to_string_lossy().replace('\\', "/");
+                let in_owned_set = owned_files.contains(rel_str.as_str());
                 let resolves_to_projects = target_resolves_to_projects(rel_from_root, &target);
                 if in_owned_set && resolves_to_projects {
                     crate::symlink::remove(&path)?;
