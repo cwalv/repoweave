@@ -1166,6 +1166,36 @@ mod tests {
         );
     }
 
+    /// Both spellings are written out here rather than computed, and that is
+    /// the point: every other assertion in this file that names
+    /// `canonical_recorded_path` builds its expected value by calling it, so
+    /// each of those holds whatever the function does — including nothing.
+    /// The second case is the arm the container takes before anyone creates
+    /// it, and it resolves a parent no `canonicalize` of the whole path can
+    /// reach.
+    #[test]
+    fn a_recorded_path_resolves_a_symlinked_spelling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        let link = tmp.path().join("link");
+        crate::symlink::create(&real, &link, crate::symlink::LinkTarget::Directory).unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "fixture precondition: `link` must be a symlink, or neither spelling differs"
+        );
+
+        let resolved = real.canonicalize().unwrap();
+        assert_eq!(canonical_recorded_path(&link), resolved);
+        assert_eq!(
+            canonical_recorded_path(&link.join("not-created-yet")),
+            resolved.join("not-created-yet")
+        );
+    }
+
     // -----------------------------------------------------------------
     // RefRegistry — receipts
     // -----------------------------------------------------------------
