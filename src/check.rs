@@ -5326,7 +5326,6 @@ pub fn fix_branch_model_migration(
 
     let mut applied = Vec::new();
     let mut errors = Vec::new();
-    let recorded = RecordedRefs::new(ws_root);
 
     for (workweave_name, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
         let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&workweave_dir) else {
@@ -5452,7 +5451,6 @@ pub fn fix_branch_model_migration(
         }
     }
 
-    let _ = &recorded;
     (applied, errors)
 }
 
