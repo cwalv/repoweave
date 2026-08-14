@@ -493,7 +493,12 @@ fn delete_from_outside_leaves_the_process_cwd_alone() {
     let ww_dir = weaveroot.join("web-app--bystander");
     add_workweave_checkout(&repo, &ww_dir, "github/org/repo", "web-app--bystander");
     let project_dir = ws.join("projects/web-app");
-    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--bystander");
+    add_workweave_checkout(
+        &project_dir,
+        &ww_dir,
+        "projects/web-app",
+        "web-app--bystander",
+    );
     write_marker(&ww_dir, &ws, "web-app");
 
     let cwd_before = std::env::current_dir().expect("the harness cwd is live at test entry");
