@@ -183,8 +183,8 @@ fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &st
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&source),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(source),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(workspace.join(".rwv-op"), body).unwrap();
 }
@@ -290,8 +290,8 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&workspace),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(workspace),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(workspace.join(".rwv-op"), body).unwrap();
 }
@@ -300,7 +300,7 @@ fn write_lease(workspace: &Path, owner: &Path) {
     let body = format!(
         "{{\"id\": \"reentry-test-advance\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = common::json_escaped(&owner),
+        owner = common::json_escaped(owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }
@@ -494,8 +494,8 @@ fn write_sync_to_owner_record_at_phase(
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&source),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(source),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -503,7 +503,7 @@ fn write_sync_to_owner_record_at_phase(
 fn write_lease_with_id(workspace: &Path, owner: &Path, id: &str) {
     let body = format!(
         "{{\"id\": \"{id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = common::json_escaped(&owner),
+        owner = common::json_escaped(owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }
@@ -666,7 +666,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 /// The marker records the primary root, project name, and parent workspace
 /// (here the primary, since this is a direct child of primary).
 fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
-    let content = common::workweave_marker(&primary_root, "web-app", &primary_root);
+    let content = common::workweave_marker(primary_root, "web-app", primary_root);
     std::fs::write(workweave_dir.join(".rwv-workweave"), content).unwrap();
 }
 
@@ -753,8 +753,8 @@ fn write_sync_to_retire_record(
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&source),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(source),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -1180,8 +1180,8 @@ fn write_sync_to_record_with_strategy(
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&owner),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(owner),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
     id.to_string()

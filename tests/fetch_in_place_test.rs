@@ -136,7 +136,7 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
 
     let mut manifest = String::from("[repositories]\n");
     for (rp, bare, _, _) in &repos {
-        let url = common::file_url(&bare);
+        let url = common::file_url(bare);
         manifest.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
@@ -149,7 +149,7 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     // emit still diffs against a real relock.
     let mut lock_entries = Vec::new();
     for (rp, bare, first, _) in &repos {
-        let url = common::file_url(&bare);
+        let url = common::file_url(bare);
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {first:?}}}"
         ));

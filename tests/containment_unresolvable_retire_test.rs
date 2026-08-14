@@ -142,7 +142,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
 }
 
 fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
-    let content = common::workweave_marker(&primary_root, "web-app", &primary_root);
+    let content = common::workweave_marker(primary_root, "web-app", primary_root);
     std::fs::write(workweave_dir.join(".rwv-workweave"), content).unwrap();
 }
 
@@ -188,8 +188,8 @@ fn write_sync_to_retire_record(owner: &Path, source: &Path, target: &Path, id: &
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&source),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(source),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -197,7 +197,7 @@ fn write_sync_to_retire_record(owner: &Path, source: &Path, target: &Path, id: &
 fn write_lease_with_id(workspace: &Path, owner: &Path, id: &str) {
     let body = format!(
         "{{\"id\": \"{id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = common::json_escaped(&owner),
+        owner = common::json_escaped(owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }

@@ -189,7 +189,7 @@ fn write_marker(dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(
         dir.join(".rwv-workweave"),
-        common::workweave_marker(&primary, project, &parent),
+        common::workweave_marker(primary, project, parent),
     )
     .unwrap();
 }

@@ -109,7 +109,7 @@ fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
         &[
             "submodule",
             "add",
-            &common::file_url(&submodule_remote),
+            &common::file_url(submodule_remote),
             sub_path,
         ],
         repo_dir,

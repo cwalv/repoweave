@@ -723,8 +723,8 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&workspace),
-        tgt = common::json_escaped(&target),
+        src = common::json_escaped(workspace),
+        tgt = common::json_escaped(target),
     );
     std::fs::write(workspace.join(".rwv-op"), body).unwrap();
 }
@@ -734,7 +734,7 @@ fn write_lease(workspace: &Path, owner: &Path) {
     let body = format!(
         "{{\"id\": \"{RESUMED_OP_ID}\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = common::json_escaped(&owner),
+        owner = common::json_escaped(owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }

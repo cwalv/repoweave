@@ -340,7 +340,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
 fn plant_lease(workspace: &Path, owner: &Path, id: &str) {
     let body = format!(
         "{{\"id\": \"{id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = common::json_escaped(&owner),
+        owner = common::json_escaped(owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }

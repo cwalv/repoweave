@@ -101,7 +101,7 @@ struct Fixture {
 }
 
 fn url_of(bare: &Path) -> String {
-    common::file_url(&bare)
+    common::file_url(bare)
 }
 
 /// Bare repo with two commits, so a lock pin and a branch HEAD can disagree.

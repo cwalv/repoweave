@@ -1101,7 +1101,7 @@ fn bare_status(dir: &Path) -> String {
 /// version value — both branches rewrite the same `"version"` line so a
 /// 3-way merge without the driver is guaranteed to conflict.
 fn lock_json(manifest_repo: &Path, version: &str) -> String {
-    let repo_url = common::file_url(&manifest_repo);
+    let repo_url = common::file_url(manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {version:?}}}}}}}",
         path = MANIFEST_REPO_PATH,

@@ -621,7 +621,7 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
         "path+{}/github/chatly/protocol",
         common::file_url(root.canonicalize().unwrap())
     );
-    let non_canonical = format!("path+{}/github/chatly/protocol", common::file_url(&root));
+    let non_canonical = format!("path+{}/github/chatly/protocol", common::file_url(root));
     assert!(
         stdout.contains(&expected_source) || stdout.contains(&non_canonical),
         "cargo metadata did not resolve chatly-protocol to the in-weave source \

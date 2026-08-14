@@ -852,8 +852,8 @@ fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: 
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = common::json_escaped(&src),
-        tgt = common::json_escaped(&tgt),
+        src = common::json_escaped(src),
+        tgt = common::json_escaped(tgt),
     );
     std::fs::write(ws_root.join(".rwv-op"), &json).unwrap();
 }
