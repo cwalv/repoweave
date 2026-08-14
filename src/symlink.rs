@@ -127,9 +127,19 @@ pub fn occupied_path_remedy(link: &Path) -> String {
 /// makes Developer Mode apply, so the happy path needs no privilege code here.
 #[cfg(windows)]
 fn platform_symlink(target: &Path, link: &Path, kind: LinkTarget) -> std::io::Result<()> {
+    // The stored target is resolved by the NT kernel, which — unlike the
+    // Win32 layer every path rwv passes normally crosses — does not accept
+    // `/` as a separator. A target carrying one is stored verbatim and the
+    // link is then unreadable (ERROR_INVALID_NAME) even though creating it
+    // succeeded. The stored spelling is a filesystem artifact, not an
+    // identity, so the platform separator is the correct one here.
+    let native: std::path::PathBuf = match target.to_str() {
+        Some(s) => s.replace('/', "\\").into(),
+        None => target.to_path_buf(),
+    };
     match kind {
-        LinkTarget::Directory => std::os::windows::fs::symlink_dir(target, link),
-        LinkTarget::File => std::os::windows::fs::symlink_file(target, link),
+        LinkTarget::Directory => std::os::windows::fs::symlink_dir(&native, link),
+        LinkTarget::File => std::os::windows::fs::symlink_file(&native, link),
     }
 }
 
