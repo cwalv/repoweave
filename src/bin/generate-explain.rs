@@ -2518,12 +2518,22 @@ fn run_doc_symbol_check(root: &Path) -> Vec<String> {
 /// integrations/cargo_workspace.rs) and matching the plural would force
 /// rewording a hit that has nothing to do with the tracker. An entry names
 /// known house vocabulary; a prior hit is not a precondition for adding one,
-/// and this list is not a log of past violations. `workweave` is core rwv
+/// and this list is not a log of past violations. An inflection can be its
+/// own entry when it is itself house vocabulary: `choreographer` is listed
+/// literally because unstemmed matching of `choreograph` does not cover it. `workweave` is core rwv
 /// vocabulary and must never be added here, and neither is `dispatch` — rwv's
 /// own CLI dispatch uses the word throughout `src/`, so it cannot be added as
 /// a bare word without banning rwv's own vocabulary alongside the consumer
 /// sense of it.
-const CONSUMER_VOCABULARY: &[&str] = &["bead", "choreograph", "subagent", "sling", "tl", "epic"];
+const CONSUMER_VOCABULARY: &[&str] = &[
+    "bead",
+    "choreograph",
+    "choreographer",
+    "subagent",
+    "sling",
+    "tl",
+    "epic",
+];
 
 /// True if `word` occurs in `haystack` (already lowercased) bounded on both
 /// sides by a non-alphanumeric character or a string edge — i.e. as a whole
