@@ -375,3 +375,11 @@ pub fn path_ends_with(path: impl AsRef<str>, suffix: &str) -> bool {
 pub fn same_path(a: impl AsRef<std::path::Path>, b: impl AsRef<std::path::Path>) -> bool {
     dunce::simplified(a.as_ref()) == dunce::simplified(b.as_ref())
 }
+
+/// Flatten path spelling inside prose: separators to `/`, the verbatim
+/// prefix dropped. For asserting a message names a file when the message
+/// holds whatever spelling a surface printed — compare both sides through
+/// this, never one.
+pub fn flatten_path_spelling(s: &str) -> String {
+    s.replace('\\', "/").replace("//?/", "")
+}

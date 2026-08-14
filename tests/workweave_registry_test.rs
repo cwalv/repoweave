@@ -147,7 +147,7 @@ fn a_symlinked_container_is_recorded_canonicalized() {
 
     let placement = idx["workweaves"]["feat"].as_str().unwrap();
     assert!(
-        placement.starts_with(&format!("{container}/")),
+        std::path::Path::new(placement).starts_with(std::path::Path::new(container)),
         "placement {placement} must sit under the recorded container {container}"
     );
 }

@@ -559,8 +559,8 @@ fn doctor_fix_withholds_regeneration_while_drift_is_unsettled() {
         "the same finding with no drift beside it must be repaired:\n{after}"
     );
     assert_eq!(
-        std::fs::read_to_string(&manifest).unwrap(),
-        authored,
+        common::read_normalized(&manifest),
+        authored.replace("\r\n", "\n"),
         "and the managed region must be back to what rwv derives:\n{after}"
     );
 }
