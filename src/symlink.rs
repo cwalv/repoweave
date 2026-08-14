@@ -103,11 +103,21 @@ fn refusal(error: &std::io::Error, target: &Path, link: &Path, on_windows: bool)
 ///
 /// rwv never overwrites what it did not put there, so removing it is the one
 /// thing that moves the state forward, and the sentence has to name which
-/// path it means. Says nothing about what the occupant is: `EEXIST` does not
-/// distinguish a file from a directory or a foreign link.
+/// path it means. `EEXIST` does not distinguish a file from a directory or
+/// a foreign link, so the occupant is classified here by looking again —
+/// which of those it is decides what the operator just protected.
 pub fn occupied_path_remedy(link: &Path) -> String {
+    let occupant = match std::fs::symlink_metadata(link) {
+        Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(link) {
+            Ok(target) => format!("a symlink to {}", target.display()),
+            Err(_) => "a symlink whose target could not be read".to_string(),
+        },
+        Ok(meta) if meta.file_type().is_dir() => "a directory".to_string(),
+        Ok(_) => "a regular file".to_string(),
+        Err(_) => "no longer observable".to_string(),
+    };
     format!(
-        "rwv does not overwrite what is already at {} — remove it and re-run",
+        "rwv does not overwrite what is already at {} ({occupant}) — remove it and re-run",
         link.display()
     )
 }
