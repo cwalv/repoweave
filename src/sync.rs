@@ -6269,9 +6269,12 @@ pub fn run_abort(
 /// `recorded_converged_tip` is from `converged_tips` (written at relock).
 ///
 /// `abandon_foreign_tip` is whether the operator named THIS repo on
-/// `--abandon-foreign-tip`. It reaches rail 2 as a policy and cannot reach
-/// rail 1: the pre-abort ref is written on the way in whatever the operator
-/// asked for, which is what leaves an abandoned tip somewhere to be found.
+/// `--abandon-foreign-tip`. It reaches rail 2 as a policy and also reaches
+/// rail 1, where it narrows first-write-wins to first-write-wins-along-
+/// divergence: an existing capture is advanced to HEAD when it is an
+/// ancestor of HEAD, so a retry after a stale-capture refusal (foreign
+/// agent committed on top between runs) proceeds. A diverged capture is
+/// still returned unchanged and rail 2's guard refuses the abandon.
 fn abort_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
@@ -6280,6 +6283,12 @@ fn abort_one_repo(
     recorded_converged_tip: Option<&str>,
     abandon_foreign_tip: bool,
 ) -> anyhow::Result<VerifiedRestoreOutcome> {
+    let policy = if abandon_foreign_tip {
+        ForeignTipPolicy::Abandon
+    } else {
+        ForeignTipPolicy::Refuse
+    };
+
     // Rail 1: write the pre-abort ref BEFORE any verified restore. Even if
     // the verified restore decides to refuse, the tip is durably captured
     // so the operator can roll the branch back later if desired.
@@ -6288,17 +6297,12 @@ fn abort_one_repo(
     // and continue with the verified restore — but only if we can determine
     // the failure is benign. Today we propagate the error: failing to
     // preserve information is itself a violation of the doctrine.
-    vcs.create_pre_abort_ref(repo, op_id.as_str())
+    vcs.create_pre_abort_ref(repo, op_id.as_str(), policy)
         .context("create pre-abort ref failed")?;
 
     // Rail 2: HEAD-verified restore. `verified_restore_savepoint` performs
     // the classification + restore-if-attributable atomically; foreign tips
     // are returned as `ForeignTip` for the caller to report.
-    let policy = if abandon_foreign_tip {
-        ForeignTipPolicy::Abandon
-    } else {
-        ForeignTipPolicy::Refuse
-    };
     vcs.verified_restore_savepoint(
         repo,
         op_id.as_str(),
@@ -6417,16 +6421,55 @@ fn report_abort_outcome(
             };
 
             // Consent that did not take effect: the only way to reach here
-            // having passed the flag is a pre-abort ref left over from an
-            // earlier abort run, capturing a tip the branch has since moved
-            // past. Say so, or the refusal reads as the flag not working.
+            // having passed the flag is that the pre-abort capture from an
+            // earlier abort run has DIVERGED from HEAD (foreign rebase or
+            // reset). An ancestor-only advance would have been done by rail 1
+            // and this branch would not be reached. Say so, and name a
+            // seat-runnable remedy — abandoning a tip nothing else names is
+            // destruction, which the flag deliberately does not authorise.
             let consent_note = if consented {
+                let captured = pre_abort_ref.revision.as_str();
+                let diverged_note = repo_abs
+                    .map(|repo| {
+                        let captured_id = ResolvedRevisionId::from_canonical(captured, None);
+                        let observed_id = ResolvedRevisionId::from_canonical(observed_tip, None);
+                        vcs.is_ancestor(repo, &captured_id, &observed_id)
+                            .map(|is_anc| {
+                                if is_anc {
+                                    "unexpected: capture is an ancestor of the observed tip \
+                                     (rail 1 should have advanced it — please file this)"
+                                        .to_string()
+                                } else {
+                                    format!(
+                                        "the pre-abort ref holds {captured}, which has DIVERGED \
+                                         from the observed tip (foreign rebase or reset — the \
+                                         captured commits are not reachable from HEAD, so \
+                                         abandoning would leave them named only by the \
+                                         ref about to be moved off)"
+                                    )
+                                }
+                            })
+                            .unwrap_or_else(|_| {
+                                format!(
+                                    "the pre-abort ref holds {captured}; ancestry against the \
+                                     observed tip could not be checked, so refusing to move the \
+                                     branch off"
+                                )
+                            })
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "the pre-abort ref holds {captured}; repo path unavailable, so \
+                             ancestry against the observed tip could not be checked"
+                        )
+                    });
                 format!(
-                    "\n\t--abandon-foreign-tip named this repo, but the pre-abort ref holds \
-                     {captured}, not the observed tip (first write wins, so an earlier abort \
-                     run's capture stands). Abandoning now would leave nothing pointing at \
-                     the commits since — refusing.",
-                    captured = pre_abort_ref.revision.as_str(),
+                    "\n\t--abandon-foreign-tip named this repo, but {diverged_note} — refusing.\n\
+                     \tto proceed: reconcile the foreign branch by hand first (move HEAD to \
+                     a commit whose history includes {captured}, or delete {ref_label} if the \
+                     captured commits are safe to lose), then re-run `rwv abort \
+                     --abandon-foreign-tip=<repo>`.",
+                    ref_label = pre_abort_ref.label,
                 )
             } else {
                 String::new()

@@ -2522,11 +2522,23 @@ pub trait Vcs: Send + Sync {
     /// path. (`rwv doctor` may garbage-collect these refs once their op
     /// is provably no longer referenced; abort itself does not.)
     ///
-    /// **First write wins:** if a pre-abort reference already exists for
-    /// this `op_id`, it is returned unchanged rather than overwritten — a
-    /// re-run of abort for the same op must not clobber the original
-    /// capture, which may by then be the only reference to that tip.
-    fn create_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Result<PreAbortRef, VcsError>;
+    /// **First write wins, narrowed to first-write-wins-along-divergence.**
+    /// If a pre-abort reference already exists for this `op_id`, it is
+    /// returned unchanged in all cases EXCEPT one: under
+    /// [`ForeignTipPolicy::Abandon`], if the existing capture is an
+    /// ancestor of `HEAD`, it is ADVANCED to `HEAD`. Ancestry guarantees
+    /// the earlier capture stays reachable from the new one, so no commit
+    /// held only by the reference is lost — the first-write-wins rationale
+    /// (never orphan the original capture) is preserved verbatim. A
+    /// diverged capture (foreign rebase/reset — genuinely something new to
+    /// lose) is still returned unchanged, and the shipped guard in
+    /// [`Vcs::verified_restore_savepoint`] refuses the abandon.
+    fn create_pre_abort_ref(
+        &self,
+        repo: &Path,
+        op_id: &str,
+        foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<PreAbortRef, VcsError>;
 
     /// Resolve the pre-abort reference captured under `op_id` in `repo`,
     /// returning `None` when no such reference exists.

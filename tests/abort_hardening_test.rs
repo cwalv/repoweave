@@ -1049,15 +1049,15 @@ fn abandon_foreign_tip_has_no_all_repos_spelling() {
     }
 }
 
-/// The guard that keeps the consent from becoming destruction.
-///
-/// `create_pre_abort_ref` is first-write-wins, so a second abort run gets back
-/// the ref an earlier run wrote. If the branch has advanced since, that ref no
-/// longer names the tip about to be left behind — restoring would strand the
-/// commits in between with nothing pointing at them. Consent does not buy
-/// that, so abort refuses and says why.
+/// First-write-wins narrows to first-write-wins-along-divergence: when the
+/// existing capture is an ancestor of HEAD (foreign agent committed on top of
+/// the previously-captured tip), rail 1 ADVANCES the capture to HEAD under
+/// `--abandon-foreign-tip` and the abandon proceeds. Ancestry keeps the
+/// original captured commits reachable through the advanced ref, so the
+/// rationale that motivates first-write-wins (never orphan the original
+/// capture) is preserved verbatim.
 #[test]
-fn abandon_refuses_when_the_pre_abort_ref_no_longer_holds_the_observed_tip() {
+fn abandon_advances_capture_along_ancestry_and_proceeds() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
@@ -1083,11 +1083,128 @@ fn abandon_refuses_when_the_pre_abort_ref_no_longer_holds_the_observed_tip() {
         Some(first_foreign.as_str()),
     );
 
-    // The foreign agent keeps going.
+    // The foreign agent keeps going, LINEARLY — a plain commit on top of the
+    // captured tip. This is the shape addendum E1 rules on: the capture is an
+    // ancestor of the observed tip, so nothing held only by the capture is
+    // about to be orphaned.
     let second_foreign = make_commit(&ws.server_dir, "f2.txt", "f2\n", "foreign: second");
+    assert!(
+        try_git(
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &first_foreign,
+                &second_foreign,
+            ],
+            &ws.server_dir,
+        ),
+        "fixture invariant: the first foreign tip must be an ancestor of the second"
+    );
 
-    // Run 2, with consent: the ref still holds the FIRST tip, so restoring
-    // would lose the second. Refuse.
+    // Run 2, with consent: rail 1 advances the capture from f1 to f2, rail
+    // 2's guard (capture == observed) then holds and the abandon proceeds.
+    rwv()
+        .arg("abort")
+        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("abandoned foreign tip"));
+
+    // The branch is back at the savepoint.
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        server_savepoint,
+        "the branch must be restored to the savepoint"
+    );
+    // The advanced capture points at the abandoned tip.
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(second_foreign.as_str()),
+        "the pre-abort ref must have advanced to the observed tip"
+    );
+    // The ORIGINAL captured commit stays reachable through the advanced ref
+    // (this is why the advance is safe): first_foreign is an ancestor of
+    // second_foreign, so it is reachable from the ref that now points there.
+    assert!(
+        try_git(
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &first_foreign,
+                &pre_abort_ref_path(op_id),
+            ],
+            &ws.server_dir,
+        ),
+        "the original captured tip must remain reachable through the advanced ref \
+         (the invariant that makes the advance safe)"
+    );
+    // And both abandoned commits' objects still exist — abandonment, not
+    // destruction.
+    for sha in [&first_foreign, &second_foreign] {
+        assert!(
+            try_git(
+                &["cat-file", "-e", &format!("{sha}^{{commit}}")],
+                &ws.server_dir,
+            ),
+            "the abandoned commit {sha} must survive the abort"
+        );
+    }
+}
+
+/// A DIVERGED capture (foreign rebase or reset — the capture is NOT an
+/// ancestor of HEAD) still refuses under `--abandon-foreign-tip`. There is
+/// now genuinely something the capture is the only witness to (the commits
+/// on the branch that HEAD moved off of), so advancing it would orphan them.
+/// The refusal must name the divergence AND a seat-runnable path forward.
+#[test]
+fn abandon_refuses_when_capture_has_diverged_from_observed_tip() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000025Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let first_foreign = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "relock", &[]);
+
+    // Run 1: captures the current tip (first_foreign).
+    rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("foreign-tip"));
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(first_foreign.as_str()),
+    );
+
+    // Foreign agent RESETS the branch off first_foreign back to the
+    // savepoint and commits a different line of work. first_foreign is no
+    // longer reachable from HEAD — the capture and HEAD have diverged.
+    git(&["reset", "--hard", &server_savepoint], &ws.server_dir);
+    let diverged_foreign =
+        make_commit(&ws.server_dir, "d1.txt", "d1\n", "foreign: diverged line");
+    assert!(
+        !try_git(
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &first_foreign,
+                &diverged_foreign,
+            ],
+            &ws.server_dir,
+        ),
+        "fixture invariant: the captured tip must NOT be an ancestor of the diverged tip"
+    );
+
+    // Run 2, with consent: the capture is diverged from HEAD, so rail 1
+    // does NOT advance it, and rail 2's guard refuses.
     let output = rwv()
         .arg("abort")
         .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
@@ -1098,22 +1215,23 @@ fn abandon_refuses_when_the_pre_abort_ref_no_longer_holds_the_observed_tip() {
         .clone();
     let stderr = String::from_utf8_lossy(&output.stderr);
 
+    // The branch is untouched — refusal, not destruction.
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ws.server_dir),
-        second_foreign,
-        "a stale capture must not be treated as consent to destroy the tip past it"
+        diverged_foreign,
+        "a diverged capture must not be treated as consent to destroy the tip"
     );
+    // The capture is unchanged: first-write-wins still holds along the
+    // divergence — there is now genuinely something to lose.
     assert_eq!(
         pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
         Some(first_foreign.as_str()),
-        "first-write-wins still holds — the refusal must not rewrite the capture"
+        "the diverged capture must not be advanced"
     );
-    // "It refused" is not the claim. The claim is that it refused FOR THIS
-    // REASON and said which tip the reference actually holds — without that
-    // SHA the operator cannot tell which commits are already safe, and a
-    // message naming the observed tip instead would read as if nothing were
-    // wrong. So the assertion is on the line, not on the transcript: the
-    // whole-stderr `contains` it replaces was green for any SHA at all.
+    // The refusal must name the divergence as the reason (not merely say
+    // "refused"), and must name a path the operator can actually walk. A
+    // message naming a stale-along-ancestry cause here would be wrong — the
+    // ancestry case is auto-advanced.
     let consent_line = stderr
         .lines()
         .find(|line| line.contains("--abandon-foreign-tip named this repo"))
@@ -1121,9 +1239,18 @@ fn abandon_refuses_when_the_pre_abort_ref_no_longer_holds_the_observed_tip() {
             panic!("a refusal that arrives despite consent must say why.\nstderr:\n{stderr}")
         });
     assert!(
+        consent_line.contains("DIVERGED"),
+        "the refusal must name the divergence as the cause.\nconsent line: {consent_line}"
+    );
+    assert!(
         consent_line.contains(&first_foreign),
-        "the refusal must name the stale capture ({first_foreign}) as the cause, \
-         not merely report a refusal.\nconsent line: {consent_line}"
+        "the refusal must name the diverged capture ({first_foreign}) so the operator \
+         can locate it.\nconsent line: {consent_line}"
+    );
+    assert!(
+        stderr.contains("to proceed:") && stderr.contains("reconcile"),
+        "the refusal must name a seat-runnable path forward (reconcile by hand, then \
+         re-run).\nstderr:\n{stderr}"
     );
     assert!(
         ws.root.join(".rwv-op").exists(),

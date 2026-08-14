@@ -1933,16 +1933,31 @@ impl Vcs for GitVcs {
         let _ = Self::run(&["update-ref", "-d", &ref_name], repo);
     }
 
-    fn create_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Result<PreAbortRef, VcsError> {
-        // First write wins: a re-run of abort for the same op (e.g. after a
-        // foreign-tip refusal was reconciled) must not overwrite the original
-        // capture — by then the operator may have moved the branch, leaving
-        // this ref as the only remaining reference to the pre-abort tip.
-        if let Some(existing) = self.resolve_pre_abort_ref(repo, op_id) {
-            return Ok(existing);
-        }
+    fn create_pre_abort_ref(
+        &self,
+        repo: &Path,
+        op_id: &str,
+        foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<PreAbortRef, VcsError> {
+        // First write wins, narrowed to first-write-wins-along-divergence:
+        // an existing capture is returned unchanged EXCEPT when the operator
+        // has consented to abandoning a foreign tip AND the existing capture
+        // is an ancestor of HEAD. Ancestry keeps the earlier capture
+        // reachable from the new one, so advancing the ref cannot orphan
+        // any commit the ref was the only witness to — the rationale that
+        // motivates first-write-wins is preserved verbatim. A diverged
+        // capture (foreign rebase/reset) is returned unchanged; the shipped
+        // guard in `verified_restore_savepoint` then refuses the abandon.
         let head = self.head_revision(repo)?;
         let label = pre_abort_ref(op_id);
+        if let Some(existing) = self.resolve_pre_abort_ref(repo, op_id) {
+            let should_advance = foreign_tip_policy == ForeignTipPolicy::Abandon
+                && existing.revision.as_str() != head.as_str()
+                && self.is_ancestor(repo, &existing.revision, &head)?;
+            if !should_advance {
+                return Ok(existing);
+            }
+        }
         Self::run(&["update-ref", &label, head.as_str()], repo)?;
         Ok(PreAbortRef {
             label,

@@ -346,7 +346,11 @@ const ALLOWLIST: &[Allowed] = &[
             refs/rwv/pre-abort/<op-id> at HEAD before any abort-time \
             restore; information-preserving rail (design § 5) — abort is \
             itself undoable via this ref and the \
-            ref is never deleted by abort cleanup. None touch user refs.",
+            ref is never deleted by abort cleanup. The same line covers \
+            both first-write and the first-write-wins-along-divergence \
+            advance (under --abandon-foreign-tip, an existing capture that \
+            is an ancestor of HEAD is advanced to HEAD; ancestry keeps the \
+            earlier capture reachable). None touch user refs.",
     },
     Allowed {
         file: "workspace.rs",

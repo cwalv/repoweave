@@ -478,7 +478,12 @@ impl Vcs for FakeVcs {
         unsupported("drop_savepoint")
     }
 
-    fn create_pre_abort_ref(&self, _repo: &Path, _op_id: &str) -> Result<PreAbortRef, VcsError> {
+    fn create_pre_abort_ref(
+        &self,
+        _repo: &Path,
+        _op_id: &str,
+        _foreign_tip_policy: ForeignTipPolicy,
+    ) -> Result<PreAbortRef, VcsError> {
         unsupported("create_pre_abort_ref")
     }
 
