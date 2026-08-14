@@ -657,7 +657,10 @@ fn fetch_project_repos(
                     // context activate now takes. This is a first-resolution of
                     // the newly-created workspace, not a re-resolution of the
                     // invocation context.
-                    let ctx = crate::workspace::WorkspaceContext::resolve(workspace_root, None)?;
+                    let ctx = crate::workspace::WorkspaceContext::resolve_invocation(
+                        workspace_root,
+                        None,
+                    )?;
                     crate::activate::activate(name, &ctx)?;
                 }
             }

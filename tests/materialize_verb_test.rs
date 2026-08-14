@@ -150,7 +150,7 @@ fn fixture() -> Fixture {
 
     // Author the managed files without materializing: the lock the tests look
     // for cannot be left over from the fixture's own setup.
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "app",
         &ctx,

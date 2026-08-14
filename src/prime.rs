@@ -315,7 +315,7 @@ enabled = true
 
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let output = render_context(&ctx);
 
         assert!(output.contains("# repoweave workspace"));
@@ -363,7 +363,7 @@ enabled = true
 
         let tmp = tempfile::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let output = render_context(&ctx);
 
         let section_start = output
@@ -444,7 +444,7 @@ role = "owned"
 "#,
         );
 
-        let ctx = WorkspaceContext::resolve(&workweave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&workweave_dir, None).unwrap();
         let output = render_context(&ctx);
 
         assert!(output.contains("**Workweave**"));
@@ -459,7 +459,7 @@ role = "owned"
         let tmp = tempfile::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let output = render_context(&ctx);
 
         assert!(output.contains("# repoweave workspace"));
@@ -478,7 +478,7 @@ role = "owned"
         write_manifest(&root, "minimal", "[repositories]\n");
         std::fs::write(root.join(".rwv-active"), "minimal\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let output = render_context(&ctx);
 
         assert!(output.contains("**Project**: `minimal`"));
@@ -496,7 +496,7 @@ role = "owned"
         std::fs::create_dir_all(root.join("projects").join("mobile")).unwrap();
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let output = render_context(&ctx);
 
         assert!(output.contains("web-app/ (active)"));

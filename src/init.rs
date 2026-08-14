@@ -36,9 +36,9 @@ use std::path::Path;
 ///
 /// Reuses [`require_workspace_or_empty`] as the gate:
 ///
-/// - Already a workspace → no-op; the caller's subsequent [`WorkspaceContext::resolve`]
+/// - Already a workspace → no-op; the caller's subsequent [`WorkspaceContext::resolve_invocation`]
 ///   will succeed as before.
-/// - Empty directory → creates `projects/` so that [`WorkspaceContext::resolve`]
+/// - Empty directory → creates `projects/` so that [`WorkspaceContext::resolve_invocation`]
 ///   can find a workspace marker and proceed.
 /// - Non-empty, non-workspace directory → returns a clear refusal error naming
 ///   the state, what `init` would do, and the next step.
@@ -58,9 +58,9 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 
     // Gate passed. If we are NOT already a workspace (resolve would fail), we
     // are in an empty dir — create the minimal `projects/` marker so that the
-    // subsequent `WorkspaceContext::resolve` call in `init`/`init_adopt` finds
+    // subsequent `WorkspaceContext::resolve_invocation` call in `init`/`init_adopt` finds
     // a workspace root.
-    if WorkspaceContext::resolve(cwd, None).is_err() {
+    if WorkspaceContext::resolve_invocation(cwd, None).is_err() {
         let projects_dir = projects_dir(cwd);
         std::fs::create_dir_all(&projects_dir)
             .with_context(|| format!("failed to create {}", projects_dir.display()))?;
@@ -90,7 +90,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     // not a re-resolution of the invocation context (which dispatch could
     // not compute pre-bootstrap).
     bootstrap_workspace_if_empty(origin_dir)?;
-    let ctx = WorkspaceContext::resolve(origin_dir, None)?;
+    let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
     let project_dir = project_dir(ctx.primary_path(), name);
 
     // Collision check
@@ -197,7 +197,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
     // Same bootstrap-then-first-resolve pattern as `init` above.
     bootstrap_workspace_if_empty(origin_dir)?;
-    let ctx = WorkspaceContext::resolve(origin_dir, None)?;
+    let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
     let root = ctx.primary_path();
 
     // Resolve the source to a clone URL and project name.

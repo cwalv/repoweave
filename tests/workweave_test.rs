@@ -978,7 +978,7 @@ role = "owned"
     // in the primary workspace so workweave-create (a context verb)
     // surfaces it via symlinks. Real-world equivalent: an intent verb
     // (rwv add) ran earlier and committed both rwv.toml and Cargo.toml.
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         project,
         &ctx,

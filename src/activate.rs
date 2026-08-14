@@ -871,7 +871,7 @@ fn remove_activation_symlinks_in(
 /// Run activation in a workweave directory without calling resolve.
 ///
 /// This is used by `create_workweave` after the workweave is fully set up.
-/// Unlike `activate`, it does not call `WorkspaceContext::resolve` (which would
+/// Unlike `activate`, it does not call `WorkspaceContext::resolve_invocation` (which would
 /// return the primary root via the `.rwv-workweave` marker). Instead it works
 /// directly against the workweave directory.
 ///

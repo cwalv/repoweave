@@ -303,7 +303,7 @@ fn looks_path_like(s: &str) -> bool {
 /// Refuse when the workweave's recorded `parent:` no longer exists on disk
 /// (retired or deleted out-of-band).
 ///
-/// Without this guard the parent path flows into `WorkspaceContext::resolve`,
+/// Without this guard the parent path flows into workspace resolution,
 /// which calls `.canonicalize()` and dies with a raw `failed to canonicalize
 /// … (os error 2)` that names no remedy. Replace that with the doctor
 /// remediation the operator can act on directly. `primary_root` is named so
@@ -1488,23 +1488,6 @@ fn replay_exclusion_source_only_refusal(
         dir = source_project_dir.display(),
         summary = replay_exclusion_problem_summary(problem),
     )
-}
-
-fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
-    match &ctx.checkout {
-        Checkout::Primary { project: Some(_) } => {
-            // Delegate to require_active_project_on_disk so a dangling
-            // .rwv-active fails early with a clear message rather than
-            // producing confusing downstream git errors.
-            ctx.require_active_project_on_disk().cloned()
-        }
-        Checkout::Workweave { project, .. } => Ok(project.clone()),
-        Checkout::Primary { project: None } => {
-            // require_active_project produces the same helpful error
-            // mentioning --project / rwv activate; defer to it.
-            ctx.require_active_project().cloned()
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3000,7 +2983,6 @@ fn guard_and_mark<'a>(
     let allow_stale_lock = request.allow_stale_lock;
     let discard_local_commits = request.discard_local_commits;
     let retire = request.retire;
-    let project_override = request.project_override.clone();
     let jobs = request.jobs;
 
     let emit_text = handler.emit_text();
@@ -3034,16 +3016,10 @@ fn guard_and_mark<'a>(
         MachineVerb::SyncTo => (cli_path.clone(), cli_path.clone()),
     };
 
-    // Project override: when CWD is a workweave its project is immutable and
-    // authoritative; pass it through so the *other* workspace resolves the
-    // same project regardless of its `.rwv-active`. Otherwise propagate the
-    // caller's explicit `--project`.
-    let other_project_override = match &cwd_ctx.checkout {
-        Checkout::Workweave { project, .. } => Some(project.clone()),
-        Checkout::Primary { .. } => project_override.clone(),
-    };
-
-    let cwd_project_name = find_project_name(cwd_ctx)?;
+    // The op's binding, learned once from the context dispatch resolved and
+    // carried by value from here on. Every other workspace this op touches is
+    // resolved under it.
+    let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
     let cwd_project_dir = project_dir(&cwd_workspace_dir, cwd_project_name.as_str());
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
@@ -3059,20 +3035,28 @@ fn guard_and_mark<'a>(
         source_project_name,
         source_is_workweave,
     ) = {
-        let override_arg = match verb {
-            MachineVerb::Sync => other_project_override.clone(),
-            // For sync-to, the target workspace must resolve to CWD's project.
-            MachineVerb::SyncTo => Some(cwd_project_name.clone()),
-        };
-        let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
-        let pname = find_project_name(&source_ctx)?;
+        let source_ctx =
+            WorkspaceContext::resolve_for_project(&source_workspace_dir, &cwd_project_name)
+                .with_context(|| {
+                    format!(
+                        "failed to resolve {} as a workspace of project `{}`",
+                        source_workspace_dir.display(),
+                        cwd_project_name.as_str(),
+                    )
+                })?;
         // The operator may name any path inside the source; a member checkout
         // is found by joining onto the workspace ROOT, never onto whatever was
         // typed.
         let root = source_ctx.active_path().to_path_buf();
-        let dir = project_dir(&root, pname.as_str());
+        let dir = project_dir(&root, cwd_project_name.as_str());
         let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
-        (dir, root, workspace_name(&source_ctx), pname, is_workweave)
+        (
+            dir,
+            root,
+            workspace_name(&source_ctx),
+            cwd_project_name.clone(),
+            is_workweave,
+        )
     };
 
     // dest_project_dir is where the terminal write lands.
@@ -3261,13 +3245,10 @@ fn guard_and_mark<'a>(
         // Load the target's project to enumerate its repos. Best-effort:
         // if we cannot load it (e.g. project not yet materialised) skip
         // — abort will just leave those repos unchanged.
-        let target_project_name = {
-            let override_arg = Some(cwd_project_name.clone());
-            let tc = WorkspaceContext::resolve(&dest_workspace_dir, override_arg);
-            tc.ok().and_then(|c| find_project_name(&c).ok())
-        };
-        if let Some(tpname) = target_project_name {
-            let target_project_dir = project_dir(&dest_workspace_dir, tpname.as_str());
+        let target_presents_the_project =
+            WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name).is_ok();
+        if target_presents_the_project {
+            let target_project_dir = project_dir(&dest_workspace_dir, cwd_project_name.as_str());
             let _ = create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(&target_project_dir) {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
@@ -3463,7 +3444,7 @@ fn load_continuing_context<'a>(
     let cwd_ctx = if owner_workspace_dir == invocation_workspace_dir {
         invocation_ctx.clone()
     } else {
-        WorkspaceContext::resolve(&owner_workspace_dir, Some(record.project.clone()))?
+        WorkspaceContext::resolve_for_project(&owner_workspace_dir, &record.project)?
     };
     let cwd_workspace_dir = owner_workspace_dir.clone();
 
@@ -3493,13 +3474,6 @@ fn load_continuing_context<'a>(
         ),
     };
 
-    let other_project_override = match (recorded_verb, &cwd_ctx.checkout) {
-        // sync-to: target must resolve to CWD's (== owner's) project.
-        (MachineVerb::SyncTo, _) => Some(cwd_project_name.clone()),
-        (_, Checkout::Workweave { project, .. }) => Some(project.clone()),
-        (_, Checkout::Primary { .. }) => project_override.clone(),
-    };
-
     let (
         source_project_dir,
         source_workspace_root,
@@ -3507,12 +3481,25 @@ fn load_continuing_context<'a>(
         source_project_name,
         source_is_workweave,
     ) = {
-        let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, other_project_override)?;
-        let pname = find_project_name(&source_ctx)?;
+        let source_ctx =
+            WorkspaceContext::resolve_for_project(&source_workspace_dir, &cwd_project_name)
+                .with_context(|| {
+                    format!(
+                        "failed to resolve {} as a workspace of project `{}`",
+                        source_workspace_dir.display(),
+                        cwd_project_name.as_str(),
+                    )
+                })?;
         let root = source_ctx.active_path().to_path_buf();
-        let dir = project_dir(&root, pname.as_str());
+        let dir = project_dir(&root, cwd_project_name.as_str());
         let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
-        (dir, root, workspace_name(&source_ctx), pname, is_workweave)
+        (
+            dir,
+            root,
+            workspace_name(&source_ctx),
+            cwd_project_name.clone(),
+            is_workweave,
+        )
     };
 
     let dest_project_dir = match recorded_verb {
@@ -3670,7 +3657,7 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
     } = &cwd_ctx.checkout
     {
         // Resolve the source workspace's location to compare. Best-effort.
-        let source_ctx = match WorkspaceContext::resolve(source_workspace_dir, None) {
+        let source_ctx = match WorkspaceContext::resolve_unbound(source_workspace_dir) {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -5568,12 +5555,12 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // project's repos while the real ones survive every successful sync-to.
     if matches!(ctx.verb, op_state::OpVerb::SyncTo) {
         let tsp_id = OpId::from_string(target_savepoint_id(&ctx.op_id));
-        let target_project_name =
-            WorkspaceContext::resolve(&ctx.dest_workspace_dir, Some(ctx.cwd_project_name.clone()))
-                .ok()
-                .and_then(|c| find_project_name(&c).ok());
-        if let Some(tpname) = target_project_name {
-            let target_project_dir = project_dir(&ctx.dest_workspace_dir, tpname.as_str());
+        let target_presents_the_project =
+            WorkspaceContext::resolve_for_project(&ctx.dest_workspace_dir, &ctx.cwd_project_name)
+                .is_ok();
+        if target_presents_the_project {
+            let target_project_dir =
+                project_dir(&ctx.dest_workspace_dir, ctx.cwd_project_name.as_str());
             delete_savepoint(ctx.project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) = Project::from_dir_skip_lock(&target_project_dir) {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
@@ -5944,7 +5931,7 @@ fn regenerate_lock_phase3(
 /// verbatim (`SyncSource::Path` does not canonicalize), so a recorded
 /// path may reach the same workspace through a symlink — e.g. macOS's
 /// `/var` → `/private/var` tempdirs, or a symlinked weaveroot — while
-/// `WorkspaceContext::resolve` always canonicalizes. Textual comparison
+/// every workspace resolution canonicalizes. Textual comparison
 /// would misclassify the workspace and pick the wrong savepoint namespace.
 fn same_workspace(a: &Path, b: &Path) -> bool {
     let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
@@ -6150,20 +6137,10 @@ pub fn run_abort(
         // Best-effort: an extra workspace that does not present the op's
         // project is skipped with a warning rather than restored from
         // whatever else lives there.
-        match WorkspaceContext::resolve(extra_dir, Some(op_project_name.clone())) {
+        match WorkspaceContext::resolve_for_project(extra_dir, &op_project_name) {
             Ok(extra_ctx) => {
-                let extra_project_name = match find_project_name(&extra_ctx) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        eprintln!(
-                            "  warning: could not determine project for {}: {e}; skipping",
-                            extra_dir.display()
-                        );
-                        continue;
-                    }
-                };
                 let extra_project_dir =
-                    project_dir(extra_ctx.active_path(), extra_project_name.as_str());
+                    project_dir(extra_ctx.active_path(), op_project_name.as_str());
                 let extra_project = match Project::from_dir_skip_lock(&extra_project_dir) {
                     Ok(p) => p,
                     Err(e) => {
@@ -7676,7 +7653,7 @@ mod tests {
         git(&store, &["config", "user.name", "T"]);
 
         let project = ProjectName::new("web-app").unwrap();
-        let ctx = WorkspaceContext::resolve(&primary, Some(project.clone()))
+        let ctx = WorkspaceContext::resolve_invocation(&primary, Some(project.clone()))
             .expect("the fixture is a workspace root");
         (ctx, store, project)
     }
@@ -7886,7 +7863,8 @@ mod tests {
         .write(&ww)
         .unwrap();
 
-        let ctx = WorkspaceContext::resolve(&ww, None).expect("the marker names the primary weave");
+        let ctx = WorkspaceContext::resolve_invocation(&ww, None)
+            .expect("the marker names the primary weave");
         assert!(
             matches!(ctx.checkout, Checkout::Workweave { .. }),
             "the fixture must resolve as a workweave, or the arm under test is not the one that runs"
@@ -8031,7 +8009,8 @@ mod tests {
         .write(&ww)
         .unwrap();
 
-        let ctx = WorkspaceContext::resolve(&ww, None).expect("the marker names the primary weave");
+        let ctx = WorkspaceContext::resolve_invocation(&ww, None)
+            .expect("the marker names the primary weave");
         assert!(
             matches!(ctx.checkout, Checkout::Workweave { .. }),
             "the fixture must resolve as a workweave, or materialize takes the clone arm instead"
@@ -8667,14 +8646,14 @@ mod tests {
     // active project must error rather than silently producing a garbage path.
     #[test]
     fn sync_source_workweave_resolve_errors_when_no_active_project() {
-        // Build a minimal workspace directory so WorkspaceContext::resolve
+        // Build a minimal workspace directory so resolution
         // succeeds and recognises it as a Weave (no .rwv-active).
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("ws");
         std::fs::create_dir_all(root.join("projects")).unwrap();
 
         // Resolve context from the weave root — no .rwv-active, no override.
-        let ctx = crate::workspace::WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = crate::workspace::WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert!(
             matches!(ctx.checkout, Checkout::Primary { project: None }),
             "expected Weave with no project, got something else"

@@ -283,7 +283,7 @@ fn fixture() -> Fixture {
 
     // Author the managed Cargo.toml with hooks suppressed: the source's lock
     // is this fixture's own, not whatever a resolver would produce here.
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "web-app",
         &ctx,

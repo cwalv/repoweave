@@ -153,12 +153,13 @@ fn resolve_workweave_flag(
 
     // Find the primary workspace root from the workspace_origin path (from -C
     // or process cwd). The registry lives on the primary; look up from there.
-    let primary_ctx = WorkspaceContext::resolve(workspace_origin, None).with_context(|| {
-        format!(
-            "'-w {raw}': could not locate a workspace from {}",
-            workspace_origin.display()
-        )
-    })?;
+    let primary_ctx =
+        WorkspaceContext::resolve_invocation(workspace_origin, None).with_context(|| {
+            format!(
+                "'-w {raw}': could not locate a workspace from {}",
+                workspace_origin.display()
+            )
+        })?;
     let primary_root = primary_ctx.primary_path().to_path_buf();
 
     // Registry lookup with marker round-trip validation.
@@ -239,7 +240,7 @@ fn resolve_project_scoped(
     use_workweave_flag: bool,
 ) -> anyhow::Result<WorkspaceContext> {
     Ok(with_target_surfaced(
-        WorkspaceContext::resolve(origin_dir, project_override)?,
+        WorkspaceContext::resolve_invocation(origin_dir, project_override)?,
         use_workweave_flag,
     ))
 }
@@ -256,7 +257,10 @@ fn resolve_project_scoped_tolerating_disputed_root(
     use_workweave_flag: bool,
 ) -> anyhow::Result<WorkspaceContext> {
     Ok(with_target_surfaced(
-        WorkspaceContext::resolve_tolerating_disputed_root(origin_dir, project_override)?,
+        WorkspaceContext::resolve_invocation_tolerating_disputed_root(
+            origin_dir,
+            project_override,
+        )?,
         use_workweave_flag,
     ))
 }
@@ -590,14 +594,14 @@ pub fn run() -> anyhow::Result<()> {
 
     match cli.command {
         None => {
-            let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             println!("{}", ctx.display());
         }
         Some(Commands::Activate {
             project,
             no_materialize,
         }) => {
-            let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             activate::activate_with_options(
                 &project,
                 &ctx,
@@ -608,7 +612,7 @@ pub fn run() -> anyhow::Result<()> {
             regenerate_drifted,
             adopt_drifted,
         }) => {
-            let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             // clap refuses the two together, so this reads as the exclusive
             // choice it is rather than a precedence.
             let consent = consent::RegenerateDriftedConsent::from_flag(regenerate_drifted)
@@ -623,11 +627,11 @@ pub fn run() -> anyhow::Result<()> {
             // `prime` tolerates the not-in-a-workspace case (silent unless
             // `--no-suppress`); resolve here and pass `Option<&ctx>` so
             // the handler stays free of resolution logic.
-            let ctx = WorkspaceContext::resolve(&origin_dir, None).ok();
+            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None).ok();
             prime::prime(ctx.as_ref(), no_suppress)?;
         }
         Some(Commands::Resolve) => {
-            let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             println!("{}", ctx.active_path().display());
         }
         Some(Commands::Add {
@@ -704,12 +708,13 @@ pub fn run() -> anyhow::Result<()> {
                              in place"
                         );
                     }
-                    let ctx = WorkspaceContext::resolve(&origin_dir, None).with_context(|| {
-                        format!(
-                            "rwv fetch: no SOURCE and no repoweave workspace found above {}",
-                            origin_dir.display(),
-                        )
-                    })?;
+                    let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)
+                        .with_context(|| {
+                            format!(
+                                "rwv fetch: no SOURCE and no repoweave workspace found above {}",
+                                origin_dir.display(),
+                            )
+                        })?;
                     // In-place fetch operates on the active project — surface
                     // the pointer-decided target before acting.
                     ctx.emit_target_line();
@@ -761,7 +766,7 @@ pub fn run() -> anyhow::Result<()> {
             } else {
                 let project = project.expect("project is required unless --claude-hook is set");
                 let project = crate::manifest::ProjectName::new(project)?;
-                let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+                let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
                 let primary_root = ctx.primary_path();
 
                 match action {
@@ -924,7 +929,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Abort {
             abandon_foreign_tip,
         }) => {
-            let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             sync::run_abort(
                 &ctx,
                 &crate::cli::consent::AbandonForeignTipConsent::from_flag(&abandon_foreign_tip),
@@ -1145,16 +1150,17 @@ pub fn run() -> anyhow::Result<()> {
             // on soft-fallthrough failure, only `RWV_VERSION` is set.
             let resolution = if cli.cwd_override.is_some() || workweave_flag_project.is_some() {
                 // Explicit address: failure is an rwv error before exec.
-                let ctx = WorkspaceContext::resolve(&origin_dir, None).with_context(|| {
-                    format!(
-                        "external verb `{verb}`: could not resolve workspace from {}",
-                        origin_dir.display()
-                    )
-                })?;
+                let ctx =
+                    WorkspaceContext::resolve_invocation(&origin_dir, None).with_context(|| {
+                        format!(
+                            "external verb `{verb}`: could not resolve workspace from {}",
+                            origin_dir.display()
+                        )
+                    })?;
                 ctx.resolution()
             } else {
                 // No flags: soft fallthrough — tolerate resolution failure.
-                WorkspaceContext::resolve(&origin_dir, None)
+                WorkspaceContext::resolve_invocation(&origin_dir, None)
                     .ok()
                     .and_then(|ctx| ctx.resolution())
             };

@@ -1337,7 +1337,7 @@ mod fo_cnpjy_3 {
         // Bare context-mode activate via the public API. This exercises the
         // same Mode::Context code path that `rwv activate` and
         // `rwv fetch` take.
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
         activate("p", &ctx).expect("context-mode activate should succeed");
 
         // The hand-edited file's bytes must be unchanged — context verbs
@@ -1375,7 +1375,7 @@ mod fo_cnpjy_3 {
         // Bootstrap: ensure .rwv-active is set so subsequent activate has
         // a coherent previously-active project's owned set to combine in
         // the removal candidate union.
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
         activate_intent_with_options(
             "p",
             &ctx,
@@ -1399,7 +1399,7 @@ mod fo_cnpjy_3 {
         // must NOT touch user-config.json — it is not in any active
         // integration's managed/generated set.
         // Rebuild the context after any workspace mutations above.
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
         activate("p", &ctx).expect("re-activate should succeed");
 
         assert!(

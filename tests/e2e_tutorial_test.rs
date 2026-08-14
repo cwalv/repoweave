@@ -155,7 +155,8 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         // skip install hooks (no `cargo generate-lockfile` etc.) because
         // staging is throwaway and the activate hook needs network/tooling
         // we're not assuming.
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(&staging, None).unwrap();
+        let ctx =
+            repoweave::workspace::WorkspaceContext::resolve_invocation(&staging, None).unwrap();
         repoweave::activate::activate_intent_with_options(
             name,
             &ctx,

@@ -144,7 +144,7 @@ role = "owned"
     // Step 1: activate("web-app") to generate root package.json with workspaces
     // -------------------------------------------------------------------------
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(ws, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 
@@ -311,7 +311,7 @@ role = "owned"
     // Step 1: activate("web-app") to generate root package.json with workspaces
     // -------------------------------------------------------------------------
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(ws, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 

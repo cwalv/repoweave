@@ -159,7 +159,7 @@ fn fixture() -> Fixture {
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
     // ---- author the managed Cargo.toml (no hooks: primary gets no lock) ----
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "web-app",
         &ctx,

@@ -334,7 +334,7 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
     // 2. Activate the primary — authors go.work at projects/web-app/go.work
     //    and surfaces the top-level symlink at ws/go.work.
     // ------------------------------------------------------------------
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent("web-app", &ctx)
         .expect("primary activate_intent should succeed");
     assert!(

@@ -297,7 +297,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // context-mode activate to surface. (Mirrors what `rwv add` does in
     // a real workflow.) Use the no-materialize variant to skip
     // `cargo generate-lockfile` (the CLI step is gated by --no-materialize).
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws_root, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "cargo-proj",
         &ctx,
@@ -583,7 +583,7 @@ fn activate_npm_no_materialize_run_during_activate() {
     // context-mode `rwv activate` below has content to surface. Use the
     // no-materialize variant so this test (which asserts node_modules is NOT
     // created) doesn't see the install hooks run during pre-authoring.
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws_root, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "npm-proj",
         &ctx,

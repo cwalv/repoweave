@@ -22,7 +22,7 @@
 //! The two steps — *acquire origin dir* and *resolve context from origin
 //! dir* — are kept separate so a future `-C <path>` or `-w <name>` flag
 //! can supply a different origin without restructuring: the CLI would
-//! feed a flag-derived path to [`WorkspaceContext::resolve`] instead of
+//! feed a flag-derived path to [`WorkspaceContext::resolve_invocation`] instead of
 //! [`acquire_origin_dir`], and everything downstream would still work.
 
 use crate::integration_runner::IntegrationContextBase;
@@ -39,7 +39,7 @@ use std::path::{Component, Path, PathBuf};
 ///
 /// **This is the single sanctioned `std::env::current_dir()` call site in
 /// the rwv CLI.** All resolution flows through here and then
-/// [`WorkspaceContext::resolve`]; handlers must receive an already-resolved
+/// [`WorkspaceContext::resolve_invocation`]; handlers must receive an already-resolved
 /// context and must not consult the process cwd on their own.
 ///
 /// The distinction between *acquire* and *resolve* is load-bearing: `-C
@@ -129,7 +129,7 @@ pub struct WorkspaceContext {
 ///
 /// The two files are **mutually exclusive**, so this is one tier rather than
 /// two ranked ones: no root can offer both answers, and there is no
-/// precedence between them to get wrong. [`WorkspaceContext::resolve`]
+/// precedence between them to get wrong. [`WorkspaceContext::resolve_invocation`]
 /// refuses a root that offers both; `rwv doctor` reports and repairs it
 /// ([`CheckViolation::WeaveRootIdentityConflict`]).
 ///
@@ -158,6 +158,11 @@ pub enum ProjectProvenance {
     /// Fall-through resolution; the "target:" line prints for this
     /// provenance only, before the verb acts.
     ActiveFile,
+    /// The project was supplied by a caller that already held the binding —
+    /// an operation resolving a workspace other than the one it was invoked
+    /// from. No chain step ran and no pointer was read, so this provenance is
+    /// unreachable from an invocation and never surfaces a "target:" line.
+    Bound,
 }
 
 /// Which kind of checkout the resolved origin dir sits inside.
@@ -599,8 +604,9 @@ impl WorkspaceSession {
 /// Check that `cwd` is safe to use as a workspace root for bootstrapping
 /// commands (`fetch`, `init`).
 ///
-/// - If [`WorkspaceContext::resolve`] succeeds, returns `Ok(())` — we are
-///   inside an existing workspace.
+/// - If [`WorkspaceContext::resolve_unbound`] succeeds, returns `Ok(())` — we
+///   are inside an existing workspace. The question is whether one is here at
+///   all, so no project is bound and none is needed.
 /// - If resolve fails and `cwd` is an empty directory, returns `Ok(())` —
 ///   bootstrapping into a fresh directory is fine.
 /// - If resolve fails and `cwd` is **non-empty**, returns an error advising
@@ -612,7 +618,7 @@ impl WorkspaceSession {
 /// such flag) should map the returned error to a command-specific
 /// message rather than surfacing the raw `--allow-non-empty-dir` hint.
 pub fn require_workspace_or_empty(cwd: &Path, allow_non_empty_dir: bool) -> anyhow::Result<()> {
-    match WorkspaceContext::resolve(cwd, None) {
+    match WorkspaceContext::resolve_unbound(cwd) {
         Ok(_) => return Ok(()), // existing workspace — proceed
         Err(_) if allow_non_empty_dir => return Ok(()),
         Err(_) => {}
@@ -714,17 +720,49 @@ fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)>
     anyhow::bail!("no repoweave workspace found above {}", cwd.display())
 }
 
+/// How one resolution learns which project it is for.
+///
+/// The distinction the resolve API is built on: an *ambient* resolution may
+/// fall through to the root's `.rwv-active`, a *bound* one may not. Both were
+/// once spelled `Option<ProjectName>`, where the ambient reading was `None` —
+/// correct at the dispatch boundary and a silent wrong binding everywhere
+/// else, byte-identical at both.
+enum ProjectBinding {
+    /// The operator's `--project`, step 1 of the resolution chain. Outranks a
+    /// workweave marker by that chain's design: it is the operator speaking
+    /// about this invocation, not a second record of the same fact.
+    Flag(ProjectName),
+    /// A binding the caller already holds — carried by value through an op, or
+    /// read back off its record. Cross-checked against a marker rather than
+    /// outranking it.
+    Bound(ProjectName),
+    /// Nothing supplied. The chain falls through to the root's own identity
+    /// file; this is the only binding under which the pointer decides.
+    Ambient,
+    /// No project, and no fall-through. A primary root resolves without one.
+    Unbound,
+}
+
+impl ProjectBinding {
+    fn for_invocation(project_flag: Option<ProjectName>) -> Self {
+        match project_flag {
+            Some(p) => Self::Flag(p),
+            None => Self::Ambient,
+        }
+    }
+}
+
 impl RootSite {
     fn by_identity(
         self,
         identity: WeaveRootIdentity,
-        project_override: Option<ProjectName>,
+        binding: ProjectBinding,
     ) -> anyhow::Result<WorkspaceContext> {
         match identity {
             WeaveRootIdentity::Workweave(identity) => {
-                self.by_marker(identity.into_marker(), project_override)
+                self.by_marker(identity.into_marker(), binding)
             }
-            WeaveRootIdentity::Primary(identity) => Ok(self.by_pointer(identity, project_override)),
+            WeaveRootIdentity::Primary(identity) => Ok(self.by_pointer(identity, binding)),
         }
     }
 
@@ -733,7 +771,7 @@ impl RootSite {
     fn by_marker(
         self,
         marker: WorkweaveMarker,
-        project_override: Option<ProjectName>,
+        binding: ProjectBinding,
     ) -> anyhow::Result<WorkspaceContext> {
         let dir_basename = self
             .dir
@@ -749,9 +787,27 @@ impl RootSite {
             Some((_, n)) => n,
             None => WorkweaveName::new(dir_basename)?,
         };
-        let (project, provenance) = match project_override {
-            Some(p) => (p, ProjectProvenance::Flag),
-            None => (marker.project, ProjectProvenance::Marker),
+        let (project, provenance) = match binding {
+            ProjectBinding::Flag(p) => (p, ProjectProvenance::Flag),
+            ProjectBinding::Bound(p) => {
+                if p != marker.project {
+                    anyhow::bail!(
+                        "workspace {} belongs to project `{}` per its `.rwv-workweave` \
+                         marker, but the operation asking for it is bound to `{}`. Two \
+                         structural records disagree; nothing here can pick between \
+                         them. Run the operation against a workspace of `{}`, or check \
+                         whether the marker is the file that is wrong.",
+                        self.dir.display(),
+                        marker.project.as_str(),
+                        p.as_str(),
+                        p.as_str(),
+                    );
+                }
+                (p, ProjectProvenance::Marker)
+            }
+            ProjectBinding::Ambient | ProjectBinding::Unbound => {
+                (marker.project, ProjectProvenance::Marker)
+            }
         };
         Ok(WorkspaceContext {
             cwd_project_hint: detect_project(&self.cwd, &marker.primary),
@@ -772,17 +828,15 @@ impl RootSite {
     /// else. Neither pointer nor override leaves both unset — the caller uses
     /// [`WorkspaceContext::require_active_project`] to surface the corrective
     /// error.
-    fn by_pointer(
-        self,
-        identity: PrimaryIdentity,
-        project_override: Option<ProjectName>,
-    ) -> WorkspaceContext {
-        let (project, provenance) = match project_override {
-            Some(p) => (Some(p), Some(ProjectProvenance::Flag)),
-            None => match identity.selection.clone() {
+    fn by_pointer(self, identity: PrimaryIdentity, binding: ProjectBinding) -> WorkspaceContext {
+        let (project, provenance) = match binding {
+            ProjectBinding::Flag(p) => (Some(p), Some(ProjectProvenance::Flag)),
+            ProjectBinding::Bound(p) => (Some(p), Some(ProjectProvenance::Bound)),
+            ProjectBinding::Ambient => match identity.selection.clone() {
                 Some(p) => (Some(p), Some(ProjectProvenance::ActiveFile)),
                 None => (None, None),
             },
+            ProjectBinding::Unbound => (None, None),
         };
         WorkspaceContext {
             cwd_project_hint: detect_project(&self.cwd, &self.dir),
@@ -831,13 +885,19 @@ impl WorkspaceContext {
     /// and recorded on the context as [`WorkspaceContext::cwd_project_hint`]
     /// so that diagnostics and `rwv` bare status can surface a divergence
     /// warning — it is no longer consulted for verb resolution.
-    pub fn resolve(cwd: &Path, project_override: Option<ProjectName>) -> anyhow::Result<Self> {
+    pub fn resolve_invocation(
+        cwd: &Path,
+        project_flag: Option<ProjectName>,
+    ) -> anyhow::Result<Self> {
         let (site, observation) = walk_to_weave_root(cwd)?;
-        site.by_identity(observation.require_exclusive()?, project_override)
+        site.by_identity(
+            observation.require_exclusive()?,
+            ProjectBinding::for_invocation(project_flag),
+        )
     }
 
-    /// Resolve for `doctor` and `status`, whose subject is the root's
-    /// identity rather than the work done through it.
+    /// [`Self::resolve_invocation`] for `doctor` and `status`, whose subject is
+    /// the root's identity rather than the work done through it.
     ///
     /// A root carrying both identity files stops every other verb. Refusing
     /// these two as well would withhold the inspection that names the state
@@ -847,15 +907,91 @@ impl WorkspaceContext {
     /// resolution reads at an undisputed workweave root anyway: the pointer
     /// decides nothing at either kind of root, so tolerating one guesses
     /// nothing. Every other unusable root is refused here exactly as in
-    /// [`Self::resolve`].
-    pub fn resolve_tolerating_disputed_root(
+    /// [`Self::resolve_invocation`].
+    pub fn resolve_invocation_tolerating_disputed_root(
         cwd: &Path,
-        project_override: Option<ProjectName>,
+        project_flag: Option<ProjectName>,
     ) -> anyhow::Result<Self> {
         let (site, observation) = walk_to_weave_root(cwd)?;
+        let binding = ProjectBinding::for_invocation(project_flag);
         match observation {
-            RootObservation::Disputed { marker, .. } => site.by_marker(marker, project_override),
-            settled => site.by_identity(settled.require_exclusive()?, project_override),
+            RootObservation::Disputed { marker, .. } => site.by_marker(marker, binding),
+            settled => site.by_identity(settled.require_exclusive()?, binding),
+        }
+    }
+
+    /// Resolve `dir` as the workspace an operation **already bound to
+    /// `project`** sees it.
+    ///
+    /// This is every workspace resolution that is not the invocation: the
+    /// source or target of a sync, the workspace an op record names, the one an
+    /// abort restores. The binding is a required argument because "resolve it
+    /// under whatever that workspace points at" is not a question any of them
+    /// is asking — a workspace's `.rwv-active` is ambient state its owner may
+    /// retarget at any moment, including while an op sits parked, and an op
+    /// that re-read it would operate on repos it never touched.
+    ///
+    /// Refuses when the workspace's own structural record contradicts the
+    /// binding: a workweave marker naming another project is not a preference
+    /// to resolve but two records disagreeing, and when `projects/<project>` is
+    /// absent the refusal names what it could not find.
+    pub fn resolve_for_project(dir: &Path, project: &ProjectName) -> anyhow::Result<Self> {
+        let (site, observation) = walk_to_weave_root(dir)?;
+        let ctx = site.by_identity(
+            observation.require_exclusive()?,
+            ProjectBinding::Bound(project.clone()),
+        )?;
+        ctx.require_bound_project_on_disk(project)?;
+        Ok(ctx)
+    }
+
+    /// Resolve `dir` as a location only — no project, and the pointer
+    /// unconsulted.
+    ///
+    /// For the callers whose subject is where a workspace sits rather than what
+    /// it holds. A primary root resolves with no active project at all; a
+    /// workweave still reports the project its marker names, because that is
+    /// the directory's own identity rather than anything ambient.
+    pub fn resolve_unbound(dir: &Path) -> anyhow::Result<Self> {
+        let (site, observation) = walk_to_weave_root(dir)?;
+        site.by_identity(observation.require_exclusive()?, ProjectBinding::Unbound)
+    }
+
+    /// The bound project's directory must exist under the primary this
+    /// workspace belongs to. Separate from
+    /// [`Self::require_active_project_on_disk`] because that one's message
+    /// sends the reader to `.rwv-active`, which is exactly what a bound
+    /// resolution did not read.
+    fn require_bound_project_on_disk(&self, project: &ProjectName) -> anyhow::Result<()> {
+        if project_dir(self.primary_path(), project.as_str()).is_dir() {
+            return Ok(());
+        }
+        let existing = discover_project_paths(self.primary_path());
+        let hint = if existing.is_empty() {
+            String::new()
+        } else {
+            format!(" Existing projects: {}.", existing.join(", "))
+        };
+        anyhow::bail!(
+            "workspace {} does not hold project `{}`: `projects/{}/` does not exist there.{}",
+            self.primary_path().display(),
+            project.as_str(),
+            project.as_str(),
+            hint,
+        )
+    }
+
+    /// The project this already-resolved context is bound to.
+    ///
+    /// The one place op code learns its binding: the chain ran at the dispatch
+    /// boundary and this reports what it chose, so nothing downstream resolves
+    /// a project for itself. A primary-rooted context also has its project
+    /// directory verified, so a stale pointer fails here rather than as a
+    /// confusing git error further down.
+    pub fn require_bound_project(&self) -> anyhow::Result<&ProjectName> {
+        match &self.checkout {
+            Checkout::Primary { .. } => self.require_active_project_on_disk(),
+            Checkout::Workweave { project, .. } => Ok(project),
         }
     }
 
@@ -1974,7 +2110,7 @@ mod tests {
         let deep = root.join("github").join("acme").join("server");
         std::fs::create_dir_all(&deep).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&deep, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.checkout {
             Checkout::Primary { project } => {
@@ -1999,7 +2135,7 @@ mod tests {
         let project_dir = root.join("projects").join("web-app");
         std::fs::create_dir_all(&project_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&project_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.checkout {
             Checkout::Primary { project } => {
@@ -2033,7 +2169,7 @@ mod tests {
 
         // Without a .rwv-workweave marker the directory is not recognized as a
         // workweave; resolution should fail.
-        let result = WorkspaceContext::resolve(&weave_dir, None);
+        let result = WorkspaceContext::resolve_invocation(&weave_dir, None);
         assert!(
             result.is_err(),
             "expected error for marker-less workweave dir, got Ok"
@@ -2061,7 +2197,7 @@ mod tests {
 
         // No marker in ws--feat-login. The walk-up finds `github/` inside
         // ws--feat-login and treats it as a workspace root.
-        let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap();
         match &ctx.checkout {
             Checkout::Primary { .. } => {
                 // Correct: treated as an anonymous workspace root, not a workweave.
@@ -2085,7 +2221,7 @@ mod tests {
     fn resolve_outside_workspace_errors() {
         let tmp = tempfile::tempdir().unwrap();
         // No workspace markers here
-        let result = WorkspaceContext::resolve(tmp.path(), None);
+        let result = WorkspaceContext::resolve_invocation(tmp.path(), None);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(
@@ -2103,9 +2239,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
-        let ctx =
-            WorkspaceContext::resolve(&root, Some(ProjectName::new("overridden-project").unwrap()))
-                .unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(
+            &root,
+            Some(ProjectName::new("overridden-project").unwrap()),
+        )
+        .unwrap();
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 let p = project.as_ref().expect("project should be set");
@@ -2131,9 +2269,11 @@ mod tests {
         };
         marker.write(&weave_dir).unwrap();
 
-        let ctx =
-            WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("custom-proj").unwrap()))
-                .unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(
+            &weave_dir,
+            Some(ProjectName::new("custom-proj").unwrap()),
+        )
+        .unwrap();
         match &ctx.checkout {
             Checkout::Workweave { project, .. } => {
                 assert_eq!(project.as_str(), "custom-proj");
@@ -2151,7 +2291,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.checkout {
             Checkout::Primary { project } => {
@@ -2284,7 +2424,7 @@ mod tests {
         // But .rwv-active is set.
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 let p = project
@@ -2308,7 +2448,7 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "from-file\n").unwrap();
 
         // CWD is inside projects/from-cwd, but `.rwv-active` should still win.
-        let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&project_dir, None).unwrap();
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 let p = project
@@ -2331,9 +2471,11 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "from-file\n").unwrap();
 
-        let ctx =
-            WorkspaceContext::resolve(&root, Some(ProjectName::new("explicit-override").unwrap()))
-                .unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(
+            &root,
+            Some(ProjectName::new("explicit-override").unwrap()),
+        )
+        .unwrap();
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 let p = project.as_ref().expect("project should be set");
@@ -2736,7 +2878,7 @@ mod tests {
         };
         marker.write(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), primary_canon);
         match &ctx.checkout {
             Checkout::Workweave {
@@ -2751,7 +2893,7 @@ mod tests {
     }
 
     /// A primary root and a workweave root beside it, both real enough for
-    /// `WorkspaceContext::resolve` to land on them.
+    /// workspace resolution to land on them.
     fn primary_and_workweave_roots(tmp: &Path) -> (PathBuf, PathBuf) {
         let root = make_workspace(tmp, "ws");
         let weave_dir = tmp.join(".workweaves").join("feat");
@@ -2788,14 +2930,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (root, weave_dir) = primary_and_workweave_roots(tmp.path());
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let session = WorkspaceSession::new(&root);
         let base = session.context_base(&project, &cache, None);
         let int_ctx: IntegrationContext = base.build_context(&config, &manifest);
         assert_eq!(ctx.checkout.kind(), ContainerKind::Primary);
         assert_eq!(int_ctx.container_kind, ctx.checkout.kind());
 
-        let ww_ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ww_ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         let ww_session = WorkspaceSession::new(&weave_dir);
         let ww_base = ww_session.context_base(&project, &cache, None);
         let ww_int_ctx: IntegrationContext = ww_base.build_context(&config, &manifest);
@@ -2817,8 +2959,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (root, weave_dir) = primary_and_workweave_roots(tmp.path());
 
-        let primary_ctx = WorkspaceContext::resolve(&root, None).unwrap();
-        let workweave_ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let primary_ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
+        let workweave_ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(primary_ctx.checkout.kind(), ContainerKind::Primary);
         assert_eq!(workweave_ctx.checkout.kind(), ContainerKind::Workweave);
 
@@ -2858,7 +3000,7 @@ mod tests {
         };
         marker.write(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.checkout {
             Checkout::Workweave {
@@ -2891,7 +3033,7 @@ mod tests {
         };
         marker.write(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         // Marker takes precedence for project (from marker, not from the
         // directory's left component). Workweave name comes from the
         // right-hand side of `<project>--<name>` so downstream lookups
@@ -2915,7 +3057,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
 
         // Should NOT resolve as a workweave — no workspace found
-        let result = WorkspaceContext::resolve(&weave_dir, None);
+        let result = WorkspaceContext::resolve_invocation(&weave_dir, None);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(
@@ -2960,7 +3102,7 @@ mod tests {
         let (dir, dangling) = make_copied_workweave(tmp.path());
         std::fs::write(dir.join(ACTIVE_PROJECT_FILE), "web-app\n").unwrap();
 
-        let err = WorkspaceContext::resolve(&dir, None).unwrap_err();
+        let err = WorkspaceContext::resolve_invocation(&dir, None).unwrap_err();
         let msg = format!("{err}");
         let canon = dir.canonicalize().unwrap();
         assert!(
@@ -2991,7 +3133,7 @@ mod tests {
         let repo_dir = dir.join("github").join("acme").join("server");
         std::fs::create_dir_all(&repo_dir).unwrap();
 
-        let err = WorkspaceContext::resolve(&repo_dir, None).unwrap_err();
+        let err = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap_err();
         assert!(
             format!("{err}").contains("not a repoweave workspace root"),
             "unexpected error: {err}"
@@ -3020,7 +3162,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (_, dir) = make_disputed_workweave(tmp.path());
 
-        let err = WorkspaceContext::resolve(&dir, None).unwrap_err();
+        let err = WorkspaceContext::resolve_invocation(&dir, None).unwrap_err();
         let msg = format!("{err}");
         let canon = dir.canonicalize().unwrap();
         assert!(
@@ -3045,7 +3187,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (root, dir) = make_disputed_workweave(tmp.path());
 
-        let ctx = WorkspaceContext::resolve_tolerating_disputed_root(&dir, None).unwrap();
+        let ctx =
+            WorkspaceContext::resolve_invocation_tolerating_disputed_root(&dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
         match &ctx.checkout {
@@ -3072,7 +3215,8 @@ mod tests {
         let (dir, dangling) = make_copied_workweave(tmp.path());
         assert!(!dir.join(ACTIVE_PROJECT_FILE).exists());
 
-        let err = WorkspaceContext::resolve_tolerating_disputed_root(&dir, None).unwrap_err();
+        let err =
+            WorkspaceContext::resolve_invocation_tolerating_disputed_root(&dir, None).unwrap_err();
         let msg = format!("{err}");
         let canon = dir.canonicalize().unwrap();
         assert!(
@@ -3112,7 +3256,7 @@ mod tests {
         .write(&dir)
         .unwrap();
 
-        let ctx = WorkspaceContext::resolve(&dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&dir, None).unwrap();
         match &ctx.checkout {
             Checkout::Workweave { parent, .. } => assert_eq!(*parent, primary_canon),
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -3150,7 +3294,7 @@ mod tests {
         .write(&lower)
         .unwrap();
 
-        let ctx = WorkspaceContext::resolve(&lower, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&lower, None).unwrap();
         assert_eq!(ctx.primary_path(), primary_canon);
         match &ctx.checkout {
             Checkout::Workweave { parent, .. } => {
@@ -3197,7 +3341,7 @@ mod tests {
         // (we're in /tmp, not inside $HOME).
         let deep = root.join("github").join("acme").join("deep");
         std::fs::create_dir_all(&deep).unwrap();
-        let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&deep, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
     }
 
@@ -3233,7 +3377,7 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
 
         // Should find the workspace even with the $HOME ceiling active.
-        let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&deep, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
     }
 
@@ -3378,7 +3522,7 @@ mod tests {
         let decoy = make_workspace(base, "decoy");
 
         // Resolve from the symlink-spelled cwd.
-        let ctx = WorkspaceContext::resolve(&cwd_via_link, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&cwd_via_link, None).unwrap();
 
         // Must find the workspace inside home, not the decoy above.
         let found = ctx.primary_path();
@@ -3426,6 +3570,108 @@ mod tests {
         marker.write(dir).unwrap();
     }
 
+    // ========================================================================
+    // resolve_for_project: the binding is the caller's, and the workspace's
+    // own records are cross-checked against it rather than consulted for it
+    // ========================================================================
+
+    #[test]
+    fn resolve_for_project_does_not_consult_the_pointer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["one", "two"]);
+        std::fs::write(root.join(".rwv-active"), "two\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve_for_project(&root, &ProjectName::new("one").unwrap())
+            .unwrap();
+        assert_eq!(
+            ctx.active_project().unwrap().as_str(),
+            "one",
+            "a bound resolution answers with the caller's project, not the pointer's"
+        );
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Bound));
+    }
+
+    #[test]
+    fn resolve_for_project_refuses_a_marker_naming_another_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "primary");
+        make_projects(&primary, &["web-app", "other-app"]);
+        let ww = make_workweave(tmp.path(), "other-app--feat", &primary, "other-app");
+
+        let err = WorkspaceContext::resolve_for_project(&ww, &ProjectName::new("web-app").unwrap())
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("other-app") && msg.contains("web-app"),
+            "the refusal must name both records — the marker's project and the \
+             op's binding — because nothing here can pick between them; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_for_project_proceeds_when_the_marker_corroborates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "primary");
+        make_projects(&primary, &["web-app"]);
+        let ww = make_workweave(tmp.path(), "web-app--feat", &primary, "web-app");
+
+        let ctx = WorkspaceContext::resolve_for_project(&ww, &ProjectName::new("web-app").unwrap())
+            .unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "web-app");
+    }
+
+    #[test]
+    fn resolve_for_project_refuses_when_the_project_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["one"]);
+
+        let err = WorkspaceContext::resolve_for_project(&root, &ProjectName::new("two").unwrap())
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("two"),
+            "the refusal must name the project it could not find; got: {msg}"
+        );
+        assert!(
+            !msg.contains(".rwv-active"),
+            "a bound resolution never read the pointer, so its refusal must not \
+             send the reader to it; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_unbound_leaves_a_primary_with_no_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["one"]);
+        std::fs::write(root.join(".rwv-active"), "one\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve_unbound(&root).unwrap();
+        assert!(
+            ctx.active_project().is_none(),
+            "an unbound resolution must not consult the pointer, and this root's \
+             names a project"
+        );
+        assert_eq!(ctx.project_provenance(), None);
+    }
+
+    /// A workweave's marker is the directory's own identity rather than
+    /// anything ambient, so an unbound resolution still reports it — that is
+    /// what makes `resolve_unbound` usable for the workweave-identity
+    /// comparisons that motivated it.
+    #[test]
+    fn resolve_unbound_still_reports_a_workweave_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "primary");
+        make_projects(&primary, &["web-app"]);
+        let ww = make_workweave(tmp.path(), "web-app--feat", &primary, "web-app");
+
+        let ctx = WorkspaceContext::resolve_unbound(&ww).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "web-app");
+    }
+
     /// Chain step 1: `--project` at a primary wins even when `.rwv-active`
     /// is set. Provenance = Flag.
     #[test]
@@ -3435,7 +3681,9 @@ mod tests {
         make_projects(&root, &["one", "two"]);
         std::fs::write(root.join(".rwv-active"), "one\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("two").unwrap())).unwrap();
+        let ctx =
+            WorkspaceContext::resolve_invocation(&root, Some(ProjectName::new("two").unwrap()))
+                .unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "two");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
     }
@@ -3451,8 +3699,11 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
 
-        let ctx =
-            WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("two").unwrap())).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(
+            &weave_dir,
+            Some(ProjectName::new("two").unwrap()),
+        )
+        .unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "two");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
     }
@@ -3472,7 +3723,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "one");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
     }
@@ -3486,7 +3737,7 @@ mod tests {
         make_projects(&root, &["only"]);
         std::fs::write(root.join(".rwv-active"), "only\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "only");
         assert_eq!(
             ctx.project_provenance(),
@@ -3505,7 +3756,7 @@ mod tests {
         make_projects(&root, &["a", "b", "c"]);
         std::fs::write(root.join(".rwv-active"), "b\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "b");
         assert_eq!(
             ctx.project_provenance(),
@@ -3523,7 +3774,7 @@ mod tests {
         make_projects(&root, &["only"]);
         // No .rwv-active written.
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert!(ctx.active_project().is_none());
         assert_eq!(ctx.project_provenance(), None);
     }
@@ -3540,8 +3791,11 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         write_marker(&weave_dir, &root.canonicalize().unwrap(), "marker-p");
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("flag-p").unwrap()))
-            .unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(
+            &weave_dir,
+            Some(ProjectName::new("flag-p").unwrap()),
+        )
+        .unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "flag-p");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
     }
@@ -3589,7 +3843,8 @@ mod tests {
         make_projects(&root, &["p"]);
 
         // Flag: silent.
-        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("p").unwrap())).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, Some(ProjectName::new("p").unwrap()))
+            .unwrap();
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
         ctx.emit_target_line(); // must not panic; policy says silent
 
@@ -3597,14 +3852,14 @@ mod tests {
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
         write_marker(&weave_dir, &root.canonicalize().unwrap(), "p");
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
         ctx.emit_target_line(); // must not panic; policy says silent
 
         // None: silent.
         let root2 = make_workspace(tmp.path(), "ws2");
         make_projects(&root2, &["p"]);
-        let ctx = WorkspaceContext::resolve(&root2, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root2, None).unwrap();
         assert_eq!(ctx.project_provenance(), None);
         ctx.emit_target_line(); // must not panic; policy says silent
     }
@@ -3621,7 +3876,7 @@ mod tests {
         make_projects(&root, &["a", "b"]);
         std::fs::write(root.join(".rwv-active"), "b\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert_eq!(
             ctx.project_provenance(),
             Some(ProjectProvenance::ActiveFile)
@@ -3647,7 +3902,7 @@ mod tests {
     fn require_active_project_no_projects_names_init() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let err = ctx.require_active_project().unwrap_err().to_string();
         assert!(err.contains("no active project"), "err: {err}");
         assert!(err.contains("rwv activate"), "err: {err}");
@@ -3665,7 +3920,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["alpha", "beta"]);
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let err = ctx.require_active_project().unwrap_err().to_string();
         assert!(err.contains("no active project"), "err: {err}");
         assert!(err.contains("rwv activate"), "err: {err}");
@@ -3683,7 +3938,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         // .rwv-active names a project whose directory does NOT exist.
         std::fs::write(root.join(".rwv-active"), "ghost\n").unwrap();
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let err = ctx
             .require_active_project_on_disk()
             .unwrap_err()
@@ -3706,7 +3961,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["real-one", "real-two"]);
         std::fs::write(root.join(".rwv-active"), "ghost\n").unwrap();
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let err = ctx
             .require_active_project_on_disk()
             .unwrap_err()
@@ -3736,7 +3991,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let res = ctx
             .resolution()
             .expect("resolution must be present with an active project");
@@ -3757,7 +4012,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         // No .rwv-active file — no project resolved.
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         assert!(
             ctx.resolution().is_none(),
             "resolution must be absent when no project is resolved"
@@ -3782,7 +4037,7 @@ mod tests {
         };
         marker.write(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         let res = ctx
             .resolution()
             .expect("resolution must be present in a workweave");
@@ -3820,7 +4075,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let res = ctx.resolution().unwrap();
         let json = serde_json::to_value(&res).expect("serializes");
         let obj = json.as_object().expect("is a JSON object");
@@ -3852,7 +4107,7 @@ mod tests {
         };
         marker.write(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         let res = ctx.resolution().unwrap();
         let json = serde_json::to_value(&res).expect("serializes");
         let obj = json.as_object().expect("is a JSON object");

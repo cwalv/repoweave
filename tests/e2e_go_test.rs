@@ -119,7 +119,7 @@ func Message() string {
     // 6. Call activate("web-app", root) via the repoweave library
     // ------------------------------------------------------------------
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 
@@ -219,7 +219,7 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
 
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 
@@ -352,7 +352,7 @@ func Message() string {
     // ------------------------------------------------------------------
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 

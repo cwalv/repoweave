@@ -795,7 +795,7 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
 
     // From the target, which holds the lease and not the op: this checkout is
     // the primary weave and owns nothing, and the request names no target.
-    let invocation = WorkspaceContext::resolve(&primary, None).unwrap();
+    let invocation = WorkspaceContext::resolve_invocation(&primary, None).unwrap();
     let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request()));
 
     assert_eq!(
@@ -833,7 +833,7 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
     // From the owner workweave, so a `retired` read off the request has
     // everything it wants: a workweave to name and a run that succeeds. The op
     // still records no retire, and no delete happened.
-    let invocation = WorkspaceContext::resolve(&ww, None).unwrap();
+    let invocation = WorkspaceContext::resolve_invocation(&ww, None).unwrap();
     let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request()));
 
     assert!(

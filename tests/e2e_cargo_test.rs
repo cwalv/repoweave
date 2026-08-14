@@ -132,7 +132,7 @@ fn e2e_cargo_workspace_wiring() {
 
     // ---- Step 1: activate("web-app", root) generates root Cargo.toml ----
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 
@@ -211,7 +211,7 @@ fn cargo_release_version_pin_workflow() {
 
     // Activate to generate the root Cargo.toml workspace symlink.
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 
@@ -338,7 +338,7 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
 
     // ---- Step 1: activation runs the hook: generate-lockfile + stamp ----
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 
@@ -429,7 +429,7 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
     // way is the adopt exit taken without anyone asking for it. The three the
     // finding names are the three there are.
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("re-activate should succeed");
     }
     let out_restamped = common::rwv()
@@ -556,7 +556,7 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
 
     // ---- Activate ----
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).unwrap_or_else(|e| {
             let cfg = std::fs::read_to_string(root.join(".cargo").join("config.toml"))
                 .unwrap_or_else(|read_err| format!("<unreadable: {read_err}>"));

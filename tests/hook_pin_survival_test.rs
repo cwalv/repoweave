@@ -594,7 +594,7 @@ fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent("app", &ctx).expect("activation should succeed");
 
     let lock_path = project_dir.join("Cargo.lock");
@@ -679,7 +679,7 @@ fn materialize_leaves_a_pin_byte_identical() {
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent("app", &ctx).expect("activation should succeed");
 
     let lock_path = project_dir.join("Cargo.lock");

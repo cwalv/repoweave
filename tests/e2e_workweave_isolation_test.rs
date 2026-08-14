@@ -135,7 +135,7 @@ func Message() string {
     // 4. Activate the primary weave — generates go.work, verify go build
     // ------------------------------------------------------------------
     {
-        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
     }
 

@@ -70,7 +70,7 @@ fn weave(root: &Path) -> PathBuf {
     git_init_with_commit(&ws.join("projects/app"));
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "app",
         &ctx,

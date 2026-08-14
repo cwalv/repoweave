@@ -36,8 +36,8 @@ use crate::vcs::{
     ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
-    parse_weave_dir_name, project_dir, project_rel_dir, project_rel_path, read_active_project,
-    weave_dir_name, CanonicalPath, WorkweaveMarker,
+    parse_weave_dir_name, project_dir, project_rel_dir, project_rel_path, weave_dir_name,
+    CanonicalPath, WorkweaveMarker,
 };
 use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
@@ -2718,7 +2718,7 @@ fn delete_workweave_inner(
 /// Delete a workweave whose on-disk path is already known.
 ///
 /// The path is validated by the caller (retire has already round-tripped
-/// the marker via `WorkspaceContext::resolve`). This bypasses the
+/// the marker via workspace resolution). This bypasses the
 /// registry lookup so an unrecorded workweave (crash-matrix scaffolding,
 /// bootstrap workspace) is still delete-able by callers that already hold
 /// the resolved path. Callers arriving through name-only entry points
@@ -3556,19 +3556,15 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 .cwd
                 .ok_or_else(|| anyhow!("missing cwd in hook input"))?;
 
-            let ws_ctx = crate::workspace::WorkspaceContext::resolve(Path::new(&cwd), None)?;
+            let ws_ctx =
+                crate::workspace::WorkspaceContext::resolve_invocation(Path::new(&cwd), None)?;
             let primary_root = ws_ctx.primary_path();
             let source_root = ws_ctx.active_path();
 
-            // Prefer the workweave's project (from .rwv-workweave marker) over
-            // the primary weave's .rwv-active. This matters when a sub-agent
-            // spawns from a workweave for a different project than the weave's
-            // active project.
-            let project = match &ws_ctx.checkout {
-                crate::workspace::Checkout::Workweave { project, .. } => project.clone(),
-                _ => read_active_project(primary_root)
-                    .ok_or_else(|| anyhow!("no .rwv-active found in {}", primary_root.display()))?,
-            };
+            let project = ws_ctx
+                .active_project()
+                .ok_or_else(|| anyhow!("no .rwv-active found in {}", primary_root.display()))?
+                .clone();
 
             let name =
                 derive_workweave_name(input.branch_name.as_deref(), input.session_id.as_deref());

@@ -250,7 +250,7 @@ fn fixture() -> Fixture {
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "app",
         &ctx,
