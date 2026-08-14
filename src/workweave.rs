@@ -2969,8 +2969,25 @@ fn delete_workweave_inner_at(
         discard_unmerged,
     );
 
-    // Remove the workweave directory itself.
+    // Remove the workweave directory itself. A process's working directory
+    // is an open handle on Windows, so a delete driven from inside the
+    // workweave — which is exactly where `sync-to --retire` stands — holds
+    // its own tree hostage; step out first. The op is terminal for this
+    // directory either way, and the parent is the container the workweave
+    // was placed in, which outlives it.
     if workweave_dir.exists() {
+        // A process's working directory is an open handle on Windows, and
+        // `sync-to --retire` drives this delete standing inside the
+        // workweave — the removal then fails with a sharing violation whose
+        // holder is the deleting process itself. Step to the parent
+        // unconditionally rather than probing the cwd: every handler runs
+        // on an already-resolved origin (origin_dir_single_read pins that
+        // nothing reads the process cwd after resolution), so the move is
+        // invisible to path handling and releases the one handle rwv can
+        // hold here.
+        if let Some(parent) = workweave_dir.parent() {
+            let _ = std::env::set_current_dir(parent);
+        }
         remove_tree_outlasting_child_handles(&workweave_dir)?;
     }
 
