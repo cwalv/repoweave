@@ -4233,7 +4233,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("scripts/ci-local.sh") && e.contains("consumer vocabulary `sling`")),
+                .any(|e| e.contains("scripts/ci-local.sh")
+                    && e.contains("consumer vocabulary `sling`")),
             "expected a `sling` hit under scripts/, got:\n{}",
             errors.join("\n")
         );
@@ -4257,7 +4258,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains(".githooks/pre-push") && e.contains("consumer vocabulary `sling`")),
+                .any(|e| e.contains(".githooks/pre-push")
+                    && e.contains("consumer vocabulary `sling`")),
             "expected a `sling` hit under .githooks/, got:\n{}",
             errors.join("\n")
         );
@@ -4279,9 +4281,8 @@ mod tests {
         .unwrap();
         let errors = check_no_consumer_vocabulary(tmp.path());
         assert!(
-            errors
-                .iter()
-                .any(|e| e.contains(".github/workflows/ci.yml") && e.contains("consumer vocabulary `bead`")),
+            errors.iter().any(|e| e.contains(".github/workflows/ci.yml")
+                && e.contains("consumer vocabulary `bead`")),
             "expected a `bead` hit under .github/workflows/, got:\n{}",
             errors.join("\n")
         );
