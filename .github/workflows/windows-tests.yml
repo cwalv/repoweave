@@ -76,6 +76,39 @@
 # SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE — so both sufficient conditions
 # hold. That is documentation-derived, not observed. This workflow is the thing
 # that would observe it.
+#
+# WHAT A RED RUN HERE COUNTS, AND WHAT IT DOES NOT
+#
+# A third category sits beside those two, and it is neither absent nor
+# vacuous: a test that EXISTS here, is not gated, compiles, and NEVER RUNS.
+# `cargo test` builds one binary per target and runs them in sequence, and
+# without --no-fail-fast it stops at the first binary that fails. The lib
+# target goes first. So one failing unit test ends the command before any of
+# the 182 files in tests/ has started, and what cargo prints as it gives up —
+# `error: test failed, to rerun pass --lib` — names the target it stopped at
+# without saying that it stopped.
+#
+# What separates a small suite from a truncated one is the number of
+# `test result:` lines, which is one per binary that actually ran plus one for
+# the doctests. A complete run prints one for the lib target, one for each
+# bin, and one for each file in tests/ — 186 at the time of writing. That
+# total does not move with the platform: a file gated `#![cfg(unix)]` still
+# builds here and still reports zero tests, so it costs a line either way.
+# Fewer lines than targets means the command stopped early. ONE line means it
+# never left the lib target.
+#
+# The first eight runs of this workflow each printed one. Every failure count
+# quoted from this job before --no-fail-fast was added therefore described the
+# lib target alone while reading as the suite's — the integration tests had
+# never executed on this platform at all, which makes their behaviour here
+# unknown rather than passing, and puts them in neither of the two categories
+# above.
+#
+# The flag does not change what the job concludes. cargo still exits non-zero
+# when any test failed, so a red suite is still a red run and every reason
+# above for keeping this workflow outside the release gates' reach is
+# untouched. What it buys is that the red belongs to the whole suite rather
+# than to whichever target happened to run first.
 name: Windows tests (advisory)
 
 on:
@@ -125,5 +158,10 @@ jobs:
         # gathered in debug is not authoritative for release: overflow checks
         # are on here and off there, and timing differs, so a test that fails
         # one way may not fail the other.
+        #
+        # --no-fail-fast is what makes the red list a list. Without it cargo
+        # stops at the first target that fails, and since the lib target runs
+        # first and has failed every time, no integration binary had ever
+        # started here. The header above says how to read a log for that.
         shell: bash
-        run: cargo test --locked
+        run: cargo test --locked --no-fail-fast
