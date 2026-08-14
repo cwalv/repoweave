@@ -8508,16 +8508,12 @@ impl KindFilter {
                         let schemars::schema::Schema::Object(obj) = v else {
                             return None;
                         };
-                        obj.object
-                            .as_ref()?
-                            .properties
-                            .get("kind")
-                            .and_then(|k| {
-                                let schemars::schema::Schema::Object(k) = k else {
-                                    return None;
-                                };
-                                k.enum_values.as_ref()?.first()?.as_str().map(String::from)
-                            })
+                        obj.object.as_ref()?.properties.get("kind").and_then(|k| {
+                            let schemars::schema::Schema::Object(k) = k else {
+                                return None;
+                            };
+                            k.enum_values.as_ref()?.first()?.as_str().map(String::from)
+                        })
                     })
                     .collect()
             })
@@ -9284,7 +9280,10 @@ pub fn run_check_json(
     // same shapes whether or not a filter is active. Integration issues
     // are not violations of any kind and are absent from a filtered view.
     let violations: Vec<CheckViolation> = match kind_filter {
-        Some(filter) => violations.into_iter().filter(|v| filter.admits(v)).collect(),
+        Some(filter) => violations
+            .into_iter()
+            .filter(|v| filter.admits(v))
+            .collect(),
         None => violations,
     };
     let issues = if kind_filter.is_none() {
