@@ -624,6 +624,14 @@ worktree on its own ephemeral branch and is checked normally.
 between `git switch <name>` and `git switch -c <name>` based on whether the
 ref already exists.
 
+Report-only is deliberate, not a missing arm. The state is operator-made — a
+`git switch` run by hand — unlike the fetch-written detachments whose repairs
+are native consented arms, and the printed command is exact and
+registry-aware (it names an existing recorded branch whenever a receipt
+exists), which is what keeps hand-running it safe. If measured recurrence in
+owned weaves reopens the question, the native form is a targeted sub-verb,
+not a bulk consent flag.
+
 #### `foreign-ephemeral`
 
 **Warning. Report-only.** The checkout is on an ephemeral ref rwv recorded for
@@ -631,7 +639,9 @@ a *different* workweave. Keyed on the receipt, not on the name: a hand-made
 look-alike lands in `shared-branch` instead. Both are report-only, so the
 distinction costs nothing but accuracy.
 
-**What to do:** switch to this workweave's own ref.
+**What to do:** switch to this workweave's own ref. Report-only is deliberate
+for the same reason as `shared-branch`'s: the state is operator-made and the
+printed switch is exact.
 
 #### `detached`
 

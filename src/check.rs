@@ -1150,7 +1150,16 @@ pub enum BranchDisciplineKind {
     /// that was never moved to an ephemeral branch. The fixture for this
     /// sub-kind exercises the bare-main-in-workweave case from the spec's
     /// acceptance criteria: the violation must flag from creation, before
-    /// any commit lands. Report-only.
+    /// any commit lands.
+    ///
+    /// Report-only, deliberately — not a missing arm. The state is
+    /// operator-made (a `git switch` run by hand), unlike the fetch-written
+    /// detachments whose repairs are native consented arms, and the
+    /// remediation prints the exact registry-aware `git switch` (it names
+    /// an existing recorded branch whenever a receipt exists), which is
+    /// what keeps hand-running it safe. If measured recurrence reopens the
+    /// question, the native form is a targeted repair naming one checkout,
+    /// not a bulk consent flag.
     ///
     /// Reference-alias carve-out: a symlinked `reference` checkout (a
     /// `CheckoutKind::ReferenceAlias`) legitimately shares the canonical
@@ -1180,7 +1189,10 @@ pub enum BranchDisciplineKind {
     /// because of how it was spelled; now it fires only when some project's
     /// registry says the ref really is one rwv minted for another workweave.
     /// A look-alike lands in [`SharedBranch`](Self::SharedBranch) instead —
-    /// both are report-only, so the distinction costs nothing but accuracy.
+    /// both are report-only, so the distinction costs nothing but accuracy,
+    /// and report-only is deliberate for the same reason as
+    /// [`SharedBranch`](Self::SharedBranch)'s: the state is operator-made
+    /// and the printed switch is exact.
     ForeignEphemeral {
         /// The branch currently checked out.
         actual_branch: String,
