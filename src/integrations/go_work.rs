@@ -435,7 +435,7 @@ fn activate_via_go_tool(
     if !work_tmp.exists() {
         let status = Command::new("go")
             .args(["work", "init"])
-            .current_dir(workspace_root)
+            .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
         if !status.success() {
             anyhow::bail!("go work init failed");
@@ -445,7 +445,7 @@ fn activate_via_go_tool(
     if let (Some(ver), true) = (go_version, go_line_absent) {
         let status = Command::new("go")
             .args(["work", "edit", &format!("-go={ver}")])
-            .current_dir(workspace_root)
+            .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
         if !status.success() {
             anyhow::bail!("go work edit -go={ver} failed");
@@ -477,7 +477,7 @@ fn activate_via_go_tool(
         let use_path = format!("./{}", p.as_ref());
         let status = Command::new("go")
             .args(["work", "use", &use_path])
-            .current_dir(workspace_root)
+            .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
         if !status.success() {
             // Clean up on failure.
@@ -495,7 +495,7 @@ fn activate_via_go_tool(
         if !new_set.contains(&old) {
             let status = Command::new("go")
                 .args(["work", "edit", &format!("-dropuse={old}")])
-                .current_dir(workspace_root)
+                .current_dir(super::subprocess_cwd(workspace_root))
                 .status()?;
             if !status.success() {
                 // Non-fatal: entry may already be gone.

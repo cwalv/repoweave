@@ -568,7 +568,7 @@ impl Integration for UvWorkspace {
         // workspace the user sees).
         let status = std::process::Command::new("uv")
             .arg("sync")
-            .current_dir(ctx.workspace_root)
+            .current_dir(super::subprocess_cwd(ctx.workspace_root))
             .status()
             .context("failed to run uv")?;
 

@@ -43,3 +43,15 @@ pub(crate) fn node_tool(name: &str) -> String {
         name.to_string()
     }
 }
+
+/// The working directory an ecosystem tool can stand in: the Windows
+/// verbatim (`\\?\`) spelling a canonicalized workspace root carries is a
+/// spelling many tools' own relative joins cannot survive — a `/`-separated
+/// component under a verbatim prefix is an invalid path, so a tool spawned
+/// there fails to find its own config (cargo's `.cargo/config.toml`
+/// discovery is the measured case). `dunce::simplified` drops the prefix
+/// only where Windows itself accepts the short form and is the identity
+/// everywhere else — the same strip the git-argv seam applies.
+pub(crate) fn subprocess_cwd(root: &std::path::Path) -> &std::path::Path {
+    dunce::simplified(root)
+}

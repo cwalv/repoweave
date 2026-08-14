@@ -278,7 +278,7 @@ impl Integration for NpmWorkspaces {
         // paths are resolved relative to the symlink location.
         let status = std::process::Command::new(super::node_tool("npm"))
             .args(["install"])
-            .current_dir(ctx.workspace_root)
+            .current_dir(super::subprocess_cwd(ctx.workspace_root))
             .status()
             .context("failed to run npm")?;
 

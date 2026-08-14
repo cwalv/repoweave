@@ -558,7 +558,7 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
         repoweave::activate::activate_intent("web-app", &ctx).unwrap_or_else(|e| {
-            let cfg = std::fs::read_to_string(root.join(".cargo/config.toml"))
+            let cfg = std::fs::read_to_string(root.join(".cargo").join("config.toml"))
                 .unwrap_or_else(|read_err| format!("<unreadable: {read_err}>"));
             panic!(
                 "activate should succeed: {e}\n\

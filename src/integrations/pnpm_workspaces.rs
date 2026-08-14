@@ -204,7 +204,7 @@ impl Integration for PnpmWorkspaces {
         // that's where the symlinks make member paths resolve correctly.
         let status = std::process::Command::new(super::node_tool("pnpm"))
             .args(["install"])
-            .current_dir(ctx.workspace_root)
+            .current_dir(super::subprocess_cwd(ctx.workspace_root))
             .status()
             .context("failed to run pnpm")?;
 

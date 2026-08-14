@@ -2363,12 +2363,14 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
 
     // The only worktree entry remaining should be the newly-created one inside
     // the fresh workweave — not a duplicate stale entry.
+    let fresh_worktree =
+        common::flatten_path_spelling(&ww_dir.join("github/org/repo").to_string_lossy());
     let stale_count = after_listing
         .lines()
         .filter(|l| {
             l.starts_with("worktree ")
                 && l.contains("stale-ww")
-                && !l.contains(ww_dir.join("github/org/repo").to_string_lossy().as_ref())
+                && !common::flatten_path_spelling(l).contains(&fresh_worktree)
         })
         .count();
     assert_eq!(
