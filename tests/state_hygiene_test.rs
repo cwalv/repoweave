@@ -473,8 +473,9 @@ fn orphaned_savepoint_live_is_kept_under_fix() {
         "live orphaned-savepoint should still be reported; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("keep") || stdout.contains("last pointer"),
-        "live finding should warn the operator that the ref is load-bearing; got:\n{stdout}"
+        stdout.contains("no live ref anchors") && stdout.contains("report-only"),
+        "live finding should warn the operator that the ref is load-bearing \
+         and that `--fix` will not touch it; got:\n{stdout}"
     );
 
     // With --fix: the savepoint MUST NOT be dropped (it's the last pointer
@@ -699,5 +700,138 @@ fn json_output_includes_state_hygiene_kinds() {
     assert!(
         kinds.contains(&"orphaned-savepoint"),
         "JSON output must include orphaned-savepoint; kinds: {kinds:?}"
+    );
+}
+
+// ===========================================================================
+// 6. The per-class count collapse: reclamation/frozen classes render as one
+//    text line each; `--json` keeps the full records; everything else stays
+//    itemized.
+// ===========================================================================
+
+/// A weave with N reclaimable savepoints renders ONE text line carrying the
+/// count, while `--json` carries all N records — the wire shape the
+/// per-class baseline capture reads (`violations[]` with per-item records)
+/// must stay intact.
+///
+/// **Mutation evidence**: remove `OrphanedSavepointKind::Redundant` from the
+/// collapse set (`CollapsedClass::of` in check.rs) and both halves of the
+/// first assertion redden — the count line disappears and three itemized
+/// savepoint lines reappear.
+#[test]
+fn reclaimable_savepoints_render_as_one_count_line_with_full_json_records() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+
+    // Three savepoints at HEAD → all redundant (trivially reachable).
+    for op_id in ["311111111111111111", "322222222222222222", "333333333333333333"] {
+        add_savepoint(&repo_abs, op_id, &head_sha);
+    }
+
+    let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("3 redundant orphaned-savepoint findings"),
+        "three reclaimable savepoints must render as one count line; got:\n{stdout}"
+    );
+    let savepoint_lines = stdout
+        .lines()
+        .filter(|l| l.contains("orphaned-savepoint"))
+        .count();
+    assert_eq!(
+        savepoint_lines, 1,
+        "the class renders as exactly one text line, not per-item; got:\n{stdout}"
+    );
+
+    // `--json` still carries every record, with per-item identity.
+    let json_out = rwv_cmd()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&json_out.stdout))
+            .expect("doctor --json parses");
+    let savepoints: Vec<&serde_json::Value> = json["violations"]
+        .as_array()
+        .expect("violations is an array")
+        .iter()
+        .filter(|v| v["kind"] == "orphaned-savepoint")
+        .collect();
+    assert_eq!(
+        savepoints.len(),
+        3,
+        "--json must carry all three records; got: {json}"
+    );
+    for record in &savepoints {
+        assert!(
+            record["op_id"].is_string(),
+            "each record keeps its per-item identity; got: {record}"
+        );
+    }
+}
+
+/// A genuinely new finding outside the reclamation/frozen classes stays
+/// itemized in the text report, beside the collapsed count lines, with no
+/// filter needed — collapsing is for backlog the operator has already
+/// judged, never for a fact they have not seen.
+#[test]
+fn a_new_non_reclamation_finding_stays_itemized_beside_the_count_lines() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+
+    // A reclaimable backlog that collapses…
+    add_savepoint(&repo_abs, "411111111111111111", &head_sha);
+
+    // …and a misnamed workweave directory — a finding class outside the
+    // collapse set. The marker is valid and names this primary; the
+    // basename's project half disagrees with it.
+    let ww_dir = root
+        .parent()
+        .expect("workspace root has a parent")
+        .join(".workweaves")
+        .join("other--feat-x");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+    let primary = root.canonicalize().unwrap();
+    std::fs::write(
+        ww_dir.join(".rwv-workweave"),
+        format!(
+            "{{\"primary\":\"{}\",\"project\":\"my-app\",\"parent\":\"{}\"}}",
+            primary.display(),
+            primary.display()
+        ),
+    )
+    .unwrap();
+
+    let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("orphaned-savepoint finding"),
+        "the reclaimable class collapses to its count line; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("disagrees with its records"),
+        "the misnamed-dir finding must stay itemized — full message, no \
+         filter; got:\n{stdout}"
     );
 }

@@ -436,9 +436,16 @@ fn doctor_reports_dead_op_lease_with_missing_owner_record() {
         "doctor must report the dead-op-lease finding; got stdout:\n{stdout}\n\
          stderr:\n{stderr}"
     );
+    // Per-item detail (the op id) lives in `--json` — the text report
+    // collapses reclamation classes to a per-class count line.
+    let json_assert = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ww.root)
+        .assert();
+    let json_stdout = String::from_utf8_lossy(&json_assert.get_output().stdout).to_string();
     assert!(
-        combined.contains("dead-op-9999"),
-        "doctor must include the op id; got:\n{combined}"
+        json_stdout.contains("dead-op-9999"),
+        "doctor --json must carry the op id; got:\n{json_stdout}"
     );
 }
 
@@ -560,7 +567,18 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     let combined = format!("{stdout}\n{stderr}");
 
     assert!(
-        combined.contains("dead-op-lease") && combined.contains("old-op-stranded"),
+        combined.contains("dead-op-lease"),
         "doctor must report the id-mismatch dead-op-lease shape; got:\n{combined}"
+    );
+    // The mismatched op id is per-item detail, carried by `--json` — the
+    // text report collapses reclamation classes to a per-class count line.
+    let json_assert = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ww.root)
+        .assert();
+    let json_stdout = String::from_utf8_lossy(&json_assert.get_output().stdout).to_string();
+    assert!(
+        json_stdout.contains("old-op-stranded"),
+        "doctor --json must carry the mismatched op id; got:\n{json_stdout}"
     );
 }

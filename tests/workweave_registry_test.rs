@@ -284,12 +284,13 @@ fn doctor_fix_prunes_stale_registry_entry() {
     let ww_dir = weaveroot.join("web-app--feat");
     std::fs::remove_dir_all(&ww_dir).unwrap();
 
-    // Doctor without --fix must surface the stale entry.
+    // Doctor without --fix must surface the stale entry (as the per-class
+    // count line; the recorded path is per-item detail in `--json`).
     rwv()
         .args(["doctor"])
         .current_dir(&ws)
         .assert()
-        .stdout(predicate::str::contains("stale entry"));
+        .stdout(predicate::str::contains("stale-registry-entry"));
 
     // Doctor with --fix must prune it.
     rwv()

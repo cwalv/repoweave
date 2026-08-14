@@ -2167,10 +2167,13 @@ same order `[V]`:
 - `Attached(a)` where `a` is a ref recorded as belonging to a **deleted**
   workweave — a leak. Report; `--fix` deletes it with a `Merged` warrant if
   one can be established, and refuses otherwise. Sub-kind
-  `CanonicalHoldsLeakedRef` (`check.rs:981`) `[V]`. (Reclamation of this class
-  belongs to the `rwv gc` family when it lands; its triggers must stay
-  **structural** — ancestry, named-ref reachability, counts — and never
-  wall-clock.)
+  `CanonicalHoldsLeakedRef` (`check.rs:981`) `[V]`. (No dedicated
+  reclamation verb exists or is planned while inflow stays at its recorded
+  floor: doctor's per-class count lines are the instrument, and a class's
+  count regrowing past its recorded post-sweep baseline is the structural
+  trigger that reopens the verb question — a count against a recorded
+  floor, never wall-clock. The shelved verb design is
+  `docs/sync-state-space/rwv-gc-verb.md` in the project docs.)
 - `Detached(_)` — a finding, which is new. **Shipped**: the arm at
   `check.rs:3908-3933` always emits `CanonicalDetached { at_sha, counterpart,
   reattachable }` `[V]`, pinned by `tests/branch_discipline_test.rs:592
@@ -2514,9 +2517,14 @@ while any receipt stands rather than retracting them (`add_remove.rs:548`)
 pointing into a store that no longer exists means for doctor — partially
 answered by `scan_dangling_receipts` (`check.rs:4096-4230`), which reports and
 `--fix`-retracts a receipt whose *ref* never appeared, but not one whose
-*store* is gone; and whether receipts are ever reclaimed (§7.2 gestures at the
-`rwv gc` family — whose triggers must stay structural: ancestry, named-ref
-reachability, counts, never wall-clock).
+*store* is gone; and whether receipts are ever reclaimed. On that last
+question: no dedicated verb exists or is planned while inflow stays at its
+recorded floor — doctor's per-class count lines are the instrument, and a
+class's count regrowing past its recorded post-sweep baseline is the
+structural trigger that reopens the verb question (a count against a
+recorded floor; triggers stay structural — ancestry, named-ref
+reachability, counts — never wall-clock). The shelved verb design is
+`docs/sync-state-space/rwv-gc-verb.md` in the project docs.
 
 **Q15 — What is the validity window of a witness? — STILL OPEN.**
 §4.2 binds `AttachedRef` to its repo, which closes the cross-repo pass, and

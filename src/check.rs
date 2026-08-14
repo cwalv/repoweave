@@ -6077,9 +6077,196 @@ fn reattach_advice(recorded_ref: Option<&str>, expected_prefix: &str) -> String 
     }
 }
 
+/// A finding class the text report collapses to one per-class count line.
+///
+/// The classes classified RECLAMATION (reclaims dead state; auto under
+/// `--fix`) and the frozen-legacy classes (a backlog with no current
+/// generator) render as ONE text line each — count, class, remedy — with
+/// per-item detail in `--json` only. Doctor's gate function is the point:
+/// the text report must read as distinct facts, and a hundred lines of the
+/// same frozen backlog is one fact. The `--json` surface is untouched — the
+/// per-class count baselines are captured from `violations[]` with jq, and
+/// that instrument depends on the full records.
+///
+/// **The counts are the re-trigger.** A class's count regrowing past its
+/// recorded post-sweep baseline is the structural signal that reopens the
+/// question of a dedicated reclamation verb — a count against a recorded
+/// floor, no wall-clock.
+///
+/// Membership is deliberate and closed:
+///
+/// * RECLAMATION — `stale-registry-entry`, `stale-worktree-registration`,
+///   `stale-ephemeral-branch-safe`, `dead-op-lease`, `dangling-ref-receipt`,
+///   redundant orphaned savepoints.
+/// * Frozen legacy — live orphaned savepoints (teardown-leak backlog; the
+///   leak is fixed and the newest orphan predates the fix),
+///   `stale-ephemeral-branch-live` / `-unowned` (only legacy/refused ones
+///   linger — deletion reaps the branch on the current path), and
+///   `shared-branch` (the pre-scheme workweave backlog; the count line
+///   keeps a fresh instance visible as regrowth).
+///
+/// Everything else stays itemized: a finding outside these classes is a
+/// distinct fact the operator has not seen before, and collapsing it would
+/// bury it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CollapsedClass {
+    StaleRegistryEntry,
+    StaleWorktreeRegistration,
+    StaleEphemeralBranchSafe,
+    StaleEphemeralBranchLive,
+    StaleEphemeralBranchUnowned,
+    DeadOpLease,
+    DanglingRefReceipt,
+    RedundantSavepoint,
+    LiveSavepoint,
+    SharedBranch,
+}
+
+impl CollapsedClass {
+    /// The class `v` collapses into, or `None` for a finding that stays
+    /// itemized.
+    fn of(v: &CheckViolation) -> Option<Self> {
+        match v {
+            CheckViolation::WorkweaveTreeIntegrity {
+                sub_kind: WorkweaveTreeIntegrityKind::StaleRegistryEntry { .. },
+                ..
+            } => Some(Self::StaleRegistryEntry),
+            CheckViolation::StaleWorktreeRegistration { .. } => {
+                Some(Self::StaleWorktreeRegistration)
+            }
+            CheckViolation::BranchDiscipline { sub_kind, .. } => match sub_kind {
+                BranchDisciplineKind::StaleEphemeralBranchSafe { .. } => {
+                    Some(Self::StaleEphemeralBranchSafe)
+                }
+                BranchDisciplineKind::StaleEphemeralBranchLive { .. } => {
+                    Some(Self::StaleEphemeralBranchLive)
+                }
+                BranchDisciplineKind::StaleEphemeralBranchUnowned { .. } => {
+                    Some(Self::StaleEphemeralBranchUnowned)
+                }
+                BranchDisciplineKind::SharedBranch { .. } => Some(Self::SharedBranch),
+                _ => None,
+            },
+            CheckViolation::DeadOpLease { .. } => Some(Self::DeadOpLease),
+            CheckViolation::DanglingRefReceipt { .. } => Some(Self::DanglingRefReceipt),
+            CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
+                OrphanedSavepointKind::Redundant => Some(Self::RedundantSavepoint),
+                OrphanedSavepointKind::Live => Some(Self::LiveSavepoint),
+            },
+            _ => None,
+        }
+    }
+
+    /// Whether `rwv doctor --fix` repairs every member of the class.
+    fn auto_fixed(self) -> bool {
+        match self {
+            Self::StaleRegistryEntry
+            | Self::StaleWorktreeRegistration
+            | Self::StaleEphemeralBranchSafe
+            | Self::DeadOpLease
+            | Self::DanglingRefReceipt
+            | Self::RedundantSavepoint => true,
+            Self::StaleEphemeralBranchLive
+            | Self::StaleEphemeralBranchUnowned
+            | Self::LiveSavepoint
+            | Self::SharedBranch => false,
+        }
+    }
+
+    /// The one text line the class renders: count, class, remedy, and where
+    /// the per-item records are.
+    fn issue(self, n: usize) -> Issue {
+        let s = if n == 1 { "" } else { "s" };
+        let body = match self {
+            Self::StaleRegistryEntry => format!(
+                "{n} stale-registry-entry finding{s} — registered workweave \
+                 path{s} that no longer round-trip{verb}; `rwv doctor --fix` \
+                 prunes them",
+                verb = if n == 1 { "s" } else { "" },
+            ),
+            Self::StaleWorktreeRegistration => format!(
+                "{n} stale-worktree-registration finding{s} — worktree \
+                 registration{s} pointing at missing directories; \
+                 `rwv doctor --fix` prunes them"
+            ),
+            Self::StaleEphemeralBranchSafe => format!(
+                "{n} stale-ephemeral-branch-safe finding{s} — receipted \
+                 branch{es} of deleted workweaves carrying no unique commits; \
+                 `rwv doctor --fix` deletes them under warrant",
+                es = if n == 1 { "" } else { "es" },
+            ),
+            Self::StaleEphemeralBranchLive => format!(
+                "{n} stale-ephemeral-branch-live finding{s} — receipted \
+                 branch{es} of deleted workweaves carrying unique commits; \
+                 never auto-deleted, review and reclaim by hand",
+                es = if n == 1 { "" } else { "es" },
+            ),
+            Self::StaleEphemeralBranchUnowned => format!(
+                "{n} stale-ephemeral-branch-unowned finding{s} — branch{es} \
+                 with no ownership receipt; not rwv's to delete",
+                es = if n == 1 { "" } else { "es" },
+            ),
+            Self::DeadOpLease => format!(
+                "{n} dead-op-lease finding{s} — lease file{s} whose recorded \
+                 owner holds no matching op; `rwv doctor --fix` clears them"
+            ),
+            Self::DanglingRefReceipt => format!(
+                "{n} dangling-ref-receipt finding{s} — receipt{s} naming refs \
+                 that are not there (benign crash residue); `rwv doctor --fix` \
+                 retracts them"
+            ),
+            Self::RedundantSavepoint => format!(
+                "{n} redundant orphaned-savepoint finding{s} — savepoint tip{s} \
+                 already anchored by a live branch; `rwv doctor --fix` drops them"
+            ),
+            Self::LiveSavepoint => format!(
+                "{n} live orphaned-savepoint finding{s} — savepoint{s} holding \
+                 commits no live ref anchors; report-only, reclaimed by the \
+                 reviewed operator sweep (report-before-drop)"
+            ),
+            Self::SharedBranch => format!(
+                "{n} shared-branch finding{s} — checkout{s} standing on a \
+                 shared (non-ephemeral) branch; the switch target for each is \
+                 in its record"
+            ),
+        };
+        let message = format!("{body}; per-item detail: `rwv doctor --json`");
+        Issue {
+            kind: IssueKind::CoreFinding,
+            integration: "core".into(),
+            severity: crate::integration::Severity::Warning,
+            message,
+            safe_to_fix: self.auto_fixed(),
+        }
+    }
+}
+
 /// Convert check violations into the same `Issue` type that integrations use,
 /// so all check results have a uniform shape.
+///
+/// Reclamation and frozen-legacy classes collapse to one count line each
+/// ([`CollapsedClass`]); everything else renders itemized. The collapse is a
+/// TEXT-report shape only — `--json` is built straight from
+/// `CheckViolation` and carries every record.
 pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
+    let mut counts: std::collections::BTreeMap<CollapsedClass, usize> =
+        std::collections::BTreeMap::new();
+    let mut itemized = Vec::new();
+    for v in violations {
+        match CollapsedClass::of(&v) {
+            Some(class) => *counts.entry(class).or_default() += 1,
+            None => itemized.push(v),
+        }
+    }
+    let mut issues = itemized_violations_to_issues(itemized);
+    issues.extend(counts.into_iter().map(|(class, n)| class.issue(n)));
+    issues
+}
+
+/// The per-item rendering behind [`violations_to_issues`] — every violation
+/// here produces its own line (or is dropped by the one deliberate
+/// json-only carve-out below).
+fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
     violations
         .into_iter()
         .filter_map(|v| {

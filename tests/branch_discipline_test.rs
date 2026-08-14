@@ -340,13 +340,15 @@ fn shared_branch_main_in_workweave_is_reported() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("shared-branch")
-            || stdout.contains("workweave checkout is on shared-branch"),
+        stdout.contains("shared-branch"),
         "doctor should report shared-branch sub-kind for bare-main-in-workweave; got:\n{stdout}"
     );
+    // The offending branch is per-item detail, carried by `--json` — the
+    // text report renders frozen classes as a per-class count line.
+    let json = doctor_json_compact(&ws, false);
     assert!(
-        stdout.contains("main"),
-        "report should name the offending branch (main); got:\n{stdout}"
+        json.contains(r#""actual_branch":"main""#),
+        "the record should name the offending branch (main); got:\n{json}"
     );
 }
 
@@ -418,7 +420,7 @@ fn handmade_lookalike_in_workweave_is_shared_not_foreign() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("shared-branch `myproj--feat-b`"),
+        stdout.contains("shared-branch"),
         "an unrecorded look-alike is the operator's branch, not another \
          workweave's; got:\n{stdout}"
     );
@@ -426,6 +428,13 @@ fn handmade_lookalike_in_workweave_is_shared_not_foreign() {
         !stdout.contains("a ref rwv recorded for a different workweave"),
         "no receipt names this ref, so nothing may call it another \
          workweave's; got:\n{stdout}"
+    );
+    // The classification and the branch name are in the `--json` record.
+    let json = doctor_json_compact(&ws, false);
+    assert!(
+        json.contains("shared-branch") && json.contains(r#""actual_branch":"myproj--feat-b""#),
+        "the record must classify the look-alike as shared-branch under its \
+         own name; got:\n{json}"
     );
 }
 
@@ -801,9 +810,14 @@ fn dangling_receipt_is_reported_and_retracted() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("ownership receipt for `myproj--never-born`")
-            && stdout.contains("no such ref is there"),
+        stdout.contains("dangling-ref-receipt"),
         "doctor should report the dangling receipt; got:\n{stdout}"
+    );
+    // The receipt's ref name is per-item detail, carried by `--json`.
+    let json = doctor_json_compact(&ws, false);
+    assert!(
+        json.contains("myproj--never-born"),
+        "the record must name the dangling receipt's ref; got:\n{json}"
     );
 
     let fixed = rwv()
@@ -843,8 +857,10 @@ fn dangling_receipt_is_scoped_to_active_project() {
 
     let scoped = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let scoped_stdout = String::from_utf8_lossy(&scoped.stdout);
+    // The count line carries no names, so probe for the class token: a
+    // scoped run must not even count project-b's finding.
     assert!(
-        !scoped_stdout.contains("project-b--ghost"),
+        !scoped_stdout.contains("dangling-ref-receipt"),
         "project-a scope must not report project-b's dangling receipt; got:\n{scoped_stdout}"
     );
 
@@ -859,15 +875,20 @@ fn dangling_receipt_is_scoped_to_active_project() {
         "project-a-scoped --fix must not retract project-b's receipt"
     );
 
-    // --all sees it, and --all --fix retracts it.
+    // --all sees it, and --all --fix retracts it. The text line is the
+    // per-class count; the ref name is in the `--json` record.
     let all = rwv()
         .args(["doctor", "--all"])
         .current_dir(&ws)
         .output()
         .unwrap();
     assert!(
-        String::from_utf8_lossy(&all.stdout).contains("project-b--ghost"),
+        String::from_utf8_lossy(&all.stdout).contains("dangling-ref-receipt"),
         "--all must report project-b's dangling receipt"
+    );
+    assert!(
+        doctor_json_compact(&ws, true).contains("project-b--ghost"),
+        "--all --json must name project-b's dangling receipt"
     );
     let _ = rwv()
         .args(["doctor", "--all", "--fix"])
@@ -952,12 +973,13 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("leaked ephemeral branch") && stdout.contains("safe class"),
+        stdout.contains("stale-ephemeral-branch-safe"),
         "doctor should report safe-class leaked ephemeral branch; got:\n{stdout}"
     );
+    // The branch name is per-item detail, carried by `--json`.
     assert!(
-        stdout.contains("myproj--dead"),
-        "report should name the offending branch; got:\n{stdout}"
+        doctor_json_compact(&ws, false).contains("myproj--dead"),
+        "the record should name the offending branch"
     );
 
     // Branch still exists pre-fix.
@@ -1047,11 +1069,11 @@ fn handmade_lookalike_branch_survives_doctor_fix() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("rwv holds no ownership receipt for it"),
+        stdout.contains("stale-ephemeral-branch-unowned"),
         "doctor should report it as unowned, not as safe class; got:\n{stdout}"
     );
     assert!(
-        !stdout.contains("safe class"),
+        !stdout.contains("stale-ephemeral-branch-safe"),
         "an unreceipted branch must never be classified safe class; got:\n{stdout}"
     );
 
@@ -1144,12 +1166,13 @@ fn stale_ephemeral_branch_live_is_reported_and_preserved() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("leaked ephemeral branch") && stdout.contains("live class"),
+        stdout.contains("stale-ephemeral-branch-live"),
         "doctor should report live-class leaked ephemeral branch; got:\n{stdout}"
     );
+    // The branch name is per-item detail, carried by `--json`.
     assert!(
-        stdout.contains("myproj--dead"),
-        "report should name the offending branch; got:\n{stdout}"
+        doctor_json_compact(&ws, false).contains("myproj--dead"),
+        "the record should name the offending branch"
     );
 
     // Branch exists pre-fix.
@@ -2392,9 +2415,12 @@ fn fix_retracts_a_pre_flat_receipt_instead_of_deleting_the_branch() {
         .unwrap();
     let after_stdout = String::from_utf8_lossy(&after.stdout).into_owned();
     assert!(
-        after_stdout.contains("myproj--ghost/main")
-            && after_stdout.contains("rwv does not guess which workweave"),
+        after_stdout.contains("stale-ephemeral-branch-unowned"),
         "the ref must fall back to the unowned class, not go quiet; got:\n{after_stdout}"
+    );
+    assert!(
+        doctor_json_compact(&ws, true).contains("myproj--ghost/main"),
+        "the unowned record must name the ref"
     );
 
     let index_path = ws
@@ -2670,9 +2696,12 @@ fn migration_leaves_a_stray_pre_flat_branch_alone() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("myproj--ghost/main")
-            && stdout.contains("rwv does not guess which workweave"),
+        stdout.contains("stale-ephemeral-branch-unowned"),
         "the stray must be reported as unowned; got:\n{stdout}"
+    );
+    assert!(
+        doctor_json_compact(&ws, false).contains("myproj--ghost/main"),
+        "the unowned record must name the stray ref"
     );
 
     let fix = rwv()
@@ -2756,6 +2785,24 @@ fn migration_reaches_the_project_repo_checkout() {
 // *report* path says in the same state, because a report that promises a
 // repair the pass will skip is a remedy the operator cannot run.
 // ===========================================================================
+
+/// `rwv doctor --json` (with optional `--all`), re-serialized compact so a
+/// substring probe for `"field":"value"` pairs is spacing-independent.
+///
+/// The per-item facts the text report used to spell inline (branch names,
+/// receipt refs, op ids) live here since the text report collapsed
+/// reclamation/frozen classes to per-class count lines.
+fn doctor_json_compact(ws: &Path, all: bool) -> String {
+    let mut args = vec!["doctor", "--json"];
+    if all {
+        args.insert(1, "--all");
+    }
+    let out = rwv().args(&args).current_dir(ws).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    json.to_string()
+}
 
 /// The `sub_kind` discriminants doctor reports, sorted. An externally-tagged
 /// enum puts the variant name in the sole key of the `sub_kind` object; a unit
@@ -3270,7 +3317,7 @@ fn unparseable_dirname_with_registry_record_still_scans_and_reports() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("workweave checkout is on"),
+        stdout.contains("shared-branch"),
         "bare-main inside the workweave must flag even after the rename — \
          the registry still records the identity; got:\n{stdout}"
     );
