@@ -475,6 +475,138 @@ fn flatten_rustdoc_links(json: &str) -> String {
     out.into_owned()
 }
 
+/// Collect every file under `dir` (non-recursively) that passes `filter`.
+///
+/// The directory is silently skipped when it does not exist so callers that
+/// add a new scripting directory do not need a path-existence guard.
+fn collect_files_in_dir<F>(dir: &Path, filter: F) -> Vec<PathBuf>
+where
+    F: Fn(&Path) -> bool,
+{
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    entries
+        .into_iter()
+        .filter_map(|e| {
+            let path = e.path();
+            (path.is_file() && filter(&path)).then_some(path)
+        })
+        .collect()
+}
+
+/// Collect all `.sh` files under `dir` recursively.
+///
+/// Shell scripts are prose-bearing shipped artifacts: their comments reach
+/// contributors and operators the same way source comments do, and a consumer
+/// word or tracker ID in a script comment is just as unfollowable from a
+/// standalone clone as one in `src/`. The directory is silently skipped when it
+/// does not exist.
+fn collect_sh_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_sh_files_inner(dir, &mut out);
+    out
+}
+
+fn collect_sh_files_inner(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_sh_files_inner(&path, out);
+        } else if path.extension().and_then(OsStr::to_str) == Some("sh") {
+            out.push(path);
+        }
+    }
+}
+
+/// Collect all `.yml` files directly under `dir` (non-recursively).
+///
+/// Used for `.github/workflows/`, where all workflow files sit at one depth.
+/// The directory is silently skipped when it does not exist.
+fn collect_yml_files_in_dir(dir: &Path) -> Vec<PathBuf> {
+    collect_files_in_dir(dir, |p| {
+        p.extension().and_then(OsStr::to_str) == Some("yml")
+    })
+}
+
+/// Shipped prose-bearing artifacts outside the `src/`, `docs/*.md`, and `tests/`
+/// scope that `src_docs_and_tests_files` already reaches.
+///
+/// Concretely:
+///
+/// - `scripts/` — all files (currently `*.sh`; new files land here automatically)
+/// - `.githooks/` — all files (currently `commit-msg`, `pre-push`; hooks have no
+///   extension, so an extension filter would miss them)
+/// - `.github/workflows/*.yml` — GitHub Actions workflow YAML files; these carry
+///   prose in `name:` and `run:` fields and are shipped as part of the repository
+/// - `docs/*.sh` — any shell scripts directly in `docs/` (currently `install.sh`,
+///   the user-facing installer script served at the docs site URL)
+/// - `python/scripts/*.sh` — wheel-build and release scripts under `python/`
+/// - `tests/*.sh` — shell-based end-to-end tests under `tests/` (the `.rs` files
+///   in that directory are already in scope via `src_docs_and_tests_files`; these
+///   are the sibling scripts)
+///
+/// This function does NOT apply a self-file exemption; its callers apply one if
+/// needed. None of these file types can spell `CONSUMER_VOCABULARY` or
+/// `FOREIGN_VOCABULARY` without triggering the rule they're being checked against,
+/// so no new exemption is required for the files in this set.
+fn shipped_prose_auxiliary_files(root: &Path) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = Vec::new();
+
+    // scripts/ — all files, no extension filter
+    let scripts_dir = root.join("scripts");
+    if let Ok(rd) = std::fs::read_dir(&scripts_dir) {
+        let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let path = entry.path();
+            if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+
+    // .githooks/ — all files, no extension filter (hooks have none)
+    let hooks_dir = root.join(".githooks");
+    if let Ok(rd) = std::fs::read_dir(&hooks_dir) {
+        let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let path = entry.path();
+            if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+
+    // .github/workflows/*.yml — GitHub Actions workflow YAML
+    files.extend(collect_yml_files_in_dir(&root.join(".github/workflows")));
+
+    // docs/*.sh — shell scripts directly in docs/ (not recursing; the .md files
+    // in docs/ are already reached by src_docs_and_tests_files via collect_md_files)
+    files.extend(collect_files_in_dir(&root.join("docs"), |p| {
+        p.extension().and_then(OsStr::to_str) == Some("sh")
+    }));
+
+    // python/scripts/*.sh — wheel-build and release scripts
+    files.extend(collect_sh_files(&root.join("python/scripts")));
+
+    // tests/*.sh — shell-based e2e tests (sibling to tests/*.rs which is already in scope)
+    files.extend(collect_files_in_dir(&root.join("tests"), |p| {
+        p.extension().and_then(OsStr::to_str) == Some("sh")
+    }));
+
+    files.sort();
+    files
+}
+
 /// Collect all `.md` files under `root` recursively, excluding any path whose
 /// canonical prefix matches one of the entries in `exclude_dirs` (compared as
 /// canonical absolute paths so symlinks don't confuse the check).
@@ -1614,8 +1746,8 @@ fn root_level_toml_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Scan `src/`, `docs/`, `tests/`, and root-level `.md`, `.rs` and `.toml`
-/// files for tracker IDs in comments, error strings, and published prose.
+/// Scan `src/`, `docs/`, `tests/`, root-level `.md`/`.rs`/`.toml` files, and
+/// shipped prose-bearing auxiliary files for tracker IDs.
 ///
 /// Code is ground truth and architecture docs carry rationale; a tracker ID
 /// in any of these surfaces points a reader at something they cannot open,
@@ -1630,12 +1762,21 @@ fn root_level_toml_files(root: &Path) -> Vec<PathBuf> {
 /// just read it there; `build.rs` is ordinary Rust that happens to sit
 /// outside `src/`, not a different kind of surface; `Cargo.toml`'s
 /// dependency comments are exactly the prose a tracker ID gets written into.
+///
+/// **Widened scope** (via `shipped_prose_auxiliary_files`): `scripts/` (any
+/// file), `.githooks/` (any file), `.github/workflows/*.yml`, any `.sh`
+/// directly in `docs/`, any `.sh` under `python/scripts/`, and any `.sh`
+/// directly in `tests/`. A tracker ID in a shell comment is as unfollowable
+/// from a standalone clone as one in `src/`. The same auxiliary-file set is
+/// also added by `check_no_consumer_vocabulary` and `check_no_foreign_vocabulary`;
+/// see `check_no_consumer_vocabulary`'s doc comment for the cross-gate rationale.
 fn check_no_tracker_ids(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     let mut files = src_docs_and_tests_files(root);
     files.extend(root_level_md_files(root));
     files.extend(root_level_rs_files(root));
     files.extend(root_level_toml_files(root));
+    files.extend(shipped_prose_auxiliary_files(root));
     if files.is_empty() {
         return vec![format!(
             "tracker-ID check: no source/doc/test files found under {}",
@@ -2397,23 +2538,46 @@ fn contains_word(haystack: &str, word: &str) -> bool {
     })
 }
 
-/// Scan `src/`, `docs/` and `tests/` for `CONSUMER_VOCABULARY`, at word
-/// boundaries.
+/// Scan `src/`, `docs/`, `tests/`, and shipped prose-bearing auxiliary files for
+/// `CONSUMER_VOCABULARY`, at word boundaries.
 ///
-/// Same file scope as `check_no_tracker_ids` (via the shared
-/// `src_docs_and_tests_files`) — this is the words-not-IDs sibling of that
-/// gate and, like it, carries no `tests/` exemption: a consumer word is a
-/// dead end for a standalone cloner in a test comment exactly as much as in
-/// `src/`. One further exception: this file
-/// (`src/bin/generate-explain.rs`) is skipped. It defines
-/// `CONSUMER_VOCABULARY` and must spell each word out literally to check
-/// for it, so scanning it here would have the gate flag its own
-/// definition. `check_no_foreign_vocabulary` gets the same exception for
-/// free — `FOREIGN_VOCABULARY` lives in this same file, just outside that
-/// gate's docs-only scope.
+/// **Core scope** (via `src_docs_and_tests_files`): `src/`, all `.md` under
+/// `docs/`, all `.rs` under `tests/`, and `docs/env-input-allowlist.txt`. This
+/// is the words-not-IDs sibling of `check_no_tracker_ids` and shares the same
+/// core scope.
+///
+/// **Widened scope** (via `shipped_prose_auxiliary_files`): `scripts/` (any
+/// file), `.githooks/` (any file), `.github/workflows/*.yml`, any `.sh` directly
+/// in `docs/`, any `.sh` under `python/scripts/`, and any `.sh` directly in
+/// `tests/`. These are shipped prose-bearing artifacts the core collectors do not
+/// reach; the class of silent violation this gate exists to prevent is exactly one
+/// that lived in `scripts/ci-local.sh`.
+///
+/// **No `tests/` exemption**: a consumer word is a dead end for a standalone
+/// cloner in a test comment exactly as much as in `src/`.
+///
+/// **Self-file exemption**: `src/bin/generate-explain.rs` is skipped. It defines
+/// `CONSUMER_VOCABULARY` and must spell each word out literally to check for it,
+/// so scanning it here would have the gate flag its own definition.
+/// `check_no_foreign_vocabulary` gets the same exception for free — `FOREIGN_VOCABULARY`
+/// lives in this same file, just outside that gate's docs-only scope. No file
+/// in the widened scope spells the banned words for definitional reasons, so no
+/// additional exemption is needed there.
+///
+/// **Sibling scope decisions** (recorded here as the cross-gate canonical reference):
+///
+/// - `check_no_tracker_ids` is also widened to cover the same auxiliary files —
+///   a tracker ID in a script comment is equally unfollowable from a standalone
+///   clone, and the two gates share the rationale. See its doc comment.
+/// - `check_no_foreign_vocabulary` is also widened — foreign deployment words
+///   (`rig`, `gas city`, etc.) do not belong in any shipped artifact regardless
+///   of whether that artifact lands on the `rwv explain` surface; the vocabulary
+///   exclusion is a source-level cleanliness rule, not an operator-surface rule.
+///   See its doc comment.
 fn check_no_consumer_vocabulary(root: &Path) -> Vec<String> {
     let self_path = Path::new("src/bin/generate-explain.rs");
-    let files = src_docs_and_tests_files(root);
+    let mut files = src_docs_and_tests_files(root);
+    files.extend(shipped_prose_auxiliary_files(root));
     if files.is_empty() {
         return vec![format!(
             "consumer-vocabulary check: no source/doc/test files found under {}",
@@ -2465,17 +2629,41 @@ const FOREIGN_VOCABULARY: &[&str] = &[
     "gc.city",
 ];
 
-/// Scan `docs/` for vocabulary from a specific deployment of rwv.
+/// Scan `docs/` and shipped prose-bearing auxiliary files for vocabulary from a
+/// specific deployment of rwv.
 ///
-/// `src/prime.rs` already asserts `rwv prime` stays free of it, but that test
-/// only sees the prime overview. `rwv explain` prints
-/// `docs/reference/explain/*.md` verbatim via `include_str!`, and one such
-/// page shipped "the Gas City rig's standard …" to every user. Scanning the
-/// whole of `docs/` covers the templates, the assembled pages, and the
-/// published explanation joints in one place.
+/// **Original scope**: `docs/` (all `.md` files). `src/prime.rs` already asserts
+/// `rwv prime` stays free of deployment vocabulary, but that test only sees the
+/// prime overview. `rwv explain` prints `docs/reference/explain/*.md` verbatim
+/// via `include_str!`, and one such page shipped "the Gas City rig's standard …"
+/// to every user. Scanning the whole of `docs/` covers the templates, the
+/// assembled pages, and the published explanation joints.
+///
+/// **Widened scope**: also covers `scripts/` (any file), `.githooks/` (any file),
+/// `.github/workflows/*.yml`, any `.sh` in `docs/`, any `.sh` under
+/// `python/scripts/`, and any `.sh` in `tests/` — the same `shipped_prose_auxiliary_files`
+/// set that `check_no_consumer_vocabulary` and `check_no_tracker_ids` add.
+/// Foreign deployment words (`rig`, `gas city`, etc.) do not belong in any
+/// shipped artifact regardless of whether it reaches the `rwv explain` surface;
+/// the exclusion is a source-level cleanliness rule, not purely an
+/// operator-surface rule. Keeping the three sibling gates' auxiliary-file scopes
+/// identical prevents silent divergence.
+///
+/// `src/` and `tests/` are deliberately outside this gate's scope. The foreign
+/// vocabulary enters through prose-facing artifacts, not through code; scanning
+/// identifiers and type names in `src/` would report false positives (a function
+/// named `trigger` contains "rig"). The consumer-vocabulary gate's broader `src/`
+/// scope is appropriate there because consumer words are entirely alien to rwv's
+/// domain model, whereas "rig" alone is a common English word that can appear
+/// legitimately in code.
+///
+/// **Sibling scope decision**: see `check_no_consumer_vocabulary`'s doc comment
+/// for the cross-gate canonical reference.
 fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    for path in collect_md_files(&root.join("docs"), &[]) {
+    let mut files: Vec<PathBuf> = collect_md_files(&root.join("docs"), &[]);
+    files.extend(shipped_prose_auxiliary_files(root));
+    for path in files {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
@@ -4012,6 +4200,136 @@ mod tests {
         );
     }
 
+    // ── consumer-vocabulary widened-scope tests ───────────────────────────────
+    //
+    // Each of the three newly-scanned roots (scripts/, .githooks/,
+    // .github/workflows/) gets its own seeded-failure pin.  The reverted-fix
+    // probe is documented inside `consumer_vocabulary_check_reaches_scripts_dir`:
+    //   revert line 12 of scripts/ci-local.sh from
+    //     "# re-gating an integration tip between landings wants --stages=drift alone,"
+    //   to
+    //     "# a sling target re-gating an integration tip between landings wants"
+    //   (any standalone consumer word in that position — "sling" is used here
+    //   because "choreograph" only appeared embedded in "Choreographer" which
+    //   does NOT match at word boundaries).
+    //   That restores a standalone consumer word in scripts/ci-local.sh; the
+    //   test below reddens.  Restore and verify clean tree before committing.
+
+    /// A consumer word planted in `scripts/` is reported.
+    ///
+    /// This is the execution-coverage pin for the `scripts/` root widening.
+    /// The actual violation this gate closed was in `scripts/ci-local.sh`.
+    #[test]
+    fn consumer_vocabulary_check_reaches_scripts_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let scripts = tmp.path().join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("ci-local.sh"),
+            "#!/usr/bin/env bash\n# run with sling to dispatch.\nset -e\n",
+        )
+        .unwrap();
+        let errors = check_no_consumer_vocabulary(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("scripts/ci-local.sh") && e.contains("consumer vocabulary `sling`")),
+            "expected a `sling` hit under scripts/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A consumer word planted in `.githooks/` is reported.
+    ///
+    /// Hooks are prose-bearing shipped artifacts; a contributor reading this
+    /// file has no referent for consumer words.
+    #[test]
+    fn consumer_vocabulary_check_reaches_githooks_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hooks = tmp.path().join(".githooks");
+        fs::create_dir_all(&hooks).unwrap();
+        fs::write(
+            hooks.join("pre-push"),
+            "#!/bin/sh\n# dispatched to the sling worker.\nset -e\n",
+        )
+        .unwrap();
+        let errors = check_no_consumer_vocabulary(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains(".githooks/pre-push") && e.contains("consumer vocabulary `sling`")),
+            "expected a `sling` hit under .githooks/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A consumer word planted in `.github/workflows/` is reported.
+    ///
+    /// Workflow YAML files are prose-bearing shipped artifacts; `name:` and
+    /// `run:` fields are operator-facing text.
+    #[test]
+    fn consumer_vocabulary_check_reaches_github_workflows_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workflows = tmp.path().join(".github/workflows");
+        fs::create_dir_all(&workflows).unwrap();
+        fs::write(
+            workflows.join("ci.yml"),
+            "name: CI\non: push\njobs:\n  build:\n    # bead gate\n    runs-on: ubuntu-latest\n",
+        )
+        .unwrap();
+        let errors = check_no_consumer_vocabulary(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains(".github/workflows/ci.yml") && e.contains("consumer vocabulary `bead`")),
+            "expected a `bead` hit under .github/workflows/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `scripts/reap-orphaned-savepoints.sh` — recently landed, deployment-neutral
+    /// — must pass the widened scan with no consumer or tracker-ID findings.
+    ///
+    /// This is the known-clean verification the bead called for.
+    #[test]
+    fn reap_orphaned_savepoints_sh_is_clean() {
+        let root = repo_root();
+        let script = root.join("scripts/reap-orphaned-savepoints.sh");
+        if !script.exists() {
+            // If the script is absent (different branch, stripped checkout), skip.
+            return;
+        }
+        let consumer_errors = check_no_consumer_vocabulary(&root);
+        let filtered_consumer: Vec<_> = consumer_errors
+            .iter()
+            .filter(|e| e.contains("reap-orphaned-savepoints.sh"))
+            .collect();
+        assert!(
+            filtered_consumer.is_empty(),
+            "reap-orphaned-savepoints.sh must be free of consumer vocabulary, got:\n{}",
+            filtered_consumer
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+
+        let tracker_errors = check_no_tracker_ids(&root);
+        let filtered_tracker: Vec<_> = tracker_errors
+            .iter()
+            .filter(|e| e.contains("reap-orphaned-savepoints.sh"))
+            .collect();
+        assert!(
+            filtered_tracker.is_empty(),
+            "reap-orphaned-savepoints.sh must be free of tracker IDs, got:\n{}",
+            filtered_tracker
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
     /// `rig` is in `FOREIGN_VOCABULARY` and no entry in that list has a live
     /// hit anywhere in this repository's own `docs/` — so a check that finds
     /// nothing is indistinguishable from one that never ran until something
@@ -4085,6 +4403,31 @@ mod tests {
             errors.is_empty(),
             "\"biogas cityscape\" straddles \"gas city\" but contains neither word of it, \
              expected no hit, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A foreign vocabulary word planted in `scripts/` is reported.
+    ///
+    /// The foreign-vocabulary gate is widened to cover the same auxiliary files
+    /// as the consumer-vocabulary and tracker-ID gates; this pin proves the
+    /// `scripts/` root is in scope.
+    #[test]
+    fn foreign_vocabulary_check_reaches_scripts_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let scripts = tmp.path().join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("deploy.sh"),
+            "#!/usr/bin/env bash\n# push through the rig.\nset -e\n",
+        )
+        .unwrap();
+        let errors = check_no_foreign_vocabulary(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("scripts/deploy.sh") && e.contains("contains `rig`")),
+            "expected a `rig` hit under scripts/, got:\n{}",
             errors.join("\n")
         );
     }
@@ -4231,6 +4574,58 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("docs/guide.md") && e.contains(&planted_id)),
             "expected a tracker-ID hit under docs/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A tracker ID planted in `scripts/` is reported.
+    ///
+    /// The tracker-ID gate is widened to cover the same auxiliary files as the
+    /// consumer-vocabulary and foreign-vocabulary gates; this pin proves the
+    /// `scripts/` root is in scope.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
+    #[test]
+    fn tracker_id_check_reaches_scripts_dir() {
+        let planted_id = format!("{}-{}", "fo", "ab12cd.3");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let scripts = tmp.path().join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("ci-local.sh"),
+            format!("#!/usr/bin/env bash\n# Added for {planted_id}.\nset -e\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("scripts/ci-local.sh") && e.contains(&planted_id)),
+            "expected a tracker-ID hit under scripts/, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A tracker ID planted in `.github/workflows/` is reported.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
+    #[test]
+    fn tracker_id_check_reaches_github_workflows_dir() {
+        let planted_id = format!("{}-{}", "fo", "ab12cd.3");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workflows = tmp.path().join(".github/workflows");
+        fs::create_dir_all(&workflows).unwrap();
+        fs::write(
+            workflows.join("ci.yml"),
+            format!("name: CI\n# Fixed per {planted_id}.\non: push\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains(".github/workflows/ci.yml") && e.contains(&planted_id)),
+            "expected a tracker-ID hit under .github/workflows/, got:\n{}",
             errors.join("\n")
         );
     }
