@@ -246,6 +246,10 @@ fn strace_probe_child_records_one_receipt() {
 /// strace runs and the calls are absent — that is the regression.
 #[test]
 fn the_receipt_reaches_the_disk_before_record_created_returns() {
+    if !cfg!(target_os = "linux") {
+        eprintln!("SKIP: the probe reads Linux strace's syscall trace; other hosts ship a different strace or none");
+        return;
+    }
     if Command::new("strace").arg("-V").output().is_err() {
         eprintln!("SKIP: strace not installed; the durability claim is unchecked here");
         return;

@@ -793,7 +793,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
 
     // Capture the committed lock content so we can verify fetch did not
     // bump it to branch HEAD.
-    let lock_before = std::fs::read_to_string(work.join("rwv.lock")).unwrap();
+    let lock_before = common::read_normalized(work.join("rwv.lock"));
 
     // Default fetch: should check out dep at first_sha (the lock value),
     // not HEAD (the branch tip, which is now ahead).
@@ -815,7 +815,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
 
     // The committed lock fully covered the manifest, so fetch had nothing
     // to bootstrap or additively add — lock content must be byte-identical.
-    let lock_after = std::fs::read_to_string(workspace.join("projects/project/rwv.lock")).unwrap();
+    let lock_after = common::read_normalized(workspace.join("projects/project/rwv.lock"));
     assert_eq!(
         lock_before, lock_after,
         "default fetch must not mutate rwv.lock when it already covers every manifest entry"

@@ -493,7 +493,8 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
         .clone();
     let stderr = String::from_utf8_lossy(&err_output.stderr);
     assert!(
-        stderr.contains("refusing to replace") && stderr.contains("github/org/repo"),
+        stderr.contains("refusing to replace")
+            && stderr.replace('\\', "/").contains("github/org/repo"),
         "marker-less create --replace-existing must refuse via the repo scan; \
          got:\n{stderr}"
     );

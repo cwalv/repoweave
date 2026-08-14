@@ -356,11 +356,14 @@ fn the_page_walk_actually_reads_the_page() {
 fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
     let register = register();
 
-    let flipped = PAGE.replace(
+    // The page arrives CRLF under an eol-smudging checkout; the seeded edit
+    // targets content, not line endings.
+    let page = PAGE.replace("\r\n", "\n");
+    let flipped = page.replace(
         "#### `redundant`\n\n**Warning. Auto-fixable.**",
         "#### `redundant`\n\n**Warning. Report-only.**",
     );
-    assert_ne!(flipped, PAGE, "the seeded edit matched nothing");
+    assert_ne!(flipped, page, "the seeded edit matched nothing");
     let gaps = page_gaps(&flipped, &register);
     assert!(
         gaps.iter()

@@ -391,7 +391,9 @@ fn materialize_refuses_on_content_it_never_accepted() {
         "the refusal must name both exits:\n{report}"
     );
     assert!(
-        report.contains(&lock.display().to_string()),
+        report
+            .replace('\\', "/")
+            .contains(common::url_path(&lock).trim_start_matches('/')),
         "the refusal must list what it would act on:\n{report}"
     );
     assert_eq!(

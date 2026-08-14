@@ -151,6 +151,6 @@ fn recipe_filter_by_role_owned_via_jq() {
     let paths = String::from_utf8(output.stdout).unwrap();
     let lines: Vec<&str> = paths.lines().collect();
     assert_eq!(lines.len(), 1, "expected one owned repo, got: {paths:?}");
-    assert!(lines[0].ends_with("github/org/primary"));
+    assert!(common::path_ends_with(lines[0], "github/org/primary"));
     assert!(std::path::Path::new(lines[0]).is_absolute());
 }

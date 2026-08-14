@@ -353,3 +353,16 @@ pub fn node_tool(name: &str) -> String {
         name.to_string()
     }
 }
+
+/// Whether `path`'s trailing components equal `suffix`'s, whatever separator
+/// or absolute prefix the platform spelled the path with. The suffix is an
+/// identity written with `/`; the path under test is whatever a surface
+/// printed. Pinning arrival of the right components without blessing any one
+/// spelling is what keeps these assertions platform-honest while the spelling
+/// itself stays an open design question.
+pub fn path_ends_with(path: impl AsRef<str>, suffix: &str) -> bool {
+    let path = path.as_ref();
+    let hay: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
+    let want: Vec<&str> = suffix.split('/').filter(|s| !s.is_empty()).collect();
+    hay.len() >= want.len() && hay[hay.len() - want.len()..] == want[..]
+}

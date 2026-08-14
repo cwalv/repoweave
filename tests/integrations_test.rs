@@ -4615,9 +4615,10 @@ resolver = "2"
         // (a) MISSING — no .cargo/config.toml yet, but patch is derived
         // and app depends on lib.
         let issues = CargoWorkspace.verify(&ctx).unwrap();
-        let has_missing = issues
-            .iter()
-            .any(|i| i.message.contains(".cargo/config.toml") && i.message.contains("missing"));
+        let has_missing = issues.iter().any(|i| {
+            i.message.replace('\\', "/").contains(".cargo/config.toml")
+                && i.message.contains("missing")
+        });
         assert!(
             has_missing,
             "expected MISSING finding for .cargo/config.toml; got: {issues:?}"

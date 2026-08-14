@@ -1124,7 +1124,7 @@ mod doctor_json {
             .and_then(|s| s.as_str())
             .expect("absolute_path");
         assert!(
-            abs.ends_with(orphan),
+            common::path_ends_with(abs, orphan),
             "absolute_path={abs} should end with {orphan}"
         );
         assert!(
