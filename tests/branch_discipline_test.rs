@@ -2942,6 +2942,89 @@ fn an_in_flight_op_leaves_the_migration_finding_standing_beside_the_op_state_one
     );
 }
 
+/// A detached checkout with two refs sharing the namespace: the same guard that
+/// blocks `unmigrated-ephemeral-branch` also blocks `--adopt-detached-checkouts`.
+///
+/// Before this fix, `doctor` reported `detached` and named `--adopt-detached-
+/// checkouts` as the remedy; `--fix --adopt-detached-checkouts` then refused on
+/// the blocking ref — exactly as `unmigrated-ephemeral-branch` did before its
+/// own blocked-namespace sub-kind was introduced.
+///
+/// The control is the second half: collapse the namespace to one ref and the
+/// same fixture reports `detached` (not `blocked-detached-namespace`), and
+/// `--fix --adopt-detached-checkouts` mints the flat ref at HEAD.
+///
+/// **Mutation evidence**: the guard `if legacy_refs.len() > 1` in the
+/// `HeadAttachment::Detached` arm of `scan_workweave_repo_branches` (check.rs)
+/// is what makes this test pass. Reverting it to an unconditional `Detached`
+/// emit reddens the first assertion (`kinds` would contain `detached` instead of
+/// `blocked-detached-namespace`).
+#[test]
+fn detached_checkout_with_blocked_namespace_is_reported_as_itself_not_as_adopt_remedy() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, ww_checkout) = two_refs_in_one_namespace(tmp.path());
+    let lock_sha = rev(&canonical, "HEAD");
+
+    // Detach the workweave checkout so HEAD no longer points at any branch.
+    // The two refs (myproj--feat-a/main and myproj--feat-a/master) remain in
+    // the namespace, so the guard fires.
+    git_in(&ww_checkout, &["checkout", "--detach", &lock_sha, "-q"]);
+
+    let kinds = branch_discipline_sub_kinds(&ws);
+    assert!(
+        kinds.contains(&"blocked-detached-namespace".to_string()),
+        "detached with a blocked namespace must name itself: {kinds:?}"
+    );
+    assert!(
+        !kinds.contains(&"detached".to_string()),
+        "and must not also be reported as the detached finding whose remedy is blocked: \
+         {kinds:?}"
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("myproj--feat-a/main") && stdout.contains("myproj--feat-a/master"),
+        "the report must name both blocking refs; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("--adopt-detached-checkouts"),
+        "and must not promise the adopt remedy the guard prevents from running; \
+         got:\n{stdout}"
+    );
+
+    // Control: remove one ref from the namespace, and the ordinary detached
+    // finding comes back with a remedy that will actually run.
+    git_in(
+        &canonical,
+        &["branch", "-m", "myproj--feat-a/master", "feat-a-master"],
+    );
+    let collapsed = branch_discipline_sub_kinds(&ws);
+    assert!(
+        collapsed.contains(&"detached".to_string())
+            && !collapsed.contains(&"blocked-detached-namespace".to_string()),
+        "with one ref under the namespace the adopt remedy is reachable again: {collapsed:?}"
+    );
+
+    // And --fix --adopt-detached-checkouts actually runs now.
+    let fix = rwv()
+        .args(["doctor", "--fix", "--adopt-detached-checkouts"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "after collapsing to one namespace ref, the adopt remedy mints the flat ref; \
+         got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        lock_sha,
+        "the flat ref is minted at the detached HEAD"
+    );
+}
+
 /// The remaining pair in the matrix, and why it needs no report-side change:
 /// the namespace guard cannot reach `unrecorded-ephemeral-branch`, because that
 /// finding requires the flat ref to exist and git will not hold

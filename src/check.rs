@@ -673,6 +673,7 @@ impl CheckViolation {
                 BranchDisciplineKind::SharedBranch { .. }
                 | BranchDisciplineKind::ForeignEphemeral { .. }
                 | BranchDisciplineKind::BlockedEphemeralNamespace { .. }
+                | BranchDisciplineKind::BlockedDetachedNamespace { .. }
                 | BranchDisciplineKind::UnbornCheckout { .. }
                 | BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. }
                 | BranchDisciplineKind::CanonicalHoldsLeakedRef { .. }
@@ -1215,6 +1216,32 @@ pub enum BranchDisciplineKind {
         /// The flat ref no arm can create while the namespace is shared
         /// (`<project>--<workweave>`).
         expected_ref: String,
+        /// Every pre-flat ref found under that namespace, in listing order.
+        blocking_refs: Vec<String>,
+    },
+    /// (a) The workweave checkout is in detached-HEAD state AND two or more
+    /// refs share this workweave's namespace, so `--adopt-detached-checkouts`
+    /// cannot run.
+    ///
+    /// `fix_branch_model_migration` skips the whole repo before any arm when
+    /// `legacy_refs.len() > 1` — including the consented detached arm — which
+    /// is why this is reported in place of
+    /// [`Detached`](Self::Detached) rather than beside it: that finding's
+    /// message promises `--adopt-detached-checkouts`, a flag whose arm the
+    /// guard prevents from running. The principle is consent-tier-independent:
+    /// a consented remedy that cannot run misleads the operator exactly as an
+    /// auto remedy does — consent changes who acts, not whether the named
+    /// action works.
+    ///
+    /// Report-only. The operator must reduce the namespace to at most one ref,
+    /// then re-run to get the ordinary [`Detached`](Self::Detached) finding
+    /// with a remedy that will actually run.
+    BlockedDetachedNamespace {
+        /// The flat ref that cannot be created while the namespace is shared
+        /// (`<project>--<workweave>`).
+        expected_ref: String,
+        /// The commit HEAD names directly.
+        at_sha: String,
         /// Every pre-flat ref found under that namespace, in listing order.
         blocking_refs: Vec<String>,
     },
@@ -4045,14 +4072,30 @@ fn scan_workweave_repo_branches(
                     },
                 }
             }
-            Ok(HeadAttachment::Detached(d)) => BranchDisciplineKind::Detached {
-                expected_ref: expected_ref.clone(),
-                recorded_ref: recorded_ref.clone(),
-                at_sha: d.at().as_str().to_string(),
-                legacy_branch: legacy_refs
-                    .first()
-                    .map(|legacy| legacy_ref_at_tip(vcs, &store, legacy, d.at())),
-            },
+            Ok(HeadAttachment::Detached(d)) => {
+                // When two or more refs share the namespace the same guard
+                // that blocks UnmigratedEphemeralBranch also blocks the
+                // consented detached arm — fix_branch_model_migration skips
+                // the whole repo before reaching HeadAttachment::Detached.
+                // Emit BlockedDetachedNamespace instead so the report never
+                // names a remedy the guard prevents from running.
+                if legacy_refs.len() > 1 {
+                    BranchDisciplineKind::BlockedDetachedNamespace {
+                        expected_ref: expected_ref.clone(),
+                        at_sha: d.at().as_str().to_string(),
+                        blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
+                    }
+                } else {
+                    BranchDisciplineKind::Detached {
+                        expected_ref: expected_ref.clone(),
+                        recorded_ref: recorded_ref.clone(),
+                        at_sha: d.at().as_str().to_string(),
+                        legacy_branch: legacy_refs
+                            .first()
+                            .map(|legacy| legacy_ref_at_tip(vcs, &store, legacy, d.at())),
+                    }
+                }
+            }
             Ok(HeadAttachment::Unborn(u)) => BranchDisciplineKind::UnbornCheckout {
                 branch: u.name().as_str().to_string(),
             },
@@ -6528,6 +6571,34 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                                  most one ref under `{}/`, then re-run `rwv doctor --fix` \
                                  to migrate it",
                                 repo_path.display(),
+                                blocking_refs.len(),
+                                expected_ref,
+                                blocking_refs
+                                    .iter()
+                                    .map(|r| format!("`{r}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                                expected_ref,
+                                expected_ref,
+                                expected_ref,
+                            )
+                        }
+                        BranchDisciplineKind::BlockedDetachedNamespace {
+                            expected_ref,
+                            at_sha,
+                            blocking_refs,
+                        } => {
+                            safe_to_fix = false;
+                            format!(
+                                "{}: workweave checkout is detached at {} while {} refs \
+                                 share its namespace `{}` ({}). git cannot create `{}` \
+                                 while any ref exists under `{}/`, so \
+                                 `--adopt-detached-checkouts` cannot run. Leave at most \
+                                 one ref under `{}/`, then re-run `rwv doctor` to get the \
+                                 ordinary detached-HEAD finding with a remedy that will \
+                                 actually run",
+                                repo_path.display(),
+                                at_sha,
                                 blocking_refs.len(),
                                 expected_ref,
                                 blocking_refs
