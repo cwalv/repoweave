@@ -111,11 +111,13 @@ fn version_triple(v: &str) -> Option<(u64, u64, u64)> {
 pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Result<()> {
     let running = crate::rwv_version();
     if let Some(existing) = read(ws_root) {
-        if let (Some(old), Some(new)) = (version_triple(&existing.version), version_triple(running))
-        {
-            if old > new {
-                return Ok(());
-            }
+        match (version_triple(&existing.version), version_triple(running)) {
+            (Some(old), Some(new)) if old > new => return Ok(()),
+            // A version that does not parse — a describe-less build in a
+            // shallow or tagless checkout reports a bare commit id — cannot
+            // outrank a floor that does: unknown never lowers known.
+            (Some(_), None) => return Ok(()),
+            _ => {}
         }
     }
 

@@ -753,7 +753,7 @@ fn detached_project_repo_is_reported() {
         "doctor should report the detached project repo; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("projects/myproj"),
+        stdout.replace('\\', "/").contains("projects/myproj"),
         "the finding should name projects/<project>, not a member; got:\n{stdout}"
     );
 }

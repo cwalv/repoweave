@@ -366,3 +366,12 @@ pub fn path_ends_with(path: impl AsRef<str>, suffix: &str) -> bool {
     let want: Vec<&str> = suffix.split('/').filter(|s| !s.is_empty()).collect();
     hay.len() >= want.len() && hay[hay.len() - want.len()..] == want[..]
 }
+
+/// Whether two spellings denote one path: compared by components with the
+/// Windows verbatim prefix simplified away, so `\\?\C:\ws\x`, `C:\ws/x` and
+/// `C:/ws/x` are one path and a genuinely different file never is. For
+/// asserting a surface named the right file without pinning which spelling
+/// the surface uses — the spelling itself is an open design question.
+pub fn same_path(a: impl AsRef<std::path::Path>, b: impl AsRef<std::path::Path>) -> bool {
+    dunce::simplified(a.as_ref()) == dunce::simplified(b.as_ref())
+}

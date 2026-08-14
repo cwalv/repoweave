@@ -309,9 +309,8 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
         create_path, doctor_path,
         "create-time and doctor-time must name the same file for the same finding"
     );
-    assert_eq!(
-        Path::new(&doctor_path),
-        f.ww_canonical_lock(),
+    assert!(
+        common::same_path(Path::new(&doctor_path), f.ww_canonical_lock()),
         "and that file is the canonical one `--fix` writes, not the weave-root view \
          (which a workweave does not even surface while the source is missing)"
     );

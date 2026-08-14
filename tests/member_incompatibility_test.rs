@@ -40,8 +40,30 @@ fn rwv() -> Command {
 /// `doctor` authors nothing and needs no such pinning.
 fn rwv_without_go() -> Command {
     let mut cmd = common::rwv();
-    cmd.env("PATH", go_free_bin());
+    cmd.env("PATH", go_free_path());
     cmd
+}
+
+/// The go-free `PATH` value, built per platform.
+///
+/// Unix keeps the allow-list directory below. Windows cannot: an executable
+/// symlinked out of its install tree does not run there (its DLLs live
+/// beside the real binary), so the shim directory's `git` starts and then
+/// fails inside every subprocess. Go and git never share a bin directory on
+/// the Windows runner, which is the layout fact the allow-list exists to
+/// avoid depending on — so on Windows the subtractive spelling is taken,
+/// with the same loud-failure property if a co-locating layout (a shim
+/// directory holding both) ever drops git with go.
+fn go_free_path() -> std::ffi::OsString {
+    if cfg!(windows) {
+        let entries = std::env::var_os("PATH").unwrap_or_default();
+        let kept: Vec<_> = std::env::split_paths(&entries)
+            .filter(|dir| !dir.join("go.exe").exists())
+            .collect();
+        std::env::join_paths(kept).expect("filtered PATH entries rejoin")
+    } else {
+        go_free_bin().into_os_string()
+    }
 }
 
 /// A directory holding a symlink to `git` and nothing else — the `PATH` the
