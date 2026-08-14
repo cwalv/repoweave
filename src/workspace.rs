@@ -33,7 +33,7 @@ use anyhow::Context;
 use saphyr::{LoadableYamlNode, YamlOwned};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Acquire the origin directory for the invocation.
 ///
@@ -242,6 +242,22 @@ pub(crate) fn strip_projects_prefix(path: &Path) -> Option<&Path> {
     (!rest.as_os_str().is_empty()).then_some(rest)
 }
 
+/// Path components as one `/`-separated name, whatever separator the host
+/// writes.
+///
+/// A [`PathBuf`] built from components joins them with
+/// [`std::path::MAIN_SEPARATOR`], which is a backslash on Windows, and
+/// rendering the source path's own bytes carries whatever spelling the caller
+/// happened to write. Both make the result a property of the host or the
+/// caller rather than of the name, and [`ProjectName::new`] rejects the
+/// backslash and the empty component that each can produce.
+fn slash_separated<'a>(components: impl Iterator<Item = Component<'a>>) -> String {
+    components
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// The project a directory belongs to, from either a weave-relative path or an
 /// absolute one: everything below the last `projects/` segment, so
 /// `/w/projects/chatly/web-app` yields `chatly/web-app`.
@@ -250,14 +266,15 @@ pub(crate) fn strip_projects_prefix(path: &Path) -> Option<&Path> {
 /// in a weave at all.
 pub(crate) fn project_name_from_dir(dir: &Path) -> Option<String> {
     if let Some(rest) = strip_projects_prefix(dir) {
-        return Some(rest.to_string_lossy().into_owned());
+        let name = slash_separated(rest.components());
+        return (!name.is_empty()).then_some(name);
     }
     let components: Vec<_> = dir.components().collect();
     let idx = components
         .iter()
         .rposition(|c| c.as_os_str() == PROJECTS_DIR)?;
-    let rest: PathBuf = components[idx + 1..].iter().collect();
-    (!rest.as_os_str().is_empty()).then(|| rest.to_string_lossy().into_owned())
+    let name = slash_separated(components[idx + 1..].iter().copied());
+    (!name.is_empty()).then_some(name)
 }
 
 /// Well-known directory names that identify a workspace root.
@@ -1909,6 +1926,36 @@ mod tests {
         std::fs::create_dir_all(root.join("github")).unwrap();
         std::fs::create_dir_all(root.join("projects")).unwrap();
         root
+    }
+
+    // ========================================================================
+    // project_name_from_dir renders a name, not a path
+    // ========================================================================
+
+    #[test]
+    fn nested_project_name_drops_the_spelling_of_the_path_it_came_from() {
+        let name = project_name_from_dir(Path::new("projects//chatly//web-app")).unwrap();
+        ProjectName::new(name.clone())
+            .expect("a derived project name must construct a ProjectName");
+        assert_eq!(name, "chatly/web-app");
+    }
+
+    /// The relative and absolute spellings reach different arms, and on a host
+    /// whose separator is already `/` they cannot disagree — the equality is
+    /// load-bearing only where `std::path::MAIN_SEPARATOR` is a backslash.
+    #[test]
+    fn nested_project_name_is_the_same_relative_and_absolute() {
+        let relative = project_name_from_dir(Path::new("projects/chatly/web-app")).unwrap();
+        let absolute = project_name_from_dir(
+            &Path::new("/w")
+                .join("projects")
+                .join("chatly")
+                .join("web-app"),
+        )
+        .unwrap();
+        ProjectName::new(absolute.clone())
+            .expect("a derived project name must construct a ProjectName");
+        assert_eq!(relative, absolute);
     }
 
     // ========================================================================
