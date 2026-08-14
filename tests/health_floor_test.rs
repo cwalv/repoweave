@@ -104,10 +104,9 @@ fn heal_and_clear(root: &Path) {
 
 /// Pin 1: a clean weave-wide run records {version, project tips}.
 ///
-/// **Mutation evidence**: dropping `violations_clean` from the record
-/// condition in `run_check` makes pin 2 red; dropping `scope_all` makes
-/// pin 3 red — this pin is the positive control both reverts are measured
-/// against.
+/// **Mutation evidence**: forcing `violations_all_report_only` to true in
+/// `run_check` makes pin 2 red; dropping `scope_all` makes pin 3 red —
+/// this pin is the positive control both reverts are measured against.
 #[test]
 fn a_clean_weave_wide_run_records_the_floor() {
     let tmp = common::tempdir().unwrap();
