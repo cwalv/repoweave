@@ -194,7 +194,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
 /// sync-to), converged_tips still empty.
 fn plant_sync_to_owner_record(owner: &Path, target: &Path, op_id: &str) {
     let body = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",

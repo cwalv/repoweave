@@ -1165,7 +1165,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
 
     // Write a v2 owner record so `rwv abort` thinks an op is in progress.
     let op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",

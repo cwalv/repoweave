@@ -719,7 +719,7 @@ const RESUMED_OP_ID: &str = "envelope-identity-resume";
 /// owned by `workspace`, landing into `target`, retiring nothing.
 fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
     let body = format!(
-        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",

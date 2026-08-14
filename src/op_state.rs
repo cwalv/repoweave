@@ -15,6 +15,7 @@
 //!   "id": "1779769917405921588",
 //!   "verb": "sync",
 //!   "strategy": "rebase",
+//!   "project": "web-app",
 //!   "source": "/abs/path/src",
 //!   "target": "/abs/path/tgt",
 //!   "retire": false,
@@ -26,7 +27,8 @@
 //! }
 //! ```
 //!
-//! `id` is the op id, shared with savepoint refs. `verb` is `sync` or
+//! `id` is the op id, shared with savepoint refs. `project` is the project
+//! both `source` and `target` are resolved under. `verb` is `sync` or
 //! `sync-to`; `strategy` is `ff` or `rebase`; `phase` is `replay`, `relock`,
 //! `advance-target`, or `retire`. `advanced_tips` is replay-phase intent (repo
 //! → planned/actual tip): empty before replay entry, cleared at relock in the
@@ -78,6 +80,7 @@
 //! Both files live at the workspace root (same directory as `.rwv-active`).
 
 use crate::durable_file::CreateNewError;
+use crate::manifest::ProjectName;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -390,6 +393,12 @@ pub struct OwnerRecord {
     pub verb: OpVerb,
     /// Strategy supplied to the op.
     pub strategy: String,
+    /// The project this op operates on. Both [`Self::source`] and
+    /// [`Self::target`] resolve under it and neither one's `.rwv-active` is
+    /// consulted: the pointer is ambient state an operator may retarget while
+    /// the op is parked, and a workspace pointing elsewhere still holds this
+    /// op's repos.
+    pub project: ProjectName,
     /// Absolute path of the source workspace.
     pub source: PathBuf,
     /// Absolute path of the target workspace (for `sync`: same as the owner
@@ -432,6 +441,7 @@ struct WireOwnerRecord {
     id: String,
     verb: OpVerb,
     strategy: String,
+    project: ProjectName,
     source: PathBuf,
     target: PathBuf,
     retire: bool,
@@ -457,6 +467,7 @@ impl From<WireOwnerRecord> for OwnerRecord {
             id: w.id,
             verb: w.verb,
             strategy: w.strategy,
+            project: w.project,
             source: w.source,
             target: w.target,
             retire: w.retire,
@@ -479,6 +490,7 @@ impl From<OwnerRecord> for WireOwnerRecord {
             id: r.id,
             verb: r.verb,
             strategy: r.strategy,
+            project: r.project,
             source: r.source,
             target: r.target,
             retire: r.retire,
@@ -498,6 +510,7 @@ impl OwnerRecord {
     pub fn new_sync(
         op_id: &OpId,
         strategy: SyncStrategy,
+        project: ProjectName,
         source_workspace: PathBuf,
         cwd_workspace: PathBuf,
     ) -> Self {
@@ -505,6 +518,7 @@ impl OwnerRecord {
             id: op_id.as_str().to_owned(),
             verb: OpVerb::Sync,
             strategy: strategy.to_string(),
+            project,
             source: source_workspace,
             target: cwd_workspace,
             retire: false,
@@ -521,6 +535,7 @@ impl OwnerRecord {
     pub fn new_sync_to(
         op_id: &OpId,
         strategy: SyncStrategy,
+        project: ProjectName,
         cwd_workspace: PathBuf,
         target_workspace: PathBuf,
         retire: bool,
@@ -529,6 +544,7 @@ impl OwnerRecord {
             id: op_id.as_str().to_owned(),
             verb: OpVerb::SyncTo,
             strategy: strategy.to_string(),
+            project,
             source: cwd_workspace,
             target: target_workspace,
             retire,
@@ -1277,6 +1293,10 @@ fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    fn test_project() -> ProjectName {
+        ProjectName::new("web-app").expect("valid project name")
+    }
+
     /// The resume verb is derived from the op's `verb` field, never hardcoded
     /// `rwv sync`: naming the pull verb for a `sync-to` op sends the operator
     /// into the verb-mismatch refusal.
@@ -1321,6 +1341,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1329,6 +1350,7 @@ mod tests {
         assert_eq!(read_back.id, record.id);
         assert_eq!(read_back.verb, OpVerb::Sync);
         assert_eq!(read_back.strategy, "rebase");
+        assert_eq!(read_back.project, test_project());
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(!read_back.retire);
         // Fresh record is in the replay half with an empty intent table.
@@ -1352,6 +1374,7 @@ mod tests {
         let mut record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1386,6 +1409,7 @@ mod tests {
   "id": "9999999999999999999",
   "verb": "sync",
   "strategy": "ff",
+  "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
   "retire": false,
@@ -1404,6 +1428,66 @@ mod tests {
     }
 
     #[test]
+    fn wire_record_missing_project_key_is_rejected() {
+        // The op's project is what abort resolves both of the op's workspaces
+        // under. A record without it has no answer that is not a guess at
+        // ambient state, so it is malformed rather than defaulted.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let json = r#"{
+  "id": "9999999999999999999",
+  "verb": "sync",
+  "strategy": "ff",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {},
+  "converged_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-01T00:00:00Z"
+}
+"#;
+        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
+        let err = read_owner(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse owner record"),
+            "a record missing project must fail to parse; got: {err}"
+        );
+    }
+
+    #[test]
+    fn wire_record_rejects_a_project_name_the_type_refuses() {
+        // The wire field is the validated newtype, not a String the reader
+        // widens back into one: a name no `ProjectName` could be built from
+        // is a parse error at the boundary rather than a path component
+        // assembled later.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let json = r#"{
+  "id": "9999999999999999999",
+  "verb": "sync",
+  "strategy": "ff",
+  "project": "web--app",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {},
+  "converged_tips": {},
+  "overrides": [],
+  "started_at": "2026-06-01T00:00:00Z"
+}
+"#;
+        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
+        let err = read_owner(dir).unwrap_err();
+        assert!(
+            err.to_string().contains("failed to parse owner record"),
+            "a record whose project name fails validation must fail to parse; got: {err}"
+        );
+    }
+
+    #[test]
     fn wire_record_missing_converged_tips_key_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
@@ -1411,6 +1495,7 @@ mod tests {
   "id": "9999999999999999999",
   "verb": "sync",
   "strategy": "ff",
+  "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
   "retire": false,
@@ -1436,6 +1521,7 @@ mod tests {
   "id": "9999999999999999999",
   "verb": "sync",
   "strategy": "ff",
+  "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
   "retire": false,
@@ -1503,6 +1589,7 @@ mod tests {
         let mut record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1555,6 +1642,7 @@ mod tests {
   "id": "1",
   "verb": "sync",
   "strategy": "rebase",
+  "project": "web-app",
   "source": "/src/ws",
   "target": "/cwd/ws",
   "retire": false,
@@ -1578,6 +1666,7 @@ mod tests {
         let record = OwnerRecord::new_sync_to(
             &op_id,
             SyncStrategy::Ff,
+            test_project(),
             PathBuf::from("/cwd/ws"),
             PathBuf::from("/tgt/ws"),
             true,
@@ -1604,6 +1693,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Ff,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1621,6 +1711,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1657,6 +1748,7 @@ mod tests {
         let mut record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1711,6 +1803,7 @@ mod tests {
         let original = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1753,6 +1846,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
@@ -1840,6 +1934,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1862,6 +1957,7 @@ mod tests {
         let record = OwnerRecord::new_sync_to(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/cwd"),
             PathBuf::from("/tgt"),
             false,
@@ -1905,6 +2001,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Ff,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -1948,6 +2045,7 @@ mod tests {
         let record = OwnerRecord::new_sync_to(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/cwd"),
             PathBuf::from("/tgt"),
             false,
@@ -1987,6 +2085,7 @@ mod tests {
         let record = OwnerRecord::new_sync_to(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             owner_dir.clone(),
             PathBuf::from("/tgt"),
             false,
@@ -2051,6 +2150,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Ff,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -2077,6 +2177,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Rebase,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -2098,6 +2199,7 @@ mod tests {
         let record = OwnerRecord::new_sync_to(
             &op_id,
             SyncStrategy::Ff,
+            test_project(),
             PathBuf::from("/cwd"),
             PathBuf::from("/tgt"),
             false,
@@ -2137,6 +2239,7 @@ mod tests {
         let record = OwnerRecord::new_sync(
             &op_id,
             SyncStrategy::Ff,
+            test_project(),
             PathBuf::from("/src"),
             PathBuf::from("/tgt"),
         );
@@ -2188,6 +2291,7 @@ mod tests {
         OwnerRecord::new_sync(
             op_id,
             SyncStrategy::Rebase,
+            test_project(),
             source.to_path_buf(),
             owner.to_path_buf(),
         )
@@ -2197,6 +2301,7 @@ mod tests {
         OwnerRecord::new_sync_to(
             op_id,
             SyncStrategy::Rebase,
+            test_project(),
             owner.to_path_buf(),
             target.to_path_buf(),
             false,

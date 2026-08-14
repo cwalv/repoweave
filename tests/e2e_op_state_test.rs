@@ -242,7 +242,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     // Write a v2 owner record into ww's workspace (simulating an in-progress op).
     let op_id = "test-concurrent-op-1234";
     let op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"source\": \"{src}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = common::json_escaped(&primary.root),
@@ -298,7 +298,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 
     // Write a v2 owner record at a specific phase.
     let op_state_json = format!(
-        "{{\"id\": \"test-phase-detect\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"test-phase-detect\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
@@ -443,7 +443,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
 
     // Write a v2 owner record at advance-target phase into ww's workspace.
     let op_state_json = format!(
-        "{{\"id\": \"test-step3-ff-1234\", \"verb\": \"sync\", \"strategy\": \"ff\", \
+        "{{\"id\": \"test-step3-ff-1234\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
@@ -505,7 +505,7 @@ fn continue_with_strategy_flag_is_rejected() {
 
     // Plant a v2 owner record so --continue would proceed if it were alone.
     let op_state_json = format!(
-        "{{\"id\": \"test-exclusive-1234\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"test-exclusive-1234\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
@@ -751,7 +751,7 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     // v2: ww is the owner (CWD/source of sync-to) → owner record at ww.root/.rwv-op.
     // primary is the target workspace → thin lease at primary.root/.rwv-op-lease.
     let ww_op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"ff\", \"source\": \"{src}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = common::json_escaped(&ww.root),
@@ -808,7 +808,7 @@ fn abort_restores_repos_and_removes_op_state() {
     );
 
     let op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"source\": \"{src}\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
         src = common::json_escaped(&primary.root),
@@ -848,7 +848,7 @@ fn abort_restores_repos_and_removes_op_state() {
 /// Plant a v2 owner record for an in-flight op at `ws_root`.
 fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: &Path) {
     let json = format!(
-        "{{\"id\": \"planted-op-1234\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"planted-op-1234\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",

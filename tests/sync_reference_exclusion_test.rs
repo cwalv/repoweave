@@ -265,7 +265,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// shape), so abort restores only this workspace's repos.
 fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str) {
     let json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",

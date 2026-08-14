@@ -207,7 +207,7 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips
         .collect::<Vec<_>>()
         .join(", ");
     let json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",

@@ -167,7 +167,7 @@ fn write_op_state(workspace_dir: &Path, op_id: &str) {
 /// As [`write_op_state`], for an op started by `verb`.
 fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
     let json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"/tmp/src\", \"target\": \"/tmp/tgt\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\"}}",

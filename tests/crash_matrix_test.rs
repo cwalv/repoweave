@@ -322,7 +322,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
         .collect::<Vec<_>>()
         .join(", ");
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
          \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
@@ -2746,7 +2746,7 @@ fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
 
     // Write the owner record WITHOUT the advanced_tips key.
     let body = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",

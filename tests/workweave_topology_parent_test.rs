@@ -239,7 +239,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
 
     // Plant a v2 owner record in the workweave root (simulate an in-flight op).
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"planted-delete-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
@@ -282,7 +282,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     let ww = create_workweave(&main, "busyforce", None);
 
     let op_json = format!(
-        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"planted-delete-op-2\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",

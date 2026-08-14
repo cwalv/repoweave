@@ -99,7 +99,7 @@ fn an_owner_record_naming_every_consent_flag_parses() {
         .collect::<Vec<_>>()
         .join(", ");
     let json = format!(
-        "{{\"id\": \"1779769917405921588\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"1779769917405921588\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"/src\", \"target\": \"/tgt\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [{list}], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}"

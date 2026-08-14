@@ -3121,12 +3121,14 @@ fn guard_and_mark<'a>(
         MachineVerb::Sync => OwnerRecord::new_sync(
             &op_id,
             strategy,
+            cwd_project_name.clone(),
             source_workspace_dir.clone(),
             cwd_workspace_dir.clone(),
         ),
         MachineVerb::SyncTo => OwnerRecord::new_sync_to(
             &op_id,
             strategy,
+            cwd_project_name.clone(),
             cwd_workspace_dir.clone(),
             dest_workspace_dir.clone(),
             retire,
@@ -6030,8 +6032,12 @@ pub fn run_abort(
     };
     let cwd_restore_id = restore_id_for(&workspace_dir);
 
-    let cwd_project_name = find_project_name(ctx)?;
-    let cwd_project_dir = project_dir(&workspace_dir, cwd_project_name.as_str());
+    // Both of the op's workspaces are enumerated under the op's own project,
+    // whichever side abort was invoked from. A workspace's `.rwv-active` may
+    // name a different project by the time an operator aborts, and that
+    // project's repos are not the ones this op advanced.
+    let op_project_name = owner_record.project.clone();
+    let cwd_project_dir = project_dir(&workspace_dir, op_project_name.as_str());
     // Use the lockless loader: abort's contract is "the state is bad, get me
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
@@ -6120,9 +6126,10 @@ pub fn run_abort(
         // Side-specific id: `-target` namespace when this extra IS the
         // recorded target workspace, base op id when it is the owner.
         let extra_restore_id = restore_id_for(extra_dir);
-        // Resolve the target workspace's project context. Best-effort: if the
-        // project name cannot be determined, skip with a warning.
-        match WorkspaceContext::resolve(extra_dir, None) {
+        // Best-effort: an extra workspace that does not present the op's
+        // project is skipped with a warning rather than restored from
+        // whatever else lives there.
+        match WorkspaceContext::resolve(extra_dir, Some(op_project_name.clone())) {
             Ok(extra_ctx) => {
                 let extra_project_name = match find_project_name(&extra_ctx) {
                     Ok(n) => n,

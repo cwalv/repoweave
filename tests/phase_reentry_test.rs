@@ -179,7 +179,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 fn write_owner_record(workspace: &Path, source: &Path, target: &Path, phase: &str) {
     let body = format!(
-        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"reentry-test-{phase}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
@@ -286,7 +286,7 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
 
 fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
     let body = format!(
-        "{{\"id\": \"reentry-test-advance\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"reentry-test-advance\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
@@ -490,7 +490,7 @@ fn write_sync_to_owner_record_at_phase(
     id: &str,
 ) {
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
@@ -749,7 +749,7 @@ fn write_sync_to_retire_record(
         .collect::<Vec<_>>()
         .join(", ");
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{{tips_json}}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
@@ -1176,7 +1176,7 @@ fn write_sync_to_record_with_strategy(
     id: &str,
 ) -> String {
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"{strategy}\", \
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"{strategy}\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",

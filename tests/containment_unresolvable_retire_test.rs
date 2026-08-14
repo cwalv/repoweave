@@ -184,7 +184,7 @@ fn make_disconnected_retire_workspaces(parent: &Path) -> (Workspace, Workspace) 
 
 fn write_sync_to_retire_record(owner: &Path, source: &Path, target: &Path, id: &str) {
     let body = format!(
-        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": true, \"phase\": \"retire\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",

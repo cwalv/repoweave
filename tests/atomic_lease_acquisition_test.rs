@@ -492,7 +492,7 @@ fn doctor_leaves_live_lease_alone() {
     let owner_ws = tmp.path().join("live-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
     let owner_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
@@ -541,7 +541,7 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     let owner_ws = tmp.path().join("other-owner");
     std::fs::create_dir_all(&owner_ws).unwrap();
     let fresh_json = format!(
-        "{{\"id\": \"fresh-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \
+        "{{\"id\": \"fresh-op\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",

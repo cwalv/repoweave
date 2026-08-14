@@ -34,6 +34,7 @@ a key fails to parse rather than defaulting.
   "id": "1779769917405921588",
   "verb": "sync",
   "strategy": "rebase",
+  "project": "web-app",
   "source": "/abs/path/src",
   "target": "/abs/path/tgt",
   "retire": false,
@@ -50,6 +51,7 @@ a key fails to parse rather than defaulting.
 | `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
 | `verb` | Which top-level verb started this op: `sync` or `sync-to` |
 | `strategy` | Strategy supplied to the op: `ff` or `rebase` |
+| `project` | The project the op operates on. Both `source` and `target` are resolved under it; neither workspace's `.rwv-active` is consulted, since an operator may retarget a pointer while the op is parked. `rwv abort` reads it to know which manifest to enumerate on each side |
 | `source` | Absolute path of the source workspace |
 | `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
 | `retire` | Whether `--retire` was passed |

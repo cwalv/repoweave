@@ -2181,6 +2181,7 @@ fn migration_skips_a_workweave_with_an_operation_in_flight() {
     let owner = repoweave::op_state::OwnerRecord::new_sync(
         &repoweave::op_state::OpId::new_now(),
         repoweave::op_state::SyncStrategy::Rebase,
+        repoweave::manifest::ProjectName::new("myproj").unwrap(),
         ws.clone(),
         ww_dir.clone(),
     );
@@ -2966,6 +2967,7 @@ fn an_in_flight_op_leaves_the_migration_finding_standing_beside_the_op_state_one
     let owner = repoweave::op_state::OwnerRecord::new_sync(
         &repoweave::op_state::OpId::new_now(),
         repoweave::op_state::SyncStrategy::Rebase,
+        repoweave::manifest::ProjectName::new("myproj").unwrap(),
         ws.clone(),
         ww_dir.clone(),
     );
