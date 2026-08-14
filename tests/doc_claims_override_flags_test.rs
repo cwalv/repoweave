@@ -415,7 +415,7 @@ fn build_push_fixture() -> PushFixture {
     git(&["config", "user.email", "test@test.com"], &project_dir);
     git(&["config", "user.name", "Test"], &project_dir);
 
-    let bare_url = manifest_bare.to_string_lossy().into_owned();
+    let bare_url = common::file_url(&manifest_bare);
     let manifest_head = head_sha(&manifest_local);
     std::fs::write(
         project_dir.join("rwv.toml"),
@@ -447,7 +447,7 @@ fn build_push_fixture() -> PushFixture {
 }
 
 fn write_lock_at(fixture: &PushFixture, sha: &str) {
-    let bare_url = fixture.manifest_bare.to_string_lossy();
+    let bare_url = common::file_url(&fixture.manifest_bare);
     let raw = format!(
         "{{\"repositories\": {{\"local/org/repo\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}}}}}"
     );

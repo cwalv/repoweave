@@ -656,11 +656,11 @@ fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
     git(&remote_path, &["commit", "-m", "initial"]);
 
     // Clone into local with the requested remote name and fetch.
-    let remote_url = remote_path.to_str().unwrap();
+    let remote_url = common::file_url(&remote_path);
     let local_str = local_path.to_str().unwrap();
     git(
         workspace.path(),
-        &["clone", "--origin", remote_name, remote_url, local_str],
+        &["clone", "--origin", remote_name, &remote_url, local_str],
     );
 
     (workspace, local_path)

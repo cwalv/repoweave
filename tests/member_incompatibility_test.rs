@@ -429,7 +429,7 @@ fn build_update_fixture(
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
 
-    let bare_url = member_bare.to_str().unwrap();
+    let bare_url = common::file_url(&member_bare);
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(

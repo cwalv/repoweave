@@ -329,8 +329,8 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         id = rec.id,
         verb = rec.verb_str,
-        src = rec.source,
-        tgt = rec.target,
+        src = common::json_escaped(&rec.source),
+        tgt = common::json_escaped(&rec.target),
         retire = rec.retire,
         phase = rec.phase,
     );

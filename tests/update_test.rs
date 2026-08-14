@@ -101,7 +101,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         let head = git_run(&canonical, &["rev-parse", "HEAD"]);
         manifest_shas.push(((*repo_path).to_string(), head));
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(&bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
@@ -129,7 +129,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     let mut lock_entries = Vec::new();
     for (rp, sha) in &manifest_shas {
         let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(bare);
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
@@ -410,7 +410,7 @@ fn update_missing_clone_names_rwv_fetch_repair_verb() {
     // Append a manifest entry for a repo that was never cloned locally.
     // (Constructing the missing state directly — no deletions needed.)
     let project_dir = ws.workspace.join("projects").join("proj-missing");
-    let bare_url = ws.manifest_bares[0].1.to_str().unwrap().to_string();
+    let bare_url = common::file_url(&ws.manifest_bares[0].1);
     let mut manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     manifest.push_str(&format!(
         "[repositories.\"local/acme/absent\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"

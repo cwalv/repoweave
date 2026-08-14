@@ -134,7 +134,7 @@ fn weave() -> Weave {
         ],
         &parent,
     );
-    let url = member_origin.to_string_lossy().into_owned();
+    let url = common::file_url(&member_origin);
     std::fs::write(
         project.join("rwv.toml"),
         format!(

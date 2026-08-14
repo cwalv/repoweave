@@ -133,7 +133,7 @@ fn build_workspace() -> Fixture {
 
     let project_dir = workspace.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let bare_url = bare.to_str().unwrap();
+    let bare_url = common::file_url(&bare);
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(

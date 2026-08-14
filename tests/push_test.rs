@@ -117,7 +117,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
         let head = git_run(&canonical, &["rev-parse", "HEAD"]);
         manifest_shas.push(((*repo_path).to_string(), head));
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(&bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
@@ -148,7 +148,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     let mut lock_entries = Vec::new();
     for (rp, sha) in &manifest_shas {
         let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(bare);
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
@@ -221,7 +221,7 @@ fn push_happy_path_pushes_manifest_then_project() {
         git_run(&local, &["add", "."]);
         git_run(&local, &["commit", "-m", "advance"]);
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
@@ -314,7 +314,7 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
     let new_sha = git_run(&local, &["rev-parse", "HEAD"]);
 
     // Rewrite lock to match the new HEAD so the precondition passes.
-    let bare_url = manifest_bare.to_str().unwrap();
+    let bare_url = common::file_url(manifest_bare);
     let raw_lock = format!(
         "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {new_sha:?}}}}}}}"
     );
@@ -577,7 +577,7 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
 
     // Update lock to point at the new SHA (HEAD on feat-x).
     let (_, bare) = &ws.manifest_bares[0];
-    let bare_url = bare.to_str().unwrap();
+    let bare_url = common::file_url(bare);
     let raw_lock = format!(
         "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {feat_sha:?}}}}}}}"
     );
@@ -636,7 +636,7 @@ fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
     let feat_sha = git_run(&local, &["rev-parse", "HEAD"]);
 
     let (_, bare) = &ws.manifest_bares[0];
-    let bare_url = bare.to_str().unwrap();
+    let bare_url = common::file_url(bare);
     let raw_lock = format!(
         "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {feat_sha:?}}}}}}}"
     );
@@ -686,7 +686,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
         git_run(&local, &["commit", "-m", "advance"]);
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         expected_shas.push(sha.clone());
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(bare);
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
         ));
@@ -745,7 +745,7 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     git_run(&local, &["commit", "-m", "advance"]);
     let manifest_sha = git_run(&local, &["rev-parse", "HEAD"]);
 
-    let bare_url = manifest_bare.to_str().unwrap();
+    let bare_url = common::file_url(manifest_bare);
     let raw_lock = format!(
         "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {manifest_sha:?}}}}}}}"
     );
@@ -846,7 +846,7 @@ fn build_workspace_with_advances(
         git_run(&local, &["add", "."]);
         git_run(&local, &["commit", "-m", &format!("advance {rp}")]);
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
-        let bare_url = bare.to_str().unwrap();
+        let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
