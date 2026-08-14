@@ -100,10 +100,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
             );
         }
 
-        let marker = format!(
-            "{{\"primary\":\"{p}\",\"project\":\"app\",\"parent\":\"{p}\"}}",
-            p = primary_canon.display()
-        );
+        let marker = common::workweave_marker(&primary_canon, "app", &primary_canon);
         std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
     }
 

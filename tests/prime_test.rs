@@ -137,11 +137,7 @@ role = "owned"
     // Write the .rwv-workweave marker so resolve() recognises this as a
     // workweave (marker-less resolution was removed).
     let primary_canon = root.canonicalize().unwrap();
-    let marker = format!(
-        "{{\"primary\":\"{}\",\"project\":\"ws\",\"parent\":\"{}\"}}",
-        primary_canon.display(),
-        primary_canon.display()
-    );
+    let marker = common::workweave_marker(&primary_canon, "ws", &primary_canon);
     fs::write(weave_dir.join(".rwv-workweave"), &marker).unwrap();
 
     Command::cargo_bin("rwv")

@@ -227,11 +227,11 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
     // Create two manifest repos.
     let repo_a_bare = tmp.path().join("repo-a.git");
     init_bare_repo_with_commit(&repo_a_bare);
-    let repo_a_url = format!("file://{}", repo_a_bare.display());
+    let repo_a_url = common::file_url(&repo_a_bare);
 
     let repo_b_bare = tmp.path().join("repo-b.git");
     init_bare_repo_with_commit(&repo_b_bare);
-    let repo_b_url = format!("file://{}", repo_b_bare.display());
+    let repo_b_url = common::file_url(&repo_b_bare);
 
     // Project bare with a manifest pointing at both repos.
     let project_bare = tmp.path().join("myproject.git");
@@ -243,7 +243,7 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
             ("local/org/repo-b", &repo_b_url),
         ],
     );
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     // Run `rwv fetch --json -j 1` (explicit serial = envelope mode).
     let assert = rwv()
@@ -305,7 +305,7 @@ fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
     for i in 0..3 {
         let bare = tmp.path().join(format!("repo-{i}.git"));
         init_bare_repo_with_commit(&bare);
-        repo_urls.push(format!("file://{}", bare.display()));
+        repo_urls.push(common::file_url(&bare));
         repo_paths.push(format!("local/org/repo-{i}"));
     }
 
@@ -317,7 +317,7 @@ fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
         .map(|(p, u)| (p.as_str(), u.as_str()))
         .collect();
     push_manifest_to_bare(&project_bare, &repo_pairs);
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     // Run with -j 2 --json → NDJSON mode.
     let assert = rwv()
@@ -399,7 +399,7 @@ fn fetch_json_ndjson_lines_are_not_interleaved() {
     for i in 0..4 {
         let bare = tmp.path().join(format!("repo-{i}.git"));
         init_bare_repo_with_commit(&bare);
-        repo_urls.push(format!("file://{}", bare.display()));
+        repo_urls.push(common::file_url(&bare));
         repo_paths.push(format!("local/org/repo-{i}"));
     }
 
@@ -411,7 +411,7 @@ fn fetch_json_ndjson_lines_are_not_interleaved() {
         .map(|(p, u)| (p.as_str(), u.as_str()))
         .collect();
     push_manifest_to_bare(&project_bare, &repo_pairs);
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     let assert = rwv()
         .args(["fetch", &project_url, "--json", "-j", "4"])

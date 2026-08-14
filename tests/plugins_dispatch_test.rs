@@ -634,11 +634,7 @@ fn envelope_via_w_flag_sets_workweave_var() {
         .join("myproj--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
     // Write the .rwv-workweave marker.
-    let marker_content = format!(
-        "{{\"primary\":\"{}\",\"project\":\"myproj\",\"parent\":\"{}\"}}",
-        ws_canon.display(),
-        ws_canon.display()
-    );
+    let marker_content = common::workweave_marker(&ws_canon, "myproj", &ws_canon);
     std::fs::write(ww_dir.join(".rwv-workweave"), &marker_content).unwrap();
     // Replicate workspace structure in the workweave dir.
     std::fs::create_dir_all(ww_dir.join("github")).unwrap();

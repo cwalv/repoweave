@@ -192,7 +192,7 @@ fn add_authors_managed_content() {
 
     let bare = tmp.path().join("dep.git");
     init_bare_repo_with_commit(&bare);
-    let url = format!("file://{}", bare.display());
+    let url = common::file_url(&bare);
 
     rwv()
         .args(["add", &url])
@@ -211,7 +211,7 @@ fn remove_authors_managed_content() {
     let tmp = common::tempdir().unwrap();
     let bare = tmp.path().join("dep.git");
     init_bare_repo_with_commit(&bare);
-    let url = format!("file://{}", bare.display());
+    let url = common::file_url(&bare);
 
     let (ws, project_dir) = setup_git_project(tmp.path(), "myapp", &[("local/org/dep", &url)]);
 
@@ -256,7 +256,7 @@ fn add_does_not_author_from_a_partial_member_set() {
 
     let absent_bare = tmp.path().join("org/absent.git");
     init_bare_go_module(&absent_bare, "example.com/absent");
-    let absent_url = format!("file://{}", absent_bare.display());
+    let absent_url = common::file_url(&absent_bare);
 
     // `org/absent` is declared and never cloned: the partially-fetched shape
     // an `rwv init --adopt` (or a failed clone) leaves behind.
@@ -264,7 +264,7 @@ fn add_does_not_author_from_a_partial_member_set() {
 
     let new_bare = tmp.path().join("org/newdep.git");
     init_bare_go_module(&new_bare, "example.com/newdep");
-    let new_url = format!("file://{}", new_bare.display());
+    let new_url = common::file_url(&new_bare);
 
     rwv()
         .args(["add", &new_url])
@@ -298,8 +298,8 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
     init_bare_go_module(&keep_bare, "example.com/keep");
     let gone_bare = tmp.path().join("org/gone.git");
     init_bare_go_module(&gone_bare, "example.com/gone");
-    let keep_url = format!("file://{}", keep_bare.display());
-    let gone_url = format!("file://{}", gone_bare.display());
+    let keep_url = common::file_url(&keep_bare);
+    let gone_url = common::file_url(&gone_bare);
 
     let (ws, project_dir) = setup_git_project(
         tmp.path(),
@@ -312,7 +312,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
     // Author once over the whole member set, via an intent verb.
     let drop_bare = tmp.path().join("org/drop.git");
     init_bare_go_module(&drop_bare, "example.com/drop");
-    let drop_url = format!("file://{}", drop_bare.display());
+    let drop_url = common::file_url(&drop_bare);
     rwv()
         .args(["add", &drop_url])
         .current_dir(&ws)
@@ -361,7 +361,7 @@ fn fetch_does_not_author_managed_content() {
     std::fs::create_dir_all(&ws).unwrap();
 
     let project_bare = make_project_bare(tmp.path(), "myapp", &[]);
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
 
     rwv()
         .args(["fetch", &source])
@@ -452,7 +452,7 @@ fn init_adopt_does_not_author_managed_content() {
     let ws = make_workspace(tmp.path());
 
     let project_bare = make_project_bare(tmp.path(), "adoptee", &[]);
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
 
     rwv()
         .args(["init", "--adopt", &source])
@@ -520,7 +520,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
     git_run(&["push", "origin", "main"], &work);
 
     let adopt_ws = make_workspace(tmp.path());
-    let source = format!("file://{}", bare.display());
+    let source = common::file_url(&bare);
 
     rwv()
         .args(["init", "--adopt", &source])
@@ -676,7 +676,7 @@ lto = true
 
     let adopt_ws = make_workspace(tmp.path());
     materialize_lib_subcrates(&adopt_ws, LIB_SUBCRATES);
-    let source = format!("file://{}", bare.display());
+    let source = common::file_url(&bare);
 
     rwv()
         .args(["init", "--adopt", &source])
@@ -721,7 +721,7 @@ lto = true
 
     let adopt_ws = make_workspace(tmp.path());
     materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
-    let source = format!("file://{}", bare.display());
+    let source = common::file_url(&bare);
 
     rwv()
         .args(["init", "--adopt", &source])
@@ -808,7 +808,7 @@ resolver = \"2\"
 
     let adopt_ws = make_workspace(tmp.path());
     materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
-    let source = format!("file://{}", bare.display());
+    let source = common::file_url(&bare);
 
     rwv()
         .args(["init", "--adopt", &source])
@@ -856,7 +856,7 @@ resolver = \"2\"
     // The point of the fixture: `materialize_lib_subcrates` is NOT called, so
     // neither member path exists.
     let adopt_ws = make_workspace(tmp.path());
-    let source = format!("file://{}", bare.display());
+    let source = common::file_url(&bare);
 
     let out = rwv()
         .args(["init", "--adopt", &source])

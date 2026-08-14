@@ -175,7 +175,7 @@ fn add_clones_repo_to_canonical_path() {
     // Create a bare repo to serve as the "remote".
     let bare = tmp.path().join("remote.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -209,7 +209,7 @@ fn add_unrecognized_registry_url_writes_three_segment_manifest_path() {
     let bare = tmp.path().join("acme").join("widgets.git");
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -248,7 +248,7 @@ fn add_with_role_flag_sets_annotation() {
 
     let bare = tmp.path().join("fork-remote.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -274,7 +274,7 @@ fn add_existing_repo_handles_gracefully() {
 
     let bare = tmp.path().join("existing.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     // Start with the repo already in the manifest.
     let (workspace, _project_dir) =
@@ -377,7 +377,7 @@ fn add_url_resolves_a_non_main_remote_default_branch() {
     run(&["commit", "-m", "initial"], &work);
     run(&["push", "origin", "master"], &work);
 
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -505,7 +505,7 @@ fn remove_path_removes_manifest_entry() {
 
     let bare = tmp.path().join("to-remove.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let repo_path = "local/org/to-remove";
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
@@ -554,7 +554,7 @@ fn remove_with_delete_flag_removes_clone() {
 
     let bare = tmp.path().join("delete-me.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let repo_path = "local/org/delete-me";
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
@@ -808,7 +808,7 @@ fn add_fork_clones_with_origin_remote() {
 
     let bare = tmp.path().join("fork-src.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url_str = format!("file://{}", bare.display());
+    let remote_url_str = common::file_url(&bare);
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -839,7 +839,7 @@ fn add_owned_clones_with_origin_remote() {
 
     let bare = tmp.path().join("owned-src.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url_str = format!("file://{}", bare.display());
+    let remote_url_str = common::file_url(&bare);
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -870,7 +870,7 @@ fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
 
     let bare = tmp.path().join("legacy-primary-src.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url_str = format!("file://{}", bare.display());
+    let remote_url_str = common::file_url(&bare);
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -892,7 +892,7 @@ fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
 /// Locate the directory rwv cloned a given bare source into by scanning the
 /// workspace for git repos whose `origin` matches.
 fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
-    let want = format!("file://{}", bare.display());
+    let want = common::file_url(&bare);
     let want_alt = bare.to_string_lossy().into_owned();
     fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -998,10 +998,7 @@ fn setup_workweave_for_add_tests(
 
     // Marker file pointing at primary (canonical, so resolve matches).
     let primary_canonical = primary.canonicalize().unwrap();
-    let marker = format!(
-        "{{\"primary\":\"{p}\",\"project\":\"test-project\",\"parent\":\"{p}\"}}",
-        p = primary_canonical.display()
-    );
+    let marker = common::workweave_marker(&primary_canonical, "test-project", &primary_canonical);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
 
     // Workweave's own copy of the project dir (its own git repo to mirror
@@ -1032,7 +1029,7 @@ fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
 
     let bare = tmp.path().join("primary-add.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (primary, _workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
@@ -1062,7 +1059,7 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
 
     let bare = tmp.path().join("workweave-add.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
@@ -1107,7 +1104,7 @@ fn add_from_workweave_clones_to_primary_canonical_path() {
 
     let bare = tmp.path().join("clone-target.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
@@ -1137,7 +1134,7 @@ fn add_from_workweave_creates_worktree_at_workweave() {
 
     let bare = tmp.path().join("wt-target.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
@@ -1187,7 +1184,7 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
 
     let bare = tmp.path().join("active-target.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
@@ -1288,7 +1285,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
     let bare = tmp.path().join("url-gcdir.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
@@ -1561,7 +1558,7 @@ fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
     // Create a bare repo to serve as the remote (shared by both projects).
     let bare = tmp.path().join("shared-remote.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     // Both projects start empty; the workspace has project-a and project-b.
     let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(&tmp, &[]);
@@ -1634,7 +1631,7 @@ fn add_url_arm_no_warning_when_clone_is_unshared() {
 
     let bare = tmp.path().join("unshared-remote.git");
     init_bare_repo_with_commit(&bare);
-    let remote_url = format!("file://{}", bare.display());
+    let remote_url = common::file_url(&bare);
 
     // Both projects start empty; project-b adds the repo fresh (unshared).
     let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(&tmp, &[]);

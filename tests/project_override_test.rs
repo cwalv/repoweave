@@ -83,7 +83,7 @@ fn make_two_project_workspace(parent: &Path) -> (PathBuf, PathBuf, PathBuf, Stri
         ],
         parent,
     );
-    let url = format!("file://{}", bare.display());
+    let url = common::file_url(&bare);
     git(&["remote", "add", "origin", &url], &server);
     git(&["fetch", "origin"], &server);
 

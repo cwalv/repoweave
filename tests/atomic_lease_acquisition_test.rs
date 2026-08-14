@@ -421,7 +421,7 @@ fn doctor_reports_dead_op_lease_with_missing_owner_record() {
     let lease_json = format!(
         "{{\"id\": \"dead-op-9999\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = ghost_owner.display(),
+        owner = common::json_escaped(&ghost_owner),
     );
     std::fs::write(ww.root.join(".rwv-op-lease"), &lease_json).unwrap();
 
@@ -459,7 +459,7 @@ fn doctor_fix_removes_dead_op_lease() {
     let lease_json = format!(
         "{{\"id\": \"dead-op-fix\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = ghost_owner.display(),
+        owner = common::json_escaped(&ghost_owner),
     );
     let lease_path = ww.root.join(".rwv-op-lease");
     std::fs::write(&lease_path, &lease_json).unwrap();
@@ -496,8 +496,8 @@ fn doctor_leaves_live_lease_alone() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = owner_ws.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&owner_ws),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(owner_ws.join(".rwv-op"), &owner_json).unwrap();
 
@@ -506,7 +506,7 @@ fn doctor_leaves_live_lease_alone() {
     let lease_json = format!(
         "{{\"id\": \"{op_id}\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = owner_ws.display(),
+        owner = common::json_escaped(&owner_ws),
     );
     std::fs::write(ww.root.join(".rwv-op-lease"), &lease_json).unwrap();
 
@@ -545,8 +545,8 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = owner_ws.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&owner_ws),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(owner_ws.join(".rwv-op"), &fresh_json).unwrap();
 
@@ -556,7 +556,7 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     let stale_lease_json = format!(
         "{{\"id\": \"old-op-stranded\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = owner_ws.display(),
+        owner = common::json_escaped(&owner_ws),
     );
     std::fs::write(ww.root.join(".rwv-op-lease"), &stale_lease_json).unwrap();
 

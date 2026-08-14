@@ -66,7 +66,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
@@ -109,7 +109,7 @@ fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
         &[
             "submodule",
             "add",
-            &format!("file://{}", submodule_remote.display()),
+            &common::file_url(&submodule_remote),
             sub_path,
         ],
         repo_dir,

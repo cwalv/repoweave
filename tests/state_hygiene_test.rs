@@ -818,11 +818,7 @@ fn a_new_non_reclamation_finding_stays_itemized_beside_the_count_lines() {
     let primary = root.canonicalize().unwrap();
     std::fs::write(
         ww_dir.join(".rwv-workweave"),
-        format!(
-            "{{\"primary\":\"{}\",\"project\":\"my-app\",\"parent\":\"{}\"}}",
-            primary.display(),
-            primary.display()
-        ),
+        common::workweave_marker(&primary, "my-app", &primary),
     )
     .unwrap();
 

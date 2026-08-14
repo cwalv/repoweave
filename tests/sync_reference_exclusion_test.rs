@@ -177,17 +177,17 @@ fn make_primary(parent: &Path) -> Primary {
     let manifest = format!(
         "[repositories.\"{owned_path}\"]\ntype = \"git\"\nurl = \"file://{owned}\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"{ref_path}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
         owned_path = OWNED_PATH,
-        owned = owned.display(),
+        owned = common::url_path(&owned),
         ref_path = REF_PATH,
-        reference = reference.display(),
+        reference = common::url_path(&reference),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let owned_url = format!("file://{}", owned.display());
-    let reference_url = format!("file://{}", reference.display());
+    let owned_url = common::file_url(&owned);
+    let reference_url = common::file_url(&reference);
     let raw_lock = format!(
         "{{\"repositories\": {{{owned_path:?}: {{\"type\": \"git\", \"url\": {owned_url:?}, \"version\": {owned_sha:?}}}, {ref_path:?}: {{\"type\": \"git\", \"url\": {reference_url:?}, \"version\": {ref_sha:?}}}}}}}",
         owned_path = OWNED_PATH,
@@ -269,7 +269,7 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str) {
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        root = workspace.display(),
+        root = common::json_escaped(&workspace),
     );
     std::fs::write(workspace.join(".rwv-op"), &json).unwrap();
 }

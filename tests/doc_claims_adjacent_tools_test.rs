@@ -100,7 +100,7 @@ fn init_bare_repo_with_commit(path: &Path, files: &[(&str, &str)]) -> String {
 fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
     let dep_bare = tmp.join("dep.git");
     let dep_sha = init_bare_repo_with_commit(&dep_bare, &[("README", "dep\n")]);
-    let dep_url = format!("file://{}", dep_bare.display());
+    let dep_url = common::file_url(&dep_bare);
 
     let project_bare = tmp.join("web-app.git");
     let manifest_toml = format!(
@@ -222,7 +222,7 @@ fn shipped_recipe_without_nesting_fails() {
     let tmp = common::tempdir().unwrap();
     let dep_bare = tmp.path().join("dep.git");
     init_bare_repo_with_commit(&dep_bare, &[("README", "dep\n")]);
-    let dep_url = format!("file://{}", dep_bare.display());
+    let dep_url = common::file_url(&dep_bare);
 
     let project_bare = tmp.path().join("web-app.git");
     let manifest_toml = format!(

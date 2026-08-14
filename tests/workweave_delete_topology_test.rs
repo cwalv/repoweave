@@ -75,7 +75,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     git(&["add", "rwv.toml"], &project_dir);
@@ -100,12 +100,7 @@ fn add_workweave_checkout(canonical_repo: &Path, ww_dir: &Path, rel_repo_path: &
 }
 
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
-    let marker = format!(
-        "{{\"primary\":\"{}\",\"project\":\"{}\",\"parent\":\"{}\"}}",
-        primary.display(),
-        project,
-        primary.display(),
-    );
+    let marker = common::workweave_marker(&primary, project, &primary);
     std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
     // Register in the primary-side `.rwv-workweave-index` so the
     // registry-backed delete path can find this hand-crafted fixture.

@@ -189,7 +189,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         &work,
     );
     run_git(&["push", "origin", "main"], &work);
-    format!("file://{}", project_bare.display())
+    common::file_url(&project_bare)
 }
 
 /// Recursively copy `src` to `dst` (test-only helper).
@@ -248,8 +248,8 @@ fn build_fixture() -> Fixture {
     let bare_b = tmp.path().join("b.git");
     init_bare_cargo_lib(&bare_a, "alpha");
     init_bare_cargo_lib(&bare_b, "beta");
-    let url_a = format!("file://{}", bare_a.display());
-    let url_b = format!("file://{}", bare_b.display());
+    let url_a = common::file_url(&bare_a);
+    let url_b = common::file_url(&bare_b);
     let repo_a_path = "github/tutorial/alpha";
     let repo_b_path = "github/tutorial/beta";
     let project_url = make_project_source(

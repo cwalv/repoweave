@@ -42,10 +42,7 @@ fn make_disputed_workweave(tmp: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(ww_project.join("rwv.toml"), "[repositories]\n").unwrap();
     std::fs::write(
         ww.join(".rwv-workweave"),
-        format!(
-            "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
-            p = primary.display()
-        ),
+        common::workweave_marker(&primary, "web-app", &primary),
     )
     .unwrap();
     std::fs::write(ww.join(".rwv-active"), "other-project\n").unwrap();

@@ -64,7 +64,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -309,7 +309,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_b_dir.join("rwv.toml"), manifest_b).unwrap();
 

@@ -245,8 +245,8 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = primary.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
@@ -302,8 +302,8 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = primary.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
@@ -447,8 +447,8 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = primary.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
@@ -509,8 +509,8 @@ fn continue_with_strategy_flag_is_rejected() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = primary.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
@@ -754,15 +754,15 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"ff\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = ww.root.display(),
-        tgt = primary.root.display(),
+        src = common::json_escaped(&ww.root),
+        tgt = common::json_escaped(&primary.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &ww_op_state_json).unwrap();
 
     // Thin lease in primary (target workspace): just {id, owner, created_at}.
     let primary_lease_json = format!(
         "{{\"id\": \"{op_id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = ww.root.display(),
+        owner = common::json_escaped(&ww.root),
     );
     std::fs::write(primary.root.join(".rwv-op-lease"), &primary_lease_json).unwrap();
 
@@ -811,8 +811,8 @@ fn abort_restores_repos_and_removes_op_state() {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"source\": \"{src}\", \
          \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
          \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = primary.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
 
@@ -852,8 +852,8 @@ fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: 
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = src.display(),
-        tgt = tgt.display(),
+        src = common::json_escaped(&src),
+        tgt = common::json_escaped(&tgt),
     );
     std::fs::write(ws_root.join(".rwv-op"), &json).unwrap();
 }
@@ -968,7 +968,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
     let lease_json = format!(
         "{{\"id\": \"planted-op-1234\", \"owner\": \"{owner}\", \
          \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = ww.root.display(),
+        owner = common::json_escaped(&ww.root),
     );
     std::fs::write(primary.root.join(".rwv-op-lease"), &lease_json).unwrap();
 

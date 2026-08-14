@@ -147,8 +147,8 @@ fn fetch_clones_project_and_repos() {
     run(&["config", "user.name", "Test"], &project_work);
 
     // Use file:// URLs so no network access is needed.
-    let server_url = format!("file://{}", bare_server.display());
-    let client_url = format!("file://{}", bare_client.display());
+    let server_url = common::file_url(&bare_server);
+    let client_url = common::file_url(&bare_client);
     write_manifest(
         &project_work,
         &[
@@ -161,7 +161,7 @@ fn fetch_clones_project_and_repos() {
     run(&["push", "origin", "main"], &project_work);
 
     // Run `rwv fetch` pointing at the project bare repo.
-    let project_source = format!("file://{}", project_bare.display());
+    let project_source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &project_source])
         .current_dir(&workspace)
@@ -220,7 +220,7 @@ fn fetch_creates_project_dir_with_manifest() {
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", bare_repo.display());
+    let source = common::file_url(&bare_repo);
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
@@ -283,13 +283,13 @@ fn fetch_repos_at_canonical_paths() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
@@ -347,13 +347,13 @@ fn fetch_existing_workspace_handles_gracefully() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
 
     // First fetch — should succeed.
     rwv()
@@ -472,13 +472,13 @@ fn fetch_mode_default_updates_lock() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
@@ -540,13 +540,13 @@ fn fetch_default_auto_activates_project() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
@@ -612,13 +612,13 @@ fn setup_bootstrap_source(tmp: &Path) -> (PathBuf, String) {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     (workspace, source)
 }
 
@@ -752,7 +752,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
     run_quiet(&["config", "user.email", "test@test.com"], &work);
     run_quiet(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run_quiet(&["add", "rwv.toml"], &work);
     run_quiet(&["commit", "-m", "manifest"], &work);
@@ -797,7 +797,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
 
     // Default fetch: should check out dep at first_sha (the lock value),
     // not HEAD (the branch tip, which is now ahead).
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
@@ -862,14 +862,14 @@ fn fetch_frozen_errors_on_missing_lock() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     // Deliberately do NOT create rwv.lock.
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest without lock"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source, "--frozen"])
         .current_dir(&workspace)
@@ -924,8 +924,8 @@ fn fetch_frozen_errors_on_incomplete_lock() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
-    let dep2_url = format!("file://{}", bare_repo2.display());
+    let dep_url = common::file_url(&bare_repo);
+    let dep2_url = common::file_url(&bare_repo2);
 
     // Manifest lists TWO repos.
     write_manifest(
@@ -945,7 +945,7 @@ fn fetch_frozen_errors_on_incomplete_lock() {
     run(&["commit", "-m", "incomplete lock"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source, "--frozen"])
         .current_dir(&workspace)
@@ -1013,7 +1013,7 @@ fn fetch_frozen_succeeds_with_valid_lock() {
     );
     let dep_sha = run(&["rev-parse", "HEAD"], &dep_clone);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
 
     // Write a valid lock that matches the manifest.
@@ -1027,7 +1027,7 @@ fn fetch_frozen_succeeds_with_valid_lock() {
     run_quiet(&["commit", "-m", "manifest+lock"], &work);
     run_quiet(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source, "--frozen"])
         .current_dir(&workspace)
@@ -1081,13 +1081,13 @@ fn fetch_second_invocation_is_idempotent() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", bare_repo.display());
+    let dep_url = common::file_url(&bare_repo);
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
     run(&["add", "rwv.toml"], &work);
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
 
     // First fetch — succeeds and activates the project.
     rwv()
@@ -1196,8 +1196,8 @@ fn fetch_no_reference_skips_reference_role_repos() {
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
-    let primary_url = format!("file://{}", primary_bare.display());
-    let reference_url = format!("file://{}", reference_bare.display());
+    let primary_url = common::file_url(&primary_bare);
+    let reference_url = common::file_url(&reference_bare);
     write_manifest_with_roles(
         &work,
         &[
@@ -1209,7 +1209,7 @@ fn fetch_no_reference_skips_reference_role_repos() {
     run(&["commit", "-m", "manifest"], &work);
     run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source, "--no-reference"])
         .current_dir(&workspace)
@@ -1290,8 +1290,8 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     );
     let primary_sha = run(&["rev-parse", "HEAD"], &primary_clone);
 
-    let primary_url = format!("file://{}", primary_bare.display());
-    let reference_url = format!("file://{}", reference_bare.display());
+    let primary_url = common::file_url(&primary_bare);
+    let reference_url = common::file_url(&reference_bare);
     write_manifest_with_roles(
         &work,
         &[
@@ -1313,7 +1313,7 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
     run_quiet(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source, "--frozen", "--no-reference"])
         .current_dir(&workspace)
@@ -1371,8 +1371,8 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     run_quiet(&["config", "user.email", "test@test.com"], &work);
     run_quiet(&["config", "user.name", "Test"], &work);
 
-    let primary_url = format!("file://{}", primary_bare.display());
-    let reference_url = format!("file://{}", reference_bare.display());
+    let primary_url = common::file_url(&primary_bare);
+    let reference_url = common::file_url(&reference_bare);
     write_manifest_with_roles(
         &work,
         &[
@@ -1393,7 +1393,7 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
     run_quiet(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source, "--frozen"])
         .current_dir(&workspace)
@@ -1434,7 +1434,7 @@ fn build_filter_fixture(
     for (path, role) in repos {
         let bare = tmp.path().join(format!("{}.git", path.replace('/', "_")));
         init_bare_repo_with_commit(&bare);
-        let url = format!("file://{}", bare.display());
+        let url = common::file_url(&bare);
         entries.push((path.to_string(), url, role.to_string()));
     }
 
@@ -1462,7 +1462,7 @@ fn build_filter_fixture(
     run(&["commit", "-m", "add manifest"], &project_work);
     run(&["push", "origin", "main"], &project_work);
 
-    format!("file://{}", project_bare.display())
+    common::file_url(&project_bare)
 }
 
 #[test]

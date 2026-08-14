@@ -240,7 +240,7 @@ fn lock_records_local_head_not_remote_tip() {
     // Set up the project.
     let project_dir = root.join("projects/my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let bare_url = format!("file://{}", bare.display());
+    let bare_url = common::file_url(&bare);
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(

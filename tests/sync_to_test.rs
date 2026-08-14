@@ -1037,10 +1037,7 @@ fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, Strin
     // Write the `.rwv-workweave` marker so WorkspaceContext::resolve returns
     // Checkout::Workweave with project = "web-app".
     let primary_canon = primary.root.canonicalize().unwrap().display().to_string();
-    let marker = format!(
-        "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
-        p = primary_canon
-    );
+    let marker = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), &marker).unwrap();
 
     (primary, ww_root, ww_project, ww_server, initial_sha)

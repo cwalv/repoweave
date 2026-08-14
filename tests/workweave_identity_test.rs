@@ -60,7 +60,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-            repo = repo.display(),
+            repo = common::url_path(&repo),
         ),
     )
     .unwrap();

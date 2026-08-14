@@ -69,7 +69,7 @@ fn make_workspace_with_git_repo(parent: &Path, project: &str) -> (PathBuf, PathB
 
     let manifest = format!(
         "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 

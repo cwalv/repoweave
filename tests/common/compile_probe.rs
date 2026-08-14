@@ -153,8 +153,8 @@ pub(crate) fn extract_crate_identity(
 /// direct `Some(id) / None` per candidate, so the failure paths are
 /// exercised without racing an actual rebuild.
 ///
-/// This is the correctness fix for the hazard rwv-lxbd measured and
-/// rwv-j3qm documented: `cargo build --release` and `cargo test --release`
+/// This is the correctness fix for a measured hazard:
+/// `cargo build --release` and `cargo test --release`
 /// resolve features differently, so two `librepoweave-*.rlib` files with
 /// different metadata hashes can coexist in `target/release/deps/`. Selecting
 /// the newer one by `mtime` picks whichever build ran last — which need not
@@ -239,10 +239,26 @@ fn running_test_crate_identity() -> CrateIdentity {
             exe.display()
         )
     });
-    match extract_crate_identity(&bytes) {
+    // An MSVC-linked image carries no symbol name strings — the linker puts
+    // them in the `.pdb` it writes next to the binary in the same step. That
+    // sidecar is this binary's own record, so keying on it is as sound as
+    // keying on the image; it is only consulted when the image has no marker
+    // at all, never to break a tie.
+    let scanned = match extract_crate_identity(&bytes) {
+        Err(None) => {
+            let pdb = exe.with_extension("pdb");
+            match std::fs::read(&pdb) {
+                Ok(pdb_bytes) => extract_crate_identity(&pdb_bytes),
+                Err(_) => Err(None),
+            }
+        }
+        other => other,
+    };
+    match scanned {
         Ok(id) => id,
         Err(None) => panic!(
-            "no `Cs...repoweave` marker found in running test binary {}\n\
+            "no `Cs...repoweave` marker found in running test binary {} or in \
+             a `.pdb` debug sidecar next to it\n\
              rustc stamps a `Cs<StableCrateId>_9repoweave` marker on the \
              symbols a binary carries from the repoweave crate, and \
              REPOWEAVE_IDENTITY_ANCHOR exists so that this binary carries \
@@ -255,7 +271,7 @@ fn running_test_crate_identity() -> CrateIdentity {
             let names: Vec<String> = all.iter().map(|id| id.to_string()).collect();
             panic!(
                 "found {} distinct `Cs...repoweave` markers in running test \
-                 binary {}: {:?}\n\
+                 binary {} (or its `.pdb` debug sidecar): {:?}\n\
                  A single link produces a single StableCrateId per crate; \
                  multiple markers mean two repoweave crates were linked into \
                  one binary, which the compile_probe cannot pick between and \

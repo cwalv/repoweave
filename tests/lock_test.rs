@@ -203,11 +203,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     // identity file — a `.rwv-active` beside it is the state doctor reports
     // as `weave-root-identity-conflict`.
     let primary_canon = root.canonicalize().unwrap();
-    let marker = format!(
-        "{{\"primary\":\"{}\",\"project\":\"ws\",\"parent\":\"{}\"}}",
-        primary_canon.display(),
-        primary_canon.display()
-    );
+    let marker = common::workweave_marker(&primary_canon, "ws", &primary_canon);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
 
     // Repo also exists in the workweave on a different commit so we can

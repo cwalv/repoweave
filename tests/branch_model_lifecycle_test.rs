@@ -101,7 +101,7 @@ fn make_workspace(tmp: &Path) -> PathBuf {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            repo = repo_path.display()
+            repo = common::url_path(&repo_path)
         ),
     )
     .unwrap();
@@ -243,7 +243,7 @@ fn delete_reports_the_branches_it_will_not_touch() {
     let mut text = std::fs::read_to_string(&manifest).unwrap();
     text.push_str(&format!(
         "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
-        repo = repo2.display()
+        repo = common::url_path(&repo2)
     ));
     std::fs::write(&manifest, text).unwrap();
     let leftover_sha =
@@ -314,7 +314,7 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
     let mut text = std::fs::read_to_string(&manifest).unwrap();
     text.push_str(&format!(
         "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
-        repo = repo2.display()
+        repo = common::url_path(&repo2)
     ));
     std::fs::write(&manifest, text).unwrap();
     let leftover_sha = hand_made_branch_with_unique_commit(&repo2, "web-app--unowned", "mine.txt");

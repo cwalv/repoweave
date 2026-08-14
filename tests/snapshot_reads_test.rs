@@ -145,7 +145,7 @@ fn sync_reads_committed_lock_not_working_tree() {
     init_repo(&source_proj);
 
     // Write manifest pointing at lib.
-    let lib_url = format!("file://{}", lib_path.display());
+    let lib_url = common::file_url(&lib_path);
     write_manifest(&source_proj, &[("lib", &lib_url)]);
     // Write .gitattributes for replay exclusion.
     std::fs::write(
@@ -243,7 +243,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     let sha_t0 = init_repo(&lib_path);
     let sha_t1 = make_commit(&lib_path, "post_t0.txt", "after T0\n", "feat: post-T0");
 
-    let lib_url = format!("file://{}", lib_path.display());
+    let lib_url = common::file_url(&lib_path);
 
     // ---- source workspace ----
     let source_ws = tmp.join("source2");
@@ -409,7 +409,7 @@ fn branch_form_lock_workspaces(
     let sha_a = init_repo(&origin);
     let sha_b = make_commit(&origin, "b.txt", "b\n", "lib: B");
     git(&["branch", "release", &sha_b], &origin);
-    let lib_url = format!("file://{}", origin.display());
+    let lib_url = common::file_url(&origin);
 
     let source_ws = tmp.join("source");
     let source_proj = source_ws.join("projects").join("myproject");

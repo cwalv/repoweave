@@ -156,7 +156,7 @@ fn fixture() -> Fixture {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    let url = format!("file://{}", primary_repo.display());
+    let url = common::file_url(&primary_repo);
     let manifest = format!(
         "[repositories.\"{REPO_PATH}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
@@ -246,7 +246,7 @@ fn advance_primary(f: &Fixture) -> String {
         "advance\n",
         "primary: advance",
     );
-    let url = format!("file://{}", f.primary.repo_dir.display());
+    let url = common::file_url(&f.primary.repo_dir);
     let raw_lock = format!(
         "{{\"repositories\": {{{REPO_PATH:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {new_sha:?}}}}}}}"
     );

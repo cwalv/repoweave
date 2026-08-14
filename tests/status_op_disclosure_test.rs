@@ -110,11 +110,11 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = REPO_PATH,
-        repo = repo.display()
+        repo = common::url_path(&repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
-    let repo_url = format!("file://{}", repo.display());
+    let repo_url = common::file_url(&repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = REPO_PATH,

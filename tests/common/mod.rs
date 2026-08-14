@@ -37,14 +37,80 @@ use std::sync::OnceLock;
 /// Pick a `$T` outside any repoweave weave: a temp root nested under one puts
 /// every fixture inside it, and the suite's "outside a workspace" tests then
 /// fail for that reason instead.
+///
+/// On Windows `canonicalize` always answers in the `\\?\` extended-length
+/// form, and git refuses an argument spelled that way — so a root left in
+/// that spelling fails every fixture helper that runs git against a fixture
+/// path. `dunce::simplified` drops the prefix only where Windows itself
+/// accepts the short form and is the identity on every other platform, the
+/// same strip production applies in `src/git.rs` where a path becomes a git
+/// argument.
 pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     let root = ROOT.get_or_init(|| {
         let raw = std::env::temp_dir();
-        raw.canonicalize()
-            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()))
+        let canonical = raw
+            .canonicalize()
+            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()));
+        dunce::simplified(&canonical).to_path_buf()
     });
     tempfile::TempDir::new_in(root)
+}
+
+/// Render a fixture path as a `file://` URL git accepts on every platform.
+///
+/// `format!("file://{}", path.display())` breaks twice on Windows: the
+/// backslashes are escape characters inside a TOML or JSON string the URL is
+/// written into, and a drive-letter path pasted after `file://` puts `C:` in
+/// the URL's host position. Forward slashes plus a third `/` for a rootless
+/// path give the `file:///C:/…` form; on Unix the output is byte-identical
+/// to the `format!` it replaces.
+pub fn file_url(path: impl AsRef<std::path::Path>) -> String {
+    format!("file://{}", url_path(path))
+}
+
+/// The path half of [`file_url`]: forward slashes, rooted with a leading `/`
+/// so a Windows drive-letter path becomes `/C:/…`. For templates that spell
+/// the `file://` prefix themselves.
+pub fn url_path(path: impl AsRef<std::path::Path>) -> String {
+    let p = path
+        .as_ref()
+        .to_str()
+        .expect("fixture path is valid UTF-8")
+        .replace('\\', "/");
+    if p.starts_with('/') {
+        p
+    } else {
+        format!("/{p}")
+    }
+}
+
+/// A path's JSON string body: the serde_json encoding minus the surrounding
+/// quotes, for hand-built state-file templates that spell the quotes
+/// themselves. A Windows path's backslashes read as JSON escapes if pasted
+/// raw. Unlike [`url_path`] the spelling is preserved, because rwv compares
+/// a record's workspace paths against the live ones.
+pub fn json_escaped(path: impl AsRef<std::path::Path>) -> String {
+    let quoted =
+        serde_json::to_string(path.as_ref().to_str().expect("fixture path is valid UTF-8"))
+            .expect("a string serializes infallibly");
+    quoted[1..quoted.len() - 1].to_string()
+}
+
+/// The `.rwv-workweave` marker JSON, built with real serialization so a
+/// Windows path's backslashes arrive escaped rather than read as escapes.
+/// Fixtures planted this shape as a hand-formatted template at 30+ sites;
+/// build it here so no site can get the encoding wrong.
+pub fn workweave_marker(
+    primary: impl AsRef<std::path::Path>,
+    project: &str,
+    parent: impl AsRef<std::path::Path>,
+) -> String {
+    format!(
+        "{{\"primary\":\"{}\",\"project\":\"{project}\",\"parent\":\"{}\"}}",
+        json_escaped(primary),
+        json_escaped(parent),
+    )
 }
 
 /// `GIT_*` environment variables that git itself sets for hooks and that

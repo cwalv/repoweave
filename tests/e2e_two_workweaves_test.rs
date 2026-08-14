@@ -125,14 +125,14 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
@@ -472,12 +472,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     let new_repo_sha = init_repo(&new_repo_abs);
     // Add an origin so `rwv add <path>` can infer the URL.
     git(
-        &[
-            "remote",
-            "add",
-            "origin",
-            &format!("file://{}", new_repo_abs.display()),
-        ],
+        &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
         &new_repo_abs,
     );
     // `rwv add` refuses rather than guess when origin/HEAD is unset, so
@@ -588,12 +583,7 @@ fn sync_phase3_materialize_failure_is_fatal() {
     let new_repo_abs = main.root.join(new_repo_path);
     init_repo(&new_repo_abs);
     git(
-        &[
-            "remote",
-            "add",
-            "origin",
-            &format!("file://{}", new_repo_abs.display()),
-        ],
+        &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
         &new_repo_abs,
     );
     // `rwv add` refuses rather than guess when origin/HEAD is unset, so

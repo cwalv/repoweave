@@ -244,7 +244,7 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
         "rwv.toml",
         &format!(
             "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
-            repo = managed_repo.display()
+            repo = common::url_path(&managed_repo)
         ),
     );
     write(
@@ -252,7 +252,7 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
         "rwv.lock",
         &format!(
             "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"{managed_sha}\"\n",
-            repo = managed_repo.display()
+            repo = common::url_path(&managed_repo)
         ),
     );
     git(

@@ -1169,7 +1169,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        root = ws.root.display(),
+        root = common::json_escaped(&ws.root),
     );
     std::fs::write(ws.root.join(".rwv-op"), &op_state_json).unwrap();
 
@@ -1477,10 +1477,7 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
     );
 
     let primary_canon = primary.root.canonicalize().unwrap().display().to_string();
-    let marker = format!(
-        "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
-        p = primary_canon
-    );
+    let marker = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
 
     MarkerSharedWorkspaces {

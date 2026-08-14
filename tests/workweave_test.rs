@@ -68,7 +68,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -97,7 +97,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     git(&["add", "rwv.toml"], &project_dir);
@@ -706,8 +706,8 @@ url = "file://{client}"
 version = "main"
 role = "fork"
 "#,
-        server = repo1.display(),
-        client = repo2.display()
+        server = common::url_path(&repo1),
+        client = common::url_path(&repo2)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -968,7 +968,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -1756,7 +1756,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_b_dir.join("rwv.toml"), manifest_b).unwrap();
 
@@ -1811,10 +1811,7 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     let legacy = weaveroot.join("web-app--from-old");
     std::fs::create_dir_all(&legacy).unwrap();
     let ws_canon = ws.canonicalize().unwrap().display().to_string();
-    let marker = format!(
-        "{{\"primary\":\"{p}\",\"project\":\"web-app\",\"parent\":\"{p}\"}}",
-        p = ws_canon
-    );
+    let marker = common::workweave_marker(&ws_canon, "web-app", &ws_canon);
     std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
 
     // List omits it: no registry entry → not visible.
@@ -2014,7 +2011,7 @@ url = "file://{repo2_path}"
 version = "main"
 role = "owned"
 "#,
-        repo1 = repo1.display(),
+        repo1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
@@ -2111,8 +2108,8 @@ url = "file://{repo3}"
 version = "main"
 role = "owned"
 "#,
-        repo1 = repo1.display(),
-        repo3 = repo3.display(),
+        repo1 = common::url_path(&repo1),
+        repo3 = common::url_path(&repo3),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     ws
@@ -2187,7 +2184,7 @@ url = "file:///nonexistent/missing"
 version = "main"
 role = "owned"
 "#,
-        repo1 = repo1.display(),
+        repo1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), &bad_manifest).unwrap();
 
@@ -2205,7 +2202,7 @@ url = "file://{repo1}"
 version = "main"
 role = "owned"
 "#,
-        repo1 = repo1.display(),
+        repo1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), &good_manifest).unwrap();
 
@@ -2843,7 +2840,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // NOTE: rwv.toml is NOT committed — no commit exists yet.
@@ -2897,8 +2894,8 @@ url = "file://{bad}"
 version = "main"
 role = "owned"
 "#,
-        good = good_repo.display(),
-        bad = bad_repo.display()
+        good = common::url_path(&good_repo),
+        bad = common::url_path(&bad_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -3176,8 +3173,8 @@ url = "file://{r2}"
 version = "main"
 role = "owned"
 "#,
-        r1 = repo1.display(),
-        r2 = repo2.display(),
+        r1 = common::url_path(&repo1),
+        r2 = common::url_path(&repo2),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -3271,7 +3268,7 @@ url = "file:///nonexistent/repo2"
 version = "main"
 role = "owned"
 "#,
-        r1 = repo1.display(),
+        r1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest_content).unwrap();
 

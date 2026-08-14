@@ -156,14 +156,14 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
@@ -451,13 +451,13 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
@@ -759,13 +759,13 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
@@ -867,13 +867,13 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
@@ -1101,7 +1101,7 @@ fn bare_status(dir: &Path) -> String {
 /// version value — both branches rewrite the same `"version"` line so a
 /// 3-way merge without the driver is guaranteed to conflict.
 fn lock_json(manifest_repo: &Path, version: &str) -> String {
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {version:?}}}}}}}",
         path = MANIFEST_REPO_PATH,

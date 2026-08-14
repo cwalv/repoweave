@@ -198,8 +198,8 @@ fn plant_sync_to_owner_record(owner: &Path, target: &Path, op_id: &str) {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = owner.display(),
-        tgt = target.display(),
+        src = common::json_escaped(&owner),
+        tgt = common::json_escaped(&target),
     );
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
@@ -207,7 +207,7 @@ fn plant_sync_to_owner_record(owner: &Path, target: &Path, op_id: &str) {
 fn plant_lease(workspace: &Path, owner: &Path, op_id: &str) {
     let body = format!(
         "{{\"id\": \"{op_id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = owner.display(),
+        owner = common::json_escaped(&owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }

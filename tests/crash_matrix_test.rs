@@ -340,7 +340,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
 fn plant_lease(workspace: &Path, owner: &Path, id: &str) {
     let body = format!(
         "{{\"id\": \"{id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-06-10T00:00:00Z\"}}",
-        owner = owner.display(),
+        owner = common::json_escaped(&owner),
     );
     std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
 }
@@ -1681,10 +1681,7 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
     // the two files are mutually exclusive and resolution now refuses a root
     // carrying both, so a fixture that planted one here would be pinning the
     // state this design removed.
-    let marker = format!(
-        "{{\"primary\":\"{primary}\",\"project\":\"web-app\",\"parent\":\"{primary}\"}}",
-        primary = primary.root.display(),
-    );
+    let marker = common::workweave_marker(&primary.root, "web-app", &primary.root);
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
 
     let _ = initial_sha;
@@ -2753,8 +2750,8 @@ fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = primary.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &body).unwrap();
 

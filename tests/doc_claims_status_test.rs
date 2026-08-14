@@ -67,7 +67,7 @@ fn make_workspace(parent: &Path, project: &str) -> (PathBuf, PathBuf, String) {
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let url = format!("file://{}", repo_path.display());
+    let url = common::file_url(&repo_path);
     let manifest = format!(
         "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );

@@ -306,11 +306,7 @@ fn target_line_silent_inside_workweave() {
     let weave_dir = tmp.path().join("ws--feat");
     std::fs::create_dir_all(weave_dir.join("github")).unwrap();
     let canon_ws = ws.canonicalize().unwrap();
-    let marker_yaml = format!(
-        "{{\"primary\":\"{}\",\"project\":\"p1\",\"parent\":\"{}\"}}",
-        canon_ws.display(),
-        canon_ws.display(),
-    );
+    let marker_yaml = common::workweave_marker(&canon_ws, "p1", &canon_ws);
     std::fs::write(weave_dir.join(".rwv-workweave"), marker_yaml).unwrap();
 
     let out = common::rwv()

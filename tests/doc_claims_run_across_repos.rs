@@ -85,8 +85,8 @@ url = "file://{r2}"
 version = "main"
 role = "fork"
 "#,
-        r1 = repo_primary.display(),
-        r2 = repo_fork.display()
+        r1 = common::url_path(&repo_primary),
+        r2 = common::url_path(&repo_fork)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Active project marker — required so `rwv status` resolves to my-app

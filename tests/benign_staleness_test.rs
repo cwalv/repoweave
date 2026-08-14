@@ -121,7 +121,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     // Round-trip through the real parser + `lock::write_lock`: a
@@ -130,7 +130,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": \"file://{repo}\", \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
+        repo = common::url_path(&manifest_repo),
         sha = initial_sha
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
@@ -1362,7 +1362,7 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": \"file://{repo}\", \"version\": \"v9.9.9-nope\"}}}}}}",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display(),
+        repo = common::url_path(&manifest_repo),
     );
     let bad_lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&bad_lock, &f.main.project_dir.join("rwv.lock")).unwrap();

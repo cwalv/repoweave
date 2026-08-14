@@ -78,7 +78,7 @@ url = "file://{repo}"
 version = "main"
 role = "owned"
 "#,
-        repo = repo_path.display()
+        repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -138,7 +138,7 @@ fn fetch_allow_non_empty_dir_waives_only_the_nonempty_dir_refusal() {
     let project_bare = tmp.path().join("proj.git");
     init_bare_repo(&project_bare);
     push_empty_manifest_to_bare(&project_bare);
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -518,10 +518,7 @@ fn push_force_does_not_waive_workweave_refusal() {
 
     let workweave_dir = fixture.workspace.parent().unwrap().join("alpha--feat");
     std::fs::create_dir_all(&workweave_dir).unwrap();
-    let marker = format!(
-        "{{\"primary\":\"{p}\",\"project\":\"alpha\",\"parent\":\"{p}\"}}",
-        p = fixture.workspace.display()
-    );
+    let marker = common::workweave_marker(&fixture.workspace, "alpha", &fixture.workspace);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
 
     let output = rwv()

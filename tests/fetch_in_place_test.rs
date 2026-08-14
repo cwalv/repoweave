@@ -136,7 +136,7 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
 
     let mut manifest = String::from("[repositories]\n");
     for (rp, bare, _, _) in &repos {
-        let url = format!("file://{}", bare.display());
+        let url = common::file_url(&bare);
         manifest.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
         ));
@@ -149,7 +149,7 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     // emit still diffs against a real relock.
     let mut lock_entries = Vec::new();
     for (rp, bare, first, _) in &repos {
-        let url = format!("file://{}", bare.display());
+        let url = common::file_url(&bare);
         lock_entries.push(format!(
             "{rp:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {first:?}}}"
         ));
@@ -651,8 +651,8 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     let project_dir = workspace.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let url_a = format!("file://{}", bare_a.display());
-    let url_b = format!("file://{}", bare_b.display());
+    let url_a = common::file_url(&bare_a);
+    let url_b = common::file_url(&bare_b);
     let manifest = format!(
         "[repositories.\"github/acme/a\"]\ntype = \"git\"\nurl = \"{url_a}\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url_b}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
@@ -895,11 +895,7 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
     .unwrap();
 
     // Write the workweave marker. Format: JSON with `primary`, `project`, `parent`.
-    let marker_yaml = format!(
-        "{{\"primary\":\"{}\",\"project\":\"my-app\",\"parent\":\"{}\"}}",
-        s.workspace.display(),
-        s.workspace.display(),
-    );
+    let marker_yaml = common::workweave_marker(&s.workspace, "my-app", &s.workspace);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker_yaml).unwrap();
 
     // Run in-place fetch from INSIDE the workweave.

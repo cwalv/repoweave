@@ -478,7 +478,7 @@ fn adopt_clones_repo_into_projects() {
     let bare = make_repo_with_commit(tmp.path(), "my-app");
 
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -503,7 +503,7 @@ fn adopt_writes_rwv_yaml_when_missing() {
     let bare = make_repo_with_commit(tmp.path(), "no-yaml");
 
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -562,7 +562,7 @@ fn adopt_preserves_existing_rwv_yaml() {
         .status();
 
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -581,7 +581,7 @@ fn adopt_activates_project() {
     let bare = make_repo_with_commit(tmp.path(), "activated");
 
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -603,14 +603,14 @@ fn adopt_rejects_duplicate_project_name() {
 
     // First adopt succeeds.
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
 
     // Second adopt with same source should fail.
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -769,7 +769,7 @@ fn adopt_bootstraps_empty_directory() {
     let bare = make_repo_with_commit(tmp.path(), "adopted-proj");
 
     rwv()
-        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .args(["init", "--adopt", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();

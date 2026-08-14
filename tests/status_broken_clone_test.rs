@@ -122,7 +122,7 @@ fn make_workspace_with_lock(parent: &Path, project: &str) -> (PathBuf, PathBuf, 
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let url = format!("file://{}", repo_path.display());
+    let url = common::file_url(&repo_path);
     let manifest = format!(
         "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
@@ -446,7 +446,7 @@ fn make_workspace_with_bare_remote(parent: &Path) -> (PathBuf, PathBuf, PathBuf,
     let project_dir = ws.join("projects").join("alpha");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let url = format!("file://{}", bare.display());
+    let url = common::file_url(&bare);
     let manifest = format!(
         "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
@@ -635,7 +635,7 @@ fn unreachable_repair_drive_git_fetch_restores_ok() {
     }
 
     // Re-point the lock to the (now-unreachable) SHA.
-    let url = format!("file://{}", bare.display());
+    let url = common::file_url(&bare);
     write_lock(&project_dir, "github/org/repo", &url, &sha);
 
     // 1. Confirm rwv status reports [unreachable].

@@ -87,7 +87,7 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     git_run(&["config", "user.email", "test@test.com"], &work);
     git_run(&["config", "user.name", "Test"], &work);
 
-    let dep_url = format!("file://{}", dep_bare.display());
+    let dep_url = common::file_url(&dep_bare);
     let manifest_toml = format!(
         "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
@@ -96,7 +96,7 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     git_run(&["commit", "-m", "manifest"], &work);
     git_run(&["push", "origin", "main"], &work);
 
-    let source = format!("file://{}", project_bare.display());
+    let source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)

@@ -199,7 +199,7 @@ fn fetch_name_collision_behavior() {
     std::fs::write(pre_existing.join("rwv.toml"), "[repositories]\n").unwrap();
 
     // Fetching into a workspace where projects/web-app already exists.
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
     let output = rwv()
         .args(["fetch", &project_url])
         .current_dir(&workspace)
@@ -250,7 +250,7 @@ fn remove_delete_does_not_check_other_projects() {
     // Create a bare repo that both projects will reference.
     let shared_bare = tmp.path().join("shared.git");
     init_bare_repo_with_commit(&shared_bare);
-    let shared_url = format!("file://{}", shared_bare.display());
+    let shared_url = common::file_url(&shared_bare);
     let repo_path = "local/org/shared";
 
     // Project A references the shared repo.
@@ -331,7 +331,7 @@ fn add_from_local_path_infers_url() {
     // Create a bare repo to act as the remote origin.
     let bare = tmp.path().join("origin.git");
     init_bare_repo_with_commit(&bare);
-    let origin_url = format!("file://{}", bare.display());
+    let origin_url = common::file_url(&bare);
 
     // Set up workspace with an empty project manifest.
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, "test-project", &[]);
@@ -436,7 +436,7 @@ fn fetch_shorthand_notation_with_local_bare_repo() {
 
     // Use a full file:// URL (shorthand only works for known registries like
     // github/gitlab; file:// URLs are passed through directly).
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     rwv()
         .args(["fetch", &project_url])
@@ -469,7 +469,7 @@ fn fetch_second_project_does_not_auto_activate() {
     let project_a_bare = tmp.path().join("project-a.git");
     init_bare_repo(&project_a_bare);
     push_manifest_to_bare(&project_a_bare, &[]);
-    let url_a = format!("file://{}", project_a_bare.display());
+    let url_a = common::file_url(&project_a_bare);
 
     // Fetch project A — this should activate it (first fetch, no .rwv-active yet).
     rwv()
@@ -497,7 +497,7 @@ fn fetch_second_project_does_not_auto_activate() {
     let project_b_bare = tmp.path().join("project-b.git");
     init_bare_repo(&project_b_bare);
     push_manifest_to_bare(&project_b_bare, &[]);
-    let url_b = format!("file://{}", project_b_bare.display());
+    let url_b = common::file_url(&project_b_bare);
 
     // Fetch project B — .rwv-active already exists, so activation is skipped.
     rwv()
@@ -531,7 +531,7 @@ fn fetch_json_envelope_shape() {
 
     // Create a repo for the manifest.
     let repo_bare = tmp.path().join("the-repo.git");
-    let repo_bare_url = format!("file://{}", repo_bare.display());
+    let repo_bare_url = common::file_url(&repo_bare);
     let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(&repo_bare)
@@ -563,7 +563,7 @@ fn fetch_json_envelope_shape() {
     let project_bare = tmp.path().join("proj.git");
     init_bare_repo(&project_bare);
     push_manifest_to_bare(&project_bare, &[("local/org/the-repo", &repo_bare_url)]);
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     // Run `rwv fetch --json -j 1` (explicit serial = envelope).
     let assert = rwv()
@@ -620,8 +620,8 @@ fn fetch_json_ndjson_under_parallel_jobs() {
     // Create two repos so we actually hit the parallel path.
     let bare_a = tmp.path().join("aa.git");
     let bare_b = tmp.path().join("bb.git");
-    let url_a = format!("file://{}", bare_a.display());
-    let url_b = format!("file://{}", bare_b.display());
+    let url_a = common::file_url(&bare_a);
+    let url_b = common::file_url(&bare_b);
 
     for bare in &[&bare_a, &bare_b] {
         let s = common::git()
@@ -653,7 +653,7 @@ fn fetch_json_ndjson_under_parallel_jobs() {
         &project_bare,
         &[("local/org/aa", &url_a), ("local/org/bb", &url_b)],
     );
-    let project_url = format!("file://{}", project_bare.display());
+    let project_url = common::file_url(&project_bare);
 
     // Run `rwv fetch -j 2 --json` → NDJSON mode.
     let assert = rwv()

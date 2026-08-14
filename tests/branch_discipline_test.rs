@@ -69,12 +69,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
     let parent_str = parent
         .canonicalize()
         .unwrap_or_else(|_| parent.to_path_buf());
-    let content = format!(
-        "{{\"primary\":\"{}\",\"project\":\"{}\",\"parent\":\"{}\"}}",
-        primary_str.display(),
-        project,
-        parent_str.display()
-    );
+    let content = common::workweave_marker(&primary_str, project, &parent_str);
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 }
 

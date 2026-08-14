@@ -91,7 +91,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
     run_git(&["add", "rwv.toml"], &work);
     run_git(&["commit", "-m", "manifest"], &work);
     run_git(&["push", "origin", "main"], &work);
-    format!("file://{}", project_bare.display())
+    common::file_url(&project_bare)
 }
 
 // ----- Tests -----------------------------------------------------------------
@@ -108,8 +108,8 @@ fn fetch_dash_j_one_emits_no_prefix() {
     let r2 = tmp.path().join("r2.git");
     init_bare_repo_with_commit(&r1);
     init_bare_repo_with_commit(&r2);
-    let u1 = format!("file://{}", r1.display());
-    let u2 = format!("file://{}", r2.display());
+    let u1 = common::file_url(&r1);
+    let u2 = common::file_url(&r2);
 
     let source = make_project_source(
         tmp.path(),
@@ -142,8 +142,8 @@ fn fetch_dash_j_two_emits_repo_prefix() {
     let r2 = tmp.path().join("r2.git");
     init_bare_repo_with_commit(&r1);
     init_bare_repo_with_commit(&r2);
-    let u1 = format!("file://{}", r1.display());
-    let u2 = format!("file://{}", r2.display());
+    let u1 = common::file_url(&r1);
+    let u2 = common::file_url(&r2);
 
     let source = make_project_source(
         tmp.path(),
@@ -179,7 +179,7 @@ fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
     for i in 0..5 {
         let bare = tmp.path().join(format!("r{i}.git"));
         init_bare_repo_with_commit(&bare);
-        urls.push(format!("file://{}", bare.display()));
+        urls.push(common::file_url(&bare));
         paths.push(format!("local/org/r{i}"));
     }
     let pairs: Vec<(&str, &str)> = paths
@@ -237,8 +237,8 @@ fn fetch_dash_j_aggregates_failures() {
     // failure while letting r_ok succeed.
     let r_ok = tmp.path().join("r_ok.git");
     init_bare_repo_with_commit(&r_ok);
-    let u_ok = format!("file://{}", r_ok.display());
-    let u_bad = format!("file://{}/does_not_exist.git", tmp.path().display());
+    let u_ok = common::file_url(&r_ok);
+    let u_bad = format!("{}/does_not_exist.git", common::file_url(tmp.path()));
 
     let source = make_project_source(
         tmp.path(),
@@ -270,7 +270,7 @@ fn fetch_accepts_long_jobs_flag() {
 
     let r1 = tmp.path().join("r1.git");
     init_bare_repo_with_commit(&r1);
-    let u1 = format!("file://{}", r1.display());
+    let u1 = common::file_url(&r1);
     let source = make_project_source(tmp.path(), "proj", &[("local/org/r1", &u1)]);
 
     rwv()
@@ -337,8 +337,8 @@ fn update_dash_j_advances_all_repos_and_relocks() {
     let bare_b = tmp.path().join("b.git");
     init_bare_repo_with_commit(&bare_a);
     init_bare_repo_with_commit(&bare_b);
-    let url_a = format!("file://{}", bare_a.display());
-    let url_b = format!("file://{}", bare_b.display());
+    let url_a = common::file_url(&bare_a);
+    let url_b = common::file_url(&bare_b);
 
     let source = make_project_source(
         tmp.path(),
@@ -401,15 +401,15 @@ fn update_dash_j_aggregates_failures() {
 
     let bare_ok = tmp.path().join("ok.git");
     init_bare_repo_with_commit(&bare_ok);
-    let url_ok = format!("file://{}", bare_ok.display());
-    let url_bad = format!("file://{}/missing.git", tmp.path().display());
+    let url_ok = common::file_url(&bare_ok);
+    let url_bad = format!("{}/missing.git", common::file_url(tmp.path()));
 
     // Fetch can't bootstrap a workspace if a repo URL is invalid, so
     // we set up a "good" manifest, fetch, then break the bad repo's
     // remote afterwards by deleting the bare backing store.
     let bare_bad = tmp.path().join("bad.git");
     init_bare_repo_with_commit(&bare_bad);
-    let url_bad_initial = format!("file://{}", bare_bad.display());
+    let url_bad_initial = common::file_url(&bare_bad);
 
     let source = make_project_source(
         tmp.path(),

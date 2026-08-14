@@ -98,11 +98,7 @@ fn two_kind_fixture(parent: &Path) -> PathBuf {
     let primary = root.canonicalize().unwrap();
     std::fs::write(
         ww_dir.join(".rwv-workweave"),
-        format!(
-            "{{\"primary\":\"{}\",\"project\":\"my-app\",\"parent\":\"{}\"}}",
-            primary.display(),
-            primary.display()
-        ),
+        common::workweave_marker(&primary, "my-app", &primary),
     )
     .unwrap();
     root

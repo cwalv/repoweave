@@ -111,14 +111,14 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let manifest = format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
-        repo = manifest_repo.display()
+        repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Round-trips through the real parser + `lock::write_lock`: a
     // hand-formatted string that differs only in whitespace from what
     // `rwv lock` itself would emit still diffs against a real relock.
-    let repo_url = format!("file://{}", manifest_repo.display());
+    let repo_url = common::file_url(&manifest_repo);
     let raw_lock = format!(
         "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
         path = MANIFEST_REPO_PATH,
@@ -243,8 +243,8 @@ fn delete_refuses_while_workweave_is_mid_op() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = ww.root.display(),
-        tgt = main.root.display(),
+        src = common::json_escaped(&ww.root),
+        tgt = common::json_escaped(&main.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
@@ -286,8 +286,8 @@ fn delete_waivers_do_not_bypass_op_mutex() {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
          \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = main.root.display(),
-        tgt = ww.root.display(),
+        src = common::json_escaped(&main.root),
+        tgt = common::json_escaped(&ww.root),
     );
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 

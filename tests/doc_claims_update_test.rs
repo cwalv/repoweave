@@ -305,7 +305,7 @@ fn update_advances_lock_while_fetch_does_not() {
     // Set up the manifest-repo bare and capture the initial SHA.
     let manifest_bare = tmp_fetch.path().join("manifest.git");
     init_bare_repo_with_commit(&manifest_bare);
-    let manifest_url = format!("file://{}", manifest_bare.display());
+    let manifest_url = common::file_url(&manifest_bare);
     let dep_clone = tmp_fetch.path().join("dep_clone");
     git_run(
         tmp_fetch.path(),
@@ -352,7 +352,7 @@ fn update_advances_lock_while_fetch_does_not() {
     git_run(&dep_clone, &["commit", "-m", "after-lock"]);
     git_run(&dep_clone, &["push", "origin", "main"]);
 
-    let project_source = format!("file://{}", project_bare.display());
+    let project_source = common::file_url(&project_bare);
     rwv()
         .args(["fetch", &project_source])
         .current_dir(&ws_fetch)

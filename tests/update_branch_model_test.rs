@@ -384,11 +384,7 @@ fn add_workweave_without_slot(fx: &Fixture, name: &str) -> PathBuf {
     }
     std::fs::write(
         dir.join(".rwv-workweave"),
-        format!(
-            "{{\"primary\":\"{}\",\"project\":\"my-app\",\"parent\":\"{}\"}}",
-            fx.workspace.display(),
-            fx.workspace.display()
-        ),
+        common::workweave_marker(&fx.workspace, "my-app", &fx.workspace),
     )
     .unwrap();
     dir

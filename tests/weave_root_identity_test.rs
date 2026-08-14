@@ -189,11 +189,7 @@ fn write_marker(dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(
         dir.join(".rwv-workweave"),
-        format!(
-            "{{\"primary\":\"{}\",\"project\":\"{project}\",\"parent\":\"{}\"}}",
-            primary.display(),
-            parent.display()
-        ),
+        common::workweave_marker(&primary, project, &parent),
     )
     .unwrap();
 }
@@ -254,12 +250,7 @@ fn activation_inside_a_workweave_does_not_write_a_pointer() {
     let second = ws.join("github/org/repo2");
     init_repo_with_commit(&second);
     rwv()
-        .args([
-            "add",
-            &format!("file://{}", second.display()),
-            "--role",
-            "owned",
-        ])
+        .args(["add", &common::file_url(&second), "--role", "owned"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -380,12 +371,7 @@ fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
     let second = ws.join("github/org/repo2");
     init_repo_with_commit(&second);
     rwv()
-        .args([
-            "add",
-            &format!("file://{}", second.display()),
-            "--role",
-            "owned",
-        ])
+        .args(["add", &common::file_url(&second), "--role", "owned"])
         .current_dir(&ww)
         .assert()
         .success();
@@ -700,11 +686,7 @@ fn doctor_fix_leaves_a_registry_holding_root_alone() {
     // registry.
     std::fs::write(
         ws.join(".rwv-workweave"),
-        format!(
-            "{{\"primary\":\"{}\",\"project\":\"demo\",\"parent\":\"{}\"}}",
-            ws.display(),
-            ws.display()
-        ),
+        common::workweave_marker(&ws, "demo", &ws),
     )
     .unwrap();
     std::fs::write(ws.join(".rwv-active"), "demo\n").unwrap();

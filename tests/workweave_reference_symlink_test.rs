@@ -106,8 +106,8 @@ role = "reference"
 "#,
         owned_path = OWNED_REPO,
         ref_path = REF_REPO,
-        owned = owned.display(),
-        reference = reference.display(),
+        owned = common::url_path(&owned),
+        reference = common::url_path(&reference),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -533,7 +533,7 @@ version = "main"
 role = "owned"
 "#,
         owned_path = OWNED_REPO,
-        owned = owned.display(),
+        owned = common::url_path(&owned),
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest_owned_only).unwrap();
 
@@ -544,7 +544,7 @@ role = "owned"
     let manifest_with_ref = format!(
         "{manifest_owned_only}\n[repositories.\"{ref_path}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
         ref_path = REF_REPO,
-        reference = reference.display(),
+        reference = common::url_path(&reference),
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest_with_ref).unwrap();
 
