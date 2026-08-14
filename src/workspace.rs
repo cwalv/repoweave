@@ -2397,11 +2397,12 @@ mod tests {
         let detoured = primary.join("..").join("primary");
         std::fs::write(
             dir.join(".rwv-workweave"),
-            format!(
-                "{{\n  \"primary\": \"{p}\",\n  \"project\": \"p\",\n  \"parent\": \"{d}\"\n}}\n",
-                p = primary.display(),
-                d = detoured.display(),
-            ),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "primary": primary,
+                "project": "p",
+                "parent": detoured,
+            }))
+            .unwrap(),
         )
         .unwrap();
 
@@ -2909,8 +2910,9 @@ mod tests {
 
         let err = WorkspaceContext::resolve(&dir, None).unwrap_err();
         let msg = format!("{err}");
+        let canon = dir.canonicalize().unwrap();
         assert!(
-            msg.contains(&dir.join(WORKWEAVE_MARKER_FILE).display().to_string()),
+            msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
             "must name the marker: {msg}"
         );
         assert!(
@@ -3020,12 +3022,13 @@ mod tests {
 
         let err = WorkspaceContext::resolve_tolerating_disputed_root(&dir, None).unwrap_err();
         let msg = format!("{err}");
+        let canon = dir.canonicalize().unwrap();
         assert!(
             msg.contains("not a repoweave workspace root"),
             "unexpected error: {msg}"
         );
         assert!(
-            msg.contains(&dir.join(WORKWEAVE_MARKER_FILE).display().to_string()),
+            msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
             "must name the marker: {msg}"
         );
         assert!(

@@ -1068,11 +1068,14 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
+        let container = tmp.path().join("new-container");
+        std::fs::create_dir_all(&container).unwrap();
+
         record_workweave(&primary, &project, "a", PathBuf::from("/orig/web-app--a")).unwrap();
-        set_container(&primary, &project, PathBuf::from("/new-container")).unwrap();
+        set_container(&primary, &project, container.clone()).unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
-        assert_eq!(got.container, PathBuf::from("/new-container"));
+        assert_eq!(got.container, canonical_recorded_path(&container));
         assert_eq!(
             got.workweaves.get("a").unwrap(),
             &PathBuf::from("/orig/web-app--a")
@@ -1142,9 +1145,12 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
-        set_container(&primary, &project, PathBuf::from("/recorded")).unwrap();
+        let recorded = tmp.path().join("recorded");
+        std::fs::create_dir_all(&recorded).unwrap();
+
+        set_container(&primary, &project, recorded.clone()).unwrap();
         let got = resolve_container(&primary, &project).unwrap();
-        assert_eq!(got, PathBuf::from("/recorded"));
+        assert_eq!(got, canonical_recorded_path(&recorded));
     }
 
     #[test]

@@ -6954,6 +6954,9 @@ mod tests {
         git(dir, &["init", "-b", "main"]);
         git(dir, &["config", "user.email", "t@t"]);
         git(dir, &["config", "user.name", "T"]);
+        // Git for Windows ships core.autocrlf=true, under which a checkout
+        // returns CRLF for content committed as LF.
+        git(dir, &["config", "core.autocrlf", "false"]);
         std::fs::write(dir.join("f"), "1").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-m", "one"]);

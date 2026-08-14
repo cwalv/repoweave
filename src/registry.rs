@@ -444,20 +444,18 @@ mod tests {
 
     #[test]
     fn repo_name_from_file_url() {
-        let url = format!(
-            "file://{}",
-            std::env::temp_dir().join("project.git").display()
+        assert_eq!(
+            repo_name_from_source("file:///srv/git/project.git"),
+            "project"
         );
-        assert_eq!(repo_name_from_source(&url), "project");
     }
 
     #[test]
     fn repo_name_from_file_url_trailing_slash() {
-        let url = format!(
-            "file://{}/",
-            std::env::temp_dir().join("project.git").display()
+        assert_eq!(
+            repo_name_from_source("file:///srv/git/project.git/"),
+            "project"
         );
-        assert_eq!(repo_name_from_source(&url), "project");
     }
 
     #[test]

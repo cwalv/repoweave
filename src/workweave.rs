@@ -3891,15 +3891,14 @@ mod tests {
     fn claude_hook_input_deserialises_fully() {
         let wt_path = std::env::temp_dir().join("wt");
         let wt_str = wt_path.to_str().unwrap();
-        let json = format!(
-            r#"{{
+        let json = serde_json::json!({
             "cwd": "/home/user/ws",
             "branch_name": "feat/new-thing",
             "session_id": "sess-001",
             "hook_event_name": "WorktreeCreate",
-            "worktree_path": "{wt_str}"
-        }}"#
-        );
+            "worktree_path": wt_str,
+        })
+        .to_string();
         let input: ClaudeHookInput = serde_json::from_str(&json).unwrap();
         assert_eq!(input.cwd.as_deref(), Some("/home/user/ws"));
         assert_eq!(input.branch_name.as_deref(), Some("feat/new-thing"));
