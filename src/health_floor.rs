@@ -5,21 +5,24 @@
 //! ## The marker (P1)
 //!
 //! One record per weave root (`.rwv-health-floor`, beside `.rwv-active`),
-//! written by a CLEAN weave-wide `rwv doctor` run: exit 0 AND zero
-//! violations after reclassification. It carries the rwv version that
-//! observed the weave clean and the tip of each project repo at the time —
-//! version lineage plus recorded tips, structural only. A `recorded_at`
-//! timestamp is included for the operator's eyes and is never consumed as
-//! policy.
+//! written by a CLEAN weave-wide `rwv doctor` run. It carries the rwv
+//! version that observed the weave clean and the tip of each project repo
+//! at the time — version lineage plus recorded tips, structural only. A
+//! `recorded_at` timestamp is included for the operator's eyes and is
+//! never consumed as policy.
 //!
-//! What "clean" means here, pinned: the VIOLATIONS list is empty (the same
-//! records `--json` carries in `violations[]`, itemized or count-collapsed
-//! in text) and no error-severity issue rendered. Warning-severity
-//! integration issues (a missing `.code-workspace`, an unsurfaced symlink)
-//! do not block the floor: the floor licenses removal of MIGRATORY arms,
-//! and migratory arms repair violations — ecosystem hygiene is a different
-//! axis, and gating on it would make floors unrecordable on any weave with
-//! an integration warning. Advisories are display-only and do not block.
+//! What "clean" means here, pinned: no error-severity finding rendered,
+//! and no violation rwv can still repair — every violation standing in
+//! the run is report-only. The floor licenses removal of MIGRATORY arms,
+//! and every arm is an Auto or Consented repair, so the attestation
+//! requires exactly the repairable set to be empty. Report-only warnings
+//! — version skew across sovereign repos, submodules in a reference
+//! checkout, a sibling weave's workweaves in the shared container — do
+//! not block: no arm repairs them, and they are not always this weave's
+//! to clear, so gating on them makes such a weave permanently floorless.
+//! Warning-severity integration issues (a missing `.code-workspace`, an
+//! unsurfaced symlink) do not block for the same reason — ecosystem
+//! hygiene is a different axis. Advisories are display-only and do not block.
 //!
 //! The floor records only from the operator surface: text-mode
 //! `rwv doctor` run weave-wide (`--all`), unfiltered. A project-scoped or

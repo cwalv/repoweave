@@ -8637,11 +8637,20 @@ pub fn run_check(
         violations
     };
 
-    // Read before `violations` moves into rendering: the health floor's
-    // "no findings after reclassification" is exactly this list being
-    // empty — the same records `--json` carries, post-repair when `--fix`
-    // ran, itemized or count-collapsed in text.
-    let violations_clean = violations.is_empty();
+    // Read before `violations` moves into rendering. A violation holds
+    // the health floor back only while rwv itself could repair it: every
+    // migratory arm the floor licenses removing is an Auto or Consented
+    // repair, so requiring that set discharged is what keeps the
+    // attestation honest. A report-only warning is an observatory over
+    // state that is not always this weave's to clear — version skew
+    // across sovereign repos, submodules in a reference checkout, a
+    // sibling weave's workweaves in the shared container — and blocking
+    // on those makes such a weave permanently floorless. Error-severity
+    // findings, converted violations included, block through
+    // `has_errors` below.
+    let violations_all_report_only = violations
+        .iter()
+        .all(|v| matches!(v.fix_disposition(), FixDisposition::ReportOnly));
 
     let mut all_issues = match kind_filter {
         // The filtered view is the drill-down: the named kinds render
@@ -8693,12 +8702,11 @@ pub fn run_check(
     // floor. Weave-wide because the floor licenses arm removal for the
     // whole weave and a scoped run proves nothing beyond its project;
     // unfiltered because `--kind` narrows what was even looked at. Clean
-    // means zero violations AND no error-severity issue — warning-level
-    // integration hygiene does not block the floor, because the floor
-    // licenses removal of MIGRATORY arms and those repair violations.
-    // Best-effort: a floor is a record, not a precondition of the run
-    // that earned it.
-    if scope_all && kind_filter.is_none() && violations_clean && !has_errors {
+    // means no error-severity finding and no violation rwv can still
+    // repair; report-only warnings do not block, per the classification
+    // where `violations_all_report_only` is computed. Best-effort: a
+    // floor is a record, not a precondition of the run that earned it.
+    if scope_all && kind_filter.is_none() && violations_all_report_only && !has_errors {
         if let Err(e) =
             crate::health_floor::record_clean_run(ctx.primary_path(), world.vcs.as_ref())
         {

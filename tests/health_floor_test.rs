@@ -3,8 +3,9 @@
 //! Executed pins:
 //!   1. A CLEAN weave-wide `rwv doctor --all` run records the floor: the
 //!      running version and each project repo's tip.
-//!   2. A run with findings does not — exit 0 alone (warnings only) is not
-//!      clean.
+//!   2. A violation rwv can still repair blocks the floor — exit 0 alone
+//!      is not clean. 2b: a report-only warning does not block. 2c: an
+//!      error-severity finding blocks regardless of disposition.
 //!   3. A clean but project-SCOPED run does not — the floor licenses arm
 //!      removal for the whole weave, and a scoped run proves nothing
 //!      weave-wide.
@@ -137,8 +138,9 @@ fn a_clean_weave_wide_run_records_the_floor() {
     assert_eq!(tip, head, "the recorded tip is the project repo's HEAD");
 }
 
-/// Pin 2: findings block the floor even when the exit code is 0 — a
-/// warning-class violation (a redundant orphaned savepoint) is a finding.
+/// Pin 2: a repairable violation blocks the floor even when the exit code
+/// is 0 — a redundant orphaned savepoint is Auto-fixable, so the
+/// attestation must not stand while the repair has not run.
 #[test]
 fn a_run_with_findings_does_not_record_the_floor() {
     let tmp = common::tempdir().unwrap();
@@ -216,5 +218,87 @@ fn the_floor_never_moves_backward() {
         floor["version"].as_str(),
         Some("99.0.0"),
         "a clean run under an older binary must not lower the floor"
+    );
+}
+
+/// Pin 2b: a report-only warning does not block the floor. A live orphaned
+/// savepoint is the plant: rwv will not drop it (`--fix` leaves it for the
+/// reviewed operator sweep), so a weave carrying one can never reach
+/// zero-violations — the floor must record over it or such a weave has no
+/// floor at all. Same reasoning covers the other report-only observatories:
+/// version skew across sovereign repos, submodules in reference checkouts,
+/// a sibling weave's workweaves in the shared container.
+///
+/// **Mutation evidence**: reverting the record condition's violation check
+/// to `violations.is_empty()` reddens this pin and only this pin.
+#[test]
+fn report_only_warnings_do_not_block_the_floor() {
+    let tmp = common::tempdir().unwrap();
+    let root = healable_workspace(tmp.path());
+    heal_and_clear(&root);
+
+    // A savepoint anchoring a commit no live ref reaches: LIVE, report-only.
+    let repo_abs = root.join("github").join("acme").join("server");
+    let tree = git_in(&repo_abs, &["rev-parse", "HEAD^{tree}"]);
+    let dangling = git_in(
+        &repo_abs,
+        &["commit-tree", &tree, "-p", "HEAD", "-m", "orphaned work"],
+    );
+    git_in(
+        &repo_abs,
+        &[
+            "update-ref",
+            "refs/rwv/pre-op/622222222222222222",
+            &dangling,
+        ],
+    );
+
+    let out = rwv()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("live orphaned-savepoint finding"),
+        "the plant must fire — a floor recorded over a clean weave proves \
+         nothing about report-only findings; report was:\n{stdout}"
+    );
+    assert!(
+        floor_path(&root).exists(),
+        "a report-only warning is not rwv's to clear and must not hold the \
+         floor; report was:\n{stdout}"
+    );
+}
+
+/// Pin 2c: an error-severity finding blocks the floor even when it is
+/// report-only — `has_errors` is the leg that catches it, since a
+/// report-only violation never trips the repairable-set check.
+///
+/// **Mutation evidence**: dropping `!has_errors` from the record condition
+/// reddens this pin; pins 1 and 2b stay green, which isolates the leg.
+#[test]
+fn an_error_severity_finding_blocks_the_floor() {
+    let tmp = common::tempdir().unwrap();
+    let root = healable_workspace(tmp.path());
+    heal_and_clear(&root);
+
+    // An orphaned clone: error severity, report-only (register or remove
+    // is the operator's call, never doctor's).
+    init_git_repo(&root.join("github").join("acme").join("stray"));
+
+    let out = rwv()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("orphaned clone"),
+        "the plant must fire; report was:\n{stdout}"
+    );
+    assert!(
+        !floor_path(&root).exists(),
+        "an error-severity finding must block the floor; report was:\n{stdout}"
     );
 }
