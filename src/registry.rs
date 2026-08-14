@@ -7,7 +7,6 @@
 //! to have different URL parsing, authentication, and discovery behavior.
 
 use crate::manifest::RepoUrl;
-use std::path::{Path, PathBuf};
 
 /// A short name for a code host or directory that serves as the first path
 /// segment in the canonical layout: `{registry}/{owner}/{repo}/`.
@@ -57,8 +56,13 @@ impl RepoId {
 
 /// The canonical local-path shape every mint site shares:
 /// `{registry}/{owner}/{repo}`.
-pub(crate) fn canonical_local_path(registry: &str, owner: &str, repo: &str) -> PathBuf {
-    Path::new(registry).join(owner).join(repo)
+///
+/// A `String` and not a `PathBuf` because this value is an identity — the
+/// manifest key `RepoPath` validates, whose separators are `/` by contract —
+/// and `PathBuf::join` renders with the platform separator, which on Windows
+/// mints a spelling the validator refuses.
+pub(crate) fn canonical_local_path(registry: &str, owner: &str, repo: &str) -> String {
+    format!("{registry}/{owner}/{repo}")
 }
 
 /// A code host or directory that can resolve URLs to local paths.
@@ -499,7 +503,7 @@ mod tests {
         let url: RepoUrl = "https://github.com/owner/repo.git".parse().unwrap();
         assert_eq!(url.registry(), Some(&RegistryName::new("github")));
         assert_eq!(url.owner_repo(), Some(("owner", "repo")));
-        assert_eq!(url.local_path().unwrap(), Path::new("github/owner/repo"));
+        assert_eq!(url.local_path().unwrap(), "github/owner/repo");
     }
 
     #[test]
@@ -519,10 +523,7 @@ mod tests {
     #[test]
     fn from_str_ssh_returns_correct_local_path() {
         let url: RepoUrl = "git@github.com:cwalv/repoweave.git".parse().unwrap();
-        assert_eq!(
-            url.local_path().unwrap(),
-            Path::new("github/cwalv/repoweave")
-        );
+        assert_eq!(url.local_path().unwrap(), "github/cwalv/repoweave");
     }
 
     #[test]
@@ -546,7 +547,7 @@ mod tests {
         let url: RepoUrl = "gitlab/org/proj".parse().unwrap();
         assert_eq!(url.registry(), Some(&RegistryName::new("gitlab")));
         assert_eq!(url.owner_repo(), Some(("org", "proj")));
-        assert_eq!(url.local_path().unwrap(), Path::new("gitlab/org/proj"));
+        assert_eq!(url.local_path().unwrap(), "gitlab/org/proj");
     }
 
     #[test]

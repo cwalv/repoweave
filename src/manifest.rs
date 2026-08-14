@@ -432,8 +432,9 @@ impl RepoUrl {
 
     /// Canonical local path `{registry}/{owner}/{repo}` for variants where the
     /// registry is known. Returns `None` for [`Self::Shorthand`] without a
-    /// registry and for [`Self::Unknown`].
-    pub fn local_path(&self) -> Option<PathBuf> {
+    /// registry and for [`Self::Unknown`]. The value is the `RepoPath`
+    /// identity spelling, `/`-separated on every platform.
+    pub fn local_path(&self) -> Option<String> {
         let registry = self.registry()?;
         let (owner, repo) = self.owner_repo()?;
         Some(crate::registry::canonical_local_path(

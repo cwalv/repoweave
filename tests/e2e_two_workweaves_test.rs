@@ -1049,7 +1049,12 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
         .assert()
         .success();
 
-    let after_resync = std::fs::read_to_string(ww2.project_dir.join("notes/shared.md")).unwrap();
+    // Read modulo the eol filter: under `core.autocrlf` the replay checks
+    // this file out CRLF-smudged, which is the same content to git and not
+    // what this assertion is about.
+    let after_resync = std::fs::read_to_string(ww2.project_dir.join("notes/shared.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
     assert_eq!(
         after_resync, "operator-resolved version\n",
         "second `rwv sync` must NOT clobber the operator's resolution; \

@@ -32,3 +32,14 @@ pub fn builtin_integrations() -> Vec<Box<dyn Integration>> {
         Box::new(StaticFiles),
     ]
 }
+
+/// The spelling `CreateProcess` can execute: the npm-family tools install
+/// `.cmd` shims on Windows, and `std::process::Command` routes a script
+/// through the interpreter only when the program name spells its extension.
+pub(crate) fn node_tool(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.cmd")
+    } else {
+        name.to_string()
+    }
+}

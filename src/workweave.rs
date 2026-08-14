@@ -1724,7 +1724,17 @@ pub fn create_workweave(
     // workweave config; lock = lockfile shared with downstream). Other
     // uncommitted project files remain at their committed state, matching
     // the existing worktree-from-ref contract for everything else.
-    if project_dir.exists() && project_wt_dest.exists() {
+    // Whether either file is dirty is git's question, not a byte
+    // comparison's: the worktree checkout above sits on the far side of
+    // git's clean/smudge filter, so under `core.autocrlf` its bytes differ
+    // from the source working tree's for a file git considers unchanged,
+    // and an overlay driven by byte inequality writes the source's line
+    // endings into a tree whose index expects the filtered ones — tracked
+    // dirt in a workweave that started clean.
+    if project_dir.exists() && project_wt_dest.exists() && project_vcs.is_repo(&project_dir) {
+        let dirty_names = project_vcs
+            .dirty_file_names(&project_dir)
+            .context("failed to read project repo status for the dirty-state overlay")?;
         for fname in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
             let src = project_dir.join(fname);
             let dst = project_wt_dest.join(fname);
@@ -1732,12 +1742,7 @@ pub fn create_workweave(
                 continue;
             }
             let src_bytes = std::fs::read(&src).ok();
-            let dst_bytes = if dst.exists() {
-                std::fs::read(&dst).ok()
-            } else {
-                None
-            };
-            if src_bytes != dst_bytes {
+            if dirty_names.iter().any(|n| n == fname) {
                 eprintln!(
                     "rwv workweave create: using working-tree projects/{}/{fname} \
                      (uncommitted changes; workweave captures dirty state)",

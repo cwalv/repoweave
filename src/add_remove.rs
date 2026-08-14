@@ -245,7 +245,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             )
         })?;
 
-    let repo_path = RepoPath::new(local_path.to_string_lossy().to_string())?;
+    let repo_path = RepoPath::new(local_path)?;
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
@@ -828,7 +828,7 @@ fn infer_url_from_path(path: &str, registries: &[&dyn Registry]) -> Option<RepoU
 /// a matched registry never produces is not a valid substitute here: it
 /// collides with the workspace-root layout every other repo is written
 /// under.
-fn derive_local_path_from_url(url: &str) -> Option<PathBuf> {
+fn derive_local_path_from_url(url: &str) -> Option<String> {
     let (registry, path_str) = if let Some(rest) = url.strip_prefix("file://") {
         ("local".to_owned(), rest)
     } else if url.contains("://") {

@@ -1,6 +1,5 @@
 use repoweave::manifest::RepoUrl;
 use repoweave::registry::{builtin_registries, DomainRegistry, Registry, RegistryName, RepoId};
-use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // DomainRegistry: HTTPS URL parsing
@@ -189,7 +188,7 @@ fn shorthand_three_part_gitlab() {
     let url: RepoUrl = "gitlab/org/proj".parse().unwrap();
     assert_eq!(url.registry(), Some(&RegistryName::new("gitlab")));
     assert_eq!(url.owner_repo(), Some(("org", "proj")));
-    assert_eq!(url.local_path().unwrap(), Path::new("gitlab/org/proj"));
+    assert_eq!(url.local_path().unwrap(), "gitlab/org/proj");
 }
 
 #[test]

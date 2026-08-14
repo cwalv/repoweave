@@ -276,7 +276,7 @@ impl Integration for NpmWorkspaces {
         // Run from workspace_root: the symlink at the root points at the
         // canonical package.json in output_dir, and workspace member
         // paths are resolved relative to the symlink location.
-        let status = std::process::Command::new("npm")
+        let status = std::process::Command::new(super::node_tool("npm"))
             .args(["install"])
             .current_dir(ctx.workspace_root)
             .status()
