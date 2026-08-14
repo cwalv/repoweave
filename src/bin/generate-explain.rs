@@ -47,14 +47,18 @@ use repoweave::cli::Cli;
 use repoweave::explain;
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeNdjsonRecord, FETCH_RECORD_SCHEMA_URL};
 use repoweave::plugins::envelope_vars;
-use repoweave::push::{PushJsonOutput, PushOutcomeNdjsonRecord, PUSH_RECORD_SCHEMA_URL, PUSH_SCHEMA_URL};
+use repoweave::push::{
+    PushJsonOutput, PushOutcomeNdjsonRecord, PUSH_RECORD_SCHEMA_URL, PUSH_SCHEMA_URL,
+};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
     auto_relock_commit_message, SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncToJsonOutput,
     SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
     SYNC_TO_RECORD_SCHEMA_URL,
 };
-use repoweave::update::{UpdateJsonOutput, UpdateNdjsonRecord, UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL};
+use repoweave::update::{
+    UpdateJsonOutput, UpdateNdjsonRecord, UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL,
+};
 use repoweave::workspace::Resolution;
 
 /// One explainable verb.
@@ -290,10 +294,7 @@ fn inject_schema_field_into_oneof_branches(
     // 1. Remove "$schema" from the top-level "properties" so the top level
     //    is no longer a closed object (the "required" constraint on "$schema"
     //    remains and still enforces presence).
-    if let Some(props) = raw
-        .get_mut("properties")
-        .and_then(|p| p.as_object_mut())
-    {
+    if let Some(props) = raw.get_mut("properties").and_then(|p| p.as_object_mut()) {
         props.remove("$schema");
         // If "properties" is now empty, remove the key entirely so the
         // closed-object check has no foothold.
@@ -305,24 +306,17 @@ fn inject_schema_field_into_oneof_branches(
     // 2. Inject "$schema": {"type":"string"} into each oneOf branch that
     //    declares "properties", making the branch's closed-object shape include
     //    the field that was previously only at the outer level.
-    if let Some(branches) = raw
-        .get_mut("oneOf")
-        .and_then(|v| v.as_array_mut())
-    {
+    if let Some(branches) = raw.get_mut("oneOf").and_then(|v| v.as_array_mut()) {
         for branch in branches.iter_mut() {
-            if let Some(props) = branch
-                .get_mut("properties")
-                .and_then(|p| p.as_object_mut())
-            {
-                props.entry("$schema").or_insert_with(|| {
-                    serde_json::json!({"type": "string"})
-                });
+            if let Some(props) = branch.get_mut("properties").and_then(|p| p.as_object_mut()) {
+                props
+                    .entry("$schema")
+                    .or_insert_with(|| serde_json::json!({"type": "string"}));
             }
         }
     }
 
-    serde_json::from_value(raw)
-        .expect("schema round-trips after oneOf branch injection")
+    serde_json::from_value(raw).expect("schema round-trips after oneOf branch injection")
 }
 
 fn verbs() -> Vec<Verb> {

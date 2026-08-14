@@ -85,8 +85,8 @@ use repoweave::status::{
 };
 use repoweave::sync::{
     ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, Step3AdvanceOutput,
-    SyncFailureOutput, SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncOutcomeOutput, SyncToJsonOutput,
-    SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
+    SyncFailureOutput, SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncOutcomeOutput,
+    SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
     SYNC_TO_RECORD_SCHEMA_URL,
 };
 use repoweave::update::{

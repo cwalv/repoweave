@@ -394,9 +394,7 @@ fn emit_ndjson(cwd: &Path, args: &[&str]) -> Vec<Value> {
         .filter(|l| !l.trim().is_empty())
         .map(|line| {
             serde_json::from_str(line).unwrap_or_else(|e| {
-                panic!(
-                    "rwv {args:?} printed a line that is not valid JSON: {e}\nline: {line}"
-                )
+                panic!("rwv {args:?} printed a line that is not valid JSON: {e}\nline: {line}")
             })
         })
         .collect()
@@ -408,20 +406,14 @@ fn emit_ndjson(cwd: &Path, args: &[&str]) -> Vec<Value> {
 /// A record URL pointing at a different artifact causes the `assert_eq` to
 /// fire, naming both the expected and the actual artifact path so the failure
 /// message is actionable without inspecting the binary.
-fn assert_ndjson_conforms(
-    verb: &str,
-    records: &[Value],
-    expected_record_artifact: &str,
-) {
+fn assert_ndjson_conforms(verb: &str, records: &[Value], expected_record_artifact: &str) {
     assert!(
         !records.is_empty(),
         "rwv {verb} --json -j 2 emitted no records — fixture proves nothing"
     );
     for (i, record) in records.iter().enumerate() {
         let url = record["$schema"].as_str().unwrap_or_else(|| {
-            panic!(
-                "rwv {verb} --json -j 2 record[{i}] has no `$schema` string:\n{record:#}"
-            )
+            panic!("rwv {verb} --json -j 2 record[{i}] has no `$schema` string:\n{record:#}")
         });
         let named = url
             .rsplit('/')
