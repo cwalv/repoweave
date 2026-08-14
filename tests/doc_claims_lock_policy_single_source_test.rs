@@ -50,8 +50,11 @@ fn read_doc(rel: &str) -> String {
     let manifest = std::env::var("CARGO_MANIFEST_DIR")
         .expect("CARGO_MANIFEST_DIR must be set (run via cargo test)");
     let path = Path::new(&manifest).join(rel);
+    // Paragraph slicing below keys on blank lines; read modulo the eol
+    // filter so a CRLF-smudged checkout still has "\n\n" between paragraphs.
     std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+        .replace("\r\n", "\n")
 }
 
 /// The token every deferring page must link to.

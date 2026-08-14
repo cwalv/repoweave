@@ -365,6 +365,30 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// repos. This matches `delete_workweave`'s existing "continue on error, collect
 /// at the end" pattern — orphan refs in a secondary repo should not prevent
 /// the workweave dir from being removed.
+/// `remove_dir_all` that outlasts a just-exited child's file handles.
+///
+/// On Windows a process that exited can hold its handles open for a beat
+/// while the OS releases them, and the git children this module runs finish
+/// immediately before their repo trees are removed — deletion then fails
+/// with `ERROR_SHARING_VIOLATION` (os error 32), an error that resolves
+/// itself when the handle closes. A bounded retry outlasts the release
+/// without masking a tree something genuinely holds; every other error, and
+/// every error elsewhere, returns on first sight.
+fn remove_tree_outlasting_child_handles(dir: &Path) -> std::io::Result<()> {
+    let mut last: Option<std::io::Error> = None;
+    for _ in 0..10 {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if cfg!(windows) && e.raw_os_error() == Some(32) => {
+                last = Some(e);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.expect("loop exits early unless a retryable error was seen"))
+}
+
 pub fn prune_orphan_worktrees_for(vcs: &dyn Vcs, pairs: &[(PathBuf, PathBuf)]) {
     for (repo_abs, worktree_path) in pairs {
         if worktree_path.exists() {
@@ -2947,7 +2971,7 @@ fn delete_workweave_inner_at(
 
     // Remove the workweave directory itself.
     if workweave_dir.exists() {
-        std::fs::remove_dir_all(&workweave_dir)?;
+        remove_tree_outlasting_child_handles(&workweave_dir)?;
     }
 
     // Retire the registry entry. Best-effort: a delete that removes the

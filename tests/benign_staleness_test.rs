@@ -321,7 +321,7 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
 
     commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
     commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
-    let ww_lock_before = std::fs::read_to_string(f.ww.project_dir.join("rwv.lock")).unwrap();
+    let ww_lock_before = common::read_normalized(f.ww.project_dir.join("rwv.lock"));
     let ww_project_before = head(&f.ww.project_dir);
     block_commits(&f.ww.project_dir, &hooks);
 

@@ -371,6 +371,11 @@ fn run_add_from_local_path(
     // consistent regardless of how the clone was created.
     let origin_url = if raw_url.starts_with('/') {
         format!("file://{raw_url}")
+    } else if !raw_url.contains("://") && Path::new(&raw_url).is_absolute() {
+        // The platform's other absolute spelling: a drive-letter path git
+        // reports verbatim. A file URL takes forward slashes and roots the
+        // drive letter behind a third slash.
+        format!("file:///{}", raw_url.replace('\\', "/"))
     } else {
         raw_url
     };

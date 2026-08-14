@@ -4651,9 +4651,10 @@ acme-lib = { path = "../github/acme/lib" }
 "#,
         );
         let issues = CargoWorkspace.verify(&ctx).unwrap();
-        let has_user_held = issues
-            .iter()
-            .any(|i| i.message.contains(".cargo/config.toml") && i.message.contains("unmarked"));
+        let has_user_held = issues.iter().any(|i| {
+            i.message.replace('\\', "/").contains(".cargo/config.toml")
+                && i.message.contains("unmarked")
+        });
         assert!(
             has_user_held,
             "expected USER-HELD finding for unmarked expected key; got: {issues:?}"
