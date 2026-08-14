@@ -2326,7 +2326,7 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
     );
 
     // ── Step 2: --replace-existing create must succeed ────────────────────
-    rwv()
+    let replace_out = rwv()
         .args([
             "workweave",
             "web-app",
@@ -2335,8 +2335,13 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
             "--replace-existing",
         ])
         .current_dir(&ws)
-        .assert()
-        .success();
+        .output()
+        .expect("rwv should spawn");
+    let replace_stderr = String::from_utf8_lossy(&replace_out.stderr).to_string();
+    assert!(
+        replace_out.status.success(),
+        "--replace-existing create must succeed; stderr:\n{replace_stderr}"
+    );
 
     // Workweave directory must exist with a marker.
     assert!(
@@ -2369,7 +2374,8 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
     assert_eq!(
         stale_count, 0,
         "--replace-existing must prune orphan worktree registrations; \
-         git worktree list after:\n{after_listing}"
+         git worktree list after:\n{after_listing}\n\
+         create's stderr (prune warnings appear here):\n{replace_stderr}"
     );
 }
 
