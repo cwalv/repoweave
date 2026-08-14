@@ -692,12 +692,17 @@ pub struct SyncToJsonOutput {
 ///
 /// Under NDJSON streaming mode, the envelope wrapper is dropped and each
 /// per-repo outcome becomes its own self-describing line. Every NDJSON
-/// record carries its own `$schema` URL so consumers can identify a line
-/// without out-of-band context.
+/// record carries its own `$schema` URL (pointing at `sync-record.json`) so
+/// consumers can identify a line without out-of-band context.
 ///
 /// Serialised with `#[serde(flatten)]` on the inner outcome so the wire
 /// shape is a single flat object: `{"$schema": "...", "kind": "...", ...}`,
 /// not a nested wrapper.
+///
+/// `$schema` names `docs/reference/schemas/sync-record.json`, not the
+/// envelope artifact (`sync.json`), because the two documents have different
+/// shapes: the envelope wraps an `outcomes` array; each streamed line is one
+/// flat per-repo object.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SyncOutcomeNdjsonRecord<'a> {
     #[serde(rename = "$schema")]
@@ -707,12 +712,22 @@ pub struct SyncOutcomeNdjsonRecord<'a> {
 }
 
 /// Schema URL embedded in `rwv sync --json` output. Pins to the committed
-/// artifact under `docs/reference/schemas/`.
+/// artifact under `docs/reference/schemas/sync.json`.
 pub const SYNC_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync");
 
+/// Schema URL embedded in each `rwv sync --json -j N` NDJSON record line.
+/// Pins to `docs/reference/schemas/sync-record.json`, which describes the
+/// flat per-repo wire shape — distinct from the serial envelope (`sync.json`).
+pub const SYNC_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-record");
+
 /// Schema URL embedded in `rwv sync-to --json` output. Pins to the committed
-/// artifact under `docs/reference/schemas/`.
+/// artifact under `docs/reference/schemas/sync-to.json`.
 pub const SYNC_TO_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-to");
+
+/// Schema URL embedded in each `rwv sync-to --json -j N` NDJSON record line.
+/// Pins to `docs/reference/schemas/sync-to-record.json`, which describes the
+/// flat per-repo wire shape — distinct from the serial envelope (`sync-to.json`).
+pub const SYNC_TO_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-to-record");
 
 impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -6471,7 +6486,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
-            schema_url: SYNC_JSON_SCHEMA_URL,
+            schema_url: SYNC_RECORD_SCHEMA_URL,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     } else {
@@ -6661,7 +6676,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
-            schema_url: SYNC_TO_JSON_SCHEMA_URL,
+            schema_url: SYNC_TO_RECORD_SCHEMA_URL,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     } else {

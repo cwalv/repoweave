@@ -22,9 +22,13 @@ use std::sync::Mutex;
 
 /// Schema URL for `rwv push --json` output. Pins to the committed artifact
 /// under `docs/reference/schemas/push.json`. Emitted as the top-level
-/// `$schema` field of the [`PushJsonOutput`] envelope and in every NDJSON
-/// record under `--json -j N` with `N > 1`.
+/// `$schema` field of the [`PushJsonOutput`] envelope.
 pub const PUSH_SCHEMA_URL: &str = crate::schema_url::schema_url!("push");
+
+/// Schema URL embedded in each `rwv push --json -j N` NDJSON record line.
+/// Pins to `docs/reference/schemas/push-record.json`, which describes the
+/// flat per-repo wire shape — distinct from the serial envelope (`push.json`).
+pub const PUSH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("push-record");
 
 // ---------------------------------------------------------------------------
 // JSON wire-output types for `rwv push --json`
@@ -103,7 +107,12 @@ pub struct PushJsonOutput {
 ///
 /// Each line is self-describing: the outcome's fields are flattened alongside
 /// `$schema` so a consumer can identify any single line without context.
-#[derive(Debug, Serialize)]
+///
+/// `$schema` names `docs/reference/schemas/push-record.json`, not the
+/// envelope artifact (`push.json`), because the two documents have different
+/// shapes: the envelope wraps an `outcomes` array; each streamed line is one
+/// flat per-repo object.
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct PushOutcomeNdjsonRecord<'a> {
     #[serde(rename = "$schema")]
     pub schema: &'a str,
@@ -697,7 +706,7 @@ pub fn run_push(
 /// parallel workers cannot interleave bytes.
 fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
     let record = PushOutcomeNdjsonRecord {
-        schema: PUSH_SCHEMA_URL,
+        schema: PUSH_RECORD_SCHEMA_URL,
         outcome,
     };
     if let Ok(line) = serde_json::to_string(&record) {

@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PushOutcomeNdjsonRecord",
+  "description": "One NDJSON record for `rwv push --json -j N` with `N > 1`.\n\nEach line is self-describing: the outcome's fields are flattened alongside `$schema` so a consumer can identify any single line without context.\n\n`$schema` names `docs/reference/schemas/push-record.json`, not the envelope artifact (`push.json`), because the two documents have different shapes: the envelope wraps an `outcomes` array; each streamed line is one flat per-repo object.",
+  "type": "object",
+  "oneOf": [
+    {
+      "description": "Manifest repo was pushed successfully.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "pushed"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "Manifest repo was skipped (e.g. by a selector filter).",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "skipped"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "Manifest repo push failed.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "message",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "failed"
+          ]
+        },
+        "message": {
+          "description": "Free-form error message from the git push attempt.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "Project repo was pushed successfully (always the last record).",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path",
+        "project"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "project-repo-pushed"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "project": {
+          "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from manifest-repo paths.",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "Project repo push failed.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "message",
+        "path",
+        "project"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "project-repo-failed"
+          ]
+        },
+        "message": {
+          "description": "Free-form error message from the git push attempt.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "required": [
+    "$schema"
+  ]
+}

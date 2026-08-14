@@ -45,15 +45,16 @@ use schemars::schema_for;
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::explain;
-use repoweave::fetch::FetchJsonOutput;
+use repoweave::fetch::{FetchJsonOutput, FetchOutcomeNdjsonRecord, FETCH_RECORD_SCHEMA_URL};
 use repoweave::plugins::envelope_vars;
-use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
+use repoweave::push::{PushJsonOutput, PushOutcomeNdjsonRecord, PUSH_RECORD_SCHEMA_URL, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
-    auto_relock_commit_message, SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
-    SYNC_TO_JSON_SCHEMA_URL,
+    auto_relock_commit_message, SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncToJsonOutput,
+    SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
+    SYNC_TO_RECORD_SCHEMA_URL,
 };
-use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
+use repoweave::update::{UpdateJsonOutput, UpdateNdjsonRecord, UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL};
 use repoweave::workspace::Resolution;
 
 /// One explainable verb.
@@ -65,6 +66,11 @@ struct Verb {
     /// `Some` for `--json`-capable verbs; the closure returns the JSON Schema
     /// as a pretty-printed string. `None` for markdown-only verbs.
     schema: Option<fn() -> String>,
+    /// `Some` for verbs that also emit NDJSON records (`-j N`, `N > 1`); the
+    /// closure returns the JSON Schema for the per-line record shape as a
+    /// pretty-printed string. Written to `<verb>-record.json` alongside the
+    /// envelope artifact. `None` when the verb has no NDJSON mode.
+    schema_record: Option<fn() -> String>,
 }
 
 fn schema_status() -> String {
@@ -210,92 +216,221 @@ fn schema_push() -> String {
     serde_json::to_string_pretty(&schema).expect("push schema serializes")
 }
 
+fn schema_fetch_record() -> String {
+    let schema = schema_for!(FetchOutcomeNdjsonRecord<'static>);
+    serde_json::to_string_pretty(&schema).expect("fetch-record schema serializes")
+}
+
+fn schema_update_record() -> String {
+    let schema = schema_for!(UpdateNdjsonRecord<'static>);
+    serde_json::to_string_pretty(&schema).expect("update-record schema serializes")
+}
+
+fn schema_push_record() -> String {
+    let schema = schema_for!(PushOutcomeNdjsonRecord<'static>);
+    let schema = inject_schema_field_into_oneof_branches(schema);
+    serde_json::to_string_pretty(&schema).expect("push-record schema serializes")
+}
+
+fn schema_sync_record() -> String {
+    let schema = schema_for!(SyncOutcomeNdjsonRecord<'static>);
+    let schema = inject_schema_field_into_oneof_branches(schema);
+    serde_json::to_string_pretty(&schema).expect("sync-record schema serializes")
+}
+
+/// Post-process a schemars-derived record schema so that a validator that
+/// closes objects whenever `properties` is declared can validate the record
+/// wire format.
+///
+/// # The generation problem
+///
+/// When a struct has a plain `#[serde(rename = "$schema")] schema: &str` field
+/// alongside a `#[serde(flatten)]` enum field, schemars places:
+///   - the outer struct's `$schema` field in top-level `required` + `properties`
+///   - the flattened enum's variants in a top-level `oneOf`
+///
+/// This creates two conflicts for a validator that closes objects at any level
+/// where `properties` is declared:
+///
+/// 1. **Top-level**: `properties: {"$schema": ...}` is present, so the
+///    validator treats the top-level object as closed. The document's variant
+///    fields (`kind`, `path`, `absolute_path`, …) appear undeclared there.
+///
+/// 2. **Branch-level**: each `oneOf` branch declares `properties` for its
+///    variant fields, but not for `$schema`. The document's `$schema` field
+///    appears undeclared inside each branch.
+///
+/// # The fix
+///
+/// For schemas that carry a top-level `oneOf` (i.e. the flattened field is an
+/// enum) alongside top-level `required`/`properties` for `$schema`:
+///
+///   - Remove `$schema` from the top-level `properties` (keeping it in
+///     `required` so the presence constraint is still enforced by the
+///     `required` keyword rather than by property-level validation).
+///   - Add `$schema: {"type":"string"}` to the `properties` of every `oneOf`
+///     branch that already declares `properties`.
+///
+/// After this transformation the validator sees one open top-level object
+/// (no `properties` key → no closed-object enforcement) with a `required`
+/// constraint, and closed branches that each declare exactly the fields they
+/// contain.
+fn inject_schema_field_into_oneof_branches(
+    schema: schemars::schema::RootSchema,
+) -> schemars::schema::RootSchema {
+    let mut raw = serde_json::to_value(&schema).expect("schema serializes for post-processing");
+    let has_oneof = raw
+        .get("oneOf")
+        .and_then(|v| v.as_array())
+        .is_some_and(|b| !b.is_empty());
+    if !has_oneof {
+        return schema;
+    }
+
+    // 1. Remove "$schema" from the top-level "properties" so the top level
+    //    is no longer a closed object (the "required" constraint on "$schema"
+    //    remains and still enforces presence).
+    if let Some(props) = raw
+        .get_mut("properties")
+        .and_then(|p| p.as_object_mut())
+    {
+        props.remove("$schema");
+        // If "properties" is now empty, remove the key entirely so the
+        // closed-object check has no foothold.
+        if props.is_empty() {
+            raw.as_object_mut().map(|m| m.remove("properties"));
+        }
+    }
+
+    // 2. Inject "$schema": {"type":"string"} into each oneOf branch that
+    //    declares "properties", making the branch's closed-object shape include
+    //    the field that was previously only at the outer level.
+    if let Some(branches) = raw
+        .get_mut("oneOf")
+        .and_then(|v| v.as_array_mut())
+    {
+        for branch in branches.iter_mut() {
+            if let Some(props) = branch
+                .get_mut("properties")
+                .and_then(|p| p.as_object_mut())
+            {
+                props.entry("$schema").or_insert_with(|| {
+                    serde_json::json!({"type": "string"})
+                });
+            }
+        }
+    }
+
+    serde_json::from_value(raw)
+        .expect("schema round-trips after oneOf branch injection")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
             name: "status",
             summary: "per-repo workspace state (branch, tip, lock, relation)",
             schema: Some(schema_status),
+            schema_record: None,
         },
         Verb {
             name: "doctor",
             summary: "convention-violation checks (orphans, drift, stale locks)",
             schema: Some(schema_doctor),
+            schema_record: None,
         },
         Verb {
             name: "sync",
             summary: "reconcile each repo with its locked SHA",
             schema: Some(schema_sync),
+            schema_record: Some(schema_sync_record),
         },
         Verb {
             name: "sync-to",
             summary: "advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance)",
             schema: Some(schema_sync_to),
+            // sync-to NDJSON records share the same per-repo wire shape as sync
+            // records (both flatten `SyncOutcomeOutput` with `$schema`), so
+            // `sync-to-record.json` reuses the same generated schema.
+            schema_record: Some(schema_sync_record),
         },
         Verb {
             name: "push",
             summary: "publish manifest repos then the project repo to shared remotes",
             schema: Some(schema_push),
+            schema_record: Some(schema_push_record),
         },
         Verb {
             name: "fetch",
             summary: "clone or fetch every repo in the active project",
             schema: Some(schema_fetch),
+            schema_record: Some(schema_fetch_record),
         },
         Verb {
             name: "update",
             summary: "advance the lock to current HEADs",
             schema: Some(schema_update),
+            schema_record: Some(schema_update_record),
         },
         Verb {
             name: "prime",
             summary: "agent-oriented orientation context for the workspace",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "explain",
             summary: "per-verb JIT reflection (this verb)",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "workweave",
             summary: "create, delete, or list workweaves for a project",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "abort",
             summary: "restore CWD workspace to its pre-sync state using savepoint refs",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "add",
             summary: "clone a repo and register it in the active project manifest",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "remove",
             summary: "remove a repo from the active project manifest",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "lock",
             summary: "snapshot current repo HEADs into rwv.lock (pure local; no network)",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "activate",
             summary: "set the active project, create symlinks, run integration install hooks",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "materialize",
             summary: "run the integration install hooks for the presented project, without selecting anything",
             schema: None,
+            schema_record: None,
         },
         Verb {
             name: "init",
             summary: "create a new project (or adopt an existing repo) and auto-activate it",
             schema: None,
+            schema_record: None,
         },
     ]
 }
@@ -2622,6 +2757,19 @@ fn main() -> anyhow::Result<()> {
             let schema_path = schemas_dir.join(format!("{}.json", verb.name));
             write_if_changed(&schema_path, &content)?;
         }
+
+        // Write the per-record NDJSON schema artifact alongside the envelope
+        // artifact. Verbs that emit NDJSON records (`-j N`, `N > 1`) have a
+        // `schema_record` generator; verbs without an NDJSON mode skip this.
+        if let Some(gen_record) = verb.schema_record {
+            let record_schema = gen_record();
+            let mut content = record_schema;
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            let record_path = schemas_dir.join(format!("{}-record.json", verb.name));
+            write_if_changed(&record_path, &content)?;
+        }
     }
 
     // Sanity-check schema URLs the binary embeds match the artifact paths we
@@ -2632,8 +2780,16 @@ fn main() -> anyhow::Result<()> {
         "SYNC_JSON_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
+        SYNC_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/sync-record.json"),
+        "SYNC_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
         SYNC_TO_JSON_SCHEMA_URL.ends_with("/docs/reference/schemas/sync-to.json"),
         "SYNC_TO_JSON_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        SYNC_TO_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/sync-to-record.json"),
+        "SYNC_TO_RECORD_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         repoweave::check::DOCTOR_SCHEMA_URL.ends_with("/docs/reference/schemas/doctor.json"),
@@ -2648,12 +2804,24 @@ fn main() -> anyhow::Result<()> {
         "FETCH_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
+        FETCH_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/fetch-record.json"),
+        "FETCH_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
         UPDATE_SCHEMA_URL.ends_with("/docs/reference/schemas/update.json"),
         "UPDATE_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
+        UPDATE_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/update-record.json"),
+        "UPDATE_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
         PUSH_SCHEMA_URL.ends_with("/docs/reference/schemas/push.json"),
         "PUSH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        PUSH_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/push-record.json"),
+        "PUSH_RECORD_SCHEMA_URL no longer points at the committed artifact"
     );
 
     let index = render_index(&verbs);
@@ -3202,11 +3370,13 @@ mod tests {
                 name: "fetch",
                 summary: "clone or fetch",
                 schema: None,
+                schema_record: None,
             },
             Verb {
                 name: "status",
                 summary: "show status",
                 schema: None,
+                schema_record: None,
             },
         ];
         let allow: HashSet<String> = HashSet::new();
@@ -3231,6 +3401,7 @@ mod tests {
             name: "fetch",
             summary: "clone or fetch",
             schema: None,
+            schema_record: None,
         }];
         let allow: HashSet<String> = HashSet::new();
         let errors = check_registry_coverage(&cli_verbs, &verbs, &allow);
@@ -3272,11 +3443,13 @@ mod tests {
                 name: "fetch",
                 summary: "clone or fetch",
                 schema: None,
+                schema_record: None,
             },
             Verb {
                 name: "status",
                 summary: "show status",
                 schema: None,
+                schema_record: None,
             },
         ];
         let runtime_verbs = vec!["fetch", "status"];
@@ -3297,11 +3470,13 @@ mod tests {
                 name: "fetch",
                 summary: "clone or fetch",
                 schema: None,
+                schema_record: None,
             },
             Verb {
                 name: "status",
                 summary: "show status",
                 schema: None,
+                schema_record: None,
             },
         ];
         // "status" is missing from the runtime side only.

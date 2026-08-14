@@ -25,6 +25,11 @@ use std::sync::Mutex;
 /// artifact under `docs/reference/schemas/fetch.json`.
 pub const FETCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch");
 
+/// Schema URL embedded in each `rwv fetch --json -j N` NDJSON record line.
+/// Pins to `docs/reference/schemas/fetch-record.json`, which describes the
+/// flat per-repo wire shape — distinct from the serial envelope (`fetch.json`).
+pub const FETCH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch-record");
+
 /// Per-repo outcome record for `rwv fetch --json`.
 ///
 /// `status` is one of `"ok"`, `"skipped"`, or `"failed"`. `message` carries
@@ -71,10 +76,16 @@ pub struct FetchJsonOutput {
 /// One NDJSON record emitted by `rwv fetch --json -j N` with `N > 1`.
 ///
 /// Each per-repo outcome becomes its own self-describing line. Every record
-/// carries its own `$schema` URL so consumers can identify a line without
-/// out-of-band context. Serialised with `#[serde(flatten)]` so the wire shape
-/// is a single flat object: `{"$schema": "...", "path": "...", ...}`.
-#[derive(Debug, Serialize)]
+/// carries its own `$schema` URL (pointing at `fetch-record.json`) so
+/// consumers can identify a line without out-of-band context. Serialised with
+/// `#[serde(flatten)]` so the wire shape is a single flat object:
+/// `{"$schema": "...", "path": "...", ...}`.
+///
+/// `$schema` names `docs/reference/schemas/fetch-record.json`, not the
+/// envelope artifact (`fetch.json`), because the two documents have different
+/// shapes: the envelope wraps an `outcomes` array; each streamed line is one
+/// flat per-repo object.
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct FetchOutcomeNdjsonRecord<'a> {
     #[serde(rename = "$schema")]
     pub schema: &'a str,
@@ -450,7 +461,7 @@ fn fetch_project_repos(
                 },
             };
             let ndjson_line = FetchOutcomeNdjsonRecord {
-                schema: FETCH_SCHEMA_URL,
+                schema: FETCH_RECORD_SCHEMA_URL,
                 outcome: &record,
             };
             if let Ok(line) = serde_json::to_string(&ndjson_line) {

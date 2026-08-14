@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FetchOutcomeNdjsonRecord",
+  "description": "One NDJSON record emitted by `rwv fetch --json -j N` with `N > 1`.\n\nEach per-repo outcome becomes its own self-describing line. Every record carries its own `$schema` URL (pointing at `fetch-record.json`) so consumers can identify a line without out-of-band context. Serialised with `#[serde(flatten)]` so the wire shape is a single flat object: `{\"$schema\": \"...\", \"path\": \"...\", ...}`.\n\n`$schema` names `docs/reference/schemas/fetch-record.json`, not the envelope artifact (`fetch.json`), because the two documents have different shapes: the envelope wraps an `outcomes` array; each streamed line is one flat per-repo object.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "absolute_path",
+    "path",
+    "status"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "absolute_path": {
+      "type": "string"
+    },
+    "message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/definitions/FetchOutcomeStatus"
+    }
+  },
+  "definitions": {
+    "FetchOutcomeStatus": {
+      "description": "Status discriminant for [`FetchOutcomeOutput`].",
+      "type": "string",
+      "enum": [
+        "ok",
+        "skipped",
+        "failed"
+      ]
+    }
+  }
+}

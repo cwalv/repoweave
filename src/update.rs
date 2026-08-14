@@ -29,6 +29,11 @@ use std::sync::Mutex;
 /// under `docs/reference/schemas/update.json`.
 pub const UPDATE_SCHEMA_URL: &str = crate::schema_url::schema_url!("update");
 
+/// Schema URL embedded in each `rwv update --json -j N` NDJSON record line.
+/// Pins to `docs/reference/schemas/update-record.json`, which describes the
+/// flat per-repo wire shape — distinct from the serial envelope (`update.json`).
+pub const UPDATE_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("update-record");
+
 /// Per-repo outcome kind for `rwv update --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -86,12 +91,17 @@ pub struct UpdateJsonOutput {
 ///
 /// Each record is a flat JSON object with `$schema` embedded so consumers
 /// can identify it without out-of-band context.
-#[derive(Debug, Serialize)]
-struct UpdateNdjsonRecord<'a> {
+///
+/// `$schema` names `docs/reference/schemas/update-record.json`, not the
+/// envelope artifact (`update.json`), because the two documents have different
+/// shapes: the envelope wraps a `repos` array; each streamed line is one
+/// flat per-repo object.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UpdateNdjsonRecord<'a> {
     #[serde(rename = "$schema")]
-    schema: &'a str,
+    pub schema: &'a str,
     #[serde(flatten)]
-    record: &'a RepoUpdateRecord,
+    pub record: &'a RepoUpdateRecord,
 }
 
 /// Run `rwv update` for the current workspace context.
@@ -312,7 +322,7 @@ fn update_for_project(
             if ndjson {
                 // Stream one line per record to stdout as we build.
                 let line_record = UpdateNdjsonRecord {
-                    schema: UPDATE_SCHEMA_URL,
+                    schema: UPDATE_RECORD_SCHEMA_URL,
                     record: &record,
                 };
                 if let Ok(line) = serde_json::to_string(&line_record) {

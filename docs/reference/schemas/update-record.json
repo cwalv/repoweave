@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UpdateNdjsonRecord",
+  "description": "One NDJSON record emitted by `rwv update --json -j N` with `N > 1`.\n\nEach record is a flat JSON object with `$schema` embedded so consumers can identify it without out-of-band context.\n\n`$schema` names `docs/reference/schemas/update-record.json`, not the envelope artifact (`update.json`), because the two documents have different shapes: the envelope wraps a `repos` array; each streamed line is one flat per-repo object.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "absolute_path",
+    "branch",
+    "kind",
+    "path"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "absolute_path": {
+      "description": "Fully resolved absolute path.",
+      "type": "string"
+    },
+    "branch": {
+      "description": "Branch name from the manifest `version:` field.",
+      "type": "string"
+    },
+    "error": {
+      "description": "Human-readable error message, only present when `kind = failed`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "description": "Outcome discriminant.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/UpdateKind"
+        }
+      ]
+    },
+    "new_sha": {
+      "description": "Tip SHA after the advance (`null` when `kind = failed`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "old_sha": {
+      "description": "Tip SHA before the advance (`null` if unreadable).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "description": "Manifest-relative path.",
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "UpdateKind": {
+      "description": "Per-repo outcome kind for `rwv update --json`.",
+      "oneOf": [
+        {
+          "description": "Repo was advanced to a new SHA (old_sha != new_sha).",
+          "type": "string",
+          "enum": [
+            "updated"
+          ]
+        },
+        {
+          "description": "Repo was already at the branch HEAD (old_sha == new_sha).",
+          "type": "string",
+          "enum": [
+            "up-to-date"
+          ]
+        },
+        {
+          "description": "Advance failed; see `error` for the message.",
+          "type": "string",
+          "enum": [
+            "failed"
+          ]
+        }
+      ]
+    }
+  }
+}

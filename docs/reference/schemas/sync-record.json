@@ -1,0 +1,745 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SyncOutcomeNdjsonRecord",
+  "description": "One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.\n\nUnder NDJSON streaming mode, the envelope wrapper is dropped and each per-repo outcome becomes its own self-describing line. Every NDJSON record carries its own `$schema` URL (pointing at `sync-record.json`) so consumers can identify a line without out-of-band context.\n\nSerialised with `#[serde(flatten)]` on the inner outcome so the wire shape is a single flat object: `{\"$schema\": \"...\", \"kind\": \"...\", ...}`, not a nested wrapper.\n\n`$schema` names `docs/reference/schemas/sync-record.json`, not the envelope artifact (`sync.json`), because the two documents have different shapes: the envelope wraps an `outcomes` array; each streamed line is one flat per-repo object.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "containment": {
+          "description": "How this checkout stood against the source when the strategy ran. The `kind` says what the strategy did; this says what it was up against — `behind` is a fast-forward, `diverged` is a rebase.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContainmentOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "derived_content_dropped": {
+          "description": "Repo-relative paths this repo declares derived whose replayed version the landed tree does not carry: the replay resolved them to the target's version instead. Regenerating them from their source of record and committing is what makes the landed tree describe itself again. Omitted when nothing was resolved away.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "converged"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "step3_advance": {
+          "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Step3AdvanceOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "commits_ahead",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "commits_ahead": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "containment": {
+          "description": "How this checkout stood against the source, and which read of the source `commits_ahead` counts against.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContainmentOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "already-ahead"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "step3_advance": {
+          "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Step3AdvanceOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "containment": {
+          "description": "How this checkout stood against the source, and which read of the source it was equal to.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContainmentOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "no-op"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "step3_advance": {
+          "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Step3AdvanceOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "failure",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "containment": {
+          "description": "How this checkout stood against the source when the strategy ran. `failure.message` renders this in prose; branch on this instead. Absent where the outcome was decided before any pair was read.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ContainmentOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "failure": {
+          "$ref": "#/definitions/SyncFailureOutput"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "failed"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "step3_advance": {
+          "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Step3AdvanceOutput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "required": [
+    "$schema"
+  ],
+  "definitions": {
+    "ConflictOp": {
+      "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.",
+      "oneOf": [
+        {
+          "description": "Native rebase (`git rebase`).\n\nThe operator-facing resume path is `rwv sync --continue` / `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS hint for this variant stops at staging (`git add <files>`); rwv core appends the `rwv <verb> --continue` line. Bare `git rebase --continue` remains a safe fallback (the durable `merge.rwv-ours.driver` config plant carries the exclusion), but it is not the primary operator path.",
+          "type": "string",
+          "enum": [
+            "rebase"
+          ]
+        },
+        {
+          "description": "Merge (`git merge`) — resumes with `git merge --continue`.",
+          "type": "string",
+          "enum": [
+            "merge"
+          ]
+        },
+        {
+          "description": "Cherry-pick (`git cherry-pick`) — resumes with `git cherry-pick --continue`. Used by sync's project-repo rebase-with-lock-exclusion path.",
+          "type": "string",
+          "enum": [
+            "cherry-pick"
+          ]
+        }
+      ]
+    },
+    "ContainmentOutput": {
+      "description": "What one repo's replay was decided from: how this checkout stood against the source, and which read of the source it was measured against.\n\nThe two travel together because a verdict without its baseline counts commits ahead of nothing in particular.",
+      "type": "object",
+      "required": [
+        "baseline",
+        "verdict"
+      ],
+      "properties": {
+        "baseline": {
+          "description": "Which read produced the source tip this verdict measured against.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReplayBaseline"
+            }
+          ]
+        },
+        "verdict": {
+          "description": "The ancestry between this checkout and the source tip.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/ContainmentVerdictOutput"
+            }
+          ]
+        }
+      }
+    },
+    "ContainmentVerdictOutput": {
+      "description": "How a repo's checkout stood against the source tip it was measured against: equal to it, containing it and carrying commits it does not, contained by it, or each holding commits the other lacks.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "relation"
+          ],
+          "properties": {
+            "relation": {
+              "type": "string",
+              "enum": [
+                "equal"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "commits",
+            "relation"
+          ],
+          "properties": {
+            "commits": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "relation": {
+              "type": "string",
+              "enum": [
+                "ahead"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "commits",
+            "relation"
+          ],
+          "properties": {
+            "commits": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "relation": {
+              "type": "string",
+              "enum": [
+                "behind"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "ahead",
+            "behind",
+            "relation"
+          ],
+          "properties": {
+            "ahead": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "behind": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "relation": {
+              "type": "string",
+              "enum": [
+                "diverged"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ReplayBaseline": {
+      "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
+      "type": "string",
+      "enum": [
+        "source-lock-entry",
+        "source-committed-tip"
+      ]
+    },
+    "Step3AdvanceOutput": {
+      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer, and carrying the revisions that advance read and wrote. Omitted (`skip_serializing_if = \"Option::is_none\"`) on a no-op advance — the target was already at CWD's tip — which is the same condition under which the text line reads `already at <sha>`, because both render one outcome.",
+      "type": "object",
+      "required": [
+        "from_sha",
+        "to_sha"
+      ],
+      "properties": {
+        "from_sha": {
+          "description": "Target repo's HEAD SHA before the fast-forward.",
+          "type": "string"
+        },
+        "to_sha": {
+          "description": "Target repo's HEAD SHA after the fast-forward (== CWD's tip).",
+          "type": "string"
+        }
+      }
+    },
+    "SyncFailureOutput": {
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "message"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "head-unreadable"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "message"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "ff-impossible"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "message"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebase-failed"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "VcsErrorOutput": {
+      "description": "Wire-output mirror of [`VcsError`] for `--json` emission.\n\n`VcsError` itself can't derive `Serialize` cleanly because tuple variants (and `io::Error`) don't play nicely with serde's internally-tagged enum representation. This struct-only mirror does: every variant carries named fields, the tag matches [`VcsError::kind`], and a `From<&VcsError>` impl converts at JSON-emission time.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "not-a-repo"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "repo",
+            "rev"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "revision-not-found"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "rev": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "branch",
+            "kind",
+            "repo"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "branch-already-exists"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "worktree-exists"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "uncommitted-changes"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "op",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebase-conflict"
+              ]
+            },
+            "op": {
+              "$ref": "#/definitions/ConflictOp"
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "expected",
+            "kind",
+            "observed",
+            "repo"
+          ],
+          "properties": {
+            "expected": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "stale-ref-witness"
+              ]
+            },
+            "observed": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "operation",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "mid-operation"
+              ]
+            },
+            "operation": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "repo",
+            "stderr"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "hook-rejected"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "paths",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "untracked-collision"
+              ]
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "ctx",
+            "kind",
+            "message"
+          ],
+          "properties": {
+            "ctx": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "io"
+              ]
+            },
+            "message": {
+              "description": "Display form of the underlying `io::Error`. The native source is dropped at the wire boundary since `io::Error` does not serialize. Named `message` (not `error`) to make clear this is free-form display text, not a typed discriminant that consumers can branch on.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "kind",
+            "repo",
+            "stderr"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "command-failed"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
