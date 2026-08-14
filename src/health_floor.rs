@@ -181,7 +181,10 @@ mod tests {
     #[test]
     fn version_triple_tolerates_describe_tails() {
         assert_eq!(version_triple("0.16.0-3-ge5bfa9f"), Some((0, 16, 0)));
-        assert_eq!(version_triple("v0.18.0-86-gd52f24e-dirty"), Some((0, 18, 0)));
+        assert_eq!(
+            version_triple("v0.18.0-86-gd52f24e-dirty"),
+            Some((0, 18, 0))
+        );
         assert_eq!(version_triple("0.18.0"), Some((0, 18, 0)));
         assert_eq!(version_triple("junk"), None);
     }

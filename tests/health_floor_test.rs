@@ -130,7 +130,10 @@ fn a_clean_weave_wide_run_records_the_floor() {
     let tip = floor["project_tips"]["my-app"]
         .as_str()
         .expect("the floor records the project repo tip");
-    let head = git_in(&root.join("projects").join("my-app"), &["rev-parse", "HEAD"]);
+    let head = git_in(
+        &root.join("projects").join("my-app"),
+        &["rev-parse", "HEAD"],
+    );
     assert_eq!(tip, head, "the recorded tip is the project repo's HEAD");
 }
 
