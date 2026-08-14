@@ -618,10 +618,10 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
     // `path+file:///abs/dir/#name@version`, so we check the substring for
     // the canonical protocol dir.
     let expected_source = format!(
-        "path+file://{}/github/chatly/protocol",
-        root.canonicalize().unwrap().display()
+        "path+{}/github/chatly/protocol",
+        common::file_url(root.canonicalize().unwrap())
     );
-    let non_canonical = format!("path+file://{}/github/chatly/protocol", root.display());
+    let non_canonical = format!("path+{}/github/chatly/protocol", common::file_url(&root));
     assert!(
         stdout.contains(&expected_source) || stdout.contains(&non_canonical),
         "cargo metadata did not resolve chatly-protocol to the in-weave source \

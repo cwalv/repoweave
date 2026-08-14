@@ -73,8 +73,7 @@ pub fn file_url(path: impl AsRef<std::path::Path>) -> String {
 /// so a Windows drive-letter path becomes `/C:/…`. For templates that spell
 /// the `file://` prefix themselves.
 pub fn url_path(path: impl AsRef<std::path::Path>) -> String {
-    let p = path
-        .as_ref()
+    let p = dunce::simplified(path.as_ref())
         .to_str()
         .expect("fixture path is valid UTF-8")
         .replace('\\', "/");
