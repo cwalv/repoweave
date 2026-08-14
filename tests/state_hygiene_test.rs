@@ -734,7 +734,11 @@ fn reclaimable_savepoints_render_as_one_count_line_with_full_json_records() {
     );
 
     // Three savepoints at HEAD → all redundant (trivially reachable).
-    for op_id in ["311111111111111111", "322222222222222222", "333333333333333333"] {
+    for op_id in [
+        "311111111111111111",
+        "322222222222222222",
+        "333333333333333333",
+    ] {
         add_savepoint(&repo_abs, op_id, &head_sha);
     }
 
@@ -759,9 +763,8 @@ fn reclaimable_savepoints_render_as_one_count_line_with_full_json_records() {
         .current_dir(&root)
         .output()
         .unwrap();
-    let json: serde_json::Value =
-        serde_json::from_str(&String::from_utf8_lossy(&json_out.stdout))
-            .expect("doctor --json parses");
+    let json: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&json_out.stdout))
+        .expect("doctor --json parses");
     let savepoints: Vec<&serde_json::Value> = json["violations"]
         .as_array()
         .expect("violations is an array")
