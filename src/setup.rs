@@ -29,7 +29,7 @@ const WORKWEAVE_HOOK_EVENTS: &[&str] = &["WorktreeCreate", "WorktreeRemove"];
 
 /// Resolve `~/.claude/settings.json`.
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
-    let home = dirs::home_dir().context("home directory not available")?;
+    let home = std::env::home_dir().context("home directory not available")?;
     Ok(home.join(".claude").join("settings.json"))
 }
 

@@ -679,11 +679,11 @@ fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)>
     // Canonicalize home so that the ceiling check compares against the
     // real path.  On systems where $HOME contains a symlinked component
     // (e.g. /home -> /private/home on macOS, or a bespoke symlink on
-    // Linux), `dirs::home_dir()` returns the raw env value while `cwd`
+    // Linux), `std::env::home_dir()` returns the raw env value while `cwd`
     // above has already been canonicalized.  Without canonicalization the
     // `starts_with` test always returns false (the paths are spelled
     // differently) and the ceiling silently never fires.
-    let home_dir = dirs::home_dir().and_then(|h| h.canonicalize().ok());
+    let home_dir = std::env::home_dir().and_then(|h| h.canonicalize().ok());
 
     let mut current = cwd.as_path();
     loop {
@@ -3176,7 +3176,7 @@ mod tests {
     // fake home dir.
     //
     // Note: this test creates the workspace hierarchy in a real temp dir so
-    // that `dirs::home_dir()` (which returns the REAL home dir) does not affect
+    // that `std::env::home_dir()` (which returns the REAL home dir) does not affect
     // the directory layout. The boundary is exercised with the real home dir
     // value; the test relies on the fact that the temp dir is NOT under $HOME
     // (i.e., it's in /tmp), so the ceiling does not fire for paths under /tmp,
@@ -3209,7 +3209,7 @@ mod tests {
     /// ABOVE $HOME — not below it.
     #[test]
     fn resolve_ceiling_workspace_inside_home_is_found() {
-        let home = match dirs::home_dir() {
+        let home = match std::env::home_dir() {
             Some(h) => h,
             None => {
                 // If we can't determine $HOME, skip.
@@ -3242,7 +3242,7 @@ mod tests {
     //
     // `resolve()` canonicalizes `cwd` but the original code
     // bound `home_dir` as the raw (un-canonicalized) value from
-    // `dirs::home_dir()`.  On systems where $HOME contains a symlinked
+    // `std::env::home_dir()`.  On systems where $HOME contains a symlinked
     // component the `starts_with` comparison always returns false (the
     // spellings differ) and the ceiling silently never fires.
     //

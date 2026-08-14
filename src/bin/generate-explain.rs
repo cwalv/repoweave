@@ -4903,7 +4903,9 @@ mod tests {
         let findings = run_doc_citation_check(root);
 
         assert!(
-            findings.iter().any(|f| f.starts_with("src/lib.rs:")),
+            findings
+                .iter()
+                .any(|f| slashed(f).starts_with("src/lib.rs:")),
             "the gate reported nothing under src/, so its silence elsewhere \
              says nothing:\n{}",
             findings.join("\n")
@@ -4911,7 +4913,7 @@ mod tests {
 
         let real_citation_under_tests: Vec<_> = findings
             .iter()
-            .filter(|f| f.starts_with("tests/") && f.contains("clone-topology.md"))
+            .filter(|f| slashed(f).starts_with("tests/") && f.contains("clone-topology.md"))
             .collect();
         assert!(
             !real_citation_under_tests.is_empty(),
