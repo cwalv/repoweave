@@ -94,6 +94,19 @@ role = "fork"
 
 #[test]
 fn recipe_checkout_branch_across_forks_via_jq_xargs() {
+    // The pinned recipe is Unix shell composition by design: bare `xargs`
+    // treats backslash as its escape character, so the pipeline word-splits
+    // the Windows spelling of `absolute_path`, and there is no Windows form
+    // of this recipe to pin until the how-to's plugin-tier revision gives it
+    // one. Skipped there, loudly, rather than decoupled from the doc line it
+    // quotes verbatim.
+    if cfg!(windows) {
+        eprintln!(
+            "SKIP: the pinned recipe is Unix shell composition; bare xargs \
+             cannot carry Windows path spellings"
+        );
+        return;
+    }
     if !ensure_tool("jq") || !ensure_tool("xargs") {
         eprintln!("skipping: jq or xargs not on PATH");
         return;
