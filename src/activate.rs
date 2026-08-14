@@ -835,7 +835,7 @@ fn remove_activation_symlinks_in(
                 let in_owned_set = owned_files.contains(rel_str.as_ref());
                 let resolves_to_projects = target_resolves_to_projects(rel_from_root, &target);
                 if in_owned_set && resolves_to_projects {
-                    std::fs::remove_file(&path)?;
+                    crate::symlink::remove(&path)?;
                 }
             }
         } else if meta.file_type().is_dir() {
@@ -1096,7 +1096,7 @@ pub fn surface_symlinks(
     //     above cannot.
     if presents_project {
         for (file, _owner) in foreign_shared_name_links(root, project, &new_owned) {
-            std::fs::remove_file(root.join(&file))?;
+            crate::symlink::remove(&root.join(&file))?;
         }
     }
 

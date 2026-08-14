@@ -11,6 +11,8 @@
 //! - {{MSG:auto_relock}} resolves in the assembled sync-to doc and matches the
 //!   string `repoweave::sync::auto_relock_commit_message` emits.
 
+mod common;
+
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
 use repoweave::explain::known_verbs;
@@ -231,10 +233,7 @@ fn generator_produces_no_drift_against_committed_artifacts() {
     // Snapshot current contents.
     let snapshots: Vec<(PathBuf, String)> = tracked
         .iter()
-        .map(|p| {
-            let content = std::fs::read_to_string(p).expect("read snapshot");
-            (p.clone(), content)
-        })
+        .map(|p| (p.clone(), common::read_normalized(p)))
         .collect();
 
     // Re-run the generator.
@@ -248,7 +247,10 @@ fn generator_produces_no_drift_against_committed_artifacts() {
     // Compare.
     let mut drift: Vec<String> = Vec::new();
     for (path, before) in &snapshots {
-        let after = std::fs::read_to_string(path).expect("read post-gen");
+        // Read modulo the eol filter, the same equivalence the gate's
+        // `git diff` drift stage applies: a checkout smudged to CRLF is not
+        // drift against the LF bytes the generator writes.
+        let after = common::read_normalized(path);
         if before != &after {
             drift.push(format!("drift: {}", path.display()));
         }

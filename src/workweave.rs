@@ -2834,7 +2834,7 @@ fn delete_workweave_inner_at(
         // unlink it, but unlinking here keeps the canonical untouched even if
         // a later refactor changes that.
         if classify_checkout(&worktree_path) == CheckoutKind::ReferenceAlias {
-            if let Err(e) = std::fs::remove_file(&worktree_path) {
+            if let Err(e) = crate::symlink::remove(&worktree_path) {
                 let msg = format!("{}: removing reference symlink: {e}", repo_path.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);

@@ -1464,10 +1464,11 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // Marker still points at primary, regardless of source.
     let marker = std::fs::read_to_string(peer_dir.join(".rwv-workweave")).unwrap();
     let ws_canonical = ws.canonicalize().unwrap();
-    assert!(
-        marker.contains(ws_canonical.to_str().unwrap()),
-        "peer marker should record primary {}, got:\n{marker}",
-        ws_canonical.display()
+    let parsed: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
+    assert_eq!(
+        Path::new(parsed["primary"].as_str().expect("primary is a string")),
+        ws_canonical,
+        "peer marker should record the primary path, got:\n{marker}"
     );
 }
 
@@ -2741,10 +2742,11 @@ fn workweave_create_records_primary_as_parent() {
     // For a workweave forked from primary, parent should resolve to the
     // canonicalised primary path.
     let ws_canonical = ws.canonicalize().unwrap();
-    assert!(
-        content.contains(ws_canonical.to_str().unwrap()),
-        "parent must equal primary path {} for primary-forked workweave, got:\n{content}",
-        ws_canonical.display()
+    let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
+    assert_eq!(
+        Path::new(marker["parent"].as_str().expect("parent is a string")),
+        ws_canonical,
+        "parent must equal the primary path for a primary-forked workweave, got:\n{content}"
     );
 }
 
@@ -2774,8 +2776,10 @@ fn workweave_forked_from_other_workweave_records_that_parent() {
     let ww2_marker = weaveroot.join("web-app--ww2/.rwv-workweave");
     let content = std::fs::read_to_string(&ww2_marker).unwrap();
     let ww1_canonical = ww1.canonicalize().unwrap();
-    assert!(
-        content.contains(ww1_canonical.to_str().unwrap()),
+    let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
+    assert_eq!(
+        Path::new(marker["parent"].as_str().expect("parent is a string")),
+        ww1_canonical,
         "ww2's parent must be ww1's path (forked from ww1's CWD), got:\n{content}"
     );
 }

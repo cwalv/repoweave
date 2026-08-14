@@ -38,6 +38,7 @@ const TRACKED: &[&str] = &[
     "\"--hard\"",               // git reset --hard
     "remove_dir_all",           // recursive directory deletion
     "remove_file",              // file deletion
+    "symlink::remove(",         // typed symlink unlink (remove_file/remove_dir by link type)
     "\"-D\"",                   // git branch force-delete
     "\"worktree\", \"remove\"", // git worktree remove
     "push(\"--force\")",        // git push --force
@@ -134,15 +135,27 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "workweave.rs",
-        pattern: "remove_file",
+        pattern: "symlink::remove(",
         count: 1,
         justification: "delete_workweave: unlinks a reference-repo SYMLINK \
             (classify_checkout == ReferenceAlias) before any git call. \
-            remove_file removes the link itself, never following it, so the \
-            shared canonical store the symlink aliases is never touched — \
-            making explicit the safety the old code only got accidentally \
-            (is_lone_canonical + remove_dir_all not following symlinks). No \
-            waiver needed: removing a read-only alias destroys no work.",
+            symlink::remove unlinks the link itself by its Windows type, \
+            never following it, so the shared canonical store the symlink \
+            aliases is never touched — making explicit the safety the old \
+            code only got accidentally (is_lone_canonical + remove_dir_all \
+            not following symlinks). No waiver needed: removing a read-only \
+            alias destroys no work.",
+    },
+    Allowed {
+        file: "symlink.rs",
+        pattern: "remove_file",
+        count: 1,
+        justification: "the unlink primitive inside symlink::remove, the \
+            typed-unlink seam every symlink removal routes through; its \
+            callers are the destructive sites and are audited under the \
+            symlink::remove( pattern. The remove_dir fallback beside it \
+            fires only when the path is verified a symlink, so a real \
+            directory is never removed here.",
     },
     Allowed {
         file: "add_remove.rs",
@@ -385,17 +398,24 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "activate.rs",
-        pattern: "remove_file",
-        count: 4,
+        pattern: "symlink::remove(",
+        count: 2,
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
             (2) foreign-shared-name cleanup: only top-level symlinks whose \
             target is exactly projects/<other-project>/<same-name> — rwv's \
             own surfacing of a shared name out of a project the weave root \
             does not present — and only while surfacing the one it does. \
-            Recoverable by re-surfacing that other project. \
-            deactivate's .rwv-active removal moved to workspace.rs's \
-            clear_active_project, audited above. \
+            Recoverable by re-surfacing that other project.",
+    },
+    Allowed {
+        file: "activate.rs",
+        pattern: "remove_file",
+        count: 2,
+        justification: "deactivate's .rwv-active removal moved to \
+            workspace.rs's clear_active_project, audited above; the two \
+            symlink unlinks moved behind symlink::remove, audited under \
+            that pattern. \
             (3) settle_arrived_drift's regenerate arm. Precondition: the file \
             is named by the owned-digest ledger AND its bytes differ from the \
             digest recorded when rwv accepted its generation — a fully-owned \

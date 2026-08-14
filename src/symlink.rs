@@ -40,6 +40,27 @@ impl LinkTarget {
     }
 }
 
+/// Remove the symlink at `link`, whatever it points at.
+///
+/// Windows types a symlink at creation: one made for a directory is refused
+/// by `remove_file` (`Access is denied`) and unlinked with `remove_dir`.
+/// Both spellings are one unlink everywhere else, so the fallback fires only
+/// where the path really is a symlink — a real directory is never removed
+/// here, and a real file keeps `remove_file`'s exact behavior and error.
+pub fn remove(link: &Path) -> std::io::Result<()> {
+    let Err(primary_err) = std::fs::remove_file(link) else {
+        return Ok(());
+    };
+    let is_symlink = std::fs::symlink_metadata(link)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if cfg!(windows) && is_symlink {
+        std::fs::remove_dir(link).map_err(|_| primary_err)
+    } else {
+        Err(primary_err)
+    }
+}
+
 /// What an operator does when Windows refuses to create a symbolic link.
 ///
 /// Developer Mode is a machine-wide policy an administrator sets once, not a
