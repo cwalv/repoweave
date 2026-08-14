@@ -10,7 +10,7 @@
 use assert_cmd::Command as AssertCommand;
 use repoweave::sync::{
     ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome, SyncFailure,
-    SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
+    SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, VcsError, VcsErrorOutput};
 use serde_json::Value;
@@ -732,7 +732,7 @@ fn sync_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
             .unwrap_or_else(|| panic!("line not an object: {line}"));
         assert_eq!(
             obj.get("$schema").and_then(Value::as_str),
-            Some(SYNC_JSON_SCHEMA_URL),
+            Some(SYNC_RECORD_SCHEMA_URL),
             "every NDJSON record must embed `$schema`: {line}"
         );
         assert!(obj.contains_key("kind"), "missing `kind`: {line}");

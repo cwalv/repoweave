@@ -10,7 +10,7 @@
 
 use repoweave::fetch::{
     FetchJsonOutput, FetchOutcomeNdjsonRecord, FetchOutcomeOutput, FetchOutcomeStatus,
-    FETCH_SCHEMA_URL,
+    FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
 };
 use serde_json::Value;
 use std::path::Path;
@@ -105,7 +105,7 @@ fn fetch_ndjson_record_embeds_schema_and_flattens_outcome() {
         message: None,
     };
     let record = FetchOutcomeNdjsonRecord {
-        schema: FETCH_SCHEMA_URL,
+        schema: FETCH_RECORD_SCHEMA_URL,
         outcome: &outcome,
     };
     let v = serde_json::to_value(&record).expect("serializes");
@@ -113,7 +113,7 @@ fn fetch_ndjson_record_embeds_schema_and_flattens_outcome() {
     // The record must be flat: $schema, path, absolute_path, status all at top level.
     assert_eq!(
         v["$schema"],
-        serde_json::Value::String(FETCH_SCHEMA_URL.to_string())
+        serde_json::Value::String(FETCH_RECORD_SCHEMA_URL.to_string())
     );
     assert_eq!(v["path"], "github/org/repo");
     assert_eq!(v["status"], "ok");
@@ -357,10 +357,11 @@ fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
             .unwrap_or_else(|e| panic!("line not parseable as JSON ({e}): {line}"));
         let obj = v.as_object().expect("line must be object");
 
-        // Every NDJSON record must carry $schema.
+        // Every NDJSON record must carry $schema pointing at the per-record
+        // artifact, not the serial envelope.
         assert_eq!(
             obj.get("$schema").and_then(Value::as_str),
-            Some(FETCH_SCHEMA_URL),
+            Some(FETCH_RECORD_SCHEMA_URL),
             "every NDJSON record must embed $schema: {line}"
         );
         assert!(obj.contains_key("path"), "missing `path`: {line}");

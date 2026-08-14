@@ -26,7 +26,7 @@
 //! reason this file exists at all.
 
 use assert_cmd::Command;
-use repoweave::update::UPDATE_SCHEMA_URL;
+use repoweave::update::{UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -538,7 +538,7 @@ fn update_json_emits_ndjson_under_j_gt_1() {
         let obj = v.as_object().unwrap();
         assert_eq!(
             obj.get("$schema").and_then(Value::as_str),
-            Some(UPDATE_SCHEMA_URL),
+            Some(UPDATE_RECORD_SCHEMA_URL),
             "every NDJSON record must embed $schema: {line}"
         );
         assert!(obj.contains_key("kind"), "missing kind: {line}");

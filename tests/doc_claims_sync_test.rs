@@ -191,7 +191,10 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     )
 }
 
+/// Schema fragment for the serial envelope (`-j 1`).
 const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync.json";
+/// Schema fragment for NDJSON per-repo records (`-j N`, `N > 1`).
+const RECORD_SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-record.json";
 
 // ===========================================================================
 // 1. Envelope shape under serial mode
@@ -402,13 +405,13 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         let obj = v
             .as_object()
             .unwrap_or_else(|| panic!("line not an object: {line}"));
-        // $schema embedded per-record.
+        // $schema embedded per-record must point at the per-record artifact.
         let schema = obj["$schema"]
             .as_str()
             .unwrap_or_else(|| panic!("line missing `$schema`: {line}"));
         assert!(
-            schema.contains(SCHEMA_FRAGMENT),
-            "per-line $schema must point at {SCHEMA_FRAGMENT}; got: {schema}"
+            schema.contains(RECORD_SCHEMA_FRAGMENT),
+            "per-line $schema must point at {RECORD_SCHEMA_FRAGMENT}; got: {schema}"
         );
         // Identifying fields.
         for field in ["kind", "path", "absolute_path"] {

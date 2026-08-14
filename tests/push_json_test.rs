@@ -8,7 +8,7 @@
 //!    distinguishability requirement.
 
 use assert_cmd::Command as AssertCommand;
-use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_SCHEMA_URL};
+use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL, PUSH_SCHEMA_URL};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -556,10 +556,11 @@ fn push_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
             .as_object()
             .unwrap_or_else(|| panic!("line not object: {line}"));
 
-        // Every NDJSON record must embed $schema.
+        // Every NDJSON record must embed $schema pointing at the per-record
+        // artifact, not the serial envelope.
         assert_eq!(
             obj.get("$schema").and_then(Value::as_str),
-            Some(PUSH_SCHEMA_URL),
+            Some(PUSH_RECORD_SCHEMA_URL),
             "every NDJSON line must embed $schema: {line}"
         );
         assert!(obj.contains_key("kind"), "missing kind: {line}");

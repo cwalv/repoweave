@@ -685,8 +685,8 @@ fn fetch_json_ndjson_under_parallel_jobs() {
             .and_then(serde_json::Value::as_str)
             .expect("each NDJSON record must have $schema");
         assert!(
-            schema_val.ends_with("/docs/reference/schemas/fetch.json"),
-            "NDJSON $schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
+            schema_val.ends_with("/docs/reference/schemas/fetch-record.json"),
+            "NDJSON $schema must end with /docs/reference/schemas/fetch-record.json; got: {schema_val}"
         );
         assert!(
             obj.contains_key("path"),
