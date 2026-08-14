@@ -878,7 +878,7 @@ impl Integration for CargoWorkspace {
             ctx.output_dir,
             "Cargo.lock",
             &lock_bytes,
-            generation_inputs(ctx.output_dir, ctx.project),
+            generation_inputs(ctx.output_dir, ctx.project, ctx.workspace_root),
         )
         .context("recording accepted-generation digest for Cargo.lock")?;
 

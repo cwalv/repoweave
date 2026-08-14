@@ -2273,18 +2273,22 @@ pub fn stamp_owned_generation(
 /// source file — so the axis stops at the join point every route passes
 /// through.
 ///
-/// The join point is specific to members: a `path =` dependency from a member
-/// into a directory that is not itself a member has no lock entry to move, so
-/// the argument above does not cover it. Doctor is silent through every state
-/// up to the moment `Cargo.lock`'s bytes actually change, and `rwv
-/// materialize` — regenerate and re-stamp in one call — is the one thing that
-/// can make that happen without a preceding warning.
+/// **What IS included: `path =` dependency target manifests that resolve
+/// OUTSIDE the member set.** These have no commit in `rwv.lock` to pin them —
+/// the argument above supplies no join point — so their `Cargo.toml` is
+/// hashed directly. Editing one and re-running `rwv materialize` would
+/// otherwise regenerate `Cargo.lock` and re-stamp within one call, absorbing
+/// the change with no signal on any axis; the digest input is the anchor that
+/// makes the staleness surface fire between the edit and the next generation.
+/// Path targets INSIDE the member set stay absent — the member's own commit
+/// still supplies the join point, unchanged.
 pub fn generation_inputs(
     project_dir: &Path,
     project: &crate::manifest::ProjectName,
+    workspace_root: &Path,
 ) -> BTreeMap<String, String> {
     let project_rel = crate::workspace::project_rel_path(project.as_str());
-    [
+    let mut inputs: BTreeMap<String, String> = [
         crate::manifest::Manifest::FILE_NAME,
         crate::manifest::LockFile::FILE_NAME,
     ]
@@ -2293,7 +2297,245 @@ pub fn generation_inputs(
         let content = std::fs::read(project_dir.join(name)).ok()?;
         Some((format!("{project_rel}/{name}"), owned_digest(&content)))
     })
-    .collect()
+    .collect();
+    inputs.extend(non_member_path_dep_manifest_digests(workspace_root));
+    inputs
+}
+
+/// Each `Cargo.toml` a `path =` dependency chain from the workspace members
+/// lands on that is NOT itself a member, keyed by a stable workspace-relative
+/// spelling of its path.
+///
+/// The walker is deliberately narrow to the shape it exists to close:
+/// cargo-workspace, `path =` deps in the standard `[dependencies]`,
+/// `[dev-dependencies]`, `[build-dependencies]` tables (and their
+/// `[target.<cfg>.<key>]` variants). It follows deps transitively so a chain
+/// through several outside directories is not silently truncated — cargo
+/// resolves through every hop, and a hole at hop 2 would be the same bug
+/// again one step deeper.
+///
+/// A missing / unparseable workspace manifest yields an empty map: this is
+/// input to a bookkeeping stamp, not the manifest gate, and other axes report
+/// the same finding as their own error.
+///
+/// Symlink resolution is best-effort: `std::fs::canonicalize` is used to
+/// classify a target as inside-vs-outside the member set (a symlink into a
+/// member must count as inside), and to key the ledger by a canonical
+/// absolute path made relative to `workspace_root`. When canonicalization
+/// fails the raw path is used, which keeps the map deterministic on
+/// filesystems that reject the syscall.
+fn non_member_path_dep_manifest_digests(workspace_root: &Path) -> BTreeMap<String, String> {
+    let ws_manifest = workspace_root.join("Cargo.toml");
+    let Ok(ws_text) = std::fs::read_to_string(&ws_manifest) else {
+        return BTreeMap::new();
+    };
+    let Ok(ws_doc) = ws_text.parse::<toml_edit::DocumentMut>() else {
+        return BTreeMap::new();
+    };
+    let members = workspace_members(&ws_doc);
+    let member_dirs: BTreeSet<std::path::PathBuf> = members
+        .iter()
+        .map(|m| canonicalize_or_owned(&workspace_root.join(m)))
+        .collect();
+
+    let ws_root_canon = canonicalize_or_owned(workspace_root);
+
+    let mut queue: Vec<std::path::PathBuf> = members
+        .iter()
+        .map(|m| workspace_root.join(m).join("Cargo.toml"))
+        .collect();
+    let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+    let mut outside: BTreeMap<String, String> = BTreeMap::new();
+
+    while let Some(manifest_path) = queue.pop() {
+        let manifest_canon = canonicalize_or_owned(&manifest_path);
+        if !seen.insert(manifest_canon.clone()) {
+            continue;
+        }
+        let manifest_dir = manifest_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| workspace_root.to_path_buf());
+        let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+            continue;
+        };
+
+        for target_manifest in path_dep_targets(&doc, &manifest_dir) {
+            let target_canon = canonicalize_or_owned(&target_manifest);
+            let target_dir_canon = target_canon
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_else(|| target_canon.clone());
+            let inside_member = member_dirs
+                .iter()
+                .any(|m| target_dir_canon == *m || target_dir_canon.starts_with(m));
+            if inside_member {
+                // Covered by the member's own commit pin — the outer doc
+                // spells out the argument. Still enqueue for the walk so a
+                // path-dep chain that leaves the member set later is not
+                // truncated at an intra-member hop.
+                queue.push(target_manifest);
+                continue;
+            }
+            let Ok(content) = std::fs::read(&target_canon) else {
+                queue.push(target_manifest);
+                continue;
+            };
+            let key = workspace_relative_key(&ws_root_canon, workspace_root, &target_canon);
+            outside.insert(key, owned_digest(&content));
+            queue.push(target_manifest);
+        }
+    }
+
+    outside
+}
+
+/// `[workspace].members` as declared.
+///
+/// A missing `[workspace]` table or `members` array yields an empty list:
+/// this is what the cargo-workspace integration writes, so its absence means
+/// no members to walk from. Glob entries are skipped — a pattern that
+/// matches nothing is not an error, so a glob cannot be "missing", and the
+/// bug shape this axis exists to close is measured against named entries.
+fn workspace_members(doc: &toml_edit::DocumentMut) -> Vec<String> {
+    let Some(members) = doc
+        .get("workspace")
+        .and_then(|w| w.as_table())
+        .and_then(|t| t.get("members"))
+        .and_then(|m| m.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in members.iter().filter_map(|v| v.as_str()) {
+        // Glob members are skipped for the same reason `unfetched_members`
+        // skips them: a pattern that matches nothing is not an error, so a
+        // glob cannot be "missing" — and a walker over glob matches is
+        // wider than this axis wants for v1. Named-entry members carry the
+        // shape the bug fixture measures.
+        if entry.contains(['*', '?', '[']) {
+            continue;
+        }
+        out.push(entry.to_string());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Absolute paths to `Cargo.toml` files named by `path = "<rel>"` entries in
+/// `doc`, across the standard dep tables and their `[target.<cfg>.<key>]`
+/// variants. Missing / non-string `path` values are dropped.
+fn path_dep_targets(
+    doc: &toml_edit::DocumentMut,
+    manifest_dir: &Path,
+) -> Vec<std::path::PathBuf> {
+    const DEP_KEYS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    let mut targets = Vec::new();
+
+    // Direct dep tables.
+    for key in DEP_KEYS {
+        collect_path_deps(doc.get(key), manifest_dir, &mut targets);
+    }
+
+    // `[target.<cfg>.<key>]` — cargo honors path deps here just like the
+    // top-level tables, so a silence here would be the same bug behind a
+    // `cfg`.
+    if let Some(target) = doc.get("target").and_then(|t| t.as_table()) {
+        for (_cfg, cfg_item) in target.iter() {
+            let cfg_table = cfg_item.as_table();
+            for key in DEP_KEYS {
+                let sub = cfg_table.and_then(|t| t.get(key));
+                collect_path_deps(sub, manifest_dir, &mut targets);
+            }
+        }
+    }
+
+    targets
+}
+
+/// Push every `Cargo.toml` an entry in a dep table's `path = "<rel>"` value
+/// resolves to onto `out`. Silent on `path` absent, non-string, or the entry
+/// not being a table-shaped dep at all.
+fn collect_path_deps(
+    deps_item: Option<&toml_edit::Item>,
+    manifest_dir: &Path,
+    out: &mut Vec<std::path::PathBuf>,
+) {
+    let Some(deps) = deps_item.and_then(|i| i.as_table()) else {
+        return;
+    };
+    for (_dep_name, dep_item) in deps.iter() {
+        let path_str = if let Some(inline) = dep_item.as_inline_table() {
+            inline.get("path").and_then(|v| v.as_str())
+        } else if let Some(table) = dep_item.as_table() {
+            table.get("path").and_then(|i| i.as_str())
+        } else {
+            None
+        };
+        if let Some(rel) = path_str {
+            out.push(manifest_dir.join(rel).join("Cargo.toml"));
+        }
+    }
+}
+
+/// Best-effort canonicalize; fall back to the input on error so unmapped
+/// filesystems and missing files still yield a deterministic key.
+fn canonicalize_or_owned(path: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// A stable workspace-relative string spelling of `target`. Paths inside
+/// `workspace_root` render without a `..` prefix (using forward slashes);
+/// paths outside are spelled with the leading `..` segments that get from
+/// `workspace_root` to `target`. Always forward-slash for cross-platform
+/// determinism (matches the rest of the ledger's key format).
+fn workspace_relative_key(
+    ws_root_canon: &Path,
+    ws_root_raw: &Path,
+    target_canon: &Path,
+) -> String {
+    // Prefer the canonicalized workspace root for stripping, so a symlinked
+    // workspace root does not double-render its own segments.
+    if let Ok(rel) = target_canon.strip_prefix(ws_root_canon) {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
+    if let Ok(rel) = target_canon.strip_prefix(ws_root_raw) {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
+    // Not under the workspace root — compute a `../..` spelling.
+    let up = ws_root_canon
+        .ancestors()
+        .enumerate()
+        .find_map(|(depth, ancestor)| {
+            target_canon
+                .strip_prefix(ancestor)
+                .ok()
+                .map(|rel| (depth, rel))
+        });
+    if let Some((depth, rel)) = up {
+        let mut s = String::new();
+        for i in 0..depth {
+            if i > 0 {
+                s.push('/');
+            }
+            s.push_str("..");
+        }
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        if !rel_str.is_empty() {
+            if !s.is_empty() {
+                s.push('/');
+            }
+            s.push_str(&rel_str);
+        }
+        return s;
+    }
+    // Truly disjoint (different filesystem root, e.g.). Fall back to the
+    // absolute path; still deterministic, just less pretty.
+    target_canon.to_string_lossy().replace('\\', "/")
 }
 
 /// Drop `file_name`'s entry from `dir`'s state file, leaving the other
@@ -2428,8 +2670,9 @@ impl StaleGeneration {
 pub fn stale_generations(
     project_dir: &Path,
     project: &crate::manifest::ProjectName,
+    workspace_root: &Path,
 ) -> Vec<StaleGeneration> {
-    let current = generation_inputs(project_dir, project);
+    let current = generation_inputs(project_dir, project, workspace_root);
     let project_rel = crate::workspace::project_rel_path(project.as_str());
     read_owned_digests(project_dir)
         .into_iter()

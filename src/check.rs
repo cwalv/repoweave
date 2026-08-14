@@ -7927,6 +7927,7 @@ fn stale_generation_findings(
         findings.extend(crate::integrations::merge::stale_generations(
             &project_dir,
             &project.name,
+            &world.workspace_dir,
         ));
     }
     findings

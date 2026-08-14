@@ -119,7 +119,7 @@ fn weave(root: &Path) -> PathBuf {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::integrations::merge::generation_inputs(&project_dir, &project),
+        repoweave::integrations::merge::generation_inputs(&project_dir, &project, &ws),
     )
     .unwrap();
     ws
@@ -237,7 +237,7 @@ fn an_input_that_appeared_since_the_generation_counts_as_moved() {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::integrations::merge::generation_inputs(&project_dir, &project),
+        repoweave::integrations::merge::generation_inputs(&project_dir, &project, &ws),
     )
     .unwrap();
     assert!(
@@ -345,7 +345,7 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::integrations::merge::generation_inputs(&project_dir, &project),
+        repoweave::integrations::merge::generation_inputs(&project_dir, &project, &ws),
     )
     .unwrap();
     ws
@@ -402,18 +402,18 @@ fn weave_with_a_path_dep(root: &Path) -> (PathBuf, PathBuf) {
     (ws, outside)
 }
 
-/// `generation_inputs`' argument for excluding member manifests is that every
-/// route from an edit to a quiet report passes through a moved `rwv.lock` —
-/// the member's own commit is what the lock pins, so there is always a join
-/// point. A `path =` dependency into a directory that is not a member has no
-/// such pin: `rwv.lock` names nothing there, and the directory is not
-/// registry-shaped, so no scan walks it either. Driven through the shipped
-/// binary: the edit is invisible on every axis until something rewrites
-/// `Cargo.lock`, and `rwv materialize` — the sanctioned way that happens —
-/// regenerates and re-stamps in the same call, so it is never visible even
-/// then.
+/// A `path =` dependency into a directory that is not itself a member has no
+/// `rwv.lock` entry to pin its commit, and the directory is not
+/// registry-shaped, so no scan walks it either. The join point that closes
+/// the silence is a digest of the target `Cargo.toml` itself: the
+/// generation reads it, so the ledger records it, so doctor answers from it.
+///
+/// Driven through the shipped binary end-to-end on the SANCTIONED route
+/// (`rwv materialize`, the one the operator is told to run), asserting the
+/// signal fires between the edit and the next materialize — where before
+/// this fix the whole route was permanently silent.
 #[test]
-fn a_path_dependency_into_a_non_member_directory_has_no_join_point() {
+fn a_path_dependency_into_a_non_member_directory_fires_the_staleness_axis() {
     if which::which("cargo").is_err() {
         eprintln!("skipping: `cargo` not found on PATH");
         return;
@@ -437,11 +437,6 @@ fn a_path_dependency_into_a_non_member_directory_has_no_join_point() {
         advisories(&ws).is_empty(),
         "precondition: the generation is current"
     );
-    let (_, clean) = rwv(&["doctor"], &ws);
-    assert!(
-        !clean.contains("generated file has drift"),
-        "precondition: no drift:\n{clean}"
-    );
 
     // Edit the non-member directory. No commit: it carries no git repo at
     // all, and it is not registry-shaped, so nothing in a weave scans it.
@@ -449,39 +444,47 @@ fn a_path_dependency_into_a_non_member_directory_has_no_join_point() {
     let declared = std::fs::read_to_string(&helper_manifest).unwrap();
     std::fs::write(&helper_manifest, declared.replace("0.1.0", "0.2.0")).unwrap();
 
-    // `Cargo.lock`'s bytes have not moved yet — nothing has regenerated it —
-    // so silence here is not yet the finding; it is the same "nothing has
-    // happened on disk" silence any check gives.
-    assert!(
-        advisories(&ws).is_empty(),
-        "bytes have not moved yet: {:?}",
-        advisories(&ws)
+    // The join point: the outside `Cargo.toml` is an attested input, so
+    // moving its bytes moves the derivation, and doctor names it as such
+    // WITHOUT anything else having to rewrite `Cargo.lock` first. Before
+    // this axis widened, this call was silent — and stayed silent through
+    // the second materialize below, absorbing the edit permanently.
+    let found = advisories(&ws);
+    assert_eq!(
+        found.len(),
+        1,
+        "the outside manifest's edit is a moved input on the same axis: {found:?}"
     );
-    let (_, still_quiet) = rwv(&["doctor"], &ws);
+    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(found[0]["remedy"], "rwv materialize");
+    let inputs = found[0]["inputs"]
+        .as_array()
+        .expect("advisory carries a paths array");
     assert!(
-        !still_quiet.contains("generated file has drift"),
-        "precondition: on-disk Cargo.lock is unchanged so far:\n{still_quiet}"
+        inputs
+            .iter()
+            .any(|v| v.as_str() == Some("../outside-helper/Cargo.toml")),
+        "the moved-inputs list names the outside manifest, spelled relative \
+         to the workspace root so an agent that never sees this repo can \
+         still resolve it: {inputs:?}"
     );
 
-    // The measured gap: `rwv materialize` is the sanctioned way this edit
-    // ever reaches `Cargo.lock`, and it regenerates and re-stamps within one
-    // call.
+    // And the sanctioned exit clears it: the same materialize that
+    // regenerates `Cargo.lock` also re-hashes the outside manifest and
+    // re-stamps, so the advisory that fired above is what stands between
+    // silence and coverage — not something the operator has to keep
+    // remembering.
     let (ok, materialized) = rwv(&["materialize"], &ws);
     assert!(ok, "{materialized}");
     let lock_text = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
     assert!(
         lock_text.contains("version = \"0.2.0\""),
-        "the edit did reach Cargo.lock: {lock_text}"
+        "the edit reached Cargo.lock: {lock_text}"
     );
     assert!(
         advisories(&ws).is_empty(),
-        "and rwv materialize absorbed it with nothing to show: {:?}",
+        "and the re-stamp cleared the staleness: {:?}",
         advisories(&ws)
-    );
-    let (_, absorbed) = rwv(&["doctor"], &ws);
-    assert!(
-        !absorbed.contains("generated file has drift"),
-        "no drift either — the stamp and the regeneration are the same call:\n{absorbed}"
     );
 }
 
