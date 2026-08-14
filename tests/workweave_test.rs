@@ -360,7 +360,7 @@ role = "owned"
 [workweave]
 copy = [".env"]
 "#,
-        repo = ws.join("github/org/repo").display()
+        repo = common::url_path(ws.join("github/org/repo"))
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -418,7 +418,7 @@ role = "owned"
 [workweave]
 link = ["shared-state"]
 "#,
-        repo = ws.join("github/org/repo").display()
+        repo = common::url_path(ws.join("github/org/repo"))
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 

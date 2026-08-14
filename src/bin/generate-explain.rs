@@ -3247,6 +3247,12 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// Findings spell paths as the platform walked them; the seeded
+    /// assertions below name locations with `/`.
+    fn slashed(s: &str) -> String {
+        s.replace('\\', "/")
+    }
+
     use super::*;
     use std::fs;
 
@@ -4145,14 +4151,14 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("consumer vocabulary `tl`")),
+                .any(|e| slashed(e).contains("consumer vocabulary `tl`")),
             "expected a `tl` hit, got:\n{}",
             errors.join("\n")
         );
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("consumer vocabulary `epic`")),
+                .any(|e| slashed(e).contains("consumer vocabulary `epic`")),
             "expected an `epic` hit, got:\n{}",
             errors.join("\n")
         );
@@ -4195,16 +4201,16 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("tests/some_test.rs")
-                    && e.contains("consumer vocabulary `epic`")),
+                .any(|e| slashed(e).contains("tests/some_test.rs")
+                    && slashed(e).contains("consumer vocabulary `epic`")),
             "expected an `epic` hit under tests/, got:\n{}",
             errors.join("\n")
         );
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("tests/some_test.rs")
-                    && e.contains("consumer vocabulary `bead`")),
+                .any(|e| slashed(e).contains("tests/some_test.rs")
+                    && slashed(e).contains("consumer vocabulary `bead`")),
             "expected a `bead` hit under tests/, got:\n{}",
             errors.join("\n")
         );
@@ -4243,8 +4249,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("scripts/ci-local.sh")
-                    && e.contains("consumer vocabulary `sling`")),
+                .any(|e| slashed(e).contains("scripts/ci-local.sh")
+                    && slashed(e).contains("consumer vocabulary `sling`")),
             "expected a `sling` hit under scripts/, got:\n{}",
             errors.join("\n")
         );
@@ -4268,8 +4274,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains(".githooks/pre-push")
-                    && e.contains("consumer vocabulary `sling`")),
+                .any(|e| slashed(e).contains(".githooks/pre-push")
+                    && slashed(e).contains("consumer vocabulary `sling`")),
             "expected a `sling` hit under .githooks/, got:\n{}",
             errors.join("\n")
         );
@@ -4291,8 +4297,10 @@ mod tests {
         .unwrap();
         let errors = check_no_consumer_vocabulary(tmp.path());
         assert!(
-            errors.iter().any(|e| e.contains(".github/workflows/ci.yml")
-                && e.contains("consumer vocabulary `bead`")),
+            errors
+                .iter()
+                .any(|e| slashed(e).contains(".github/workflows/ci.yml")
+                    && slashed(e).contains("consumer vocabulary `bead`")),
             "expected a `bead` hit under .github/workflows/, got:\n{}",
             errors.join("\n")
         );
@@ -4313,7 +4321,7 @@ mod tests {
         let consumer_errors = check_no_consumer_vocabulary(&root);
         let filtered_consumer: Vec<_> = consumer_errors
             .iter()
-            .filter(|e| e.contains("reap-orphaned-savepoints.sh"))
+            .filter(|e| slashed(e).contains("reap-orphaned-savepoints.sh"))
             .collect();
         assert!(
             filtered_consumer.is_empty(),
@@ -4328,7 +4336,7 @@ mod tests {
         let tracker_errors = check_no_tracker_ids(&root);
         let filtered_tracker: Vec<_> = tracker_errors
             .iter()
-            .filter(|e| e.contains("reap-orphaned-savepoints.sh"))
+            .filter(|e| slashed(e).contains("reap-orphaned-savepoints.sh"))
             .collect();
         assert!(
             filtered_tracker.is_empty(),
@@ -4353,7 +4361,7 @@ mod tests {
         fs::write(docs.join("deploy.md"), "Ship it through the rig.\n").unwrap();
         let errors = check_no_foreign_vocabulary(tmp.path());
         assert!(
-            errors.iter().any(|e| e.contains("contains `rig`")),
+            errors.iter().any(|e| slashed(e).contains("contains `rig`")),
             "expected a `rig` hit, got:\n{}",
             errors.join("\n")
         );
@@ -4390,7 +4398,9 @@ mod tests {
         fs::write(docs.join("deploy.md"), "Deployed from the Gas City rig.\n").unwrap();
         let errors = check_no_foreign_vocabulary(tmp.path());
         assert!(
-            errors.iter().any(|e| e.contains("contains `gas city`")),
+            errors
+                .iter()
+                .any(|e| slashed(e).contains("contains `gas city`")),
             "expected a `gas city` hit, got:\n{}",
             errors.join("\n")
         );
@@ -4437,7 +4447,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("scripts/deploy.sh") && e.contains("contains `rig`")),
+                .any(|e| slashed(e).contains("scripts/deploy.sh")
+                    && slashed(e).contains("contains `rig`")),
             "expected a `rig` hit under scripts/, got:\n{}",
             errors.join("\n")
         );
@@ -4463,7 +4474,7 @@ mod tests {
         .unwrap();
         let errors = check_no_tracker_ids(tmp.path());
         assert!(
-            errors.iter().any(|e| e.contains(&planted_id)),
+            errors.iter().any(|e| slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit, got:\n{}",
             errors.join("\n")
         );
@@ -4488,7 +4499,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("tests/some_test.rs") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains("tests/some_test.rs")
+                    && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit under tests/, got:\n{}",
             errors.join("\n")
         );
@@ -4511,7 +4523,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("CLAUDE.md") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains("CLAUDE.md") && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit in root-level CLAUDE.md, got:\n{}",
             errors.join("\n")
         );
@@ -4534,7 +4546,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("build.rs") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains("build.rs") && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit in root-level build.rs, got:\n{}",
             errors.join("\n")
         );
@@ -4558,7 +4570,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("Cargo.toml") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains("Cargo.toml") && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit in root-level Cargo.toml, got:\n{}",
             errors.join("\n")
         );
@@ -4583,7 +4595,7 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("docs/guide.md") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains("docs/guide.md") && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit under docs/, got:\n{}",
             errors.join("\n")
         );
@@ -4611,7 +4623,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("scripts/ci-local.sh") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains("scripts/ci-local.sh")
+                    && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit under scripts/, got:\n{}",
             errors.join("\n")
         );
@@ -4635,7 +4648,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains(".github/workflows/ci.yml") && e.contains(&planted_id)),
+                .any(|e| slashed(e).contains(".github/workflows/ci.yml")
+                    && slashed(e).contains(&planted_id)),
             "expected a tracker-ID hit under .github/workflows/, got:\n{}",
             errors.join("\n")
         );
@@ -5283,7 +5297,9 @@ mod tests {
              pub fn f() {}\n",
         );
         assert!(
-            above.iter().any(|e| e.contains("regenerable-regions.md")),
+            above
+                .iter()
+                .any(|e| slashed(e).contains("regenerable-regions.md")),
             "the same citation above the boundary must be reported, got:\n{}",
             above.join("\n")
         );

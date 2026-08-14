@@ -33,6 +33,7 @@ fn setup_claude_errors_without_settings() {
         .unwrap()
         .args(["setup", "claude"])
         .env("HOME", tmp.path())
+        .env("USERPROFILE", tmp.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("does not exist"));
@@ -53,6 +54,7 @@ fn setup_claude_registers_hooks() {
         .unwrap()
         .args(["setup", "claude"])
         .env("HOME", tmp.path())
+        .env("USERPROFILE", tmp.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("Registered"));
@@ -120,6 +122,7 @@ fn setup_claude_idempotent() {
         .unwrap()
         .args(["setup", "claude"])
         .env("HOME", tmp.path())
+        .env("USERPROFILE", tmp.path())
         .assert()
         .success();
 
@@ -129,6 +132,7 @@ fn setup_claude_idempotent() {
         .unwrap()
         .args(["setup", "claude"])
         .env("HOME", tmp.path())
+        .env("USERPROFILE", tmp.path())
         .assert()
         .success()
         .stdout(predicate::str::contains("up to date"));
@@ -154,6 +158,7 @@ fn setup_claude_scripts_are_executable() {
         .unwrap()
         .args(["setup", "claude"])
         .env("HOME", tmp.path())
+        .env("USERPROFILE", tmp.path())
         .assert()
         .success();
 

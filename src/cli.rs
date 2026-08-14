@@ -19,7 +19,7 @@ use crate::op_state::SyncStrategy;
 use crate::sync::SyncSource;
 
 #[derive(Parser)]
-#[command(name = "rwv", version = crate::rwv_version(), about = "A cross-repo workspace manager")]
+#[command(name = "rwv", bin_name = "rwv", version = crate::rwv_version(), about = "A cross-repo workspace manager")]
 pub struct Cli {
     /// Resolve workspace as if invoked from <path>. Any path inside a
     /// checkout works; the normal containment walk (marker, root, $HOME
