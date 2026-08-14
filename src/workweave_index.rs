@@ -727,6 +727,12 @@ impl RefRegistry {
     /// Adding the field is not itself an ownership claim: it produces an
     /// *empty* registry, so every pre-existing ref stays unowned until an
     /// arm of the pass records it explicitly.
+    ///
+    /// MIGRATORY arm: adds the receipts field to indexes written by rwv <=
+    /// v0.15.0. Expires LAST of the branch-model migration arms — it is
+    /// the precondition the others record through — and drops with them
+    /// once every owned weave's health floor records a clean doctor at the
+    /// version that removes them (see [`crate::health_floor`]).
     pub fn migrate_legacy_index(&mut self) -> anyhow::Result<bool> {
         let _guard = index_rmw_guard();
         let Some(mut index) = read(&self.primary_root, &self.project)? else {

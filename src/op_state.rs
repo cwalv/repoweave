@@ -1182,8 +1182,9 @@ pub fn resume(workspace_dir: &Path) -> anyhow::Result<(OwnerRecord, PathBuf)> {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// RFC3339 UTC timestamp for "right now".
-fn utc_now_rfc3339() -> String {
+/// RFC3339 UTC timestamp for "right now". Shared with the health-floor
+/// record's `recorded_at` — display-only in both homes, never policy.
+pub(crate) fn utc_now_rfc3339() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();

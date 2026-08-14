@@ -37,6 +37,7 @@ pub mod durable_file;
 pub mod explain;
 pub mod fetch;
 pub mod git;
+pub mod health_floor;
 pub mod init;
 pub mod integration;
 pub mod integration_runner;

@@ -142,6 +142,11 @@ pub enum CheckViolation {
     /// [`Manifest::FILE_NAME`], so nothing in the project loads. Report-only:
     /// the file is hand-authored, and the comments and key order in it do not
     /// survive a mechanical cross-format rewrite.
+    ///
+    /// MIGRATORY finding: the pre-TOML manifest was written by rwv <=
+    /// v0.16.0. The report arm is removable once every owned weave's health
+    /// floor records a clean doctor at >= v0.18 (see
+    /// [`crate::health_floor`]).
     LegacyManifestFormat {
         /// Project the manifest belongs to. Derived from the directory rather
         /// than read off a `Project`, which cannot load without a manifest
@@ -2546,6 +2551,10 @@ pub(crate) enum CommitOutcome {
 /// `sync::verify_replay_exclusion_invariant`'s fallback hint so the two
 /// forms of the fix (auto and hand-run) sit on adjacent commits with
 /// consistent framing.
+///
+/// MIGRATORY arm: repairs the legacy replay-exclusion spelling written by
+/// rwv <= v0.12.1. Removable once every owned weave's health floor records
+/// a clean doctor at >= v0.18 (see [`crate::health_floor`]).
 pub(crate) fn commit_replay_exclusion_migration(
     vcs: &dyn crate::vcs::Vcs,
     project_dir: &Path,
@@ -5526,6 +5535,11 @@ pub fn fix_branch_model_migration(
 /// gone. Retracted below; if the process dies between the two,
 /// `fix_dangling_receipts` clears it on the next run.
 ///
+/// MIGRATORY arm: renames pre-flat refs minted by rwv <= v0.15.0.
+/// Removable once every owned weave's health floor records a clean doctor
+/// at >= v0.18 after a migration-complete run (see
+/// [`crate::health_floor`]).
+///
 /// [`DeletionWarrant::unmoved`]: crate::vcs::DeletionWarrant::unmoved
 /// [`OwnedRef`]: crate::vcs::OwnedRef
 fn migrate_legacy_ref(
@@ -5607,6 +5621,10 @@ fn migrate_legacy_ref(
 /// specifies ("adopt it: write a receipt at the observed tip") — and what
 /// makes the pass idempotent over its own partial output, because a re-run
 /// finds the receipt already there and `record_created` does nothing.
+///
+/// MIGRATORY arm: adopts flat refs minted without receipts during the
+/// v0.16.0 development window only. Removable on the same floor as the
+/// pre-flat rename arm (see [`crate::health_floor`]).
 fn adopt_flat_ref(
     vcs: &dyn crate::vcs::Vcs,
     registry: &mut crate::workweave_index::RefRegistry,
@@ -5861,6 +5879,10 @@ pub fn fix_dangling_receipts(
 ///
 /// Returns `(retracted, errors)`: the `(store, ref name)` pairs disowned,
 /// and per-receipt failures for the caller to surface as issues.
+///
+/// MIGRATORY arm: retracts receipts left by pre-v0.16.0 migration crashes.
+/// Removable on the same floor as the pre-flat rename arm (see
+/// [`crate::health_floor`]).
 pub fn fix_pre_flat_receipts(
     ws_root: &Path,
     active_project: Option<&str>,
@@ -8586,6 +8608,11 @@ pub fn run_check(
 ) -> anyhow::Result<bool> {
     use crate::integration::Severity;
 
+    // The P2 gate: a binary whose release removed migratory arms refuses a
+    // weave whose recorded floor predates them, naming the bridge version.
+    // A no-op while no removal has named a requirement.
+    crate::health_floor::enforce(ctx.primary_path())?;
+
     let mut fix_errors: Vec<String> = Vec::new();
 
     if fix {
@@ -8609,6 +8636,12 @@ pub fn run_check(
     } else {
         violations
     };
+
+    // Read before `violations` moves into rendering: the health floor's
+    // "no findings after reclassification" is exactly this list being
+    // empty — the same records `--json` carries, post-repair when `--fix`
+    // ran, itemized or count-collapsed in text.
+    let violations_clean = violations.is_empty();
 
     let mut all_issues = match kind_filter {
         // The filtered view is the drill-down: the named kinds render
@@ -8654,6 +8687,23 @@ pub fn run_check(
             }
         };
         println!("[{prefix}] {}: {}", issue.integration, issue.message);
+    }
+
+    // The P1 record: a clean weave-wide unfiltered run advances the health
+    // floor. Weave-wide because the floor licenses arm removal for the
+    // whole weave and a scoped run proves nothing beyond its project;
+    // unfiltered because `--kind` narrows what was even looked at. Clean
+    // means zero violations AND no error-severity issue — warning-level
+    // integration hygiene does not block the floor, because the floor
+    // licenses removal of MIGRATORY arms and those repair violations.
+    // Best-effort: a floor is a record, not a precondition of the run
+    // that earned it.
+    if scope_all && kind_filter.is_none() && violations_clean && !has_errors {
+        if let Err(e) =
+            crate::health_floor::record_clean_run(ctx.primary_path(), world.vcs.as_ref())
+        {
+            eprintln!("warning: could not record the health floor: {e:#}");
+        }
     }
 
     Ok(has_errors)
@@ -9268,6 +9318,10 @@ pub fn run_check_json(
     scope_all: bool,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<bool> {
+    // The P2 gate, same as the text path. This surface never RECORDS a
+    // floor — `--json` is a machine-reading surface and does not mutate
+    // weave state; the floor records from the operator's text-mode run.
+    crate::health_floor::enforce(ctx.primary_path())?;
     let world = load_doctor_world(ctx, scope_all)?;
     let DoctorFindings {
         violations,

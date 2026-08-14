@@ -339,6 +339,11 @@ pub fn run() -> anyhow::Result<()> {
     // Early-dispatch did-you-mean hints for removed/relocated flags.
     // These run before clap's full parse so we can produce a friendly error
     // instead of clap's generic "unexpected argument" message.
+    //
+    // MIGRATORY shims: the flag spellings they intercept were renamed in
+    // v0.10.0. Expiry follows the alpha rule rather than a health floor —
+    // verify no local automation still spells the old flags, then delete
+    // the shim (`crate::health_floor` documents the floor-gated arms).
     {
         let raw_args: Vec<String> = std::env::args().collect();
         // Detect: rwv sync --retire (--retire has moved to sync-to)
