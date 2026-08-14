@@ -2970,23 +2970,29 @@ fn delete_workweave_inner_at(
     );
 
     // Remove the workweave directory itself. A process's working directory
-    // is an open handle on Windows, so a delete driven from inside the
-    // workweave — which is exactly where `sync-to --retire` stands — holds
-    // its own tree hostage; step out first. The op is terminal for this
-    // directory either way, and the parent is the container the workweave
-    // was placed in, which outlives it.
+    // is an open handle on Windows, and `sync-to --retire` drives this
+    // delete standing inside the workweave — the removal then fails with a
+    // sharing violation whose holder is the deleting process itself. Step
+    // out to the parent first, but only when the current directory sits
+    // under the tree being removed: the hosting process may not be rwv's
+    // own (a test harness shares one working directory across every
+    // concurrent thread), so a directory this delete does not hold hostage
+    // stays where it is. Both sides are canonicalized so `starts_with`
+    // compares one spelling; a working directory that cannot be read or
+    // canonicalized cannot be proven outside, and stepping out of it is
+    // harmless.
     if workweave_dir.exists() {
-        // A process's working directory is an open handle on Windows, and
-        // `sync-to --retire` drives this delete standing inside the
-        // workweave — the removal then fails with a sharing violation whose
-        // holder is the deleting process itself. Step to the parent
-        // unconditionally rather than probing the cwd: every handler runs
-        // on an already-resolved origin (origin_dir_single_read pins that
-        // nothing reads the process cwd after resolution), so the move is
-        // invisible to path handling and releases the one handle rwv can
-        // hold here.
-        if let Some(parent) = workweave_dir.parent() {
-            let _ = std::env::set_current_dir(parent);
+        let cwd_inside = match (
+            std::env::current_dir().and_then(|d| d.canonicalize()),
+            workweave_dir.canonicalize(),
+        ) {
+            (Ok(cwd), Ok(ww)) => cwd.starts_with(&ww),
+            _ => true,
+        };
+        if cwd_inside {
+            if let Some(parent) = workweave_dir.parent() {
+                let _ = std::env::set_current_dir(parent);
+            }
         }
         remove_tree_outlasting_child_handles(&workweave_dir)?;
     }

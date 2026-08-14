@@ -471,3 +471,49 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
         "workweave dir must be preserved by refusal"
     );
 }
+
+/// The step-out that releases delete's own directory handle on Windows is
+/// a process-global mutation, and this test binary is a process whose cwd
+/// every concurrently running test shares. Invoked from a directory
+/// OUTSIDE the workweave, delete must leave that directory alone: a cwd
+/// moved into fixture territory dies with the fixture's tempdir, and the
+/// next test to spawn a subprocess inherits the deleted directory.
+///
+/// The inverse arm — cwd inside the workweave steps out to the parent —
+/// is exercised only by production topology (`sync-to --retire` stands
+/// inside the workweave it deletes); a test that moved this binary's
+/// shared cwd into a fixture to probe it would itself recreate the
+/// poisoning this test pins against.
+#[test]
+fn delete_from_outside_leaves_the_process_cwd_alone() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, repo) = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    let ww_dir = weaveroot.join("web-app--bystander");
+    add_workweave_checkout(&repo, &ww_dir, "github/org/repo", "web-app--bystander");
+    let project_dir = ws.join("projects/web-app");
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--bystander");
+    write_marker(&ww_dir, &ws, "web-app");
+
+    let cwd_before = std::env::current_dir().expect("the harness cwd is live at test entry");
+    let result = workweave_delete(
+        &ws,
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("bystander").unwrap(),
+        true,
+        true,
+    );
+    assert!(result.is_ok(), "delete should succeed; got: {result:?}");
+    assert!(
+        !ww_dir.exists(),
+        "the workweave directory should be gone — the cwd check below is \
+         vacuous if delete never reached the removal step"
+    );
+    let cwd_after = std::env::current_dir()
+        .expect("the process cwd must still resolve after a delete invoked from outside it");
+    assert_eq!(
+        cwd_after, cwd_before,
+        "deleting a workweave from outside it moved the process cwd"
+    );
+}
