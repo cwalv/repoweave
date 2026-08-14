@@ -2945,10 +2945,14 @@ fn an_in_flight_op_leaves_the_migration_finding_standing_beside_the_op_state_one
 /// A detached checkout with two refs sharing the namespace: the same guard that
 /// blocks `unmigrated-ephemeral-branch` also blocks `--adopt-detached-checkouts`.
 ///
-/// Before this fix, `doctor` reported `detached` and named `--adopt-detached-
-/// checkouts` as the remedy; `--fix --adopt-detached-checkouts` then refused on
-/// the blocking ref — exactly as `unmigrated-ephemeral-branch` did before its
-/// own blocked-namespace sub-kind was introduced.
+/// Before this fix, `doctor` reported `detached` and instructed the operator to
+/// run `rwv doctor --fix --adopt-detached-checkouts`; that flag's arm was then
+/// skipped by the namespace guard — exactly as `unmigrated-ephemeral-branch` did
+/// before its own blocked-namespace sub-kind was introduced.
+///
+/// The report for `blocked-detached-namespace` names `--adopt-detached-checkouts`
+/// to explain what is blocked, but does not offer `rwv doctor --fix
+/// --adopt-detached-checkouts` as an instruction.
 ///
 /// The control is the second half: collapse the namespace to one ref and the
 /// same fixture reports `detached` (not `blocked-detached-namespace`), and
@@ -2987,10 +2991,12 @@ fn detached_checkout_with_blocked_namespace_is_reported_as_itself_not_as_adopt_r
         stdout.contains("myproj--feat-a/main") && stdout.contains("myproj--feat-a/master"),
         "the report must name both blocking refs; got:\n{stdout}"
     );
+    // The report may mention --adopt-detached-checkouts to explain what is
+    // blocked, but must not offer it as an instruction to run.
     assert!(
-        !stdout.contains("--adopt-detached-checkouts"),
-        "and must not promise the adopt remedy the guard prevents from running; \
-         got:\n{stdout}"
+        !stdout.contains("rwv doctor --fix --adopt-detached-checkouts"),
+        "the report must not instruct the operator to run the adopt flag \
+         when the guard prevents it from running; got:\n{stdout}"
     );
 
     // Control: remove one ref from the namespace, and the ordinary detached
