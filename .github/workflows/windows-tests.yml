@@ -97,14 +97,18 @@
 # Fewer than that means the command stopped early. ONE means it never left the
 # lib target.
 #
-# Match on the target names rather than on a raw count, because three lines in
-# a complete log are not cargo's. tests/e2e_cargo_test.rs assembles a two-crate
-# fixture workspace and drives `cargo test --workspace` over it as a child
-# process, which writes to the harness's real stdout instead of being captured
-# by it, so that workspace's lib, bin and doctest results interleave with ours
-# under its own crate names. Whether those three are there at all depends on
-# that test reaching its last step, which is what makes a bare total the wrong
-# thing to compare.
+# Match on the crate name each line carries, not on a raw count and not on the
+# target name, because three lines in a complete log are not cargo's.
+# tests/e2e_cargo_test.rs assembles a two-crate fixture workspace and drives
+# `cargo test --workspace` over it as a child process, which writes to the
+# harness's real stdout instead of being captured by it, so that workspace's
+# lib, bin and doctest results interleave with ours. The target name does not
+# tell them apart — the fixture's lib is also `unittests src/lib.rs`, and that
+# string appears twice in a complete log. What separates them is the crate: the
+# binary path in parentheses names it, and the doctest line is `Doc-tests`
+# followed by it. Whether those three lines are there at all depends on that
+# test reaching its last step, which is the other reason a bare total is the
+# wrong thing to compare.
 #
 # The first eight runs of this workflow each printed one. Every failure count
 # quoted from this job before --no-fail-fast was added therefore described the
