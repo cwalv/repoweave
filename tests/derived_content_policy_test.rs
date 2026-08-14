@@ -53,7 +53,7 @@ fn write(dir: &Path, rel: &str, contents: &str) {
 }
 
 fn read(dir: &Path, rel: &str) -> String {
-    fs::read_to_string(dir.join(rel)).unwrap()
+    common::read_normalized(dir.join(rel))
 }
 
 /// A repo whose committed `.gitattributes` declares [`DERIVED`] derived, and

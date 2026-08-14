@@ -486,14 +486,16 @@ fn create_workweave_writes_marker() {
         marker_file.display()
     );
 
-    // Parse and verify contents.
+    // Parse and verify contents. Compared through JSON, not by substring:
+    // the recorded path's backslashes arrive JSON-escaped, so its raw
+    // spelling never appears in the content on Windows.
     let content = std::fs::read_to_string(&marker_file).unwrap();
-    // primary should contain the workspace root path.
+    let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
     let ws_canonical = ws.canonicalize().unwrap();
-    assert!(
-        content.contains(ws_canonical.to_str().unwrap()),
-        ".rwv-workweave should contain primary path {}, got:\n{content}",
-        ws_canonical.display()
+    assert_eq!(
+        Path::new(marker["primary"].as_str().expect("primary is a string")),
+        ws_canonical,
+        ".rwv-workweave should record the primary path, got:\n{content}"
     );
     // project should be "web-app".
     assert!(

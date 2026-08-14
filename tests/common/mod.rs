@@ -89,6 +89,10 @@ pub fn url_path(path: impl AsRef<std::path::Path>) -> String {
 /// themselves. A Windows path's backslashes read as JSON escapes if pasted
 /// raw. Unlike [`url_path`] the spelling is preserved, because rwv compares
 /// a record's workspace paths against the live ones.
+///
+/// TOML basic strings take the same escape forms for everything a path can
+/// contain, so this is also the rendering for a path inside a hand-built
+/// `.toml` fixture.
 pub fn json_escaped(path: impl AsRef<std::path::Path>) -> String {
     let quoted =
         serde_json::to_string(path.as_ref().to_str().expect("fixture path is valid UTF-8"))
@@ -110,6 +114,16 @@ pub fn workweave_marker(
         json_escaped(primary),
         json_escaped(parent),
     )
+}
+
+/// `read_to_string` modulo git's eol filter: under `core.autocrlf` a
+/// checkout spells text content CRLF, which is the same content to git and
+/// not what a content assertion is about.
+pub fn read_normalized(path: impl AsRef<std::path::Path>) -> String {
+    let path = path.as_ref();
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+        .replace("\r\n", "\n")
 }
 
 /// `GIT_*` environment variables that git itself sets for hooks and that

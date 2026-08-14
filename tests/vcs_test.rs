@@ -1306,7 +1306,7 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
 
     // Working tree should hold MAIN's lock content — replay-exclusion keeps
     // the rebase target's version through every replayed commit.
-    let final_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
+    let final_lock = common::read_normalized(p.join("rwv.lock"));
     assert_eq!(
         final_lock, main_lock_content,
         "replay-exclusion should keep main's lock content after rebase; \
@@ -1611,7 +1611,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
 
     // Lock ended up as MAIN's version — the F2 lock-only pick merged to
     // "ours" via the inline driver flag (never touched the durable config).
-    let final_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
+    let final_lock = common::read_normalized(p.join("rwv.lock"));
     assert_eq!(
         final_lock, main_lock,
         "rwv.lock must be main's version after continue (inline rwv-ours flag)"

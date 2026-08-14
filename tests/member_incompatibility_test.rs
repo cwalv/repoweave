@@ -65,8 +65,10 @@ fn go_free_bin() -> PathBuf {
         let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("go-free-bin");
         std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
 
-        let git = which("git").expect("git must be on PATH to run these tests");
-        let link = dir.join("git");
+        let git = which::which("git").expect("git must be on PATH to run these tests");
+        // The shim must carry the name a child's lookup resolves: Windows
+        // appends `.exe`, so a link named bare `git` is invisible there.
+        let link = dir.join(if cfg!(windows) { "git.exe" } else { "git" });
         // The directory is a `static` reused across runs, so the link
         // usually already exists. `symlink::create` folds the io error into a
         // message, so the pre-existing case is tested for rather than caught.
@@ -77,13 +79,6 @@ fn go_free_bin() -> PathBuf {
         dir
     })
     .clone()
-}
-
-/// Absolute path of `name` on the ambient `PATH`.
-fn which(name: &str) -> Option<PathBuf> {
-    std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(name))
-        .find(|p| p.is_file())
 }
 
 /// Whether the real `go` binary is on `PATH`.

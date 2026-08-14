@@ -103,7 +103,7 @@ fn write_local_crate_source(source_dir: &Path, weave_root: &Path, versions: &[&s
         weave_root.join(".cargo/config.toml"),
         format!(
             "[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = \"{}\"\n",
-            source_dir.display()
+            common::json_escaped(source_dir)
         ),
     )
     .unwrap();

@@ -528,8 +528,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
         .assert()
         .success();
 
-    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/myapp.code-workspace"))
-        .expect("adopted project should still carry the committed .code-workspace file");
+    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/myapp.code-workspace"));
     assert_eq!(
         adopted, committed_code_workspace,
         "`rwv init --adopt` must not re-author the adopted repo's committed \
@@ -684,8 +683,7 @@ lto = true
         .assert()
         .success();
 
-    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.toml"))
-        .expect("adopted project should still carry the committed Cargo.toml");
+    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/Cargo.toml"));
     assert!(
         adopted.contains("org/lib/crates/legacy"),
         "`rwv init --adopt` must not drop a committed workspace member; \
@@ -729,8 +727,7 @@ lto = true
         .assert()
         .success();
 
-    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.toml"))
-        .expect("adopted project should still carry the committed Cargo.toml");
+    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/Cargo.toml"));
     assert!(
         !adopted.contains("resolver"),
         "`rwv init --adopt` must not inject the DefaultOnly `resolver` key \
@@ -889,8 +886,7 @@ resolver = \"2\"
         adopt_ws.join(".rwv-active").exists(),
         "a completed adopt selects the project it adopted"
     );
-    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.toml"))
-        .expect("adopted project should still carry the committed Cargo.toml");
+    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/Cargo.toml"));
     assert_eq!(
         adopted, committed_cargo_toml,
         "deferring the lockfile must not disturb the committed Cargo.toml"

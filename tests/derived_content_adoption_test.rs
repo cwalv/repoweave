@@ -137,8 +137,7 @@ fn write(repo: &Path, rel: &str, contents: &str) {
 }
 
 fn read(repo: &Path, rel: &str) -> String {
-    std::fs::read_to_string(repo.join(rel))
-        .unwrap_or_else(|e| panic!("failed to read {rel} in {}: {e}", repo.display()))
+    common::read_normalized(repo.join(rel))
 }
 
 // ---------------------------------------------------------------------------

@@ -633,7 +633,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         "target server repo must not advance past the collision"
     );
     assert_eq!(
-        std::fs::read_to_string(primary.server_dir.join("newfile.txt")).unwrap(),
+        common::read_normalized(primary.server_dir.join("newfile.txt")),
         "primary scratch\n",
         "the target's untracked file must survive the refused advance"
     );
@@ -682,7 +682,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         "--continue should complete the fast-forward once the collision is cleared"
     );
     assert_eq!(
-        std::fs::read_to_string(primary.server_dir.join("newfile.txt")).unwrap(),
+        common::read_normalized(primary.server_dir.join("newfile.txt")),
         "ww content\n",
         "the landed newfile.txt must carry ww's content, not the target's old scratch file"
     );

@@ -1306,7 +1306,7 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     // "Ours" semantics: the final lock is the rebase TARGET's version —
     // feature's lock edit vanished into the driver, exactly as during an
     // rwv-driven replay.
-    let final_lock = std::fs::read_to_string(repo.join("rwv.lock")).unwrap();
+    let final_lock = common::read_normalized(repo.join("rwv.lock"));
     assert_eq!(
         final_lock, main_lock,
         "final rwv.lock must be main's version (ours semantics)"
