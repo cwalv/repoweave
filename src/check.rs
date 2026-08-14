@@ -6245,7 +6245,7 @@ impl CollapsedClass {
 /// so all check results have a uniform shape.
 ///
 /// Reclamation and frozen-legacy classes collapse to one count line each
-/// ([`CollapsedClass`]); everything else renders itemized. The collapse is a
+/// (`CollapsedClass`); everything else renders itemized. The collapse is a
 /// TEXT-report shape only — `--json` is built straight from
 /// `CheckViolation` and carries every record.
 pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
