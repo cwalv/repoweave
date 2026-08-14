@@ -5538,12 +5538,17 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // namespace (see target_savepoint_id). Best-effort: if the target's
     // project dir or repos are gone (e.g. after a retire that deleted the
     // workweave and the target structure changed), silently skip.
+    //
+    // Resolve the target under the op's own project, exactly as savepoint
+    // creation did: the target workspace's `.rwv-active` may name a different
+    // project, and resolving by that pointer drops refs in the wrong
+    // project's repos while the real ones survive every successful sync-to.
     if matches!(ctx.verb, op_state::OpVerb::SyncTo) {
         let tsp_id = OpId::from_string(target_savepoint_id(&ctx.op_id));
-        // Try to load target project from dest_workspace_dir.
-        let target_project_name = WorkspaceContext::resolve(&ctx.dest_workspace_dir, None)
-            .ok()
-            .and_then(|c| find_project_name(&c).ok());
+        let target_project_name =
+            WorkspaceContext::resolve(&ctx.dest_workspace_dir, Some(ctx.cwd_project_name.clone()))
+                .ok()
+                .and_then(|c| find_project_name(&c).ok());
         if let Some(tpname) = target_project_name {
             let target_project_dir = project_dir(&ctx.dest_workspace_dir, tpname.as_str());
             delete_savepoint(ctx.project_vcs.as_ref(), &target_project_dir, &tsp_id);

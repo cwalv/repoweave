@@ -513,9 +513,10 @@ fn sync_to_allow_stale_lock_bypasses_target_precondition() {
 // path and leaving the op resumable via `rwv sync-to --continue`.
 // ===========================================================================
 
-/// Count savepoints under `refs/rwv/pre-op/` in `repo`, without needing the
-/// op-id: enough to tell "a savepoint exists" from "none does".
-fn savepoint_count(repo: &Path) -> usize {
+/// List savepoints under `refs/rwv/pre-op/` in `repo`, without needing the
+/// op-id: enough to tell "a savepoint exists" from "none does", and a red
+/// assertion prints which refs survived.
+fn savepoint_refs(repo: &Path) -> Vec<String> {
     let out = common::git()
         .args(["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op"])
         .current_dir(repo)
@@ -524,7 +525,12 @@ fn savepoint_count(repo: &Path) -> usize {
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.is_empty())
-        .count()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn savepoint_count(repo: &Path) -> usize {
+    savepoint_refs(repo).len()
 }
 
 /// A target-side untracked file that the incoming fast-forward never writes
@@ -649,6 +655,13 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         savepoint_count(&primary.server_dir) > 0,
         "target savepoint must remain after the collision refusal"
     );
+    assert!(
+        savepoint_refs(&primary.server_dir)
+            .iter()
+            .any(|r| r.ends_with("-target")),
+        "the parked op must hold a target-side (-target) savepoint; refs: {:?}",
+        savepoint_refs(&primary.server_dir)
+    );
 
     // Move the colliding file aside and resume.
     std::fs::rename(
@@ -676,5 +689,85 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
     assert!(
         !ww.root.join(".rwv-op").exists(),
         "op-state should be cleared once --continue completes"
+    );
+}
+
+/// A completed sync-to leaves zero `refs/rwv/pre-op/*` on either side: the
+/// cleanup phase drops the owner-side savepoints AND the `<op-id>-target`
+/// refs it minted for the target's repos. The worktree pairs share one refdb
+/// per repo, so each count below covers both sides of that repo at once.
+#[test]
+fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        savepoint_refs(&primary.server_dir),
+        Vec::<String>::new(),
+        "a completed sync-to must drop every pre-op ref in the manifest repo"
+    );
+    assert_eq!(
+        savepoint_refs(&primary.project_dir),
+        Vec::<String>::new(),
+        "a completed sync-to must drop every pre-op ref in the project repo"
+    );
+}
+
+/// Same claim as above, with the target's `.rwv-active` naming a DIFFERENT
+/// project than the one being synced. The pointer is ambient state the op
+/// never consults for its landing — savepoint creation and advance-target
+/// both resolve the target under CWD's project — so cleanup must find the
+/// `<op-id>-target` refs where creation minted them, not where the target's
+/// pointer happens to aim. Resolving by pointer deletes refs in the wrong
+/// project's repos, and since dropping a savepoint swallows misses, every
+/// successful sync-to then leaks one `-target` ref per touched repo.
+#[test]
+fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared(tmp.path());
+
+    let other_project = primary.root.join("projects/other-app");
+    init_repo(&other_project);
+    write_manifest(&other_project, &[]);
+    git(&["add", "rwv.toml"], &other_project);
+    git(&["commit", "-m", "other-app: manifest"], &other_project);
+    std::fs::write(primary.root.join(".rwv-active"), "other-app\n").unwrap();
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        c2,
+        "the landing must reach the synced project regardless of the target's pointer"
+    );
+    assert_eq!(
+        savepoint_refs(&primary.server_dir),
+        Vec::<String>::new(),
+        "cleanup must drop the target-side refs in the synced project's manifest repo"
+    );
+    assert_eq!(
+        savepoint_refs(&primary.project_dir),
+        Vec::<String>::new(),
+        "cleanup must drop the target-side refs in the synced project's project repo"
     );
 }
