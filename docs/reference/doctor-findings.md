@@ -460,6 +460,30 @@ hand-corruption or a truncated write, not a shape upgrading produces.
 **What to do:** the finding message names what to write by hand. There is
 nothing here to guess a repair from, so `--fix` leaves the file untouched.
 
+#### `misnamed-dir`
+
+**Warning. Report-only.** A marker-bearing workweave directory whose basename
+disagrees with its records: it does not spell `{marker project}--{name}`,
+where the name is the one the project's registry records for this path (or,
+for an unregistered directory, the basename's own name half). Only a
+hand-rename produces this — `rwv workweave create` derives the directory name
+from the same pair it writes into the marker and the registry.
+
+Identity is by record, so the scans keep working from the records — a renamed
+directory keeps its recorded branch expectation and its project scope. What
+this finding reports is that the directory's name now lies about those
+records, which misleads operators and collides with any future workweave
+whose records genuinely mint this basename. When the basename is unparseable
+AND no registry entry names the path, identity is unrecoverable, the scans
+skip the directory entirely, and this finding is the only signal.
+
+**What to do:** rename the directory to the name the finding reports (the
+checkouts inside were registered under the recorded name, so restoring it
+also restores their worktree back-pointers). When no record pins the intended
+name, rename it to the `<project>--<name>` you intend, or remove the
+directory. Never auto-fixed: a directory rename under live checkouts is not
+rwv's to perform, and in the unrecoverable case the target is not derivable.
+
 ### `workweave-drift`
 
 **Warning. Report-only.** A worktree the manifest lists is missing from a

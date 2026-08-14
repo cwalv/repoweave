@@ -194,7 +194,7 @@ Every per-repo variant carries `path` (manifest-relative) and
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
-(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
+(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
 run time. Each record carries `name` (the `<verb>` in `rwv-<verb>`), `path`
@@ -2677,6 +2677,35 @@ Schema:
                 "detail": {
                   "description": "Why the marker cannot be read, and what to write in its place.",
                   "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A marker-bearing workweave directory whose basename disagrees with its records: it does not spell `{marker project}--{name}`, where the name is the one the project's registry records for this path (or, for an unregistered directory, the basename's own name half).\n\nOnly a hand-rename produces this — `rwv workweave create` derives the directory name from the same (project, name) pair it writes into the marker and the registry. Identity is by record, so the scans keep working from the records; what this finding reports is that the directory's own name now lies about them, which misleads operators and collides with any future workweave whose records genuinely mint this basename. When the basename is unparseable AND no registry entry names the path, identity is unrecoverable and the scans skip the directory entirely — this finding is then the only signal.\n\nReport-only: renaming the directory back is the operator's one-step remedy (the checkouts inside were registered under the recorded name, so restoring it also restores their worktree back-pointers), and when no record exists the intended name is not derivable from the directory itself.",
+          "type": "object",
+          "required": [
+            "misnamed-dir"
+          ],
+          "properties": {
+            "misnamed-dir": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "description": "What disagrees: which half, and with which record.",
+                  "type": "string"
+                },
+                "expected_dir_name": {
+                  "description": "The basename the records expect (`{project}--{name}`), when the records pin one. `None` when the basename is unparseable and no registry entry names this path.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }

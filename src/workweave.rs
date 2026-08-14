@@ -3069,6 +3069,18 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
 /// `(project, name, path)` triples so doctor can tell which project a
 /// discovered workweave belongs to (for orphan / stale reporting).
 ///
+/// **Identity is by record, never by name shape.** The PROJECT comes from
+/// the marker — the record the directory itself carries — and the NAME
+/// comes from the registry entry naming this path when one exists
+/// ([`workweave_name_for_path`]), falling back to the directory basename's
+/// name half only for unregistered directories, where no record exists.
+/// The basename is discovery, not identity: a hand-renamed directory keeps
+/// its recorded identity, so the branch scans keep validating the branch
+/// the records own instead of deriving a new expectation from the rename.
+/// A directory whose identity is unrecoverable (unparseable basename AND
+/// no registry entry) is skipped here; the tree-integrity scan's
+/// misnamed-dir finding owns reporting it.
+///
 /// This is the ONLY surviving on-disk scan (the pre-registry list/delete
 /// scan was deleted). Every other code path resolves via the registry.
 pub fn doctor_scan_container(
@@ -3085,16 +3097,6 @@ pub fn doctor_scan_container(
         if !dir.is_dir() {
             continue;
         }
-        let dir_name = entry.file_name().to_string_lossy().into_owned();
-        let parsed = parse_weave_dir_name(&dir_name);
-        if parsed.is_none() {
-            continue;
-        }
-        let (project_str, parsed_name) = parsed.unwrap();
-        let project_name = match ProjectName::new(project_str) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
         let marker = match WorkweaveMarker::read(&dir) {
             Ok(Some(m)) => m,
             _ => continue,
@@ -3102,7 +3104,21 @@ pub fn doctor_scan_container(
         if !marker.names_primary(ws_root) {
             continue;
         }
-        result.push((project_name, parsed_name.as_str().to_string(), dir));
+        let project_name = marker.project().clone();
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let recorded = workweave_name_for_path(ws_root, &project_name, &dir)
+            .ok()
+            .flatten();
+        let name = match recorded {
+            Some(n) => n.as_str().to_string(),
+            None => match parse_weave_dir_name(&dir_name) {
+                Some((_, parsed_name)) => parsed_name.as_str().to_string(),
+                // No record and no parseable basename: identity is not
+                // recoverable. The misnamed-dir finding owns this state.
+                None => continue,
+            },
+        };
+        result.push((project_name, name, dir));
     }
     result.sort_by(|a, b| (a.0.as_str().cmp(b.0.as_str())).then(a.1.cmp(&b.1)));
     result

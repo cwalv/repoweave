@@ -119,6 +119,7 @@ pub fn case_token(v: &CheckViolation) -> String {
                 }
                 WorkweaveTreeIntegrityKind::TrackedIndex { .. } => "tracked-index",
                 WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => "unreadable-marker",
+                WorkweaveTreeIntegrityKind::MisnamedDir { .. } => "misnamed-dir",
             };
             format!("workweave-tree-integrity/{tail}")
         }
@@ -396,6 +397,16 @@ pub fn corpus() -> Vec<CheckViolation> {
                          workweave marker with no `primary:` field, so it cannot be migrated \
                          automatically. Write it by hand as JSON with the three required \
                          fields: `primary`, `project`, and `parent`"
+                    .into(),
+            },
+        },
+        CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: path("/ws/.workweaves/other--feat-a"),
+            sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
+                expected_dir_name: Some("proj--feat-a".into()),
+                detail: "the marker records project `proj` and the name the registry \
+                         records for this path is `feat-a`, so the records expect \
+                         `proj--feat-a`"
                     .into(),
             },
         },

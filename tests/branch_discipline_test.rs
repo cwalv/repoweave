@@ -3067,3 +3067,285 @@ fn the_flat_ref_and_a_namespace_ref_cannot_coexist_so_the_skip_cannot_reach_unre
         "and must refuse a namespace ref while the flat ref exists"
     );
 }
+
+// ===========================================================================
+// Report scope and repair scope read the same source: the marker.
+//
+// Identity is by record, never by name shape. The project is the marker's;
+// the workweave name is the registry's when an entry names the path, and the
+// directory basename's name half only for unregistered directories. A
+// directory whose basename disagrees with those records is a `misnamed-dir`
+// tree-integrity finding, not a shift of identity.
+// ===========================================================================
+
+/// Fixture: dir `proja--feat-x`, marker project `projb`, registered as
+/// projb/feat-x, checkout on pre-flat `projb--feat-x/main` (the namespace the
+/// records mint). Both projects exist. The state one `mv` produces from a
+/// healthy projb workweave.
+fn divergent_marker_fixture(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let ws = make_primary(tmp);
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    write_project_manifest(&ws, "proja", "github/acme/repo");
+    write_project_manifest(&ws, "projb", "github/acme/repo");
+
+    let ww_dir = workweaves_dir(&ws).join("proja--feat-x");
+    write_marker(&ww_dir, &ws, "projb", &ws);
+    record_placement(&ws, "projb", "feat-x", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "projb--feat-x/main");
+
+    (ws, canonical, ww_checkout)
+}
+
+/// The divergence this area was audited for, one level below rwv-rsf7's
+/// guard table: the report's project-scope filter used to read the directory
+/// basename while the repair's read the marker, so the same finding was
+/// shown under one project and repaired under another.
+///
+/// With the dirname's project active: the finding is OUT of scope on both
+/// sides — the report does not show it and `--fix` does not act. Before the
+/// fix, the report showed the rename promise here and `--fix` skipped it.
+///
+/// **Mutation evidence**: revert `branch_discipline_in_scope`'s (a)-arm to
+/// compare `parse_weave_dir_name(dir_name).0` instead of the marker's
+/// project and the first assertion reddens (the finding reappears under
+/// proja while the repair still skips).
+#[test]
+fn divergent_marker_report_and_repair_agree_under_dirname_project() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, _ck) = divergent_marker_fixture(tmp.path());
+    set_active_project(&ws, "proja");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("renames it to `projb--feat-x`"),
+        "the branch finding belongs to projb (the marker's project); it must \
+         not surface under proja's scope where the repair would skip it; \
+         got:\n{stdout}"
+    );
+
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        !branch_exists(&canonical, "projb--feat-x"),
+        "and the repair agrees: nothing of projb's is migrated under proja"
+    );
+}
+
+/// The other direction: with the marker's project active, the finding is IN
+/// scope on both sides — the report names the rename and `--fix` performs
+/// it. Before the fix, the report was silent here while `--fix` acted.
+#[test]
+fn divergent_marker_report_and_repair_agree_under_marker_project() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, _ck) = divergent_marker_fixture(tmp.path());
+    set_active_project(&ws, "projb");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("renames it to `projb--feat-x`"),
+        "the branch finding must surface under the marker's project, where \
+         the repair runs; got:\n{stdout}"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        branch_exists(&canonical, "projb--feat-x"),
+        "and the repair performs the rename the report promised; got:\n{}",
+        String::from_utf8_lossy(&fix.stdout)
+    );
+    assert!(!branch_exists(&canonical, "projb--feat-x/main"));
+}
+
+/// `--fix --all` must converge on the divergent state. Before the fix, the
+/// orphan pass keyed on the DIRNAME's project while registry validation
+/// keyed on the marker's, so every run adopted the workweave into the
+/// dirname's project and every subsequent run pruned that entry as a
+/// project-mismatch and re-adopted it — two `[fixed]` lines per run,
+/// forever.
+#[test]
+fn divergent_marker_fix_converges_instead_of_prune_adopt_looping() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _canonical, _ck) = divergent_marker_fixture(tmp.path());
+    set_active_project(&ws, "proja");
+
+    let first = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let first_stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        !first_stdout.contains("into project `proja`'s registry"),
+        "the orphan adopt must follow the marker, never the dirname; \
+         got:\n{first_stdout}"
+    );
+
+    let second = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let second_stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(
+        !second_stdout.contains("pruned stale registry entry `feat-x`")
+            && !second_stdout.contains("adopted workweave `feat-x`"),
+        "a second `--fix --all` must not keep pruning and re-adopting the \
+         same workweave; got:\n{second_stdout}"
+    );
+}
+
+/// The divergent directory is not silent: the tree-integrity scan reports
+/// `misnamed-dir` naming the directory the records expect, and the control
+/// half proves the finding clears when the name is restored.
+#[test]
+fn divergent_marker_dir_is_reported_as_misnamed_with_the_recorded_target() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _canonical, _ck) = divergent_marker_fixture(tmp.path());
+    set_active_project(&ws, "projb");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("disagrees with its records")
+            && stdout.contains("Rename the directory to `projb--feat-x`"),
+        "the misnamed dir must be reported with the recorded target name; \
+         got:\n{stdout}"
+    );
+
+    // Control: restore the recorded name and the finding clears. The
+    // registry entry follows the move.
+    let old_dir = workweaves_dir(&ws).join("proja--feat-x");
+    let new_dir = workweaves_dir(&ws).join("projb--feat-x");
+    std::fs::rename(&old_dir, &new_dir).unwrap();
+    record_placement(&ws, "projb", "feat-x", &new_dir);
+
+    let after = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let after_stdout = String::from_utf8_lossy(&after.stdout);
+    assert!(
+        !after_stdout.contains("disagrees with its records"),
+        "restoring the recorded name must clear the finding; got:\n{after_stdout}"
+    );
+}
+
+/// A registered workweave whose directory was renamed to a basename
+/// `WorkweaveName::new` rejects (`feat--y` contains `--`). Before the fix
+/// this was TOTAL silence: the scans skipped the unparseable basename, the
+/// registry validated the entry without ever parsing it, and a checkout on
+/// bare `main` inside — the state the acceptance criteria says must flag
+/// from creation — reported nothing.
+///
+/// With identity by record, the branch scan works from the registry's name
+/// and the bare-main checkout reports `shared-branch` again, and the rename
+/// itself reports `misnamed-dir`.
+#[test]
+fn unparseable_dirname_with_registry_record_still_scans_and_reports() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "proja", "github/acme/repo");
+    set_active_project(&ws, "proja");
+
+    let ww_dir = workweaves_dir(&ws).join("proja--feat--y");
+    write_marker(&ww_dir, &ws, "proja", &ws);
+    record_placement(&ws, "proja", "feat-y", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    git_in(&canonical, &["checkout", "-b", "rwv-primary-tip", "-q"]);
+    worktree_add_existing(&canonical, &ww_checkout, "main");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("workweave checkout is on"),
+        "bare-main inside the workweave must flag even after the rename — \
+         the registry still records the identity; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Rename the directory to `proja--feat-y`"),
+        "and the rename itself must be reported with the recorded target; \
+         got:\n{stdout}"
+    );
+}
+
+/// The unrecoverable corner: unparseable basename AND no registry entry.
+/// The scans cannot derive an identity to validate against, so they skip —
+/// and `misnamed-dir` is the one signal left. It must fire, and it must not
+/// be accompanied by an orphan-adopt offer (adopting an identity that does
+/// not exist would register garbage).
+#[test]
+fn unparseable_unregistered_dirname_reports_misnamed_not_silence() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "proja", "github/acme/repo");
+    set_active_project(&ws, "proja");
+
+    let ww_dir = workweaves_dir(&ws).join("proja--feat--y");
+    write_marker(&ww_dir, &ws, "proja", &ws);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("disagrees with its records")
+            && stdout.contains("intended name is not derivable"),
+        "the unrecoverable rename must be reported rather than silent; \
+         got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("not recorded in `.rwv-workweave-index`"),
+        "and no orphan adopt may be offered for an identity that cannot be \
+         derived; got:\n{stdout}"
+    );
+}
+
+/// A name-half rename of a registered workweave (`projb--feat-x` moved to
+/// `projb--feat-z`): the checkout on the recorded flat ref stays HEALTHY —
+/// identity is the record, so the scan does not derive a new expectation
+/// from the new basename and misreport the workweave's own branch as
+/// foreign. The rename surfaces as `misnamed-dir` instead.
+#[test]
+fn name_half_rename_keeps_recorded_branch_healthy_and_reports_misnamed() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "projb", "github/acme/repo");
+    set_active_project(&ws, "projb");
+
+    // Healthy flat-ref workweave, registered, receipted — then renamed.
+    let ww_dir = workweaves_dir(&ws).join("projb--feat-z");
+    write_marker(&ww_dir, &ws, "projb", &ws);
+    record_placement(&ws, "projb", "feat-x", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "projb--feat-x");
+    record_receipt(&ws, "projb", "feat-x", &canonical);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("a ref rwv recorded for a different workweave")
+            && !stdout.contains("workweave checkout is on"),
+        "the checkout is on the branch its records own; the rename must not \
+         make the scan call it foreign or shared; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Rename the directory to `projb--feat-x`"),
+        "the rename is the finding, with the recorded target; got:\n{stdout}"
+    );
+}

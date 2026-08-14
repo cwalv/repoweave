@@ -652,7 +652,8 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::ForeignPrimary { .. }
                 | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
                 | WorkweaveTreeIntegrityKind::TrackedIndex { .. }
-                | WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => ReportOnly,
+                | WorkweaveTreeIntegrityKind::UnreadableMarker { .. }
+                | WorkweaveTreeIntegrityKind::MisnamedDir { .. } => ReportOnly,
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
@@ -974,6 +975,34 @@ pub enum WorkweaveTreeIntegrityKind {
     /// Report-only: there is no value here to guess a repair from.
     UnreadableMarker {
         /// Why the marker cannot be read, and what to write in its place.
+        detail: String,
+    },
+    /// A marker-bearing workweave directory whose basename disagrees with
+    /// its records: it does not spell `{marker project}--{name}`, where the
+    /// name is the one the project's registry records for this path (or,
+    /// for an unregistered directory, the basename's own name half).
+    ///
+    /// Only a hand-rename produces this — `rwv workweave create` derives
+    /// the directory name from the same (project, name) pair it writes into
+    /// the marker and the registry. Identity is by record, so the scans keep
+    /// working from the records; what this finding reports is that the
+    /// directory's own name now lies about them, which misleads operators
+    /// and collides with any future workweave whose records genuinely mint
+    /// this basename. When the basename is unparseable AND no registry
+    /// entry names the path, identity is unrecoverable and the scans skip
+    /// the directory entirely — this finding is then the only signal.
+    ///
+    /// Report-only: renaming the directory back is the operator's one-step
+    /// remedy (the checkouts inside were registered under the recorded
+    /// name, so restoring it also restores their worktree back-pointers),
+    /// and when no record exists the intended name is not derivable from
+    /// the directory itself.
+    MisnamedDir {
+        /// The basename the records expect (`{project}--{name}`), when the
+        /// records pin one. `None` when the basename is unparseable and no
+        /// registry entry names this path.
+        expected_dir_name: Option<String>,
+        /// What disagrees: which half, and with which record.
         detail: String,
     },
 }
@@ -2970,6 +2999,59 @@ pub fn scan_workweave_tree_integrity(
             // for the cycle/cross-project check using what we have.
         }
 
+        // Misnamed-dir check: the basename must spell what the records say.
+        // Identity is by record — project from the marker, name from the
+        // registry entry naming this path (basename name half for
+        // unregistered dirs) — so a disagreement here never shifts what the
+        // scans validate; it reports that the directory's name now lies
+        // about the records it carries.
+        if let Some(basename) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            let recorded =
+                crate::workweave::workweave_name_for_path(ws_root, marker.project(), dir)
+                    .ok()
+                    .flatten();
+            let parsed = crate::workspace::parse_weave_dir_name(&basename);
+            let expected_name = recorded.clone().or_else(|| parsed.map(|(_, n)| n));
+            match expected_name {
+                Some(name) => {
+                    let expected_dir =
+                        crate::workspace::weave_dir_name(marker.project().as_str(), &name);
+                    if basename != expected_dir {
+                        let name_source = if recorded.is_some() {
+                            "the name the registry records for this path"
+                        } else {
+                            "the basename's own name half"
+                        };
+                        violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                            workweave_dir: dir.clone(),
+                            sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
+                                expected_dir_name: Some(expected_dir.clone()),
+                                detail: format!(
+                                    "the marker records project `{}` and {name_source} is \
+                                     `{name}`, so the records expect `{expected_dir}`",
+                                    marker.project().as_str(),
+                                ),
+                            },
+                        });
+                    }
+                }
+                None => {
+                    violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                        workweave_dir: dir.clone(),
+                        sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
+                            expected_dir_name: None,
+                            detail: format!(
+                                "the basename does not parse as `<project>--<name>` and no \
+                                 registry entry of project `{}` names this path, so the \
+                                 intended name is not derivable",
+                                marker.project().as_str(),
+                            ),
+                        },
+                    });
+                }
+            }
+        }
+
         marker_entries.push(MarkerEntry {
             dir: dir.clone(),
             project: marker.project().clone(),
@@ -4952,9 +5034,14 @@ pub fn scan_state_hygiene(
 ///
 /// - **Workweave checkout** (sub-kinds a: `SharedBranch`, `ForeignEphemeral`,
 ///   `Detached`): `repo_path` lives under the workweave parent directory
-///   (`<ws_root>/../.workweaves/<project>--<ww_name>/`).  The project is
-///   the `<project>` prefix extracted from the workweave directory basename
-///   via [`crate::workspace::parse_weave_dir_name`].
+///   (`<ws_root>/../.workweaves/<ww_dir>/`).  The project is read from the
+///   workweave directory's `.rwv-workweave` marker — the same source the
+///   scan that produced the finding minted from, and the same source
+///   `fix_branch_model_migration` scopes its repairs on. Reading the
+///   directory basename here instead (the pre-fix behavior) made the report
+///   and the repair scope the same finding to different projects whenever a
+///   hand-renamed directory disagreed with its marker: the report showed a
+///   remedy under one project while `--fix` skipped it under the other.
 ///
 /// - **Canonical clone** (sub-kinds b/c: `StaleEphemeralBranchSafe`,
 ///   `StaleEphemeralBranchLive`, `StaleEphemeralBranchUnowned`): `repo_path`
@@ -4987,17 +5074,20 @@ fn branch_discipline_in_scope(
     // recorded container.
     for ww_parent in workweave_containers_for_scan(ws_root) {
         if let Ok(rel_from_ww_parent) = repo_path.strip_prefix(&ww_parent) {
-            // (a) path: under <container>/<project>--<ww_name>/...
+            // (a) path: under <container>/<ww_dir>/... — the project is the
+            // marker's, matching the mint and the repair scope.
             let ww_dir_name = rel_from_ww_parent
                 .components()
                 .next()
                 .map(|c| c.as_os_str().to_string_lossy().into_owned());
             if let Some(dir_name) = ww_dir_name {
-                if let Some((proj, _)) = crate::workspace::parse_weave_dir_name(&dir_name) {
-                    return proj == active_project;
+                let ww_dir = ww_parent.join(&dir_name);
+                if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&ww_dir) {
+                    return marker.project().as_str() == active_project;
                 }
             }
-            // Can't parse the workweave dir name → conservative: exclude.
+            // No readable marker → conservative: exclude. The tree-integrity
+            // scan owns reporting the broken marker.
             return false;
         }
     }
@@ -6361,6 +6451,23 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                             index_path.display()
                         ),
                         WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
+                        WorkweaveTreeIntegrityKind::MisnamedDir {
+                            expected_dir_name,
+                            detail,
+                        } => match expected_dir_name {
+                            Some(expected) => format!(
+                                "{}: workweave directory name disagrees with its records — \
+                                 {detail}. Rename the directory to `{expected}` to restore \
+                                 the recorded identity",
+                                workweave_dir.display(),
+                            ),
+                            None => format!(
+                                "{}: workweave directory name disagrees with its records — \
+                                 {detail}. Rename it to the `<project>--<name>` you intend, \
+                                 or remove the directory",
+                                workweave_dir.display(),
+                            ),
+                        },
                     };
                     (crate::integration::Severity::Warning, msg)
                 }
