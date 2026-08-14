@@ -487,6 +487,41 @@ Schema:
           "additionalProperties": false
         },
         {
+          "description": "(a) The workweave checkout is in detached-HEAD state AND two or more refs share this workweave's namespace, so `--adopt-detached-checkouts` cannot run.\n\n`fix_branch_model_migration` skips the whole repo before any arm when `legacy_refs.len() > 1` — including the consented detached arm — which is why this is reported in place of `Detached` rather than beside it: that finding's message promises `--adopt-detached-checkouts`, a flag whose arm the guard prevents from running. The principle is consent-tier-independent: a consented remedy that cannot run misleads the operator exactly as an auto remedy does — consent changes who acts, not whether the named action works.\n\nReport-only. The operator must reduce the namespace to at most one ref, then re-run to get the ordinary `Detached` finding with a remedy that will actually run.",
+          "type": "object",
+          "required": [
+            "blocked-detached-namespace"
+          ],
+          "properties": {
+            "blocked-detached-namespace": {
+              "type": "object",
+              "required": [
+                "at_sha",
+                "blocking_refs",
+                "expected_ref"
+              ],
+              "properties": {
+                "at_sha": {
+                  "description": "The commit HEAD names directly.",
+                  "type": "string"
+                },
+                "blocking_refs": {
+                  "description": "Every pre-flat ref found under that namespace, in listing order.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expected_ref": {
+                  "description": "The flat ref that cannot be created while the namespace is shared (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
           "description": "(a) The workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
           "type": "object",
           "required": [
