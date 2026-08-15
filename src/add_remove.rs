@@ -291,11 +291,10 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         .with_context(|| format!("failed to determine default branch for {}", dest.display()))?
     else {
         anyhow::bail!(
-            "rwv add: origin/HEAD is unset for '{}' at {}; run `git remote set-head origin -a` \
-             there (or push once with an explicit branch) to record its canonical branch, \
-             then re-run `rwv add {}`",
+            "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
             repo_path.as_str(),
             dest.display(),
+            vcs.remote_default_branch_repair_hint(),
             url
         );
     };
@@ -403,11 +402,10 @@ fn run_add_from_local_path(
     })?
     else {
         anyhow::bail!(
-            "rwv add: origin/HEAD is unset for '{}' at {}; run `git remote set-head origin -a` \
-             there (or push once with an explicit branch) to record its canonical branch, \
-             then re-run `rwv add {}`",
+            "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
             repo_path.as_str(),
             clone_dir.display(),
+            vcs.remote_default_branch_repair_hint(),
             path_arg
         );
     };

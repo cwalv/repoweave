@@ -781,13 +781,14 @@ fn realign_present_clone(
         return Err(format!(
             "{}: aligning '{attached}' to {} is not a fast-forward — the pin is \
              not a descendant of the branch tip, which is what materializing an \
-             older lock, or a branch carrying commits origin has not seen, looks \
+             older lock, or a branch carrying commits {} has not seen, looks \
              like.\n  \
              Reconcile '{attached}' with the pin yourself (ordinary `git rebase` \
              / `git merge`) and re-run, or re-run with --detach-checkouts to \
              materialize {} on a detached HEAD (the branch ref is not moved).",
             repo_path.as_str(),
             target.display_str(),
+            vcs.conventional_remote_name(),
             target.display_str(),
         ));
     };

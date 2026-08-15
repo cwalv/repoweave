@@ -3264,6 +3264,28 @@ pub trait Vcs: Send + Sync {
     /// malformed. **No fallback** — see [`RemoteDefaultBranch`].
     fn remote_default_branch(&self, repo: &Path) -> Result<Option<RemoteDefaultBranch>, VcsError>;
 
+    /// Human-readable hint for the `None` arm of [`remote_default_branch`]:
+    /// what is unset, and the VCS-native ways to record it. Embedded verbatim
+    /// in the bail messages of verbs that need the canonical branch and refuse
+    /// to guess one.
+    ///
+    /// Returned text is a clause, not a whole message — the caller supplies
+    /// the repo it is talking about before it and the `rwv` verb to re-run
+    /// after it.
+    ///
+    /// ## Seam rule
+    ///
+    /// This is the one place the repair is spelled. It carries the name of the
+    /// unset ref and the native command that sets it, which is why core does
+    /// not: respelling the remote name at a call site would leave the command
+    /// beside it still naming git's. The impl owns both or neither. It must
+    /// not name an rwv verb — that half is the caller's, the same split
+    /// [`conflict_resolution_hint`] makes for `ConflictOp::Rebase`.
+    ///
+    /// [`remote_default_branch`]: Vcs::remote_default_branch
+    /// [`conflict_resolution_hint`]: Vcs::conflict_resolution_hint
+    fn remote_default_branch_repair_hint(&self) -> String;
+
     // ---- listing ----------------------------------------------------------
 
     /// Local branch names starting with `prefix`, as observed.

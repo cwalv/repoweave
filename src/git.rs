@@ -2656,6 +2656,14 @@ impl Vcs for GitVcs {
         }
     }
 
+    fn remote_default_branch_repair_hint(&self) -> String {
+        format!(
+            "{GIT_DEFAULT_REMOTE_NAME}/HEAD is unset; run \
+             `git remote set-head {GIT_DEFAULT_REMOTE_NAME} -a` there (or push \
+             once with an explicit branch) to record its canonical branch"
+        )
+    }
+
     fn list_branch_names_with_prefix(
         &self,
         repo: &Path,

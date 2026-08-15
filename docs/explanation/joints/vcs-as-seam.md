@@ -375,17 +375,48 @@ carries git's vocabulary across the seam:
 
 - **A remote name, in operator text.** Item 5 closes every path that
   *acts* on a remote; it does not close the sentences that *mention*
-  one. Four message sites in core still write `origin` as a literal:
-  three telling the operator that `origin/HEAD` is unset and how to
-  record it (`rwv add` twice, `rwv push` once), and one doctor finding
-  for a URL mismatch, whose wire `kind` carries the word too. Those
-  three are really the third item in this list rather than this one —
-  they spell a git command, `git remote set-head origin -a`, and
-  respelling the remote name alone would leave the command standing.
-  They are the residue, and they are the reason item 5's enforcement is
-  the compiler and not a scan for the literal: a matcher over `"origin"`
-  reports exactly these four, and a matcher that reports code someone
-  deliberately left is a matcher that gets turned off.
+  one. That residue is now one site, and getting there corrected the
+  count as much as it reduced it.
+
+  The census used to read four: three telling the operator that
+  `origin/HEAD` is unset and how to record it (`rwv add` twice,
+  `rwv push` once), and one doctor finding for a URL mismatch. Measured
+  against the tree it was six — `rwv fetch`'s non-fast-forward refusal
+  ("a branch carrying commits origin has not seen") and `rwv update`'s
+  ("diverged from the tip origin is on") were mentions nobody had
+  counted, in messages whose subject is something else. A hand-written
+  census undercounts in exactly that shape: it records the sites someone
+  went looking for.
+
+  The three set-head sites were really the third item in this list
+  rather than this one — they spell a git command, `git remote set-head
+  origin -a`, and respelling the remote name alone would leave the
+  command standing. All three now come from
+  `Vcs::remote_default_branch_repair_hint`, which carries the name and
+  the command together because owning one without the other is what
+  leaves a message half across the seam. The two `fetch`/`update`
+  mentions were only ever naming the remote, so they render it through
+  `Vcs::conventional_remote_name`.
+
+  What remains is the doctor finding, whose wire `kind` carries the word
+  too — the case below.
+- **A published identifier carrying the name.** The doctor finding kind
+  `origin-url-mismatch`, and the render text that echoes it. This one is
+  not a message someone can rephrase — it is the token `--json`
+  consumers match on and `rwv doctor --kind` accepts, published under a
+  promise of stability, so it is decided on a cost model of its own
+  rather than on the rule above.
+
+  It is also the reason enforcement here is a scan at all, where it once
+  could not be. The argument against one used to be precision — a
+  matcher over `origin` reported the sites someone had deliberately
+  left, and a matcher that reports correct code gets turned off. With
+  the message sites moved, the population is one, and one exemption
+  naming one file is a scan someone will keep.
+  `tests/core_remote_name_literal_test.rs` is that scan; it reads
+  non-comment lines of `src/` outside the backend module, matching the
+  standalone word only, so rwv's own `origin_dir` concept is invisible
+  to it by construction.
 - **A `.git*` file convention.** (`.gitattributes`, `.gitignore`,
   `.gitmodules`.) The convention belongs in `src/git.rs`; a caller
   outside it that needs one is in the wrong module.

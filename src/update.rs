@@ -646,11 +646,12 @@ fn advance_checkout(
         }
         return Err(format!(
             "{}: advancing '{attached}' to {} is not a fast-forward — this \
-             workweave's checkout has diverged from the tip origin is on.\n  \
+             workweave's checkout has diverged from the tip {} is on.\n  \
              Run `rwv sync` to reconcile the workweave with its parent, then \
              re-run `rwv update`.",
             repo_path.as_str(),
             target.display_str(),
+            vcs.conventional_remote_name(),
         ));
     }
 

@@ -192,9 +192,8 @@ pub fn run_push(
         .with_context(|| format!("failed to determine canonical branch for {project_name}"))?;
     let Some(project_remote_default) = project_remote_default else {
         anyhow::bail!(
-            "rwv push: project repo at projects/{project_name}/: origin/HEAD is unset; \
-             run `git remote set-head origin -a` in the project repo (or push once with \
-             an explicit branch) to record its canonical branch, then re-run `rwv push`"
+            "rwv push: project repo at projects/{project_name}/: {}, then re-run `rwv push`",
+            project_vcs.remote_default_branch_repair_hint()
         );
     };
     let project_canonical = project_remote_default.local_counterpart();
