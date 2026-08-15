@@ -1353,35 +1353,44 @@ impl WorkspaceContext {
     /// provenance (which chain step chose the project) is human-surface only
     /// (stderr target line) and is deliberately excluded from this struct.
     ///
-    /// A future change will emit an env-var envelope
-    /// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`) as a second
-    /// serialization of this same projection. That path will call this method
-    /// and map fields to env vars; the values must never be independently
-    /// computed.
+    /// [`crate::plugins::envelope_vars`] is a second serialization of this
+    /// same projection, mapping these fields to the `RWV_*` env vars a
+    /// spawned plugin reads. It calls this method; the values are never
+    /// independently computed.
     pub fn resolution(&self) -> Option<Resolution> {
         let project = self.active_project()?;
         let workspace = self.primary_root.clone();
-        let workweave = match &self.checkout {
-            Checkout::Primary { .. } => None,
-            Checkout::Workweave { name, project, .. } => {
-                name.recorded().map(|name| weave_dir_name(project, name))
-            }
+        let (workweave, workweave_unregistered) = match &self.checkout {
+            Checkout::Primary { .. } => (None, false),
+            Checkout::Workweave { name, project, .. } => match name.recorded() {
+                Some(name) => (Some(weave_dir_name(project, name)), false),
+                None => (None, true),
+            },
         };
         Some(Resolution {
             workspace,
             workweave,
+            workweave_unregistered,
             project: project.as_str().to_owned(),
         })
     }
 }
 
-/// Resolved workspace coordinates for `--json` output and (future) plugin
-/// env-var envelope.
+/// Resolved workspace coordinates for `--json` output and the plugin env-var
+/// envelope.
 ///
-/// Carries exactly the three result fields — `workspace` (primary root abs
-/// path), `workweave` (the `<project>--<name>` identity the registry records,
-/// absent at primary and for an unregistered workweave), and `project`
-/// (resolved project name). No separate `kind` or `location` field.
+/// Carries `workspace` (primary root abs path), `workweave` (the
+/// `<project>--<name>` identity the registry records), `project` (resolved
+/// project name), and `workweave_unregistered`. No `kind` or `location`
+/// field: the checkout is one of three states, and two of them are already
+/// carried by `workweave`'s presence.
+///
+/// The third state needs a field of its own. A workweave whose directory no
+/// registry entry names has no identity, so `workweave` is absent for it —
+/// and absent is what the primary looks like. Without
+/// `workweave_unregistered` the two serialize identically, and a consumer
+/// reading the documented meaning of that absence is told, positively, that
+/// it is at the primary checkout.
 ///
 /// Results only — provenance (which chain step resolved the project, which
 /// flag addressed the workspace) is deliberately excluded: anything in
@@ -1390,9 +1399,9 @@ impl WorkspaceContext {
 /// human-facing "target:" line printed to stderr.
 ///
 /// Isomorphic to the plugin env-var envelope
-/// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`): both surfaces are pure
-/// projections of [`WorkspaceContext::resolution`], never independently
-/// computed.
+/// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`):
+/// both surfaces are pure projections of [`WorkspaceContext::resolution`],
+/// never independently computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resolution {
     /// Primary workspace root (absolute path).
@@ -1403,11 +1412,27 @@ pub struct Resolution {
     /// Absent at the primary, and absent for a workweave whose directory no
     /// registry entry names — identity is by record, so an unregistered
     /// workweave has no identity to report and rwv will not spell one from the
-    /// directory name. `rwv doctor --fix` registers such a directory.
+    /// directory name. Those two absences are told apart by
+    /// `workweave_unregistered`, not by this field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workweave: Option<String>,
+    /// `true` when the invocation resolved into a workweave whose directory no
+    /// registry entry names, so `workweave` above is absent for a reason that
+    /// is not "this is the primary".
+    ///
+    /// Serialized only in that state, so the primary and a registered
+    /// workweave emit exactly the bytes they emitted before this field
+    /// existed. `rwv doctor --fix` registers such a directory, after which
+    /// this is absent and `workweave` carries the identity.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub workweave_unregistered: bool,
     /// Resolved project name.
     pub project: String,
+}
+
+/// `skip_serializing_if` predicate for a flag that is only news when set.
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// A condition worth an operator's attention that a verb's `--json` output
@@ -4234,6 +4259,112 @@ mod tests {
         assert_eq!(
             keys, expected,
             "in workweave: exactly {{workspace, workweave, project}} — no provenance fields"
+        );
+    }
+
+    /// A workweave the registry does not name resolves to something a
+    /// consumer can tell apart from the primary.
+    ///
+    /// Both have no `<project>--<name>` identity to report, so `workweave` is
+    /// absent in both — and that absence is documented as meaning "at the
+    /// primary". Without the flag below, a plugin spawned inside an
+    /// unregistered workweave is told, positively and in rwv's own published
+    /// contract, that it is somewhere it is not.
+    #[test]
+    fn an_unregistered_workweave_does_not_serialize_as_the_primary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
+        let primary_canon = root.canonicalize().unwrap();
+
+        let weave_dir = tmp.path().join("myproject--unrecorded");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("myproject").unwrap(),
+            parent: CanonicalPath::of(&primary_canon),
+        }
+        .write(&weave_dir)
+        .unwrap();
+        // Deliberately NOT registered: that is the state under test.
+
+        let unregistered = WorkspaceContext::resolve_invocation(&weave_dir, None)
+            .unwrap()
+            .resolution()
+            .expect("a resolution exists — the marker names the project");
+        let primary = WorkspaceContext::resolve_invocation(&root, None)
+            .unwrap()
+            .resolution()
+            .expect("the pointer names the project");
+
+        assert!(
+            unregistered.workweave.is_none(),
+            "an unregistered workweave has no identity to report"
+        );
+        assert!(
+            unregistered.workweave_unregistered,
+            "the state must be represented, not merely absent"
+        );
+        assert_ne!(
+            serde_json::to_string(&unregistered).unwrap(),
+            serde_json::to_string(&primary).unwrap(),
+            "the two must not serialize alike"
+        );
+
+        let vars = |r: &Resolution| -> std::collections::BTreeMap<String, String> {
+            crate::plugins::envelope_vars(Some(r))
+                .into_iter()
+                .map(|(k, v)| (k.to_owned(), v))
+                .collect()
+        };
+        assert_ne!(
+            vars(&unregistered),
+            vars(&primary),
+            "the env envelope a plugin reads must not be identical either"
+        );
+        assert_eq!(
+            vars(&unregistered).get("RWV_WORKWEAVE_UNREGISTERED"),
+            Some(&"1".to_owned()),
+            "the envelope carries the state as its own variable"
+        );
+    }
+
+    /// The two states that could serialize before this field still serialize
+    /// to exactly the same bytes, field order included. A consumer parsing
+    /// today's output sees nothing new unless it is in the new state.
+    #[test]
+    fn the_representable_states_serialize_byte_for_byte_as_before() {
+        let primary = Resolution {
+            workspace: PathBuf::from("/ws"),
+            workweave: None,
+            workweave_unregistered: false,
+            project: "myproject".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_string(&primary).unwrap(),
+            r#"{"workspace":"/ws","project":"myproject"}"#
+        );
+
+        let registered = Resolution {
+            workspace: PathBuf::from("/ws"),
+            workweave: Some("myproject--feat".to_owned()),
+            workweave_unregistered: false,
+            project: "myproject".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_string(&registered).unwrap(),
+            r#"{"workspace":"/ws","workweave":"myproject--feat","project":"myproject"}"#
+        );
+
+        let unregistered = Resolution {
+            workspace: PathBuf::from("/ws"),
+            workweave: None,
+            workweave_unregistered: true,
+            project: "myproject".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_string(&unregistered).unwrap(),
+            r#"{"workspace":"/ws","workweave_unregistered":true,"project":"myproject"}"#
         );
     }
 

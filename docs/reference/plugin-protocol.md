@@ -24,11 +24,12 @@ For the design rationale — what earns a place in core versus a plugin, and why
 |---|---|---|
 | `RWV_VERSION` | `rwv` semver | never |
 | `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
-| `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
+| `RWV_WORKWEAVE` | `<project>--<name>` | not in a workweave, or in one the registry does not name |
+| `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |
 | `RWV_PROJECT` | resolved project name | no workspace resolved |
 
 - **Outputs only.** `rwv` sets these; it never reads them back. A plugin that needs to hand a value back to `rwv` passes it as an explicit argument — see addressing, below.
-- **Presence encodes kind.** `RWV_WORKWEAVE` being set is the sole signal that the invocation addressed a workweave rather than the primary weave; there is no separate kind variable.
+- **Presence encodes kind, across two variables.** `RWV_WORKWEAVE` being set means the invocation addressed a workweave and the registry names it. The checkout is one of three states, though, and the third — a workweave whose directory no registry entry names — has no identity to put in `RWV_WORKWEAVE`, so it is unset there exactly as it is at the primary. `RWV_WORKWEAVE_UNREGISTERED=1` is what distinguishes the two, and it is set in that one case only. A plugin that wants "am I in a workweave" tests both; one that never looks at the second variable sees the environment it always saw. Run `rwv doctor --fix` to register such a directory, after which the ordinary two-state reading holds again.
 - **`RWV_WORKSPACE` is always the primary root**, not "wherever this checkout is" — the value is identical whether the plugin is running at primary or inside a workweave. See addressing, below, for why this matters.
 - **One projection, two surfaces.** The envelope is a pure projection of the same resolved value that the `resolution` block in `--json` output serializes. A plugin that reads both never sees them disagree.
 - **Version floors are a last resort.** `RWV_VERSION` is always set, but prefer probing the shape of `--json` output over gating on it — see [additive-schema guarantee](#additive-schema-guarantee) below.

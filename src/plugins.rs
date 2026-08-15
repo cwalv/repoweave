@@ -56,11 +56,16 @@
 //! |---|---|---|
 //! | `RWV_VERSION` | `rwv` semver ([`crate::rwv_version`]) | never |
 //! | `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
-//! | `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
+//! | `RWV_WORKWEAVE` | `<project>--<name>` | not in a workweave, or in one the registry does not name |
+//! | `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |
 //! | `RWV_PROJECT` | resolved project name | no project resolved |
 //!
-//! Presence of `RWV_WORKWEAVE` encodes the checkout kind — no separate kind
-//! variable is needed.
+//! The checkout is one of three states and `RWV_WORKWEAVE` alone carries two
+//! of them. A workweave the registry does not name has no identity to put in
+//! it, so it is unset there — which is also how the primary looks.
+//! `RWV_WORKWEAVE_UNREGISTERED` is what tells those two apart, and it is set
+//! in that one case only, so a plugin that never looks at it sees exactly the
+//! environment it saw before the variable existed.
 //!
 //! `rwv` never reads any of these variables back. They are outputs set at
 //! spawn for the child; a plugin that needs to address `rwv` explicitly
@@ -96,6 +101,9 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
         vars.push(("RWV_WORKSPACE", r.workspace.to_string_lossy().into_owned()));
         if let Some(ww) = &r.workweave {
             vars.push(("RWV_WORKWEAVE", ww.clone()));
+        }
+        if r.workweave_unregistered {
+            vars.push(("RWV_WORKWEAVE_UNREGISTERED", "1".to_owned()));
         }
         vars.push(("RWV_PROJECT", r.project.clone()));
     }
@@ -245,7 +253,8 @@ pub fn external_commands_help_section(paths_override: Option<&OsStr>) -> Option<
 ///
 /// Sets the `RWV_*` context envelope on the child before returning:
 /// - `RWV_VERSION` is always set to the `rwv` semver.
-/// - `RWV_WORKSPACE`, `RWV_WORKWEAVE` (when in a workweave), and
+/// - `RWV_WORKSPACE`, `RWV_WORKWEAVE` (when the registry names the
+///   workweave), `RWV_WORKWEAVE_UNREGISTERED` (when it does not), and
 ///   `RWV_PROJECT` are set when `resolution` is `Some`; they are absent
 ///   from the child's env when no workspace was resolved (soft fallthrough).
 ///
@@ -407,6 +416,7 @@ mod tests {
         let r = crate::workspace::Resolution {
             workspace: std::path::PathBuf::from("/ws/primary"),
             workweave: None,
+            workweave_unregistered: false,
             project: "myproj".to_owned(),
         };
         let vars = envelope_vars(Some(&r));
@@ -428,6 +438,7 @@ mod tests {
         let r = crate::workspace::Resolution {
             workspace: std::path::PathBuf::from("/ws/primary"),
             workweave: Some("myproj--fo-123".to_owned()),
+            workweave_unregistered: false,
             project: "myproj".to_owned(),
         };
         let vars = envelope_vars(Some(&r));

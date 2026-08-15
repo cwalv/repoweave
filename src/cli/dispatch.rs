@@ -1168,10 +1168,11 @@ pub fn run() -> anyhow::Result<()> {
             //   still needs to succeed.)
             // - No-flag case: resolution failure is tolerated (soft
             //   fallthrough). Some plugins legitimately run outside a
-            //   workspace (`--help`, generators). The plugin receives the
-            //   envelope with `RWV_WORKSPACE`/`RWV_PROJECT` unset —
-            //   `RWV_WORKWEAVE` being absent is its signal that no
-            //   workspace was resolved.
+            //   workspace (`--help`, generators). The plugin receives an
+            //   envelope carrying `RWV_VERSION` and nothing else, so
+            //   `RWV_WORKSPACE` being absent is its signal that no workspace
+            //   was resolved. `RWV_WORKWEAVE` is absent at the primary too
+            //   and answers a different question.
             //
             // In both cases we attempt resolution so the envelope is set
             // on the child. On success, the full envelope is injected;

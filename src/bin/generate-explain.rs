@@ -1589,6 +1589,7 @@ fn check_envelope_output_documented(protocol_md_content: &str) -> Vec<String> {
     let full_resolution = Resolution {
         workspace: std::path::PathBuf::from("/sentinel/workspace"),
         workweave: Some("sentinel-project--sentinel-ww".to_owned()),
+        workweave_unregistered: true,
         project: "sentinel-project".to_owned(),
     };
 

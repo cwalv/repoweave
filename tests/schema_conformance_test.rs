@@ -192,6 +192,7 @@ fn resolution() -> Resolution {
     Resolution {
         workspace: PathBuf::from("/ws"),
         workweave: Some("proj--feat-a".into()),
+        workweave_unregistered: false,
         project: "proj".into(),
     }
 }
@@ -200,6 +201,19 @@ fn primary_resolution() -> Resolution {
     Resolution {
         workspace: PathBuf::from("/ws"),
         workweave: None,
+        workweave_unregistered: false,
+        project: "proj".into(),
+    }
+}
+
+/// The third checkout state: in a workweave, with no registry entry naming
+/// it. Distinct from both above, and the one a present-or-absent `workweave`
+/// cannot carry.
+fn unregistered_resolution() -> Resolution {
+    Resolution {
+        workspace: PathBuf::from("/ws"),
+        workweave: None,
+        workweave_unregistered: true,
         project: "proj".into(),
     }
 }
@@ -378,7 +392,7 @@ fn push_corpus() -> Vec<(&'static str, Value)> {
             value(PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_owned(),
                 outcomes: push_outcomes(),
-                resolution: Some(primary_resolution()),
+                resolution: Some(unregistered_resolution()),
             }),
         ),
         (

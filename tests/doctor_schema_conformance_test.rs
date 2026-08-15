@@ -140,6 +140,7 @@ fn resolution() -> Resolution {
     Resolution {
         workspace: PathBuf::from("/ws"),
         workweave: Some("proj--feat-a".into()),
+        workweave_unregistered: false,
         project: "proj".into(),
     }
 }

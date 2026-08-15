@@ -513,6 +513,7 @@ const ENVELOPE_VARS: &[&str] = &[
     "RWV_VERSION",
     "RWV_WORKSPACE",
     "RWV_WORKWEAVE",
+    "RWV_WORKWEAVE_UNREGISTERED",
     "RWV_PROJECT",
 ];
 
@@ -670,6 +671,75 @@ fn envelope_via_w_flag_sets_workweave_var() {
     );
     let ws_val = env.get("RWV_WORKSPACE").expect("RWV_WORKSPACE must be set");
     assert_ne!(ws_val, "UNSET", "RWV_WORKSPACE must be set; got: {env:?}");
+}
+
+/// A plugin spawned inside a workweave the registry does not name must not
+/// receive the primary's envelope.
+///
+/// The identity is genuinely absent — nothing to put in `RWV_WORKWEAVE` — and
+/// the protocol documents that absence as "not in a workweave". Read through
+/// the spawn a plugin actually gets, since that is the surface the claim is
+/// made on: an unregistered workweave and the primary differ here, or a
+/// third-party tool is misinformed about where it is running.
+#[test]
+fn envelope_marks_an_unregistered_workweave_apart_from_primary() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let ws_canon = ws.canonicalize().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
+    write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
+
+    // A marker-bearing workweave with no registry entry — the state doctor
+    // reports as `unregistered-workweave` and `--fix` adopts.
+    let ww_dir = ws_canon
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("myproj--unrecorded");
+    std::fs::create_dir_all(ww_dir.join("projects").join("myproj")).unwrap();
+    std::fs::write(
+        ww_dir.join(".rwv-workweave"),
+        common::workweave_marker(&ws_canon, "myproj", &ws_canon),
+    )
+    .unwrap();
+
+    let in_workweave = rwv()
+        .arg("envcheck")
+        .current_dir(&ww_dir)
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let ww_env = parse_env_dump(&String::from_utf8_lossy(&in_workweave.get_output().stdout));
+
+    let at_primary = rwv()
+        .arg("envcheck")
+        .current_dir(&ws)
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let primary_env = parse_env_dump(&String::from_utf8_lossy(&at_primary.get_output().stdout));
+
+    assert_eq!(
+        ww_env.get("RWV_WORKWEAVE").map(|s| s.as_str()),
+        Some("UNSET"),
+        "an unregistered workweave has no identity to carry; got: {ww_env:?}"
+    );
+    assert_eq!(
+        ww_env.get("RWV_WORKWEAVE_UNREGISTERED").map(|s| s.as_str()),
+        Some("1"),
+        "the state must reach the plugin; got: {ww_env:?}"
+    );
+    assert_eq!(
+        primary_env
+            .get("RWV_WORKWEAVE_UNREGISTERED")
+            .map(|s| s.as_str()),
+        Some("UNSET"),
+        "the primary must be unchanged by this variable; got: {primary_env:?}"
+    );
+    assert_ne!(
+        ww_env, primary_env,
+        "the two envelopes must not be identical"
+    );
 }
 
 /// Shared-projection test: the `Resolution` that goes into the `--json`
