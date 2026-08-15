@@ -38,7 +38,7 @@ on disk that a later invocation reads and resumes (§5).
 ## 2. Module map
 
 One library crate (`repoweave`, `src/lib.rs`) and two binaries. `src/lib.rs` is
-a flat list of 28 `pub mod` declarations — there is no internal layering
+a flat list of 33 `pub mod` declarations — there is no internal layering
 enforced by the module tree, so the grouping below is by role, not by
 visibility.
 
@@ -74,6 +74,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `workweave` (`src/workweave.rs`, 3799) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
 | `workweave_index` (`src/workweave_index.rs`, 1833) | The primary-side `.rwv-workweave-index` (`:99`) and `RefRegistry` (`:595`) — the ref-ownership receipt store. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` (`:90`) / `SyncStrategy` (`:139`), the two record fields the engine also reads. |
+| `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`, `:48`): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. Used by `workweave_index` and `op_state`. |
 
 ### Verbs
@@ -89,8 +90,8 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 |---|---|
 | `vcs` (`src/vcs.rs`, 3087) | The `Vcs` trait (`:1762`), its witness and warrant types, and `VcsError` (`:296`). §6.1. |
 | `git` (`src/git.rs`, 3088) | The one implementor, `GitVcs` (`:330`, `impl` at `:731`), plus `git_command()` (`:32`). |
-| `integration` (`src/integration.rs`, 308) | The `Integration` trait (`:154`) and `IntegrationContext`. §6.2. |
-| `integrations/` | Eight built-in implementors plus `merge.rs` — the managed-file merge engine, which is *not* an integration. |
+| `integration` (`src/integration.rs`, 618) | The `Integration` trait (`:416`) and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` (`:302`) the trait returns. §6.2. |
+| `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
 | `integration_runner` (`src/integration_runner.rs`, 786) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
 | `plugins` (`src/plugins.rs`, 726) | External-subcommand discovery and dispatch. §6.4. |
 | `parallel` (`src/parallel.rs`, 579) | Bounded per-repo fan-out for the network-bound verbs. |
@@ -156,7 +157,7 @@ All durable rwv state is files. There is no database and no cache directory.
 | `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs:99` | `projects/<project>/` | The primary's inverse view: container path, name→path map, and `RefRegistry` receipts. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs:73` | a workspace root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs:76` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
-| `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/integrations/merge.rs:1952` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
+| `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs:48` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
 
 Two ownership rules are structural rather than conventional:
 
@@ -331,7 +332,7 @@ directly, and `src/check.rs:2211` bypasses even that with a raw
 
 ### 6.2 `Integration`
 
-`pub trait Integration` (`src/integration.rs:154`) is ten methods: five
+`pub trait Integration` (`src/integration.rs:416`) is ten methods: five
 required (`name`, `default_enabled`, `activate`, `deactivate`, `check`) and
 five defaulted (`activate_hook`, `generated_files`, `managed_files`, `verify`,
 `member_incompatibility`).
@@ -363,13 +364,23 @@ because the two halves are easy to confuse:
 - Errors are contained per integration: one integration returning `Err` becomes
   an `Issue` tagged with its name, and iteration continues.
 
-`src/integrations/merge.rs` is the largest file in that directory and is not an
-integration. It is the shared managed-file engine — the `ManagedDoc` trait and
-its `JsonDoc` / `TomlDoc` / `YamlDoc` / `GoWorkDoc` implementations,
-`merge_activate` / `strip_deactivate`, and the ownership-marker machinery — so
-the hybrid-file invariants live once rather than per integration. Its contract
-is published at
+`src/integrations/merge.rs` is the shared managed-file engine the hybrid
+implementors call — the `ManagedDoc` trait (`:210`) and its `JsonDoc` /
+`TomlDoc` / `YamlDoc` / `GoWorkDoc` implementations, `merge_activate` (`:282`)
+/ `strip_deactivate` (`:358`), and the ownership-marker machinery — so the
+hybrid-file invariants live once rather than per integration. It imports
+`Issue`, `IssueKind` and `Severity` and nothing else from core. Its contract is
+published at
 [`docs/explanation/joints/file-ownership.md`](docs/explanation/joints/file-ownership.md).
+
+The other ownership axis is not here. Attesting a **fully-owned** generated
+file — one rwv cannot recompute, so drift can only be detected against a
+recorded digest — is `owned_state` (§2). The two axes are independent:
+`cargo-workspace` is on both, `vscode-workspace` merges a hybrid file with no
+generated one to attest, and `gita` writes its CSVs whole without attesting
+them, because rwv derives their content and can simply rewrite it. That is why
+`owned_state` is a core service `activate`, `check` and `workweave` consume
+directly rather than a second helper under `integrations/`.
 
 ### 6.3 Type-level enforcement, in one place
 

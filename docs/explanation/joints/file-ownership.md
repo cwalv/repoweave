@@ -219,23 +219,65 @@ The hybrid-merge invariants live once, in `src/integrations/merge.rs`, rather th
 per integration. The trait:
 
 ```rust
+type KeyPath = Vec<String>;
+
 trait ManagedDoc: Sized {
     fn parse(text: &str) -> anyhow::Result<Self>;    // bail on malformed
     fn empty() -> Self;
-    fn set_owned(&mut self, key: &str, value: OwnedValue);
-    fn remove_owned(&mut self, key: &str);
-    fn has_marker(&self) -> bool;
-    fn set_marker(&mut self);
-    fn is_empty_after_strip(&self) -> bool;
+    fn has_marker(&self, owned_keys: &[KeyPath]) -> bool;
+    fn set_marker(&mut self, owned_keys: &[KeyPath]);
+    fn remove_marker(&mut self, owned_keys: &[KeyPath]);
+    fn key_present(&self, key: &KeyPath) -> bool;
+    fn set_owned(&mut self, key: &KeyPath, value: &OwnedValue);
+    fn remove_owned(&mut self, key: &KeyPath);
+    fn is_empty(&self) -> bool;
     fn serialize(&self) -> anyhow::Result<String>;
 }
-fn merge_activate<D: ManagedDoc>(path, owned: &[(&str, OwnedValue)]) -> Result<()>;
-fn strip_deactivate<D: ManagedDoc>(path, owned_keys: &[&str]) -> Result<()>;
+fn merge_activate<D: ManagedDoc>(
+    path: &Path,
+    owned: &[(KeyPath, Ownership, OwnedValue)],
+) -> anyhow::Result<MergeResult>;
+fn strip_deactivate<D: ManagedDoc>(
+    path: &Path,
+    owned_keys: &[KeyPath],
+) -> anyhow::Result<StripOutcome>;
 ```
+
+Three shapes in that signature list carry contract, not convenience:
+
+- **A key is a path of segments, not a dotted string.** `KeyPath` is
+  `Vec<String>`, so vscode's `settings."files.exclude"` is unambiguously
+  `["settings", "files.exclude"]` — two segments, the second containing a
+  literal dot. A dotted `&str` cannot express that.
+- **The marker methods take the owned keys.** TOML places the marker as a
+  per-key decoration rather than a document header, so the trait does not
+  commit to a single sentinel location; JSON ignores the slice and uses its
+  top-level marker key. This is what lets one trait cover both.
+- **`key_present` is the generate-vs-verify switch.** A managed key on disk
+  with no marker means the user took the pen, and `merge_activate` defers
+  rather than authoring. Without this method the switch would have to be
+  re-derived per format.
+
+`merge_activate` also takes each key's `Ownership`. `Author` keys rwv writes
+and strips; `DefaultOnly` keys rwv writes only when absent and never
+overwrites or strips, because the value is the operator's to adjust once
+seeded — a divergent `DefaultOnly` value is CLEAN, not drift. The returned
+`MergeResult` names which `Author` keys were authored and which were deferred,
+so the caller can raise the USER-HELD warning for the deferred ones;
+`DefaultOnly` keys appear in neither list.
+
+`strip_deactivate` returns a `StripOutcome` — `Absent`, `UserHeld`, or
+`Stripped` — so a caller that must know whether the strip happened (to gate
+removing a co-requisite generated file, say) learns it without re-reading and
+re-parsing the file to redo the marker check.
 
 Implementations: `JsonDoc` (serde_json — npm and vscode), `TomlDoc` (toml_edit — cargo and uv,
 with sub-table scoping), `YamlDoc` / line-editor (pnpm), `GoWorkDoc` (use-block merger). The
 delete-if-empty and strip-only-owned invariants live here once.
+
+This is the hybrid axis only. Attesting a fully-owned generated file (rule 6)
+is a separate mechanism with no overlap — see
+[lock-as-derived](./lock-as-derived.md).
 
 `deactivate(root: &Path)` receives no `IntegrationContext`, so owned keys are static
 per-integration constants — the helper does not infer them from the manifest at deactivate time.
