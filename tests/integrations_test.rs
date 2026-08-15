@@ -828,7 +828,7 @@ mod npm_workspaces {
     /// overwrote `name` with the hardcoded literal "repoweave" — trashing e.g.
     /// `name: "tmuxcc"` in a tmuxcc workweave.
     #[test]
-    fn fo_z8vyl_regression_name_and_scripts_survive_activate() {
+    fn regression_name_and_scripts_survive_activate() {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -8843,7 +8843,7 @@ mod s8_cross_port_default_only {
     // npm — `name` and `private`
     //
     // Port-specific equivalents:
-    //   (a) → fo_z8vyl_regression_name_and_scripts_survive_activate
+    //   (a) → regression_name_and_scripts_survive_activate
     //         default_only_private_false_survives_activate
     //   (b) → greenfield_name_set_from_context_project_name
     //

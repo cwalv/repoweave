@@ -1,7 +1,8 @@
 //! Integration tests verifying doc claims about `rwv` context display.
 //!
-//! Doc IDs referenced:
-//!   - project-reporoot-0ptp: rwv display context
+//! The claim covered here: `rwv` with no subcommand prints the weave root, the
+//! active project, the workweave when there is one, and the count of repos the
+//! active project's manifest names.
 //!
 //! `tests/context_display_test.rs` drives the same no-subcommand surface from
 //! an earlier generation, and the overlap is narrower than it looks. Its
@@ -113,7 +114,7 @@ role = "owned"
 }
 
 // ---------------------------------------------------------------------------
-// 1. rwv_display_shows_repos (doc: project-reporoot-0ptp)
+// 1. rwv_display_shows_repos
 //
 // Doc claim: "`rwv` (no subcommand) shows root, project, workweave, repos"
 //
@@ -165,7 +166,7 @@ fn rwv_display_shows_repos() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. rwv_display_no_active_project (doc: project-reporoot-0ptp)
+// 3. rwv_display_no_active_project
 //
 // With no .rwv-active file, the output should still show the root and list
 // available projects, but not claim any project is active.
@@ -205,7 +206,7 @@ fn rwv_display_no_active_project() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. rwv_display_in_workweave (doc: project-reporoot-0ptp)
+// 4. rwv_display_in_workweave
 //
 // Doc claim: running `rwv` from inside a workweave shows "workweave" location
 // and the workweave name.

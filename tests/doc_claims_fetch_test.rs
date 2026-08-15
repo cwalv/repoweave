@@ -1,9 +1,9 @@
 //! Integration tests verifying documented behaviour of `rwv fetch`, `rwv add`,
 //! and `rwv remove`.
 //!
-//! Each test is tied to a specific doc-claim ticket.  Where the implementation
-//! diverges from what the docs say, the test verifies the *current* behaviour
-//! and carries a `// TODO` comment pointing at the gap.
+//! Each test states the documented claim it pins in its own section banner.
+//! Where the implementation diverges from what the docs say, the test verifies
+//! the *current* behaviour and carries a `// TODO` comment pointing at the gap.
 //!
 //! ## Verb-vocabulary audit (2026-05-24)
 //!
@@ -175,7 +175,7 @@ fn setup_workspace_with_project(
 }
 
 // ============================================================================
-// Test 1 — project-reporoot-gazl
+// Test 1 — name collision on fetch
 //
 // Doc claim: "If names collide, rwv fetch errors and suggests a scoped path:
 //             projects/{owner}/{name}/"
@@ -235,7 +235,7 @@ fn fetch_name_collision_behavior() {
 }
 
 // ============================================================================
-// Test 2 — project-reporoot-nt18
+// Test 2 — `rwv remove --delete` against a clone another project shares
 //
 // `rwv remove --delete` checks whether other projects reference the same repo
 // before deleting.  If a reference is found:
@@ -317,7 +317,7 @@ fn remove_delete_does_not_check_other_projects() {
 }
 
 // ============================================================================
-// Test 3 — project-reporoot-fwui
+// Test 3 — `rwv add <local-path>` infers the URL from the origin remote
 //
 // `rwv add <local-path> --role reference` infers the URL from the clone's
 // origin remote when the argument has no URL scheme and the directory exists
@@ -376,7 +376,7 @@ fn add_from_local_path_infers_url() {
 }
 
 // ============================================================================
-// Test 4 — project-reporoot-n5y5
+// Test 4 — two-segment shorthand resolves to github.com
 //
 // Doc claim: `rwv fetch owner/name` (two-segment shorthand) resolves to
 //             github.com and clones.
@@ -452,7 +452,7 @@ fn fetch_shorthand_notation_with_local_bare_repo() {
 }
 
 // ============================================================================
-// Test 5 — project-reporoot-gjci
+// Test 5 — fetching a second project leaves the active project alone
 //
 // Doc claim: Fetching a second project does not change the active project.
 // ============================================================================

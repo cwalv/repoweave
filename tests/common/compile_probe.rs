@@ -368,8 +368,8 @@ fn repoweave_rlib() -> PathBuf {
                 "no librepoweave-*.rlib in {} carries the crate identity the \
                  running test binary was linked against ({wanted}).\n\
                  Candidates seen: [\n  {}\n]\n\
-                 This is the specific hazard rwv-lxbd measured and this code \
-                 refuses to guess through: `cargo build --release` and \
+                 This is the specific hazard this code refuses to guess \
+                 through: `cargo build --release` and \
                  `cargo test --release` resolve features differently and can \
                  leave two differently-built rlibs on disk, and the one the \
                  test binary needs is not present here. The old fallback to \

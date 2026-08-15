@@ -1093,7 +1093,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
 // split and the trigger-model decoupling (intent vs context verbs).
 // ===========================================================================
 
-mod fo_cnpjy_3 {
+mod generated_managed_split_and_trigger_model {
     use super::common;
     use std::cell::RefCell;
     use std::collections::HashMap;

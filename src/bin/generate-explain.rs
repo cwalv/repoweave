@@ -82,6 +82,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use clap::CommandFactory;
@@ -1675,27 +1676,76 @@ fn run_envelope_output_check(root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(check_envelope_output_documented(&protocol_md_content))
 }
 
-/// Match a tracker ID (`fo-<slug>`, optionally dotted) at a word boundary.
+/// Every retired-scheme ID spelling this gate matches: the literal prefix, the
+/// slug lengths that follow it, and the separator its numeric sub-IDs use.
+///
+/// The retired tracker prefix appears in two spellings of one ID. `fo-` is how
+/// prose writes it; `fo_` is the only spelling a Rust module or function name
+/// can carry. A numeric sub-ID follows whichever separator the prefix itself
+/// uses, so the two spellings of one ID differ in their separators and in
+/// nothing else. The third entry is the retired doc-claim scheme, whose slugs
+/// run as short as three characters and so take no four-character floor; its
+/// seventeen-character prefix is what lets it take the wider slug range
+/// without collecting anything else.
+///
+/// No entry here may be written out in full anywhere in this file: the gate
+/// reads its own source, so an illustrative ID in a doc comment is a finding.
+///
+/// `rwv-`, the prefix the tracker issues now, is deliberately absent and stays
+/// caught by whoever is reading — see `check_no_tracker_ids`.
+const RETIRED_ID_SPELLINGS: &[(&str, RangeInclusive<usize>, u8)] = &[
+    ("fo-", 4..=8, b'.'),
+    ("fo_", 4..=8, b'_'),
+    ("project-reporoot-", 1..=8, b'.'),
+];
+
+/// Match a retired-scheme ID at a word boundary, reporting the leftmost one on
+/// the line so the finding names the token a reader scanning left to right hits
+/// first.
 ///
 /// Deliberately hand-rolled rather than regex: the generator has no regex
 /// dependency, and the shape is narrow enough to scan directly.
 fn find_tracker_id(line: &str) -> Option<String> {
+    RETIRED_ID_SPELLINGS
+        .iter()
+        .filter_map(|(prefix, slug_lens, sub_id_sep)| {
+            find_prefixed_id(line, prefix, slug_lens, *sub_id_sep)
+        })
+        .min()
+        .map(|(_, id)| id)
+}
+
+/// Leftmost `prefix` on `line` followed by a `slug_lens`-long run of lowercase
+/// letters and digits at a word boundary, as `(offset, token)`.
+///
+/// The character before the prefix must be neither alphanumeric nor `_`.
+/// Excluding `_` is what makes this a boundary in identifier space rather than
+/// in prose: without it every `tracker_id_check_..._fo_prefix...` name in this
+/// file is a finding, and a gate that reports its own test names gets turned
+/// off.
+fn find_prefixed_id(
+    line: &str,
+    prefix: &str,
+    slug_lens: &RangeInclusive<usize>,
+    sub_id_sep: u8,
+) -> Option<(usize, String)> {
     let bytes = line.as_bytes();
     let mut i = 0;
-    while let Some(off) = line[i..].find("fo-") {
+    while let Some(off) = line[i..].find(prefix) {
         let start = i + off;
-        let prev_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let mut end = start + 3;
+        let prev_ok =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let mut end = start + prefix.len();
         while end < bytes.len() && (bytes[end].is_ascii_lowercase() || bytes[end].is_ascii_digit())
         {
             end += 1;
         }
-        let slug_len = end - start - 3;
-        if prev_ok && (4..=8).contains(&slug_len) {
-            // Include a trailing `.N` sub-ID so the reported token matches
+        let slug_len = end - start - prefix.len();
+        if prev_ok && slug_lens.contains(&slug_len) {
+            // Include a trailing numeric sub-ID so the reported token matches
             // what the author wrote.
             let mut tail = end;
-            if tail < bytes.len() && bytes[tail] == b'.' {
+            if tail < bytes.len() && bytes[tail] == sub_id_sep {
                 let mut d = tail + 1;
                 while d < bytes.len() && bytes[d].is_ascii_digit() {
                     d += 1;
@@ -1704,9 +1754,9 @@ fn find_tracker_id(line: &str) -> Option<String> {
                     tail = d;
                 }
             }
-            return Some(line[start..tail].to_owned());
+            return Some((start, line[start..tail].to_owned()));
         }
-        i = start + 3;
+        i = start + prefix.len();
     }
     None
 }
@@ -1795,6 +1845,23 @@ fn root_level_toml_files(root: &Path) -> Vec<PathBuf> {
 
 /// Scan `src/`, `docs/`, `tests/`, root-level `.md`/`.rs`/`.toml` files, and
 /// shipped prose-bearing auxiliary files for tracker IDs.
+///
+/// **What is matched** is `RETIRED_ID_SPELLINGS`: the retired tracker prefix
+/// both as prose writes it and as a Rust identifier has to write it, and the
+/// retired doc-claim prefix. All three are dead schemes — nothing is issued
+/// under them — so a hit is old text coming back rather than a new author's
+/// habit. They were admitted on a measurement: over the file set this gate
+/// reads, and over every tracked file in the repository, the three together
+/// report nothing that is not an ID.
+///
+/// **What is not matched, and why.** `rwv-`, the prefix the tracker issues
+/// now, is also this repo's own vocabulary namespace: matched on the retired
+/// prefix's own terms it collides with roughly 1,300 occurrences across the
+/// file set this gate reads, some 290 of them in `src/*.rs` alone, led by
+/// `rwv-active`, `rwv-ours` and `rwv-owned`. A matcher that reports correct
+/// code gets turned off, so `rwv-` stays caught by whoever is reading, and
+/// **a green gate means no retired-scheme ID, not no tracker ID.** Widening to
+/// a live prefix needs a suppression mechanism this gate does not have.
 ///
 /// Code is ground truth and architecture docs carry rationale; a tracker ID
 /// in any of these surfaces points a reader at something they cannot open,
@@ -4766,18 +4833,93 @@ mod tests {
         );
     }
 
-    /// The matcher holds `fo-` and nothing else, which is the boundary the
-    /// tracker-ID clause states: rwv's own `rwv-`-prefixed vocabulary is not
-    /// a tracker prefix here, an embedded `fo-` is not a word, and a slug
-    /// outside four-to-eight lowercase-or-digit characters is not a slug.
+    /// A module or function name spelling the retired prefix with an
+    /// underscore is reported — the shape a Rust identifier is forced into,
+    /// because it cannot carry the hyphen.
     ///
-    /// The planted control carries the whole weight of this test: asserting
-    /// only that the negatives stay silent would pass equally if the gate
-    /// stopped reporting anything at all. Widening the matcher to a second
-    /// prefix without amending that clause reddens the count.
+    /// Two plants, because the two sites differ in what follows the slug: a
+    /// numeric sub-ID, which belongs to the ID and is reported with it, and an
+    /// English word, which does not and is not.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
     #[test]
-    fn tracker_id_check_holds_the_fo_prefix_and_nothing_else() {
-        let control = format!("{}-{}", "fo", "ab12cd");
+    fn tracker_id_check_fails_on_identifier_spelled_id() {
+        let module_id = format!("{}_{}_3", "fo", "ab12cd");
+        let fn_id = format!("{}_{}", "fo", "ef34gh");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tests_dir = tmp.path().join("tests");
+        fs::create_dir_all(&tests_dir).unwrap();
+        fs::write(
+            tests_dir.join("some_test.rs"),
+            format!("mod {module_id} {{}}\nfn {fn_id}_regression_survives() {{}}\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert!(
+            errors
+                .iter()
+                .any(|e| slashed(e).contains(&format!("`{module_id}`"))),
+            "expected the module name's ID reported with its `_3` sub-ID, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| slashed(e).contains(&format!("`{fn_id}`"))),
+            "expected the test name's ID reported without the words after it, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// The retired doc-claim prefix is reported, down to a three-character
+    /// slug — the length the tracker-ID matcher's four-character floor would
+    /// pass over, and the length a third of the retired doc-claim IDs in this
+    /// repository's own history carried.
+    ///
+    /// Same assembled-ID reason as `tracker_id_check_fails_on_fo_prefixed_id`.
+    #[test]
+    fn tracker_id_check_fails_on_retired_doc_claim_id() {
+        let short = format!("project-{}-{}", "reporoot", "201");
+        let long = format!("project-{}-{}", "reporoot", "85h9");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tests_dir = tmp.path().join("tests");
+        fs::create_dir_all(&tests_dir).unwrap();
+        fs::write(
+            tests_dir.join("doc_claims_test.rs"),
+            format!("//! Keyed to {short}\n// 2. check_missing_role ({long})\n"),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        for planted in [&short, &long] {
+            assert!(
+                errors.iter().any(|e| slashed(e).contains(planted)),
+                "expected a hit for {planted}, got:\n{}",
+                errors.join("\n")
+            );
+        }
+    }
+
+    /// The matcher holds the three retired spellings and nothing else.
+    ///
+    /// The retired tracker prefix is matched as prose writes it and as an
+    /// identifier writes it, and the retired doc-claim prefix is matched down
+    /// to a one-character slug. Everything else is out: rwv's own
+    /// `rwv-`-prefixed vocabulary is the prefix the tracker issues now and
+    /// stays human-caught, an embedded `fo-` is not a word, a slug outside
+    /// four-to-eight lowercase-or-digit characters is not a tracker slug, and
+    /// an underscore before the prefix continues an identifier rather than
+    /// ending a word — without that last rule this gate reports its own test
+    /// names.
+    ///
+    /// The planted controls carry the whole weight of this test: asserting
+    /// only that the negatives stay silent would pass equally if the gate
+    /// stopped reporting anything at all. Widening the matcher to a fourth
+    /// spelling without amending that clause reddens the count.
+    #[test]
+    fn tracker_id_check_holds_the_retired_spellings_and_nothing_else() {
+        let hyphen_control = format!("{}-{}", "fo", "ab12cd");
+        let underscore_control = format!("{}_{}", "fo", "ef34gh");
+        let claim_control = format!("project-{}-{}", "reporoot", "c3ad");
         let tmp = tempfile::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
@@ -4788,7 +4930,12 @@ mod tests {
                  // .rwv-active names the marker rwv-workweave reads.\n\
                  // An info-abc12 token embeds the prefix inside a word.\n\
                  // Bounds: fo-abc, fo-abcdefghij and fo-ABC12 are not IDs.\n\
-                 // Only this one is: {control}\n\
+                 // Nor is tracker_id_check_holds_the_fo_prefix_and_more, whose\n\
+                 // underscore continues an identifier rather than ending a word.\n\
+                 // The three that are, one per line so each is its own finding:\n\
+                 // {hyphen_control}\n\
+                 // {underscore_control}\n\
+                 // {claim_control}\n\
                  pub fn f() {{}}\n"
             ),
         )
@@ -4796,15 +4943,17 @@ mod tests {
         let errors = check_no_tracker_ids(tmp.path());
         assert_eq!(
             errors.len(),
-            1,
-            "only the planted control may be reported, got:\n{}",
+            3,
+            "only the three planted controls may be reported, got:\n{}",
             errors.join("\n")
         );
-        assert!(
-            errors[0].contains(&control),
-            "the single hit must be the planted control, got:\n{}",
-            errors[0]
-        );
+        for planted in [&hyphen_control, &underscore_control, &claim_control] {
+            assert!(
+                errors.iter().any(|e| e.contains(planted)),
+                "the planted control {planted} must be reported, got:\n{}",
+                errors.join("\n")
+            );
+        }
     }
 
     /// The boundary drops test content and keeps production code.

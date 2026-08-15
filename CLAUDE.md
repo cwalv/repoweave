@@ -117,28 +117,40 @@ rewrite would have removed. Expect to reach for it close to never.
 
 Three gates in `src/bin/generate-explain.rs`:
 
-- `check_no_tracker_ids` enforces the tracker-ID clause for **one prefix**:
-  the literal `fo-`, not preceded by an alphanumeric, followed by four to
-  eight lowercase letters or digits and an optional `.N` sub-ID. Nothing
-  shorter, longer, capitalised, or differently prefixed. It reads `docs/`
+- `check_no_tracker_ids` enforces the tracker-ID clause for **retired schemes
+  only**, in three spellings: the literal `fo-`, followed by four to eight
+  lowercase letters or digits and an optional `.N` sub-ID; the same prefix
+  written `fo_`, which is the form a Rust module or function name is forced
+  into, with an optional `_N` sub-ID; and the retired doc-claim prefix
+  `project-reporoot-`, whose slugs run as short as three characters and so
+  carry no four-character floor. None may be preceded by an alphanumeric or an
+  underscore — an underscore continues an identifier rather than ending a
+  word, and without that rule the gate reports its own test names. Nothing
+  shorter, longer, capitalised, or otherwise prefixed. It reads `docs/`
   as well as `src/` and `tests/`, which the citation gate does not, and it
   also reads every `.md`, `.rs` and `.toml` file directly at the repo root —
   `CLAUDE.md`, `build.rs` and `Cargo.toml` included, so neither the file
   stating this ban, the one root-level source file, nor the dependency
   manifest goes unchecked.
 
-  That prefix is the retired one. The prefix the tracker issues now is
-  `rwv-`, which is also this repo's own vocabulary namespace — some 480
-  occurrences in `src/` alone, led by `rwv-active`, `rwv-workweave`,
-  `rwv-op`, and `rwv-ours`, the merge driver written into `.gitattributes`
-  and into `merge.rwv-ours.*` config keys, at 51 sites by itself. A general
-  `PREFIX-slug` matcher reads every one of those as a tracker ID, and a
-  matcher that reports correct code gets turned off. So this gate holds the
-  one prefix it can hold without a suppression mechanism, and a second one
-  is written in by hand by someone who has measured what it collides with
-  first. The narrowness is a measurement, not an oversight — but **a green
-  gate means no `fo-`-shaped ID, not no tracker ID.** Every other prefix is
-  yours to catch while you read.
+  All three are dead schemes: nothing is issued under any of them, so a hit is
+  old text coming back rather than a new author's habit. The prefix the tracker
+  issues now is `rwv-`, which is also this repo's own vocabulary namespace.
+  Read on the retired prefix's own bounds it collides with some 297 occurrences
+  in `src/*.rs` alone — `rwv-active` at 155, `rwv-ours` at 58 (the merge driver
+  written into `.gitattributes` and into `merge.rwv-ours.*` config keys),
+  `rwv-owned` at 20 — and with over a thousand across everything this gate
+  reads. Drop the slug bounds and `src/*.rs` alone rises to some 514, taking in
+  `rwv-workweave` and `rwv-op`, whose slug lengths those bounds happen to
+  exclude. A general `PREFIX-slug` matcher reads
+  every one of those as a tracker ID, and a matcher that reports correct code
+  gets turned off. So this gate holds only prefixes it can hold without a
+  suppression mechanism, and a new one goes in by hand from someone who has
+  measured what it collides with first — the three above were admitted on a
+  measurement returning zero non-ID hits over the file set this gate reads and
+  over every tracked file in the repository. The narrowness is a measurement,
+  not an oversight — but **a green gate means no retired-scheme ID, not no
+  tracker ID.** Every live prefix is yours to catch while you read.
 - `check_doc_citations` enforces the two-base resolution rule and the
   bare-pointer clause over comments in `src/` and `tests/`, for tokens whose
   last component ends in a document extension. A filename with no `/`
@@ -294,11 +306,14 @@ The four the survey found, for the taxonomy:
 - **one syntactic form** — the citation gate required a `/` in a token before
   it would look at the token at all. Roughly eighty bare `<document>.md §N`
   citations sat unexamined behind that one character.
-- **one spelling** — the tracker-ID matcher recognises the retired `fo-` prefix
-  and not the one that replaced it. The live IDs that sat green behind it came
-  out by hand; the successor prefix is this repo's own vocabulary namespace, so
-  the clause above states the gate's one prefix rather than the gate growing to
-  meet the rule.
+- **one spelling** — the tracker-ID matcher recognised the retired prefix as
+  prose writes it and not as a Rust identifier is forced to write it, so a
+  module name and a test name carrying that same retired ID sat green, as did
+  an entire retired doc-claim scheme at twenty-one sites. Those came out by
+  hand and the matcher now holds all three spellings. It still does not hold
+  the prefix that replaced them: that one is this repo's own vocabulary
+  namespace, so the clause above states which spellings the gate holds rather
+  than the gate growing to meet the rule.
 - **one region of the file** — the citation gate stopped scanning at the first
   `#[cfg(test)]` module. The exclusion was deliberate and nothing re-examined
   it, so a non-resolving citation below that line stayed invisible for as long

@@ -1,12 +1,15 @@
 //! Integration tests for documentation claims about `rwv activate`, `rwv doctor`,
 //! and the `static-files` integration.
 //!
-//! Tests are keyed to their spec/claim IDs:
-//!   - project-reporoot-201  workspace context from project dir
-//!   - project-reporoot-85h9 check: missing role field, workweave drift
-//!   - project-reporoot-c3ad activate symlinks ecosystem + lock files
-//!   - project-reporoot-1ejx static-files integration
-//!   - project-reporoot-l56a activate runs install commands
+//! The claims covered here:
+//!   - a command run from inside `projects/<name>/` resolves to the weave with
+//!     that project active;
+//!   - `rwv doctor` reports a manifest whose entry has no `role` field, and an
+//!     unreferenced git repo inside the workspace;
+//!   - `rwv activate` symlinks the ecosystem workspace config and lock files;
+//!   - the `static-files` integration symlinks each declared file at the
+//!     workspace root and warns rather than fails on a missing one;
+//!   - `rwv activate` runs the ecosystem install commands afterwards.
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
@@ -88,7 +91,7 @@ fn make_workspace_no_repo(parent: &Path, project: &str) -> PathBuf {
 }
 
 // ===========================================================================
-// 1. workspace_context_from_project_dir (project-reporoot-201)
+// 1. workspace_context_from_project_dir
 //
 // Doc claim: Running commands from inside projects/<name>/ resolves to the
 // weave with that project active.
@@ -152,7 +155,7 @@ fn workspace_context_from_project_dir_no_subcommand() {
 }
 
 // ===========================================================================
-// 2. check_missing_role (project-reporoot-85h9)
+// 2. check_missing_role
 //
 // Doc claim: `rwv doctor` reports entries without a `role` field.
 //
@@ -218,7 +221,7 @@ version = "main"
 }
 
 // ===========================================================================
-// 3. check_workweave_drift — extra worktree (project-reporoot-85h9)
+// 3. check_workweave_drift — extra worktree
 //
 // A git repo directory lives inside the workspace that is not referenced by
 // any project's rwv.toml.  `rwv doctor` reports it as an orphaned clone.
@@ -271,7 +274,7 @@ fn check_workweave_drift_extra_repo() {
 }
 
 // ===========================================================================
-// 4. activate_symlinks_ecosystem_lock_files (project-reporoot-c3ad)
+// 4. activate_symlinks_ecosystem_lock_files
 //
 // Doc claim: Cargo.lock, package-lock.json etc. are symlinked alongside
 // workspace configs on activate.
@@ -373,7 +376,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
 }
 
 // ===========================================================================
-// 5. static_files_missing_file_warning (project-reporoot-1ejx)
+// 5. static_files_missing_file_warning
 //
 // Doc claim: Missing declared file prints warning but activation succeeds.
 // ===========================================================================
@@ -430,7 +433,7 @@ files = ["exists.txt", "missing.txt"]
 }
 
 // ===========================================================================
-// 6. static_files_symlink_creation (project-reporoot-1ejx)
+// 6. static_files_symlink_creation
 //
 // Doc claim: Files listed in static-files config are symlinked at the
 // workspace root, pointing into projects/<project>/<file>.
@@ -549,7 +552,7 @@ link = [".beads"]
 }
 
 // ===========================================================================
-// 7. activate_runs_install_commands (project-reporoot-l56a)
+// 7. activate_runs_install_commands
 //
 // Doc claim: `rwv activate` runs ecosystem install commands (npm install,
 // uv sync, etc.) after generating workspace config files.
