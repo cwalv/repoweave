@@ -781,6 +781,12 @@ pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
 /// The relative tail comparison is what makes the predicate owner-scoped:
 /// a symlink at `root/foo` pointing at `projects/p/bar` is NOT owned
 /// surfacing of `foo` (the owner would have produced `projects/p/foo`).
+///
+/// `<project>` is not a fixed number of components — a project name may
+/// itself carry `/` — so the split is read off the two known lengths
+/// instead of assumed: whatever sits under `projects/` beyond the trailing
+/// `rel_from_root` components is the project's own directory, however many
+/// components that takes.
 fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
     let mut comps = target.components().peekable();
     // Skip any leading parent-dir components (`../../...` for nested links).
@@ -795,11 +801,13 @@ fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
     let Some(under_projects) = strip_projects_prefix(&sited) else {
         return false;
     };
-    let mut below_project = under_projects.components();
-    if below_project.next().is_none() {
+    let under_components: Vec<_> = under_projects.components().collect();
+    let rel_components: Vec<_> = rel_from_root.components().collect();
+    if under_components.len() <= rel_components.len() {
         return false;
     }
-    below_project.as_path() == rel_from_root
+    let split = under_components.len() - rel_components.len();
+    under_components[split..] == rel_components[..]
 }
 
 fn remove_activation_symlinks_in(
