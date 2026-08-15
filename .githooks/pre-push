@@ -1,23 +1,29 @@
 #!/bin/sh
-# Pre-push hook: run the same checks as CI before pushing.
+# Pre-push hook: gate each pushed commit with the same checks as CI.
 # Install with: git config core.hooksPath .githooks
 set -e
 
-echo "pre-push: running scripts/ci-local.sh..."
-./scripts/ci-local.sh
+# git hands one "<local_ref> <local_sha> <remote_ref> <remote_sha>" line per
+# pushed ref on stdin. Read the stream once; the tag checks and the gate
+# below share it.
+refs=$(cat)
 
 # A version tag is a publish trigger: pushing one builds and ships binaries,
-# the homebrew formula and PyPI wheels. Check what only this moment can check.
+# the homebrew formula and PyPI wheels. Check what only this moment can check,
+# and check it before paying for a build.
 #
 # The release workflow cannot do this for us. Its very first job runs
 # `dist host --steps=create` on the tag, so by the time any gate inside that
 # workflow could refuse, the release exists. A job added there can stop the
 # artifacts; it cannot stop the tag. This is where the tag is stoppable.
-while read local_ref local_sha remote_ref remote_sha; do
+while read -r local_ref local_sha remote_ref remote_sha; do
   case "$local_ref" in
     refs/tags/v*)
       tag="${local_ref#refs/tags/}"
-      cargo_version="v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
+      # The version the tag must match is the one in the TAGGED commit's
+      # manifest, not whatever the working tree holds right now.
+      cargo_version="v$(git cat-file blob "$local_sha:Cargo.toml" \
+        | grep '^version' | head -1 | sed 's/.*"\(.*\)"/\1/')"
       if [ "$tag" != "$cargo_version" ]; then
         echo "pre-push: tag $tag does not match Cargo.toml version $cargo_version"
         exit 1
@@ -25,7 +31,7 @@ while read local_ref local_sha remote_ref remote_sha; do
       echo "pre-push: tag $tag matches Cargo.toml"
 
       # Release artifacts target darwin and windows-msvc as well as linux, so
-      # the local checks above — one platform, one Go, one filesystem — do not
+      # the local checks below — one platform, one Go, one filesystem — do not
       # answer whether this commit is releasable. The CI run on this exact
       # commit does. Requiring the whole run to have concluded `success` keys
       # on nothing that a new matrix entry would invalidate.
@@ -46,6 +52,50 @@ while read local_ref local_sha remote_ref remote_sha; do
       echo "pre-push: CI is green on $local_sha"
       ;;
   esac
-done
+done <<EOF
+$refs
+EOF
+
+# The gate certifies the COMMIT being pushed, so it runs in a throwaway
+# detached worktree of that commit — never against the working tree the push
+# happens from, whose contents and surroundings prove nothing about the
+# commit. Under ${TMPDIR:-/tmp} no ancestor directory carries a [workspace]
+# manifest, so the member builds standalone: the same shape CI builds, and
+# immune to whatever workspace the pushing checkout happens to sit inside.
+gate_dir=""
+cleanup() {
+  if [ -n "$gate_dir" ]; then
+    rm -rf "$gate_dir"
+    git worktree prune
+  fi
+}
+trap cleanup EXIT
+
+# An empty RUSTC_WRAPPER tells cargo "no wrapper": sccache is a speed knob
+# when installed, never a precondition. CARGO_INCREMENTAL=0 keeps the compile
+# units cacheable — sccache does not cache incremental compilation.
+rustc_wrapper=""
+if command -v sccache >/dev/null 2>&1; then
+  rustc_wrapper=sccache
+fi
+
+gated=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Deletions (an all-zero sha) and anything else that does not peel to a
+  # commit have no tree to gate.
+  commit=$(git rev-parse --verify --quiet "$local_sha^{commit}") || continue
+  case " $gated " in *" $commit "*) continue ;; esac
+  gated="$gated $commit"
+
+  gate_dir=$(mktemp -d "${TMPDIR:-/tmp}/repoweave-pre-push.XXXXXX")
+  git worktree add --detach --quiet "$gate_dir" "$commit"
+  echo "pre-push: running scripts/ci-local.sh against $commit..."
+  (cd "$gate_dir" && CARGO_INCREMENTAL=0 RUSTC_WRAPPER="$rustc_wrapper" ./scripts/ci-local.sh)
+  rm -rf "$gate_dir"
+  git worktree prune
+  gate_dir=""
+done <<EOF
+$refs
+EOF
 
 echo "pre-push: all checks passed"
