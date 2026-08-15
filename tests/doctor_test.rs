@@ -382,7 +382,11 @@ enabled = true
         .arg("doctor")
         .current_dir(&root)
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains(
+            "[warning] vscode-workspace: my-app.code-workspace does not exist",
+        ))
+        .stdout(predicate::str::contains("is not surfaced"));
 }
 
 // ===========================================================================
@@ -1017,6 +1021,7 @@ fn check_fix_plants_rwv_ours_driver_config() {
 
 mod doctor_json {
     use super::*;
+    use common::doctor_corpus::{case_token, corpus};
     use repoweave::check::{
         build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind,
         ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
@@ -1447,109 +1452,27 @@ mod doctor_json {
     }
 
     #[test]
-    fn wire_all_eight_variant_tags_stable() {
-        // Construct one of each variant and confirm the `kind` tags match
-        // the table in the spec verbatim. The table is part of the
-        // public contract: if a serde rename strips, capitalises, or
-        // reorders these, downstream agents break silently.
+    fn wire_kind_tags_agree_with_the_corpus_for_every_variant() {
+        // Each `kind` tag against `case_token`'s independent spelling, for
+        // every variant `corpus()` carries — exhaustive because `case_token`
+        // is. The tag is part of the public contract: if a serde rename
+        // strips, capitalises, or reorders it, downstream agents break
+        // silently.
         let ws = workspace_dir();
         let no_ww = empty_workweave_dirs();
-        let pn = || ProjectName::new("p").expect("known-safe literal");
-        let rp = || RepoPath::new("github/a/b").expect("known-safe literal");
-
-        let cases: Vec<(CheckViolation, &str)> = vec![
-            (
-                CheckViolation::OrphanedClone { path: rp() },
-                "orphaned-clone",
-            ),
-            (
-                CheckViolation::DanglingReference {
-                    project: pn(),
-                    repo: rp(),
-                },
-                "dangling-reference",
-            ),
-            (
-                CheckViolation::MissingRole {
-                    project: pn(),
-                    repo: rp(),
-                },
-                "missing-role",
-            ),
-            (
-                CheckViolation::StaleLock {
-                    project: pn(),
-                    repo: rp(),
-                    locked: ResolvedRevisionId::from_canonical("aaa", None),
-                    actual: ResolvedRevisionId::from_canonical("bbb", None),
-                },
-                "stale-lock",
-            ),
-            (
-                CheckViolation::IncompleteLock {
-                    project: pn(),
-                    repo: rp(),
-                },
-                "incomplete-lock",
-            ),
-            (
-                CheckViolation::WorkweaveDrift {
-                    workweave: WorkweaveName::new("ww").unwrap(),
-                    kind: DriftKind::Missing,
-                    repo: rp(),
-                },
-                "workweave-drift",
-            ),
-            (
-                CheckViolation::IndexDrift {
-                    workweave: None,
-                    repo: rp(),
-                    kind: IndexDriftKind::SafeToFix,
-                },
-                "index-drift",
-            ),
-            (
-                CheckViolation::WorkingTreeDrift {
-                    workweave: None,
-                    repo: rp(),
-                    kind: WorkingTreeDriftKind::SafeToFix,
-                },
-                "working-tree-drift",
-            ),
-            (
-                CheckViolation::MissingReplayExclusion {
-                    project: pn(),
-                    sub_kind: ReplayExclusionKind::Absent,
-                },
-                "missing-replay-exclusion",
-            ),
-            (
-                CheckViolation::UnparseableProject {
-                    project: pn(),
-                    manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.toml"),
-                    message: "bad manifest_toml".to_owned(),
-                },
-                "unparseable-project",
-            ),
-            (
-                CheckViolation::MissingCanonicalClone {
-                    workweave: WorkweaveName::new("ww1").unwrap(),
-                    repo: rp(),
-                    canonical_path: std::path::PathBuf::from("/ws/github/a/b"),
-                },
-                "missing-canonical-clone",
-            ),
-        ];
-
-        for (violation, expected) in cases {
+        for v in corpus() {
+            let token = case_token(&v);
+            let expected_kind = token.split('/').next().expect("case_token is non-empty");
             let json =
-                serde_json::to_value(ViolationOutput::from_violation(violation, &ws, &no_ww))
-                    .unwrap();
+                serde_json::to_value(ViolationOutput::from_violation(v, &ws, &no_ww)).unwrap();
             let tag = json
                 .get("kind")
                 .and_then(|v| v.as_str())
                 .unwrap_or_else(|| panic!("missing `kind`: {json}"));
-            assert_eq!(tag, expected, "wire tag mismatch (full record: {json})");
+            assert_eq!(
+                tag, expected_kind,
+                "wire tag mismatch (full record: {json})"
+            );
         }
     }
 
@@ -1614,9 +1537,18 @@ mod doctor_json {
 
     // ---- round-trip via a test-only Deserialize mirror ----
 
-    /// Test-only mirror of the wire shape. If the serde-emitted JSON
-    /// shape ever drifts (renames, casing tweaks, missing fields), this
-    /// round-trip will fail to deserialize and pinpoint the variant.
+    /// Test-only mirror of the wire shape, one arm per [`CheckViolation`]
+    /// variant. If the serde-emitted JSON shape ever drifts (a renamed
+    /// `kind` tag, a missing field), the round-trip in
+    /// [`wire_round_trip_all_variants`] fails to deserialize.
+    ///
+    /// Sub-kind and other nested-enum fields (`sub_kind`, `verb`,
+    /// `occurrences`, `created_at`) are left off every arm: several of the
+    /// nested enums serialize as a plain string for one sample and a
+    /// tagged object for another (any kind carrying fields does), so no
+    /// single scalar type here would fit every corpus specimen. The named
+    /// fields that remain are enough to prove the round-trip: a missing or
+    /// renamed one still fails to deserialize.
     #[derive(serde::Deserialize, Debug, PartialEq)]
     #[serde(tag = "kind", rename_all = "kebab-case")]
     enum WireViolation {
@@ -1667,10 +1599,130 @@ mod doctor_json {
         MissingReplayExclusion {
             project: String,
         },
+        ReplayExclusionUnreadable {
+            project: String,
+            error: String,
+        },
+        MissingMergeDriverConfig {
+            project: String,
+            config_key: String,
+        },
+        MergeDriverConfigUnreadable {
+            project: String,
+            config_key: String,
+            error: String,
+        },
+        HeadUnreadable {
+            path: String,
+            absolute_path: String,
+            error: String,
+        },
+        ProjectsDirUnreadable {
+            path: String,
+            error: String,
+        },
+        ProjectlessDir {
+            absolute_path: String,
+        },
+        UnnameableProject {
+            absolute_path: String,
+            derived: String,
+            error: String,
+        },
+        UnresolvableLockEntry {
+            path: String,
+            absolute_path: String,
+            project: String,
+        },
+        LegacyManifestFormat {
+            project: String,
+            legacy_path: String,
+        },
+        DanglingActiveProject {
+            project: String,
+            missing_dir: String,
+        },
+        WeaveRootIdentityConflict {
+            root: String,
+            pointer_project: Option<String>,
+        },
+        LegacyWorkweaveMarker {
+            marker_path: String,
+            primary: String,
+        },
+        LegacyWorkweaveIndex {
+            project: String,
+            index_path: String,
+        },
+        UnreadableWorkweaveIndex {
+            project: String,
+            index_path: String,
+            error: String,
+        },
         UnparseableProject {
             project: String,
             manifest_path: String,
             message: String,
+        },
+        WorkweaveTreeIntegrity {
+            workweave_dir: String,
+        },
+        Provenance {
+            path: String,
+            absolute_path: String,
+            project: String,
+        },
+        CloneTopology {
+            path: String,
+            absolute_path: String,
+        },
+        BranchDiscipline {
+            repo_path: String,
+        },
+        StaleWorktreeRegistration {
+            path: String,
+            absolute_path: String,
+            workweave: Option<String>,
+            missing_path: String,
+        },
+        StaleOpState {
+            workspace_dir: String,
+            started_at: String,
+        },
+        DeadOpLease {
+            workspace_dir: String,
+            op_id: String,
+            recorded_owner: String,
+        },
+        DanglingRefReceipt {
+            project: String,
+            store_path: String,
+            ref_name: String,
+        },
+        PreFlatRefReceipt {
+            project: String,
+            store_path: String,
+            ref_name: String,
+        },
+        OrphanedSavepoint {
+            path: String,
+            absolute_path: String,
+            workweave: Option<String>,
+            op_id: String,
+        },
+        ConfusableSiblings {
+            parent: String,
+            first: String,
+            second: String,
+        },
+        CargoVersionSkew {
+            crate_name: String,
+        },
+        CargoPatchShadowing {
+            weave_config: String,
+            member_config: String,
+            registry: String,
+            crate_name: String,
         },
         MissingCanonicalClone {
             path: String,
@@ -1678,64 +1730,25 @@ mod doctor_json {
             workweave: String,
             canonical_path: String,
         },
+        UninitializedSubmodule {
+            absolute_path: String,
+            path: String,
+            workweave: String,
+            empty_paths: Vec<String>,
+        },
+        PhantomMergeDriver {
+            path: String,
+            absolute_path: String,
+            pattern: String,
+            driver: String,
+        },
     }
 
     #[test]
     fn wire_round_trip_all_variants() {
         let ws = workspace_dir();
         let no_ww = empty_workweave_dirs();
-        let violations = vec![
-            CheckViolation::OrphanedClone {
-                path: RepoPath::new("github/a/b").expect("known-safe literal"),
-            },
-            CheckViolation::DanglingReference {
-                project: ProjectName::new("p").unwrap(),
-                repo: RepoPath::new("github/a/c").expect("known-safe literal"),
-            },
-            CheckViolation::MissingRole {
-                project: ProjectName::new("p").unwrap(),
-                repo: RepoPath::new("github/a/d").expect("known-safe literal"),
-            },
-            CheckViolation::StaleLock {
-                project: ProjectName::new("p").unwrap(),
-                repo: RepoPath::new("github/a/e").expect("known-safe literal"),
-                locked: ResolvedRevisionId::from_canonical("aaa", None),
-                actual: ResolvedRevisionId::from_canonical("bbb", None),
-            },
-            CheckViolation::IncompleteLock {
-                project: ProjectName::new("p").unwrap(),
-                repo: RepoPath::new("github/a/j").expect("known-safe literal"),
-            },
-            CheckViolation::WorkweaveDrift {
-                workweave: WorkweaveName::new("ww1").unwrap(),
-                kind: DriftKind::Missing,
-                repo: RepoPath::new("github/a/f").expect("known-safe literal"),
-            },
-            CheckViolation::IndexDrift {
-                workweave: None,
-                repo: RepoPath::new("github/a/g").expect("known-safe literal"),
-                kind: IndexDriftKind::SafeToFix,
-            },
-            CheckViolation::WorkingTreeDrift {
-                workweave: Some(WorkweaveName::new("ww1").unwrap()),
-                repo: RepoPath::new("github/a/h").expect("known-safe literal"),
-                kind: WorkingTreeDriftKind::LiveEdits,
-            },
-            CheckViolation::MissingReplayExclusion {
-                project: ProjectName::new("p").unwrap(),
-                sub_kind: ReplayExclusionKind::Absent,
-            },
-            CheckViolation::UnparseableProject {
-                project: ProjectName::new("p").unwrap(),
-                manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.toml"),
-                message: "bad manifest_toml".to_owned(),
-            },
-            CheckViolation::MissingCanonicalClone {
-                workweave: WorkweaveName::new("ww1").unwrap(),
-                repo: RepoPath::new("github/a/i").expect("known-safe literal"),
-                canonical_path: std::path::PathBuf::from("/ws/github/a/i"),
-            },
-        ];
+        let violations = corpus();
         let expected_len = violations.len();
 
         let payload = serde_json::to_value(build_doctor_json(
@@ -1749,30 +1762,13 @@ mod doctor_json {
         ))
         .expect("doctor payload serializes");
         let arr = payload.get("violations").unwrap().clone();
-        let parsed: Vec<WireViolation> = serde_json::from_value(arr).expect("round-trip failed");
-        assert_eq!(parsed.len(), expected_len);
-
-        // Spot-check each variant deserialised into the expected arm.
-        assert!(matches!(parsed[0], WireViolation::OrphanedClone { .. }));
-        assert!(matches!(parsed[1], WireViolation::DanglingReference { .. }));
-        assert!(matches!(parsed[2], WireViolation::MissingRole { .. }));
-        assert!(matches!(parsed[3], WireViolation::StaleLock { .. }));
-        assert!(matches!(parsed[4], WireViolation::IncompleteLock { .. }));
-        assert!(matches!(parsed[5], WireViolation::WorkweaveDrift { .. }));
-        assert!(matches!(parsed[6], WireViolation::IndexDrift { .. }));
-        assert!(matches!(parsed[7], WireViolation::WorkingTreeDrift { .. }));
-        assert!(matches!(
-            parsed[8],
-            WireViolation::MissingReplayExclusion { .. }
-        ));
-        assert!(matches!(
-            parsed[9],
-            WireViolation::UnparseableProject { .. }
-        ));
-        assert!(matches!(
-            parsed[10],
-            WireViolation::MissingCanonicalClone { .. }
-        ));
+        let parsed: Vec<WireViolation> =
+            serde_json::from_value(arr).unwrap_or_else(|e| panic!("round-trip failed: {e}"));
+        assert_eq!(
+            parsed.len(),
+            expected_len,
+            "every corpus specimen must round-trip through the mirror"
+        );
     }
 
     /// ViolationOutput::UnparseableProject emits `message` (not `error`).
