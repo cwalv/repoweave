@@ -137,6 +137,55 @@ const HEADERS_IN_ORDER: &[&str] = &[
     "==> explain artifacts up to date (no drift after regeneration)",
 ];
 
+/// Argv a `==> cargo ...` header claims to run: `cargo ` stripped, and any
+/// trailing parenthetical annotation (the doc stage's `(rustdoc warnings
+/// deny)`) cut off. `None` for a header that isn't a `cargo` echo at all —
+/// the drift stage's header names what the stage checks, not the command it
+/// runs, so it carries no claim this can compare against an invocation.
+fn cargo_args_claimed_by(header: &str) -> Option<&str> {
+    let args = header.strip_prefix("==> cargo ")?;
+    Some(match args.find(" (") {
+        Some(i) => &args[..i],
+        None => args,
+    })
+}
+
+/// `HEADERS_IN_ORDER`'s substring search only proves a header's text exists
+/// somewhere in `stdout`; it cannot tell that from a command that has
+/// drifted underneath an unchanged header, since the old header text is
+/// still there to find. This instead pairs each `cargo`-echoing header with
+/// the STUB_CARGO line logged before the next header and asserts the two
+/// name the same argv — the direction a header and its command actually
+/// disagree.
+///
+/// Scope: covers only headers `cargo_args_claimed_by` recognises (six of
+/// the seven — drift's header is prose, not a command echo, and is outside
+/// what this can see).
+fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
+    let positions: Vec<(usize, &str)> = HEADERS_IN_ORDER
+        .iter()
+        .filter_map(|h| stdout.find(h).map(|pos| (pos, *h)))
+        .collect();
+    for (i, &(pos, header)) in positions.iter().enumerate() {
+        let Some(claimed) = cargo_args_claimed_by(header) else {
+            continue;
+        };
+        let end = positions.get(i + 1).map_or(stdout.len(), |&(p, _)| p);
+        let logged = stdout[pos..end]
+            .lines()
+            .find_map(|line| line.strip_prefix("STUB_CARGO: "))
+            .unwrap_or_else(|| {
+                panic!(
+                    "header {header:?} has no STUB_CARGO invocation before the next header:\n{stdout}"
+                )
+            });
+        assert_eq!(
+            logged, claimed,
+            "header {header:?} claims `cargo {claimed}` but the logged invocation was `cargo {logged}`"
+        );
+    }
+}
+
 #[test]
 fn default_run_executes_all_seven_stages_in_order() {
     let fixture = fixture_repo();
@@ -169,6 +218,7 @@ fn default_run_executes_all_seven_stages_in_order() {
         7,
         "expected one cargo invocation per stage:\n{stdout}"
     );
+    assert_cargo_headers_agree_with_invocations(&stdout);
 }
 
 #[test]
