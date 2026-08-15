@@ -561,6 +561,10 @@ link = [".beads"]
 
 /// Build an npm-flavoured workspace at `ws_root` and pre-author its managed
 /// files, leaving a context-mode `rwv activate` something to surface.
+///
+/// Unix-gated with its two callers, which need a PATH shim Windows cannot
+/// resolve; see [`write_recording_npm`].
+#[cfg(unix)]
 fn make_npm_workspace(ws_root: &Path, repo: &str) {
     std::fs::create_dir_all(ws_root.join("github")).unwrap();
 
