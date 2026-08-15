@@ -93,7 +93,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The `.rwv-workweave-index` file name (dotted, machine-local).
-const INDEX_FILENAME: &str = ".rwv-workweave-index";
+pub(crate) const INDEX_FILENAME: &str = ".rwv-workweave-index";
 
 /// The recorded workweave registry for one `(primary, project)` pair.
 ///

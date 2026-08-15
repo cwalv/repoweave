@@ -470,6 +470,13 @@ primary does not know about it.
 `delete`) deliberately do not adopt on the fly — adoption is an operator
 decision, so it happens where you asked for it.
 
+**Scope.** The scan enumerates the containers each project records, so this
+finding covers a directory sitting in one of them. A workweave placed outside
+them all — `rwv workweave <project> create <name> --dir <path>` — is not among
+the candidates: an unrecorded one there produces no finding and `--fix` has
+nothing to adopt. Retire the directory and create the workweave again instead,
+which does not depend on where it sits.
+
 #### `stale-registry-entry`
 
 **Warning. Auto-fixable.** A registered workweave whose recorded path is not a

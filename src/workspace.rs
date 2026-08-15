@@ -235,6 +235,15 @@ impl WorkweaveNameRecord {
 
     /// The recorded name for an operation that acts on the workweave's
     /// identity and has nothing to act on without one.
+    ///
+    /// The refusal names two repairs, and states the condition that decides
+    /// between them rather than leaving the operator to try both: adoption
+    /// enumerates the recorded containers, so a directory placed outside them
+    /// is never a candidate and `--fix` reports nothing for it. The condition
+    /// is stated, not evaluated here — deciding it needs the container walk
+    /// *and* the basename parse that `doctor_scan_container` pairs it with,
+    /// and a second copy of that conjunction is a thing that can disagree with
+    /// the one doctor runs.
     pub fn require(&self, dir: &Path, project: &ProjectName) -> anyhow::Result<&WorkweaveName> {
         match self {
             Self::Recorded(name) => Ok(name),
@@ -242,10 +251,22 @@ impl WorkweaveNameRecord {
                 "the workweave at {} carries a `.rwv-workweave` marker for project `{}`, \
                  but no entry in that project's workweave index records this directory, \
                  so rwv has no recorded name for it and will not take one from the \
-                 directory name. This operation acts on that name. Run \
-                 `rwv doctor --fix` to register this workweave, then re-run; or retire \
-                 the directory and create the workweave again.",
+                 directory name. This operation acts on that name. Two repairs, and \
+                 where this directory sits decides which one applies. \
+                 `rwv doctor --fix` adopts an unrecorded workweave only out of a \
+                 container recorded in `{}`, and only when the directory is spelled \
+                 `{}--<name>`; one placed anywhere else — `rwv workweave {} create \
+                 <name> --dir <path>` does that — is not a candidate, and `--fix` will \
+                 find nothing to adopt here. Retiring this directory and creating the \
+                 workweave again works wherever it sits.",
                 crate::path_spelling::operator_path(dir),
+                project.as_str(),
+                format_args!(
+                    "{}/{}",
+                    project_rel_path(project.as_str()),
+                    crate::workweave_index::INDEX_FILENAME
+                ),
+                project.as_str(),
                 project.as_str(),
             ),
         }

@@ -2782,9 +2782,14 @@ pub(crate) fn commit_replay_exclusion_migration(
 ///   excluded from pass 2 rather than having every workweave on disk
 ///   reported as `unregistered-workweave`, whose repair reads this same file.
 ///
-/// The scan iterates every project's recorded container so per-workweave
-/// placement overrides (a workweave living outside the default container)
-/// still get reconciliation coverage. Bootstrapping workspaces (no index
+/// The scan iterates every project's recorded container, so a project that
+/// moved its container keeps reconciliation coverage. A workweave placed
+/// outside every recorded container — what `create --dir` does — keeps none:
+/// pass 2 enumerates containers, and nothing walks the host behind it, so
+/// such a directory is reported by no finding here and adopted by no `--fix`.
+/// That limit is what
+/// [`crate::workspace::WorkweaveNameRecord::require`]'s refusal states
+/// instead of promising around. Bootstrapping workspaces (no index
 /// yet, live workweaves at the compiled-in default) surface every
 /// marker-bearing directory as `unregistered-workweave` — the intended
 /// self-heal path is `rwv doctor --fix` on first run after upgrade.

@@ -404,6 +404,57 @@ fn doctor_fix_restores_the_recorded_name_the_refusals_named() {
     assert_eq!(identity, "web-app--feat");
 }
 
+/// The other half of that loop, which does not close — and which the refusal
+/// therefore has to stop promising.
+///
+/// Adoption enumerates recorded containers. A workweave placed outside them
+/// all is not a candidate for it, so `--fix` reports nothing and repairs
+/// nothing here. Byte-for-byte the fixture above except for the placement:
+/// the basename still spells `web-app--drifted`, so what fails is the
+/// placement and nothing else. The refusal names the condition and names the
+/// remedy that does not depend on it.
+#[test]
+fn a_dir_placed_workweave_gets_the_refusals_placement_independent_remedy() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    let outside = tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+    let dir = make_drifted_workweave(&ws, &outside);
+    deregister(&ws, "feat");
+
+    // The no-op is the premise, so measure it rather than assume it.
+    let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).output();
+    let resolution = status_resolution(&dir);
+    assert!(
+        resolution.get("workweave").is_none(),
+        "`--fix` cannot adopt what its container walk never reaches: {resolution}"
+    );
+
+    let out = rwv()
+        .args(["workweave", "web-app", "log"])
+        .current_dir(&dir)
+        .output()
+        .expect("verb should run");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !out.status.success(),
+        "the verb must still refuse: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "adopts an unrecorded workweave only out of a container recorded in \
+             `projects/web-app/.rwv-workweave-index`"
+        ),
+        "the refusal must qualify the remedy that no-ops here: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "Retiring this directory and creating the workweave again works wherever it sits"
+        ),
+        "and must mark the one that does not depend on placement: {stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The matcher itself, which no run on a non-folding filesystem can see
 // ---------------------------------------------------------------------------
