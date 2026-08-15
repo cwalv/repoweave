@@ -1,14 +1,27 @@
 //! Regression test for the *cost* of `rwv doctor`'s per-worktree drift scan,
-//! at a workspace shape that reproduces the scan's O(workweaves x repos)
+//! at workspace shapes that reproduce the scan's O(workweaves x repos)
 //! access pattern: many workweaves, each materializing every manifest repo.
 //!
-//! Asserts on `git` subprocess invocation COUNT rather than elapsed time. A
-//! count is a property of the code path an input takes; it does not change
-//! with how fast or how loaded the host is, so doubling the workspace
-//! doubles the count on a saturated CI runner exactly as it does on an idle
-//! laptop. Wall-clock has no such invariance — runner speed scales the one
-//! thing it measures directly — which is why this test does not time
-//! anything it asserts on.
+//! ## Structural license
+//!
+//! A direct behavioural assertion would time `rwv doctor --all` and bound
+//! the elapsed-wall-clock ratio between two scales. That is not usable on a
+//! host running concurrent, unrelated load — contention noise swamps the
+//! signal at the scale a fixture can afford to build, so no behavioural
+//! assertion on elapsed time can reliably distinguish linear from
+//! quadratic scaling here. Counting `git` subprocess invocations is the
+//! licensed stand-in: it is a property of the code path an input takes,
+//! invariant to host speed or load, so doubling the workspace doubles the
+//! count on a saturated runner exactly as it does on an idle laptop.
+//!
+//! ## Scope
+//!
+//! Two independent sweeps below, each holding one factor of the product
+//! fixed and doubling the other: workweave count (repos fixed) and repo
+//! count (workweaves fixed). Neither sweep varies both factors at once, so
+//! a regression quadratic in the *product* of workweaves and repos —
+//! rather than in either factor alone — is invisible to both. Scales below
+//! either sweep's smaller measurement are also unsampled.
 //!
 //! SKIPPED ON WINDOWS. The counting instrument is a `#!/bin/sh` `git` shim
 //! placed on `PATH` and made discoverable with a mode bit; Windows has
@@ -171,14 +184,30 @@ fn scan_and_count_git_calls(root: &Path, real_git: &Path) -> (usize, std::time::
     (shim.call_count(), elapsed)
 }
 
+/// Assert vacuity (`count1` is at least one `git` call per repo-on-disk
+/// entry — a fixture that silently failed to build would pass a bare ratio
+/// check) and a linear-growth bound (the count does not more than triple
+/// when `axis`'s count doubles, well under the ~4x a quadratic scan in
+/// `axis` would produce) on a pair of measurements from the same sweep.
+fn assert_linear_in_swept_factor(count1: usize, count2: usize, floor: usize, axis: &str) {
+    assert!(
+        count1 >= floor,
+        "only {count1} git calls at the smaller {axis} scale — fewer than one per \
+         repo-on-disk entry, which means the fixture likely didn't build as intended"
+    );
+
+    let ratio = count2 as f64 / count1 as f64;
+    assert!(
+        ratio < 3.0,
+        "git call count more than tripled ({count1} -> {count2}, ratio {ratio:.2}) when \
+         {axis} count only doubled; the scan is no longer linear in {axis} count"
+    );
+}
+
 /// `rwv doctor --all`'s `git` invocation count grows linearly, not
-/// quadratically, with workspace size.
-///
-/// Measured at two scales related by a clean doubling of workweave count;
-/// their ratio stays well under the ~4x a quadratic scan would produce. The
-/// floor on the smaller scale's count is what keeps a fixture that silently
-/// failed to build (zero repos on disk) from passing the ratio check
-/// vacuously.
+/// quadratically, with WORKWEAVE count — repos held fixed. See the module
+/// doc for why call count stands in for elapsed time, and for what this
+/// sweep (paired with its repo-count sibling below) does not cover.
 #[test]
 fn doctor_scan_git_call_count_stays_linear_in_workspace_size() {
     let n_repos: usize = 5;
@@ -200,18 +229,33 @@ fn doctor_scan_git_call_count_stays_linear_in_workspace_size() {
          {n2_ww}x{n_repos} -> {count2} calls in {elapsed2:?}"
     );
 
-    let floor = n1_ww * n_repos;
-    assert!(
-        count1 >= floor,
-        "only {count1} git calls scanning {n1_ww}x{n_repos} — fewer than one per \
-         repo-on-disk entry, which means the fixture likely didn't build as intended"
+    assert_linear_in_swept_factor(count1, count2, n1_ww * n_repos, "workweave");
+}
+
+/// `rwv doctor --all`'s `git` invocation count grows linearly, not
+/// quadratically, with REPO count — workweave count held fixed. The axis
+/// the sibling test above does not sweep: a regression quadratic in repo
+/// count alone would pass that test's ratio check unchanged.
+#[test]
+fn doctor_scan_git_call_count_stays_linear_in_repo_count() {
+    let n_ww: usize = 10;
+    let n1_repos: usize = 10;
+    let n2_repos: usize = 20;
+
+    let real_git = which::which("git").expect("git must be resolvable on PATH for this test");
+
+    let tmp1 = common::tempdir().unwrap();
+    let root1 = build_large_workspace(tmp1.path(), n1_repos, n_ww);
+    let tmp2 = common::tempdir().unwrap();
+    let root2 = build_large_workspace(tmp2.path(), n2_repos, n_ww);
+
+    let (count1, elapsed1) = scan_and_count_git_calls(&root1, &real_git);
+    let (count2, elapsed2) = scan_and_count_git_calls(&root2, &real_git);
+
+    eprintln!(
+        "doctor scan git calls: {n_ww}x{n1_repos} -> {count1} calls in {elapsed1:?}; \
+         {n_ww}x{n2_repos} -> {count2} calls in {elapsed2:?}"
     );
 
-    let ratio = count2 as f64 / count1 as f64;
-    assert!(
-        ratio < 3.0,
-        "git call count more than tripled ({count1} -> {count2}, ratio {ratio:.2}) when \
-         workweave count only doubled ({n1_ww} -> {n2_ww}); the scan is no longer linear \
-         in (workweaves x repos)"
-    );
+    assert_linear_in_swept_factor(count1, count2, n_ww * n1_repos, "repo");
 }
