@@ -41,6 +41,9 @@ backstop unnecessary.
   registration.
 - [code-style](./code-style.md) — conventions for rwv source that clippy and
   rustfmt do not enforce.
+- [testing](./testing.md) — what a test must evidence to enter the suite, when
+  a structural pin is licensed, the mutation-evidence standard, and when
+  deletion is the correct outcome.
 - [op-state](./op-state.md) — field-level schemas of the `.rwv-op` owner record
   and the `.rwv-op-lease` pointer, for someone changing sync's resume logic.
   Consumers call back into `rwv` instead of parsing them.

@@ -8,7 +8,8 @@
 > that is a UX gap: file it rather than working around it at the file level.
 
 Conventions for rwv source that aren't enforced by clippy or rustfmt — read this
-before writing or reviewing rwv source.
+before writing or reviewing rwv source. Test-side conventions live in
+[testing.md](testing.md).
 
 ## No silent fallback on inconsistent state
 
