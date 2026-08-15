@@ -957,12 +957,12 @@ mod npm_workspaces {
     }
 
     // -----------------------------------------------------------------------
-    // §6 npm-workspaces — RED scenarios (turned green by C4)
+    // npm-workspaces — RED scenarios (turned green by C4)
     // -----------------------------------------------------------------------
     //
-    // Plan §6 npm scenarios 1–4. Scenarios 1 and 3 partly overlap with the
-    // existing precedent tests above; we restate them in the §6 shape so the
-    // port author has a single set of acceptance assertions per scenario.
+    // Scenarios 1 and 3 partly overlap with the precedent tests above; they
+    // are restated here so each scenario has a single set of acceptance
+    // assertions.
     //
     // Scenario 2 (object-form workspaces + nohoist) is the data-loss
     // regression: RED today vs current :44.
@@ -971,7 +971,7 @@ mod npm_workspaces {
     // C4, the marker probe is `x-repoweave`; current code uses `name`. These
     // are RED against the marker.
 
-    /// §6.npm.1 — Activate over a real app's package.json (array workspaces).
+    /// Activate over a real app's package.json (array workspaces).
     /// User scripts / engines / devDependencies / packageManager survive.
     #[test]
     fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
@@ -1046,7 +1046,7 @@ mod npm_workspaces {
         );
     }
 
-    /// §6.npm.2 — Activate over workspaces OBJECT form with nohoist
+    /// Activate over workspaces OBJECT form with nohoist
     /// (the data-loss regression test). Current :44 flattens the object.
     #[test]
     fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
@@ -1123,7 +1123,7 @@ mod npm_workspaces {
         assert_eq!(parsed["scripts"]["env:prod"], "env-cmd -e prod");
     }
 
-    /// §6.npm.3 — Re-activate idempotent on user content (preserve_order).
+    /// Re-activate idempotent on user content (preserve_order).
     /// Add a third member; only mutation is the added workspaces entry.
     #[test]
     fn s6_npm_3_reactivate_idempotent_preserve_order() {
@@ -1188,7 +1188,7 @@ mod npm_workspaces {
         );
     }
 
-    /// §6.npm.4 — Deactivate strips Author keys (workspaces) and marker,
+    /// Deactivate strips Author keys (workspaces) and marker,
     /// preserves DefaultOnly keys (name, private) and user content, deletes
     /// the lockfile (gated on marker), leaves file only if non-Author content
     /// remains.
@@ -1426,10 +1426,10 @@ mod pnpm_workspaces {
     }
 
     // -----------------------------------------------------------------------
-    // §6 pnpm-workspaces — RED scenarios (turned green by C10)
+    // pnpm-workspaces — RED scenarios (turned green by C10)
     // -----------------------------------------------------------------------
     //
-    // Synthetic scenarios (per plan §12.4): no on-disk pnpm-workspace.yaml
+    // Synthetic scenarios: no on-disk pnpm-workspace.yaml
     // exists in any weave; the four scenarios use spec idioms (`catalog:`,
     // `overrides:`, `peerDependencyRules:`, `# comments`). default_enabled is
     // false today; tests force it on via `enabled: true` in the config.
@@ -1438,7 +1438,7 @@ mod pnpm_workspaces {
     // activate/deactivate directly (the integration's own gating logic ignores
     // default_enabled when invoked through trait methods).
 
-    /// §6.pnpm.1 — Activate preserves a user catalog and comment.
+    /// Activate preserves a user catalog and comment.
     #[test]
     fn s6_pnpm_1_activate_preserves_catalog_and_comments() {
         let tmp = common::tempdir().unwrap();
@@ -1488,7 +1488,7 @@ packages:
         );
     }
 
-    /// §6.pnpm.2 — Deactivate strips `packages:` but keeps `overrides:`.
+    /// Deactivate strips `packages:` but keeps `overrides:`.
     /// Regression vs current unconditional remove_file at pnpm_workspaces.rs:33-35.
     #[test]
     fn s6_pnpm_2_deactivate_strips_packages_keeps_overrides() {
@@ -1519,7 +1519,7 @@ packages:
         );
     }
 
-    /// §6.pnpm.3 — Deactivate deletes a fully-rwv-authored file (no foreign
+    /// Deactivate deletes a fully-rwv-authored file (no foreign
     /// content). delete-if-empty kicks in.
     ///
     /// Currently GREEN incidentally — current pnpm deactivate is an
@@ -1546,7 +1546,7 @@ packages:
         });
     }
 
-    /// §6.pnpm.4 — Activate is comment-safe & idempotent. peerDependencyRules
+    /// Activate is comment-safe & idempotent. peerDependencyRules
     /// with an inline comment survives byte-for-byte, even when activate runs
     /// twice with a member added in between.
     #[test]
@@ -1976,15 +1976,14 @@ mod go_work {
     }
 
     // -----------------------------------------------------------------------
-    // §6 go-work — RED scenarios (turned green by C11)
+    // go-work — RED scenarios (turned green by C11)
     // -----------------------------------------------------------------------
     //
-    // Per plan §12.4: real /home/cwa/weaveroot/foundations/go.work uses
-    // `go 1.26` + `use(...)` over repoweave + some-go-tool. Member names are
-    // illustrative — use `repoweave + some-go-tool` even though actual is
-    // ntm/beads/etc.
+    // A real weave's go.work carries `go 1.26` and a `use(...)` block over
+    // its members. The member names here are illustrative: `repoweave` and
+    // `some-go-tool` stand in for whatever a given weave actually holds.
     //
-    // The hand-parse fallback is mandatory; per plan §8 the merge-logic tests
+    // The hand-parse fallback is mandatory: the merge-logic tests
     // must exercise the fallback deterministically. The current impl always
     // overwrites and does not use `go work edit`, so for now we exercise the
     // hand-parse fallback path implicitly (no `go work edit` exists).
@@ -1996,7 +1995,7 @@ mod go_work {
     // download. s6_go_3 and s6_go_4 go through deactivate(), which never
     // invokes `go`, so they keep 1.26.
 
-    /// §6.go.1 — Adding a repo preserves a hand-authored `replace` directive.
+    /// Adding a repo preserves a hand-authored `replace` directive.
     /// `go 1.20` must NOT be downgraded to `1.21` (the concrete bug).
     #[test]
     fn s6_go_1_add_preserves_replace_and_go_version() {
@@ -2082,7 +2081,7 @@ replace example.com/legacy => ./vendor/legacy
         );
     }
 
-    /// §6.go.2 — Removing a repo strips its use entry but keeps toolchain.
+    /// Removing a repo strips its use entry but keeps toolchain.
     #[test]
     fn s6_go_2_remove_keeps_toolchain_and_godebug() {
         let tmp = common::tempdir().unwrap();
@@ -2159,7 +2158,7 @@ use (
         );
     }
 
-    /// §6.go.3 — Deactivate strips the use set but keeps replace.
+    /// Deactivate strips the use set but keeps replace.
     /// Regression vs current unconditional remove_file at go_work.rs:36-38.
     #[test]
     fn s6_go_3_deactivate_strips_use_keeps_replace() {
@@ -2204,7 +2203,7 @@ replace example.com/foo => ../foo
         );
     }
 
-    /// §6.go.4 — Deactivate deletes when only rwv content remained.
+    /// Deactivate deletes when only rwv content remained.
     ///
     /// Currently GREEN incidentally — current go.work deactivate is an
     /// unconditional `remove_file`, which happens to satisfy this scenario.
@@ -2457,14 +2456,14 @@ mod uv_workspace {
     }
 
     // -----------------------------------------------------------------------
-    // §6 uv-workspace — scenarios (GREEN)
+    // uv-workspace — scenarios (GREEN)
     // -----------------------------------------------------------------------
     //
     // Seeds use astral-sh/ruff pyproject.toml idioms (maturin + ruff + black +
     // rooster). Marker = per-key `# managed by rwv` decor on
     // `[tool.uv.workspace].members`. Reuses TomlDoc from C7.
 
-    /// §6.uv.1 — Activate preserves a real maturin+ruff root (merge, not clobber).
+    /// Activate preserves a real maturin+ruff root (merge, not clobber).
     #[test]
     fn s6_uv_1_activate_preserves_ruff_style_root() {
         let tmp = common::tempdir().unwrap();
@@ -2552,7 +2551,7 @@ major_labels = []  # Ruff never uses major bumps
 
         // The legacy `# Generated by rwv` line MUST NOT be the first line of
         // the file — it would either replace `[build-system]` (the bug) or
-        // inject a header into a user file (also rejected per plan §5b).
+        // inject a header into a user file. Both are rejected.
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(
             !text.starts_with("# Generated by rwv"),
@@ -2562,7 +2561,7 @@ major_labels = []  # Ruff never uses major bumps
         );
     }
 
-    /// §6.uv.2 — Add a repo: idempotent, only mutates members; user
+    /// Add a repo: idempotent, only mutates members; user
     /// `[tool.uv.sources]` entries that aren't `{workspace=true}` survive.
     #[test]
     fn s6_uv_2_add_member_preserves_user_sources() {
@@ -2633,7 +2632,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
         assert!(after_second.contains("[tool.ruff]"));
     }
 
-    /// §6.uv.3 — Deactivate strips only rwv keys, keeps the manifest.
+    /// Deactivate strips only rwv keys, keeps the manifest.
     /// User non-workspace sources survive.
     #[test]
     fn s6_uv_3_deactivate_strips_keeps_user_manifest() {
@@ -2700,7 +2699,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
         );
     }
 
-    /// §6.uv.4 — Greenfield root: rwv creates pyproject.toml from scratch with
+    /// Greenfield root: rwv creates pyproject.toml from scratch with
     /// `package=false`; deactivate removes the managed region but preserves
     /// `package = false` (it is a `DefaultOnly` key — user-adjustable, never
     /// stripped). The file survives deactivation with only the DefaultOnly key.
@@ -5187,7 +5186,7 @@ acme-lib = { path = "../github/acme/lib" }
 
     /// A member's own `.cargo/config.toml` shadowing the same
     /// `[patch.crates-io].<crate>` key silently defeats the weave-level
-    /// entry under the config surface — same P5b shadowing as the manifest
+    /// entry under the config surface — the same shadowing as the manifest
     /// surface. The scan is target-agnostic (checks all discoverable
     /// member configs regardless of where the weave writes).
     #[test]
@@ -5239,7 +5238,7 @@ acme-lib = { path = "../github/acme/lib" }
 }
 
 // ===========================================================================
-// §7 cargo-workspace doctor-acceptance battery
+// cargo-workspace doctor-acceptance battery
 // ===========================================================================
 //
 // Verify() + doctor --fix acceptance tests for cargo-workspace.
@@ -5256,13 +5255,13 @@ mod s7_cargo_doctor {
 
     /// Filter verify() output to hybrid-Cargo.toml findings only.
     ///
-    /// The pre-§7.6 tests in this module were written when `verify()` only
-    /// inspected the hybrid `Cargo.toml`. §7.6 (R34) extended
-    /// `verify()` to also inspect the fully-owned `Cargo.lock`. To keep those
+    /// The older tests in this module were written when `verify()` only
+    /// inspected the hybrid `Cargo.toml`; it was later extended to also
+    /// inspect the fully-owned `Cargo.lock`. To keep those
     /// pre-existing tests focused on their original semantic axis
     /// (Cargo.toml states) without seeding an unrelated Cargo.lock in each
     /// fixture, this helper filters out Cargo.lock findings. The fully-owned
-    /// axis is covered separately in §7.6.
+    /// axis is covered separately, by the fully-owned `Cargo.lock` battery below.
     fn cargo_toml_issues(issues: Vec<Issue>) -> Vec<Issue> {
         issues
             .into_iter()
@@ -5271,7 +5270,7 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.1 MISSING: verify() reports MISSING when Cargo.toml is absent
+    // MISSING: verify() reports MISSING when Cargo.toml is absent
     // -----------------------------------------------------------------------
 
     /// Given: cargo-workspace config with members.include = [a, b, c],
@@ -5385,8 +5384,8 @@ mod s7_cargo_doctor {
 
         // Post-condition: CLEAN (no verify issues on the Cargo.toml axis).
         // Cargo.lock is still absent (activate() does not run the hook), so
-        // the fully-owned arm would emit MISSING — that's exercised by §7.6
-        // and out of scope for this hybrid-focused test.
+        // the fully-owned arm would emit MISSING — exercised by the
+        // fully-owned `Cargo.lock` battery, and out of scope here.
         let post_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert!(
             post_issues.is_empty(),
@@ -5395,7 +5394,7 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.2 DRIFT: verify() reports DRIFT when markers are present but
+    // DRIFT: verify() reports DRIFT when markers are present but
     //      on-disk content doesn't match config
     // -----------------------------------------------------------------------
 
@@ -5485,7 +5484,7 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.3 USER-HELD: verify() reports USER-HELD, doctor --fix is a no-op
+    // USER-HELD: verify() reports USER-HELD, doctor --fix is a no-op
     // -----------------------------------------------------------------------
 
     /// Given: Cargo.toml exists with [workspace] members/resolver, NO markers.
@@ -5576,7 +5575,7 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.4 CLEAN: verify() returns no issues when file is up to date
+    // CLEAN: verify() returns no issues when file is up to date
     // -----------------------------------------------------------------------
 
     /// Given: Cargo.toml was written by activate() (markers present, content
@@ -5605,7 +5604,7 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.5 resolver DefaultOnly
+    // resolver DefaultOnly
     // -----------------------------------------------------------------------
 
     /// Greenfield: empty Cargo.toml gets `resolver = "2"` set by activate().
@@ -5791,18 +5790,18 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.6 Fully-owned Cargo.lock verify (R34)
+    // Fully-owned Cargo.lock verify
     //
     // The three-state verify() shape (MISSING / DRIFT / USER-HELD) was
     // originally hybrid-only; USER-HELD requires an owned-key + marker pair
-    // that fully-owned files don't have. This §7.6 battery covers the
+    // that fully-owned files don't have. This battery covers the
     // fully-owned axis on `Cargo.lock`:
     //
     //   - MISSING (file absent when generation expected) → DRIFT, safe_to_fix
     //   - Parse-fail (garbage bytes / cargo half-write) → DRIFT, safe_to_fix
     //   - Present + parseable → CLEAN
     //
-    // Anchors the R34 audit finding: previously `verify()` ignored Cargo.lock
+    // Anchors the audit finding: previously `verify()` ignored Cargo.lock
     // entirely — any mutation was invisible to doctor.
     // -----------------------------------------------------------------------
 
@@ -5847,7 +5846,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() reports a MISSING finding for Cargo.lock naming the
     ///        file, the state, and the `rwv doctor --fix` repair verb.
     ///
-    /// R34 regression: pre-fix, doctor exited 0 with no report even when
+    /// Regression: pre-fix, doctor exited 0 with no report even when
     /// the fully-owned lockfile was gone.
     #[test]
     fn s7_6_cargo_lock_missing_reports_drift_naming_doctor_fix() {
@@ -6028,10 +6027,10 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.7 C3 regeneration gap: activate_hook refuses cleanly when the
+    // C3 regeneration gap: activate_hook refuses cleanly when the
     //      managed file is missing, naming `rwv doctor --fix`.
     //
-    // Empirical evidence from the R34 audit: a repo that acquired its
+    // Empirical evidence from the audit: a repo that acquired its
     // Cargo.toml AFTER `rwv add` never had its managed Cargo.toml generated,
     // so `activate` blew up in the activate_hook (cargo generate-lockfile
     // has no root manifest to lock against) with the confusing "workspace
@@ -6136,8 +6135,8 @@ mod s7_cargo_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.8 Recorded-digest verify: cargo rewriting Cargo.lock as VALID TOML
-    //      (the R34 headline — invisible to the parse check).
+    // Recorded-digest verify: cargo rewriting Cargo.lock as VALID TOML
+    //      (invisible to the parse check).
     //
     // rwv cannot recompute lock content (cargo generate-lockfile output
     // depends on registry state), so the activation hook stamps a SHA-256 of
@@ -6153,7 +6152,7 @@ mod s7_cargo_doctor {
 
     use repoweave::owned_state::stamp_owned_digest;
 
-    /// The R34 regression test proper.
+    /// The regression test proper.
     ///
     /// Given: Cargo.lock stamped at generation, then rewritten out-of-band
     ///        as DIFFERENT but VALID TOML (what a cargo invocation does).
@@ -7188,7 +7187,7 @@ mod vscode_workspace {
 }
 
 // ===========================================================================
-// vscode-workspace: §6 residual-bug scenarios
+// vscode-workspace: residual-bug scenarios
 // ===========================================================================
 //
 // Each scenario pins one promise of the activate/deactivate merge over a
@@ -7202,9 +7201,6 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     // Scenario 1 — User adds a personal `files.exclude` entry; sync must not
     // eat it.
-    //
-    // Plan §6 vscode scenario 1: "User adds personal `files.exclude` entry;
-    // sync preserves it. RED today against :178-181."
     // -------------------------------------------------------------------------
     #[test]
     fn scenario1_user_files_exclude_survives_reactivation() {
@@ -7306,9 +7302,6 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     // Scenario 2 — User adds `extensions`/`launch`/`tasks`/`compounds`; they
     // survive activate AND deactivate.
-    //
-    // Plan §6 vscode scenario 2: "User adds extensions/launch/tasks/compounds;
-    // survive activate AND deactivate. RED today against :209."
     // -------------------------------------------------------------------------
     #[test]
     fn scenario2_user_blocks_survive_activate_and_deactivate() {
@@ -7435,9 +7428,6 @@ mod vscode_workspace_scenarios {
 
     // -------------------------------------------------------------------------
     // Scenario 3 — User converts to multi-root; rwv keeps the extra folder.
-    //
-    // Plan §6 vscode scenario 3: "User converts to multi-root; rwv keeps the
-    // extra folder. RED today against :119-122."
     // -------------------------------------------------------------------------
     #[test]
     fn scenario3_user_extra_folder_survives_reactivation() {
@@ -7508,9 +7498,6 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     // Scenario 4 — Deactivate of a purely-rwv file deletes it; hand-written
     // file (no marker) is untouched.
-    //
-    // Plan §6 vscode scenario 4: "Deactivate of a pure-rwv file deletes it;
-    // hand-written file (no marker) untouched."
     // -------------------------------------------------------------------------
     #[test]
     fn scenario4_deactivate_deletes_pure_rwv_file_leaves_handwritten() {
@@ -7957,7 +7944,7 @@ mod activate_hooks {
         );
     }
 
-    /// R13: when the cargo lockfile step fails, the error must hint at
+    /// When the cargo lockfile step fails, the error must hint at
     /// `integrations.cargo-workspace.exclude` and `members` config as the
     /// resolution paths for duplicate crate names.
     ///
@@ -8042,15 +8029,15 @@ mod activate_hooks {
         );
         assert!(
             report.contains("integrations.cargo-workspace.exclude"),
-            "R13: error must name `integrations.cargo-workspace.exclude`:\n{report}"
+            "error must name `integrations.cargo-workspace.exclude`:\n{report}"
         );
         assert!(
             report.contains("integrations.cargo-workspace.members"),
-            "R13: error must name `integrations.cargo-workspace.members`:\n{report}"
+            "error must name `integrations.cargo-workspace.members`:\n{report}"
         );
         assert!(
             report.contains("include:"),
-            "R13: error must mention the `include:` list syntax:\n{report}"
+            "error must mention the `include:` list syntax:\n{report}"
         );
     }
 
@@ -8726,25 +8713,25 @@ mod static_files {
     }
 
     // -----------------------------------------------------------------------
-    // §6 static-files — RED scenarios
+    // static-files — RED scenarios
     // -----------------------------------------------------------------------
     //
-    // §6.static-files.1 is already covered above by
+    // is already covered above by
     // `activate_fails_when_name_collides_with_workweave_link` /
     // `check_emits_error_for_workweave_link_collision` (the C13 hard-error
     // path). This realizes the remaining plan scenarios:
     //
-    // §6.static-files.2 — deactivate strips only static-files-owned symlinks;
+    // — deactivate strips only static-files-owned symlinks;
     // foreign symlinks and user files survive. The integration's
     // `deactivate(root)` is a no-op — symlink removal is the framework's job,
     // so the subject is `repoweave::activate::unsurface_names`.
     //
-    // §6.static-files.3 — missing declared file skipped with warning (already
+    // — missing declared file skipped with warning (already
     // covered by `check_warns_on_missing_files` and
     // `activate_succeeds_even_when_files_missing` above; we leave them in
     // place rather than duplicate).
 
-    /// §6.static-files.2 — the framework's symlink reaping is owner-scoped on
+    /// the framework's symlink reaping is owner-scoped on
     /// BOTH legs of its conjunction: a declared name is unlinked only when the
     /// name is one rwv surfaces AND the link's target is the shape activation
     /// would have written (`projects/<project>/<that name>`).
@@ -8815,7 +8802,7 @@ mod static_files {
 }
 
 // ===========================================================================
-// §8 Cross-port DefaultOnly regression battery
+// Cross-port DefaultOnly regression battery
 //
 // For each port that adopts Ownership::DefaultOnly, two tests:
 //   (a) s8_<port>_default_only_preserves_user_value — an existing value set by
@@ -8829,7 +8816,7 @@ mod static_files {
 // port-specific equivalent added by the per-port spec, so reviewers can see
 // that no coverage is duplicated — only the s8_ naming convention is new.
 //
-// Contract being tested (from merge.rs § Ownership::DefaultOnly):
+// Contract being tested (`Ownership::DefaultOnly` in src/integrations/merge.rs):
 //   - merge_activate sets the key only when absent; never overwrites.
 //   - strip_deactivate does NOT remove DefaultOnly keys.
 //   - DefaultOnly drift is CLEAN in verify().
@@ -9309,7 +9296,7 @@ mod s8_cross_port_default_only {
 }
 
 // ===========================================================================
-// §7 doctor verify() — npm-workspaces
+// doctor verify() — npm-workspaces
 // ===========================================================================
 
 mod s7_npm_doctor {
@@ -9317,7 +9304,7 @@ mod s7_npm_doctor {
     use repoweave::integrations::NpmWorkspaces;
 
     // -----------------------------------------------------------------------
-    // §7.1 MISSING: verify() reports MISSING when package.json is absent
+    // MISSING: verify() reports MISSING when package.json is absent
     // -----------------------------------------------------------------------
 
     /// Given: npm repos detected but package.json absent.
@@ -9400,7 +9387,7 @@ mod s7_npm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.2 DRIFT: verify() reports DRIFT when marker present but content differs
+    // DRIFT: verify() reports DRIFT when marker present but content differs
     // -----------------------------------------------------------------------
 
     /// Given: package.json with x-repoweave marker but outdated workspaces list.
@@ -9491,7 +9478,7 @@ mod s7_npm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.3 USER-HELD: verify() reports USER-HELD, doctor --fix is a no-op
+    // USER-HELD: verify() reports USER-HELD, doctor --fix is a no-op
     // -----------------------------------------------------------------------
 
     /// Given: package.json with workspaces but NO x-repoweave marker.
@@ -9574,7 +9561,7 @@ mod s7_npm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.4 CLEAN: verify() returns no issues when file is up to date
+    // CLEAN: verify() returns no issues when file is up to date
     // -----------------------------------------------------------------------
 
     /// Given: package.json was written by activate() (marker + correct content).
@@ -9603,7 +9590,7 @@ mod s7_npm_doctor {
 }
 
 // ===========================================================================
-// §7 doctor verify() — pnpm-workspaces
+// doctor verify() — pnpm-workspaces
 // ===========================================================================
 
 mod s7_pnpm_doctor {
@@ -9611,7 +9598,7 @@ mod s7_pnpm_doctor {
     use repoweave::integrations::PnpmWorkspaces;
 
     // -----------------------------------------------------------------------
-    // §7.1 MISSING
+    // MISSING
     // -----------------------------------------------------------------------
 
     /// Given: pnpm repos detected but pnpm-workspace.yaml absent.
@@ -9687,7 +9674,7 @@ mod s7_pnpm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.2 DRIFT
+    // DRIFT
     // -----------------------------------------------------------------------
 
     /// Given: pnpm-workspace.yaml with marker but outdated packages list.
@@ -9768,7 +9755,7 @@ mod s7_pnpm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.3 USER-HELD
+    // USER-HELD
     // -----------------------------------------------------------------------
 
     /// Given: pnpm-workspace.yaml with packages: but NO marker.
@@ -9852,7 +9839,7 @@ mod s7_pnpm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.4 CLEAN
+    // CLEAN
     // -----------------------------------------------------------------------
 
     /// Given: pnpm-workspace.yaml was written by activate() (marker + correct content).
@@ -9880,7 +9867,7 @@ mod s7_pnpm_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.5 CLEAN — duplicate/overlapping globs must not cause false DRIFT
+    // CLEAN — duplicate/overlapping globs must not cause false DRIFT
     // -----------------------------------------------------------------------
 
     /// Regression: when a member repo's pnpm-workspace.yaml has duplicate
@@ -9926,7 +9913,7 @@ mod s7_pnpm_doctor {
 }
 
 // ===========================================================================
-// §7 doctor verify() — uv-workspace
+// doctor verify() — uv-workspace
 // ===========================================================================
 
 mod s7_uv_doctor {
@@ -9934,7 +9921,7 @@ mod s7_uv_doctor {
     use repoweave::integrations::UvWorkspace;
 
     // -----------------------------------------------------------------------
-    // §7.1 MISSING
+    // MISSING
     // -----------------------------------------------------------------------
 
     /// Given: Python repos detected but pyproject.toml absent.
@@ -10019,7 +10006,7 @@ mod s7_uv_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.2 DRIFT
+    // DRIFT
     // -----------------------------------------------------------------------
 
     /// Given: pyproject.toml with marker but outdated members list.
@@ -10107,7 +10094,7 @@ mod s7_uv_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.3 USER-HELD
+    // USER-HELD
     // -----------------------------------------------------------------------
 
     /// Given: pyproject.toml with [tool.uv.workspace].members but NO marker.
@@ -10184,7 +10171,7 @@ mod s7_uv_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.4 CLEAN
+    // CLEAN
     // -----------------------------------------------------------------------
 
     /// Given: pyproject.toml written by activate() (marker + correct members).
@@ -10213,7 +10200,7 @@ mod s7_uv_doctor {
 }
 
 // ===========================================================================
-// §7 doctor verify() — go-work
+// doctor verify() — go-work
 // ===========================================================================
 
 mod s7_go_work_doctor {
@@ -10238,7 +10225,7 @@ mod s7_go_work_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.1 MISSING
+    // MISSING
     // -----------------------------------------------------------------------
 
     /// Given: Go repos detected but go.work absent.
@@ -10311,7 +10298,7 @@ mod s7_go_work_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.2 DRIFT
+    // DRIFT
     // -----------------------------------------------------------------------
 
     /// Given: go.work with marker but outdated use entries.
@@ -10410,7 +10397,7 @@ mod s7_go_work_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.3 USER-HELD
+    // USER-HELD
     // -----------------------------------------------------------------------
 
     /// Given: go.work with use block but NO `// managed by repoweave` marker.
@@ -10511,7 +10498,7 @@ mod s7_go_work_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.4 CLEAN
+    // CLEAN
     // -----------------------------------------------------------------------
 
     /// Given: go.work written by activate() (marker + correct use entries).
@@ -10540,7 +10527,7 @@ mod s7_go_work_doctor {
 }
 
 // ===========================================================================
-// §7 doctor verify() — vscode-workspace
+// doctor verify() — vscode-workspace
 // ===========================================================================
 
 mod s7_vscode_doctor {
@@ -10548,7 +10535,7 @@ mod s7_vscode_doctor {
     use repoweave::integrations::VscodeWorkspace;
 
     // -----------------------------------------------------------------------
-    // §7.1 MISSING
+    // MISSING
     // -----------------------------------------------------------------------
 
     /// Given: No .code-workspace file.
@@ -10620,7 +10607,7 @@ mod s7_vscode_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.2 DRIFT
+    // DRIFT
     // -----------------------------------------------------------------------
 
     /// Given: .code-workspace with rwv.generated marker but wrong primary folder.
@@ -10702,7 +10689,7 @@ mod s7_vscode_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.3 USER-HELD
+    // USER-HELD
     // -----------------------------------------------------------------------
 
     /// Given: .code-workspace file with NO rwv.generated marker.
@@ -10794,7 +10781,7 @@ mod s7_vscode_doctor {
     }
 
     // -----------------------------------------------------------------------
-    // §7.4 CLEAN
+    // CLEAN
     // -----------------------------------------------------------------------
 
     /// Given: .code-workspace written by activate() (marker + correct primary).
