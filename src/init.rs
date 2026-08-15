@@ -28,7 +28,10 @@ use crate::git::GIT_DEFAULT_REMOTE_NAME;
 use crate::manifest::{LockFile, Manifest, RepoUrl};
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::project_vcs;
-use crate::workspace::{project_dir, projects_dir, require_workspace_or_empty, WorkspaceContext};
+use crate::workspace::{
+    create_identity_dir, project_dir, projects_dir, require_workspace_or_empty,
+    warn_confusable_project_siblings, MintedDir, WorkspaceContext,
+};
 use anyhow::Context;
 use std::path::Path;
 
@@ -93,18 +96,19 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
     let project_dir = project_dir(ctx.primary_path(), name);
 
-    // Collision check
-    if project_dir.exists() {
+    // The collision check IS the creation: asking the filesystem to make the
+    // directory is what consults it about its own equivalence. A prior
+    // `exists()` test answers the same question one call earlier and then has
+    // to guess at the occupant, which is how git ends up naming the spelling
+    // that was asked for rather than the one that is there.
+    if let MintedDir::Occupied(occupant) = create_identity_dir(&project_dir)? {
         anyhow::bail!(
-            "project '{}' already exists at {}",
-            name,
-            project_dir.display()
+            "cannot create project '{name}': {}. Choose another name, or work \
+             in the project that is already there.",
+            occupant.describe()
         );
     }
-
-    // Create directory
-    std::fs::create_dir_all(&project_dir)
-        .with_context(|| format!("failed to create {}", project_dir.display()))?;
+    warn_confusable_project_siblings(ctx.primary_path(), name);
 
     let vcs = project_vcs();
     vcs.init_repo(&project_dir)

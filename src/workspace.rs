@@ -300,6 +300,217 @@ pub(crate) fn project_rel_path(project: &str) -> String {
     format!("{PROJECTS_DIR}/{project}")
 }
 
+// ---------------------------------------------------------------------------
+// Confusable-sibling lint over the recorded namespace
+// ---------------------------------------------------------------------------
+
+/// Two recorded sibling names that differ only by ASCII case.
+///
+/// A portability lint, and deliberately nothing more: the pair that mints
+/// cleanly on a case-sensitive filesystem is the pair that strands the next
+/// fetch onto one that folds. Nothing stores this fold, nothing resolves
+/// through it, and identity comparison stays byte-exact — the two names remain
+/// two distinct identities, which is why this warns rather than refuses.
+///
+/// Residue, stated: an ASCII fold does not see non-ASCII confusables
+/// (`ß`/`SS`, precomposed against decomposed). Those are the same class one
+/// size down and are caught only where a real filesystem folds them.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConfusableSiblings {
+    /// The parent whose entries these are, as the caller names it.
+    pub parent: String,
+    /// The two names, ordered so the pair reads the same however it was found.
+    pub first: String,
+    pub second: String,
+}
+
+/// Every pair among `siblings` that differs only by ASCII case fold.
+///
+/// `siblings` are names sharing one parent; the fold is applied to compare
+/// them and is discarded here — it is never returned, stored, or used to
+/// decide which name anything resolves to.
+pub fn confusable_siblings(parent: &str, siblings: &[String]) -> Vec<ConfusableSiblings> {
+    let mut by_fold: std::collections::BTreeMap<String, Vec<&String>> =
+        std::collections::BTreeMap::new();
+    for name in siblings {
+        by_fold
+            .entry(name.to_ascii_lowercase())
+            .or_default()
+            .push(name);
+    }
+    let mut found = Vec::new();
+    for group in by_fold.values() {
+        let mut distinct: Vec<&String> = group.to_vec();
+        distinct.sort();
+        distinct.dedup();
+        for (i, first) in distinct.iter().enumerate() {
+            for second in &distinct[i + 1..] {
+                found.push(ConfusableSiblings {
+                    parent: parent.to_owned(),
+                    first: (*first).clone(),
+                    second: (*second).clone(),
+                });
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// The operator-facing sentence for one confusable pair.
+///
+/// One home so the mint-time warning and the doctor finding say the same
+/// thing; the two fire at different moments and must not diverge in what they
+/// claim.
+pub fn confusable_warning(pair: &ConfusableSiblings) -> String {
+    format!(
+        "`{}` and `{}` under {} differ only by ASCII case. rwv holds them as two \
+         distinct identities and will keep doing so — but a filesystem that folds \
+         case cannot hold both, so a clone or fetch of this weave onto macOS or \
+         Windows collides. Rename one if this weave is meant to travel.",
+        pair.first, pair.second, pair.parent
+    )
+}
+
+/// Warn about any project sibling of `project` that differs from it only by
+/// ASCII case.
+///
+/// Runs at mint on every host, including the case-sensitive ones where both
+/// names are perfectly legal — that is the point: the pair is created here and
+/// strands somewhere else, so here is where it is cheap to say so.
+pub fn warn_confusable_project_siblings(root: &Path, project: &str) {
+    let dir = project_dir(root, project);
+    let (Some(parent), Some(leaf)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str()))
+    else {
+        return;
+    };
+    let names: Vec<String> = match std::fs::read_dir(parent) {
+        Ok(entries) => entries
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => return,
+    };
+    let label = project_rel_path(project);
+    let label = label
+        .rsplit_once('/')
+        .map_or(PROJECTS_DIR, |(head, _)| head);
+    for pair in confusable_siblings(label, &names) {
+        if pair.first == leaf || pair.second == leaf {
+            eprintln!("warning: {}", confusable_warning(&pair));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Minting a directory whose final component is an identity
+// ---------------------------------------------------------------------------
+
+/// What already occupies a path an identity was about to be minted at.
+#[derive(Debug, Clone)]
+pub struct DirOccupant {
+    requested: PathBuf,
+    /// The name the parent directory lists for the occupant, which is not
+    /// always the name that was asked for. `None` when the parent cannot be
+    /// read or no entry matches — the collision is real either way, and
+    /// nothing more precise can be said about it.
+    listed: Option<String>,
+}
+
+impl DirOccupant {
+    /// The clause naming what is there. A caller frames it with what it was
+    /// minting and what to do instead.
+    ///
+    /// It says more than the requested path whenever the filesystem lists the
+    /// occupant under a different name, which is the case this exists for: on
+    /// a folding filesystem the operator asked for one spelling and something
+    /// spelled another way answered.
+    pub fn describe(&self) -> String {
+        occupant_sentence(&self.requested, self.listed.as_deref())
+    }
+}
+
+/// The same sentence for a caller that learned of the collision without
+/// attempting a create — `git clone` mints some identity directories, and a
+/// pre-check is all rwv has there.
+pub fn describe_existing(dir: &Path) -> String {
+    occupant_sentence(dir, listed_occupant(dir).as_deref())
+}
+
+/// One home for the sentence, so every refusal that names an occupant names it
+/// the same way.
+fn occupant_sentence(requested: &Path, listed: Option<&str>) -> String {
+    let asked = requested.file_name().and_then(|n| n.to_str());
+    match listed {
+        Some(listed) if Some(listed) != asked => format!(
+            "{} already exists — the filesystem lists it as `{listed}` and treats the \
+             two spellings as one name",
+            requested.display()
+        ),
+        _ => format!("{} already exists", requested.display()),
+    }
+}
+
+/// The occupant's listed name when the filesystem answered a request for `dir`
+/// with an entry it spells differently — the case an idempotent-reuse path
+/// must not adopt, and the divergence doctor reports in steady state.
+///
+/// `None` when nothing is there, or when the spelling on disk is the one that
+/// was asked for.
+pub fn diverged_occupant(dir: &Path) -> Option<String> {
+    let asked = dir.file_name().and_then(|n| n.to_str())?;
+    let listed = listed_occupant(dir)?;
+    (listed != asked).then_some(listed)
+}
+
+/// Outcome of [`create_identity_dir`].
+#[derive(Debug)]
+pub enum MintedDir {
+    Created,
+    Occupied(DirOccupant),
+}
+
+/// The name the parent directory lists for whatever occupies `dir`.
+///
+/// Not `canonicalize`: on a folding filesystem it echoes back the spelling it
+/// was asked with rather than the one on disk, so it can never report the
+/// divergence. The parent's own listing carries true spellings, and
+/// filesystem identity is what says which entry answered.
+fn listed_occupant(dir: &Path) -> Option<String> {
+    let parent = dir.parent()?;
+    std::fs::read_dir(parent).ok()?.flatten().find_map(|entry| {
+        crate::workweave_index::same_directory(&entry.path(), dir)
+            .then(|| entry.file_name().to_string_lossy().into_owned())
+    })
+}
+
+/// Create `dir`, whose final component is an identity, refusing to adopt
+/// whatever is already there.
+///
+/// `create_dir` and never `create_dir_all` at this component: `create_dir_all`
+/// reports success for a directory that already exists, so on a filesystem
+/// that folds case it silently adopts a directory the operator spelled another
+/// way. Parents are created first — only the last component carries identity,
+/// and the ones above it are layout.
+pub fn create_identity_dir(dir: &Path) -> anyhow::Result<MintedDir> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    match std::fs::create_dir(dir) {
+        Ok(()) => Ok(MintedDir::Created),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(MintedDir::Occupied(DirOccupant {
+                requested: dir.to_path_buf(),
+                listed: listed_occupant(dir),
+            }))
+        }
+        Err(e) => Err(anyhow::Error::from(e))
+            .with_context(|| format!("failed to create {}", dir.display())),
+    }
+}
+
 /// What sits below `projects/` in `path`, or `None` when `path` neither starts
 /// with the segment nor reaches past it.
 pub(crate) fn strip_projects_prefix(path: &Path) -> Option<&Path> {

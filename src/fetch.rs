@@ -210,9 +210,15 @@ pub fn run_fetch(
         } else {
             format!("projects/{owner}/{name}/")
         };
-        eprintln!("Error: project '{name}' already exists at projects/{name}/");
+        eprintln!(
+            "Error: cannot fetch project '{name}': {}",
+            crate::workspace::describe_existing(&project_dir)
+        );
         eprintln!("Hint: try a scoped path: {scoped}");
-        bail!("project '{}' already exists at projects/{}/", name, name);
+        bail!(
+            "cannot fetch project '{name}': {}",
+            crate::workspace::describe_existing(&project_dir)
+        );
     } else {
         // In JSON mode, project-level progress goes to stderr so stdout stays
         // JSON-only. In text mode it goes to stdout as before.

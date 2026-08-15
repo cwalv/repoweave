@@ -78,6 +78,31 @@ the implementation and is not part of this published book.
 
 ---
 
+## Portability of recorded names
+
+### `confusable-siblings`
+
+**Warning. Report-only.** Two recorded sibling identities differ only by ASCII
+case: two projects under one parent directory, or two repo-path segments under
+one parent within a project.
+
+rwv holds the two as distinct identities and keeps resolving them byte-exactly
+— this finding changes nothing about that, and stores no folded key. What it
+reports is a portability hazard: a filesystem that folds case cannot hold both,
+so a clone or fetch of this weave onto macOS or Windows collides. That is why
+it fires on case-sensitive hosts too, where the pair is perfectly legal and
+nothing else would notice until someone else's machine failed. `rwv init` and
+`rwv fetch` print the same warning at mint, so a pair is usually reported when
+it is created rather than found later.
+
+**What to do:** rename one of the two if this weave is meant to travel.
+Never auto-fixed — which of two recorded identities should change is the
+operator's call, and on the host that raised the warning nothing is broken yet.
+
+**Residue:** the fold is ASCII, so it does not see non-ASCII confusables
+(`ß`/`SS`, precomposed against decomposed). Those are the same class one size
+down, and only a filesystem that actually folds them will report them.
+
 ## Manifest, lock, and repo registration
 
 ### `orphaned-clone`

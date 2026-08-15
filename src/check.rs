@@ -460,6 +460,31 @@ pub enum CheckViolation {
         ref_name: String,
     },
 
+    /// Two recorded sibling identities that differ only by ASCII case fold.
+    ///
+    /// A portability lint over the record, not an identity equivalence:
+    /// rwv holds the two as distinct names and keeps resolving them
+    /// byte-exactly. What it reports is that a filesystem which folds case
+    /// cannot hold both, so a clone or fetch of this weave onto macOS or
+    /// Windows collides — which is why it fires on case-sensitive hosts too,
+    /// where the pair is perfectly legal and nothing else would notice.
+    ///
+    /// Report-only, and deliberately: renaming a recorded identity is the
+    /// operator's call, and on the host that raised the warning nothing is
+    /// broken yet.
+    ///
+    /// Residue: an ASCII fold does not see non-ASCII confusables (`ß`/`SS`,
+    /// precomposed against decomposed). Those are the same class one size
+    /// down, and only a filesystem that folds them reports them.
+    ConfusableSiblings {
+        /// The namespace the two names share, as an operator would name it.
+        parent: String,
+        /// The two spellings, ordered so the pair reads the same however the
+        /// scan happened to find it.
+        first: String,
+        second: String,
+    },
+
     /// A `refs/rwv/pre-op/<op-id>` savepoint whose op-id is not present
     /// in any `.rwv-op` file in this workspace tree. Sub-kind picks the
     /// classification — savepoint tip reachable from current HEAD
@@ -691,6 +716,7 @@ impl CheckViolation {
                 OrphanedSavepointKind::Redundant => Auto,
                 OrphanedSavepointKind::Live => ReportOnly,
             },
+            CheckViolation::ConfusableSiblings { .. } => ReportOnly,
         }
     }
 
@@ -737,6 +763,7 @@ impl CheckViolation {
             CheckViolation::DanglingRefReceipt { .. } => "dangling-ref-receipt",
             CheckViolation::PreFlatRefReceipt { .. } => "pre-flat-ref-receipt",
             CheckViolation::OrphanedSavepoint { .. } => "orphaned-savepoint",
+            CheckViolation::ConfusableSiblings { .. } => "confusable-siblings",
             CheckViolation::CargoVersionSkew { .. } => "cargo-version-skew",
             CheckViolation::CargoPatchShadowing { .. } => "cargo-patch-shadowing",
             CheckViolation::MissingCanonicalClone { .. } => "missing-canonical-clone",
@@ -1769,6 +1796,14 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: OrphanedSavepointKind,
     },
+    /// See [`CheckViolation::ConfusableSiblings`].
+    ConfusableSiblings {
+        /// The namespace the two names share.
+        parent: String,
+        /// The two spellings, in a stable order.
+        first: String,
+        second: String,
+    },
     /// See [`CheckViolation::CargoVersionSkew`].
     CargoVersionSkew {
         /// Registry crate name.
@@ -1881,6 +1916,15 @@ impl ViolationOutput {
             CheckViolation::OrphanedClone { path } => Self::OrphanedClone {
                 absolute_path: abs(workspace_dir, &path),
                 path: path.to_string(),
+            },
+            CheckViolation::ConfusableSiblings {
+                parent,
+                first,
+                second,
+            } => Self::ConfusableSiblings {
+                parent,
+                first,
+                second,
             },
             CheckViolation::DanglingReference { project, repo } => Self::DanglingReference {
                 absolute_path: abs(workspace_dir, &repo),
@@ -3021,6 +3065,91 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
             marker.project()
         ))),
     }
+}
+
+/// Recorded sibling identities that differ only by ASCII case fold, across
+/// the two namespaces the record owns: project names and repo-path segments.
+///
+/// Project names are enumerated by **walking `projects/` per directory**
+/// rather than through `discover_project_paths`, which reads only the
+/// immediate children and so cannot see a multi-segment project at all — a
+/// lint that inherited that would silently skip exactly the nested namespaces
+/// this weave now spells. A listing also answers the question directly: a case
+/// fold is about entries sharing one parent, which is what each directory
+/// hands back at every depth. Repo paths come from each manifest's own
+/// `repositories` keys, grouped by parent — that record needs no disk at all.
+fn scan_confusable_siblings(ws_root: &Path, projects: &[Project]) -> Vec<CheckViolation> {
+    fn walk(dir: &Path, label: &str, out: &mut Vec<CheckViolation>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut names = Vec::new();
+        let mut subdirs = Vec::new();
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            names.push(entry.file_name().to_string_lossy().into_owned());
+            subdirs.push(entry.path());
+        }
+        out.extend(
+            crate::workspace::confusable_siblings(label, &names)
+                .into_iter()
+                .map(|pair| CheckViolation::ConfusableSiblings {
+                    parent: pair.parent,
+                    first: pair.first,
+                    second: pair.second,
+                }),
+        );
+        for sub in subdirs {
+            let Some(leaf) = sub.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            walk(&sub, &format!("{label}/{leaf}"), out);
+        }
+    }
+
+    let mut violations = Vec::new();
+    // The label is read off the directory the layout owner names, so the
+    // segment keeps its single spelling.
+    let projects_root = crate::workspace::projects_dir(ws_root);
+    let root_label = projects_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    walk(&projects_root, &root_label, &mut violations);
+
+    for project in projects {
+        let mut by_parent: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for repo_path in project.manifest.repositories.keys() {
+            let spelled = repo_path.to_string();
+            let (parent, leaf) = match spelled.rsplit_once('/') {
+                Some((parent, leaf)) => (parent.to_owned(), leaf.to_owned()),
+                None => (String::new(), spelled.clone()),
+            };
+            by_parent.entry(parent).or_default().push(leaf);
+        }
+        for (parent, names) in by_parent {
+            let label = if parent.is_empty() {
+                format!("project `{}`", project.name.as_str())
+            } else {
+                format!("project `{}` at {parent}", project.name.as_str())
+            };
+            violations.extend(
+                crate::workspace::confusable_siblings(&label, &names)
+                    .into_iter()
+                    .map(|pair| CheckViolation::ConfusableSiblings {
+                        parent: pair.parent,
+                        first: pair.first,
+                        second: pair.second,
+                    }),
+            );
+        }
+    }
+    violations.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    violations.dedup_by(|a, b| format!("{a:?}") == format!("{b:?}"));
+    violations
 }
 
 pub fn scan_workweave_tree_integrity(
@@ -6441,6 +6570,20 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
             // findings override to false so `doctor --fix` leaves them alone.
             let mut safe_to_fix = true;
             let (severity, message) = match v {
+                CheckViolation::ConfusableSiblings {
+                    parent,
+                    first,
+                    second,
+                } => (
+                    crate::integration::Severity::Warning,
+                    crate::workspace::confusable_warning(
+                        &crate::workspace::ConfusableSiblings {
+                            parent: parent.clone(),
+                            first: first.clone(),
+                            second: second.clone(),
+                        },
+                    ),
+                ),
                 CheckViolation::OrphanedClone { path } => (
                     crate::integration::Severity::Error,
                     format!(
@@ -9117,6 +9260,10 @@ fn collect_doctor_violations(
     }
 
     violations.extend(scan_workweave_tree_integrity(vcs, ctx.primary_path()));
+    violations.extend(scan_confusable_siblings(
+        ctx.primary_path(),
+        &input.projects,
+    ));
     violations.extend(scan_provenance(workspace_dir, &input.projects));
     violations.extend(scan_phantom_merge_drivers(workspace_dir, &input.projects));
 

@@ -1978,6 +1978,35 @@
           }
         },
         {
+          "description": "See [`CheckViolation::ConfusableSiblings`].",
+          "type": "object",
+          "required": [
+            "first",
+            "kind",
+            "parent",
+            "second"
+          ],
+          "properties": {
+            "first": {
+              "description": "The two spellings, in a stable order.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "confusable-siblings"
+              ]
+            },
+            "parent": {
+              "description": "The namespace the two names share.",
+              "type": "string"
+            },
+            "second": {
+              "type": "string"
+            }
+          }
+        },
+        {
           "description": "See [`CheckViolation::CargoVersionSkew`].",
           "type": "object",
           "required": [

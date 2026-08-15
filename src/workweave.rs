@@ -1294,6 +1294,20 @@ pub fn create_workweave(
     }
 
     if workweave_dir.exists() {
+        // Whatever is there may not be this workweave. On a filesystem that
+        // folds case the lookup above answers for a directory spelled another
+        // way, and both arms below would then act on someone else's seat —
+        // reuse would adopt it, replace would destroy it.
+        if crate::workspace::diverged_occupant(&workweave_dir).is_some() {
+            bail!(
+                "cannot create workweave `{name}` for project `{project}`: {}. That is \
+                 a different workweave, not this one. Address it by its own name, or \
+                 choose a name whose directory does not collide.",
+                crate::workspace::describe_existing(&workweave_dir),
+                name = name.as_str(),
+                project = project.as_str(),
+            );
+        }
         if replace_existing {
             // Destructive reuse. Prefer delete_workweave (which also
             // prunes worktrees and ephemeral branches) when the marker
@@ -1485,7 +1499,16 @@ pub fn create_workweave(
         prune_orphan_worktrees_for(project_vcs.as_ref(), &orphan_pairs);
     }
 
-    std::fs::create_dir_all(&workweave_dir)?;
+    if let crate::workspace::MintedDir::Occupied(occupant) =
+        crate::workspace::create_identity_dir(&workweave_dir)?
+    {
+        bail!(
+            "cannot create workweave `{}` for project `{}`: {}.",
+            name.as_str(),
+            project.as_str(),
+            occupant.describe()
+        );
+    }
 
     // B7: Rollback guard — automatically undoes partial state on any failure
     // path (including `bail!` / `?` propagation). Tracks which repos got

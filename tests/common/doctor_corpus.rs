@@ -54,6 +54,7 @@ pub fn path(p: &str) -> PathBuf {
 pub fn case_token(v: &CheckViolation) -> String {
     match v {
         CheckViolation::OrphanedClone { .. } => "orphaned-clone".into(),
+        CheckViolation::ConfusableSiblings { .. } => "confusable-siblings".into(),
         CheckViolation::DanglingReference { .. } => "dangling-reference".into(),
         CheckViolation::MissingRole { .. } => "missing-role".into(),
         CheckViolation::StaleLock { .. } => "stale-lock".into(),
@@ -418,6 +419,11 @@ pub fn corpus() -> Vec<CheckViolation> {
                 workweave_name: "feat-a".into(),
                 expected_dir_name: "chatly+web-app--feat-a".into(),
             },
+        },
+        CheckViolation::ConfusableSiblings {
+            parent: "projects".into(),
+            first: "Chatly".into(),
+            second: "chatly".into(),
         },
         CheckViolation::Provenance {
             project: project(),
