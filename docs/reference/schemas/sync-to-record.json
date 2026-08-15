@@ -389,7 +389,7 @@
       }
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The `#[serde(rename)]` override below keeps the wire tag matching [`SyncFailure::kind`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",

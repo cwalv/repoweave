@@ -460,8 +460,7 @@ impl RepoSyncOutcome {
 ///
 /// Carries the same payload as the in-memory enum but with a `cause`
 /// represented as the serialisable [`VcsErrorOutput`]. The `#[serde(rename)]`
-/// override below keeps the wire tag matching [`SyncFailure::kind`]
-/// (pinned by `sync_failure_kind_matches_wire_tag`).
+/// override below keeps the wire tag matching [`SyncFailure::kind`].
 ///
 /// `message` is the human-readable display string of the failure (free-form
 /// text, not a typed discriminant). `cause` is the structured typed cause when
