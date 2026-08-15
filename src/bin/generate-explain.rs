@@ -1,4 +1,5 @@
-//! `generate-explain` — build-time assembler for `rwv explain` artifacts.
+//! `generate-explain` — build-time assembler for `rwv explain` artifacts, and
+//! the runner for this repository's policy gates.
 //!
 //! Reads hand-written templates from `docs/reference/explain/templates/`,
 //! splices in schemars-derived JSON Schemas for `--json`-capable verbs,
@@ -9,6 +10,51 @@
 //! Run with `cargo run --bin generate-explain`. CI re-runs the generator and
 //! fails on drift via `git diff --exit-code docs/reference/explain/
 //! docs/reference/schemas/`.
+//!
+//! # Repo-policy gates
+//!
+//! Assembling artifacts is half of what `main` does. The other half is a set
+//! of gates over the repository itself; a gate that reports anything fails
+//! the run. They live in the generator rather than in a test because they
+//! share the corpus walk and the scope definitions with generation, and
+//! because running them here means regenerating the artifacts cannot skip
+//! them. Someone looking for where a house rule about comments, vocabulary
+//! or documentation coverage is mechanised looks in this file.
+//!
+//! Each is a `// --- <name> gate ---` block in `main`, in this order:
+//!
+//! - `run_coverage_checks` — every CLI subcommand appears in
+//!   `docs/reference/cli.md`, and every top-level verb is registered in
+//!   `verbs()`.
+//! - `check_verb_registry_consistency` — `verbs()` and the runtime dispatch
+//!   table name the same set.
+//! - `run_schema_url_scheme_check` — no file hand-spells a schema base URL.
+//! - `check_assembled_docs` — the link-cleanliness invariant below.
+//! - `run_env_input_check` — every environment read in non-test `src/` code
+//!   is listed in `docs/env-input-allowlist.txt`.
+//! - `check_vcs_seam_bypasses` — production code takes the VCS seam from its
+//!   caller instead of minting a backend or spawning git itself.
+//! - `run_envelope_output_check` — every plugin envelope variable is
+//!   documented in `docs/reference/plugin-protocol.md`.
+//! - `check_no_tracker_ids` — no tracker ID in `src/`, `docs/` or `tests/`.
+//! - `run_doc_citation_check` — a document a comment names resolves from the
+//!   repo root or from the citing file's own directory, and no comment is
+//!   only a pointer.
+//! - `run_doc_symbol_check` — a comment writing a qualified member name
+//!   names one that occurs in code.
+//! - `check_no_consumer_vocabulary` — no word naming a consumer or workflow
+//!   rwv happens to be used from.
+//! - `check_no_foreign_vocabulary` — `docs/` describes rwv, not one
+//!   deployment of it.
+//! - `check_no_internals_on_operator_surfaces` — nothing lifted onto an
+//!   assembled page or schema points at `docs/internals/`, which mdBook does
+//!   not render.
+//! - `check_explanation_joints_index_agreement` — `docs/SUMMARY.md` and
+//!   `docs/explanation/index.md` list the same joints pages.
+//!
+//! What a gate does not cover is stated on the predicate that implements it,
+//! where a reader widening it will meet it. Green here means the corpus a
+//! gate examined was clean, not that its rule holds over the tree.
 //!
 //! # Link-cleanliness invariant
 //!
