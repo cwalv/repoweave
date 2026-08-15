@@ -1151,7 +1151,7 @@ fn a_live_checkouts_pre_flat_branch_is_not_reported_unowned() {
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
-    std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
+    make_project(&ws, "myproj");
 
     let seat = tmp.path().join("elsewhere").join("unrelated-name");
     write_marker(&seat, &ws, "myproj", &ws);
