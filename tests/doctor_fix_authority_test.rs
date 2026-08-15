@@ -958,11 +958,12 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["working-tree-drift/safe-to-fix"]),
         ),
         (
-            "core: {kind_label}",
-            Findings(&[
-                "stale-worktree-registration",
-                "orphaned-savepoint/redundant",
-            ]),
+            "stale-worktree-registration for",
+            Findings(&["stale-worktree-registration"]),
+        ),
+        (
+            "orphaned-savepoint for",
+            Findings(&["orphaned-savepoint/redundant"]),
         ),
         (
             "dead-op-lease for",
