@@ -413,6 +413,11 @@ mod tests {
         assert_eq!(out, expected);
     }
 
+    /// Silent serialisation is invisible to `tests/parallel_test.rs`: with
+    /// the pool clamped to one worker every `-j` acceptance test there still
+    /// passes, because the prefix, the lock and the aggregation depend on
+    /// `jobs > 1`, not on the workers existing. Wall time is the only
+    /// observable that separates them.
     #[test]
     fn run_in_parallel_actually_runs_in_parallel() {
         // Run 4 tasks that each sleep 100ms with 4 workers. If serialised
@@ -631,8 +636,9 @@ mod tests {
     /// `forward_stream_consumes_to_eof_without_panic`), and
     /// `stderr_capture` is empty by contract regardless of what the
     /// child wrote (`run_subprocess_with_reporter_parallel_returns_empty_capture`).
-    /// Line arrival is pinned end-to-end, via a real child process, in
-    /// `tests/parallel_test.rs`.
+    /// That a forwarded line arrives at all is therefore unobservable from
+    /// here, and is pinned end-to-end against a real child in
+    /// `tests/parallel_test.rs::update_dash_j_forwards_child_output_prefixed`.
     #[test]
     fn run_subprocess_multi_line_under_parallel_completes_without_hanging() {
         let lock = Mutex::new(());

@@ -389,6 +389,46 @@ fn update_dash_j_advances_all_repos_and_relocks() {
     );
 }
 
+/// A worker's *subprocess* output reaches the user, prefixed. `rwv update`
+/// streams `git fetch` through the reporter under `-j > 1`; rwv's own stderr
+/// lines on this path are written directly and carry no prefix, so a
+/// prefixed stderr line is one git wrote and the forwarding delivered.
+///
+/// The in-src tests in `src/parallel.rs` cannot pin this: under
+/// `Reporter::Parallel` the forwarded lines go to the test process's real
+/// stdout/stderr from a spawned thread, outside libtest's capture, so those
+/// tests can see the call return but not that a line came out.
+#[test]
+fn update_dash_j_forwards_child_output_prefixed() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+
+    let bare = tmp.path().join("a.git");
+    init_bare_repo_with_commit(&bare);
+    let url = common::file_url(&bare);
+    let source = make_project_source(tmp.path(), "proj", &[("local/team/a", &url)]);
+
+    rwv()
+        .args(["fetch", &source])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    advance_bare_repo(tmp.path(), &bare, "a-v2");
+
+    let out = rwv()
+        .args(["update", "-j", "2"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(
+        stderr.lines().any(|l| l.starts_with("[local/team/a] ")),
+        "no forwarded child line arrived on stderr under -j 2:\n{stderr}"
+    );
+}
+
 /// Failure aggregation under `rwv update -j 2`: one bad repo (broken
 /// remote) must not prevent the healthy one from being attempted, and
 /// the aggregated error report must surface the bad repo and bail

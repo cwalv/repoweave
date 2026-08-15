@@ -52,17 +52,39 @@ fn non_comment_lines(text: &str) -> impl Iterator<Item = &str> {
     text.lines().filter(|l| !l.trim_start().starts_with('#'))
 }
 
+/// True when `line` names the command `cargo` — the word, not a prefix of
+/// `cargo_version` and not the `Cargo.toml` the hook legitimately reads.
+fn names_the_cargo_command(line: &str) -> bool {
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    line.match_indices("cargo").any(|(at, _)| {
+        !word(line[..at].chars().next_back()) && !word(line[at + "cargo".len()..].chars().next())
+    })
+}
+
+/// Structural license: a prohibition over an enumerable population — the
+/// hook's own non-comment lines. The behavioural sibling below
+/// (`stub_cargo_count == gate runs * 7`) sees only invocations on a path the
+/// fixture drives whose output reaches the hook's stdout, and both of those
+/// are escapable: a `cargo` call in the CI-not-green refusal arm, which the
+/// `gh` stub makes unreachable, and a `cargo` call whose output is redirected
+/// both leave that count unchanged. Neither is escapable here, because this
+/// reads the file rather than a run of it.
+///
+/// Scope, and therefore the coverage boundary: `.githooks/pre-push` only,
+/// lines not starting with `#`, matching `cargo` as a word. Invisible to it —
+/// a cargo run reached through a variable or a shell function (`$CARGO
+/// clippy`, `c() { cargo "$@"; }`), a gate script the hook delegates to that
+/// itself drifts, and every other file in the repo.
+///
+/// The complement runs the other way: the hook can delegate to
+/// `scripts/ci-local.sh --stages=check` — no bare cargo, still a subset gate —
+/// and only the behavioural count reddens.
 #[test]
 fn contains_no_bare_cargo_invocations() {
     let text = std::fs::read_to_string(pre_push_hook()).expect("pre-push hook should exist");
     for line in non_comment_lines(&text) {
         assert!(
-            !line.contains("cargo clippy")
-                && !line.contains("cargo fmt")
-                && !line.contains("cargo test")
-                && !line.contains("cargo check")
-                && !line.contains("cargo doc")
-                && !line.contains("cargo run"),
+            !names_the_cargo_command(line),
             "pre-push hook invokes cargo directly, bypassing scripts/ci-local.sh: {line:?}"
         );
     }
@@ -70,6 +92,34 @@ fn contains_no_bare_cargo_invocations() {
         non_comment_lines(&text).any(|l| l.contains("scripts/ci-local.sh")),
         "pre-push hook should delegate to scripts/ci-local.sh"
     );
+}
+
+/// The predicate above is the instrument, so it gets fed a known red and a
+/// known green: the hook's own `cargo_version=` assignment and the
+/// `Cargo.toml` blob it reads are what a naive substring match trips on.
+#[test]
+fn the_cargo_command_predicate_separates_invocations_from_mentions() {
+    for invocation in [
+        "cargo build --release",
+        "  cargo fmt --all -- --check >/dev/null 2>&1",
+        "CARGO_INCREMENTAL=0 cargo test",
+        "(cd \"$dir\" && cargo xtask)",
+    ] {
+        assert!(
+            names_the_cargo_command(invocation),
+            "should read as a cargo invocation: {invocation:?}"
+        );
+    }
+    for mention in [
+        "      cargo_version=\"v$(git cat-file blob \"$local_sha:Cargo.toml\")\"",
+        "if [ \"$tag\" != \"$cargo_version\" ]; then",
+        "CARGO_INCREMENTAL=0 RUSTC_WRAPPER=\"$rustc_wrapper\" ./scripts/ci-local.sh",
+    ] {
+        assert!(
+            !names_the_cargo_command(mention),
+            "should not read as a cargo invocation: {mention:?}"
+        );
+    }
 }
 
 const STUB_CARGO: &str = "#!/bin/sh\nprintf 'STUB_CARGO: %s\\n' \"$*\"\nexit 0\n";

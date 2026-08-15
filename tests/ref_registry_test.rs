@@ -232,6 +232,62 @@ fn strace_probe_child_records_one_receipt() {
         .unwrap();
 }
 
+/// The trace lines the durability story is told in: the receipt's own
+/// file, and the directory whose fsync makes the rename survive.
+fn receipt_syscalls(trace: &str) -> Vec<&str> {
+    trace
+        .lines()
+        .filter(|l| l.contains(".rwv-workweave-index") || l.contains("projects/web-app>"))
+        .collect()
+}
+
+/// `None` when the trace shows the three calls the durability story rests
+/// on, in order. Split out from its caller so a hand-written trace can
+/// drive the same predicate the strace run does — a positional parser that
+/// silently stopped matching would otherwise report a durable write from
+/// any trace at all.
+fn durability_violation(trace: &str) -> Option<String> {
+    let calls = receipt_syscalls(trace);
+    let position = |pred: &dyn Fn(&str) -> bool| calls.iter().position(|l| pred(l));
+
+    let Some(fsync_temp) =
+        position(&|l: &str| l.contains("fsync(") && l.contains(".rwv-workweave-index.tmp"))
+    else {
+        return Some(format!(
+            "no fsync of the temp file in:\n{}",
+            calls.join("\n")
+        ));
+    };
+    let Some(rename) = position(&|l: &str| l.contains("rename") && l.contains(".tmp")) else {
+        return Some(format!(
+            "no rename publishing the index in:\n{}",
+            calls.join("\n")
+        ));
+    };
+    let Some(fsync_dir) = position(&|l: &str| {
+        l.contains("fsync(") && l.trim_end().ends_with("projects/web-app>) = 0")
+    }) else {
+        return Some(format!(
+            "no fsync of the containing directory in:\n{}",
+            calls.join("\n")
+        ));
+    };
+
+    if fsync_temp >= rename {
+        return Some(format!(
+            "the contents must be on disk before the rename publishes them:\n{}",
+            calls.join("\n")
+        ));
+    }
+    if rename >= fsync_dir {
+        return Some(format!(
+            "the directory fsync is what makes the rename itself survive:\n{}",
+            calls.join("\n")
+        ));
+    }
+    None
+}
+
 /// The receipt is fsynced — file *and* containing directory — and the
 /// directory fsync happens after the rename that publishes it.
 ///
@@ -283,36 +339,79 @@ fn the_receipt_reaches_the_disk_before_record_created_returns() {
         "the probe must have run: stdout={child_stdout}\nstderr={trace}"
     );
 
-    // The three calls the durability story rests on, in order.
-    let calls: Vec<&str> = trace
+    if let Some(violation) = durability_violation(&trace) {
+        panic!("{violation}");
+    }
+}
+
+/// A trace captured from the probe above, shortened at the path only, plus
+/// one fsync of a file the receipt has nothing to do with — the filter's
+/// reason for existing, and what the count below is about.
+const ORDERED_TRACE: &str = "\
+strace: Process 4242 attached\n\
+[pid 4242] fsync(3</tmp/rwv-probe/ws/projects/web-app/.rwv-workweave-index.tmp.4241.0>) = 0\n\
+[pid 4242] fsync(4</tmp/rwv-probe/unrelated.log>) = 0\n\
+[pid 4242] rename(\"/tmp/rwv-probe/ws/projects/web-app/.rwv-workweave-index.tmp.4241.0\", \"/tmp/rwv-probe/ws/projects/web-app/.rwv-workweave-index\") = 0\n\
+[pid 4242] fsync(3</tmp/rwv-probe/ws/projects/web-app>) = 0\n\
+[pid 4242] +++ exited with 0 +++\n\
++++ exited with 0 +++\n";
+
+fn trace_line(needle: &str) -> &'static str {
+    ORDERED_TRACE
         .lines()
-        .filter(|l| l.contains(".rwv-workweave-index") || l.contains("projects/web-app>"))
-        .collect();
-    let position = |pred: &dyn Fn(&str) -> bool| calls.iter().position(|l| pred(l));
+        .find(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("no {needle} line in the ordered trace"))
+}
 
-    let fsync_temp =
-        position(&|l: &str| l.contains("fsync(") && l.contains(".rwv-workweave-index.tmp"))
-            .unwrap_or_else(|| panic!("no fsync of the temp file in:\n{}", calls.join("\n")));
-    let rename = position(&|l: &str| l.contains("rename") && l.contains(".tmp"))
-        .unwrap_or_else(|| panic!("no rename publishing the index in:\n{}", calls.join("\n")));
-    let fsync_dir = position(&|l: &str| {
-        l.contains("fsync(") && l.trim_end().ends_with("projects/web-app>) = 0")
-    })
-    .unwrap_or_else(|| {
-        panic!(
-            "no fsync of the containing directory in:\n{}",
-            calls.join("\n")
-        )
-    });
+/// The check above reads syscall lines positionally, and a positional
+/// parser that stops matching reports a durable write from a trace that
+/// shows none. So feed it traces that must red: each of the three calls
+/// missing in turn, and each of the two orderings inverted.
+///
+/// The paired control is `ORDERED_TRACE` itself — a parser that reds on
+/// everything would satisfy the seeded halves alone.
+#[test]
+fn the_durability_check_reds_on_an_incomplete_or_re_ordered_trace() {
+    assert_eq!(
+        durability_violation(ORDERED_TRACE),
+        None,
+        "control: the captured ordering is the passing one"
+    );
+    assert_eq!(
+        receipt_syscalls(ORDERED_TRACE).len(),
+        3,
+        "the filter keeps the receipt's three calls and drops the rest: {:?}",
+        receipt_syscalls(ORDERED_TRACE)
+    );
 
-    assert!(
-        fsync_temp < rename,
-        "the contents must be on disk before the rename publishes them:\n{}",
-        calls.join("\n")
-    );
-    assert!(
-        rename < fsync_dir,
-        "the directory fsync is what makes the rename itself survive:\n{}",
-        calls.join("\n")
-    );
+    let fsync_temp = trace_line(".rwv-workweave-index.tmp.4241.0>");
+    let rename = trace_line("rename(");
+    let fsync_dir = trace_line("web-app>) = 0");
+
+    for (seeded, expected) in [
+        ([rename, fsync_dir].join("\n"), "no fsync of the temp file"),
+        (
+            [fsync_temp, fsync_dir].join("\n"),
+            "no rename publishing the index",
+        ),
+        (
+            [fsync_temp, rename].join("\n"),
+            "no fsync of the containing directory",
+        ),
+        (
+            [rename, fsync_temp, fsync_dir].join("\n"),
+            "the contents must be on disk before the rename publishes them",
+        ),
+        (
+            [fsync_dir, fsync_temp, rename].join("\n"),
+            "the directory fsync is what makes the rename itself survive",
+        ),
+    ] {
+        let violation = durability_violation(&seeded)
+            .unwrap_or_else(|| panic!("seeded trace reported no violation:\n{seeded}"));
+        assert!(
+            violation.starts_with(expected),
+            "expected {expected:?}, got {violation:?}"
+        );
+    }
 }
