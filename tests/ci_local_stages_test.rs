@@ -166,6 +166,7 @@ fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
         .iter()
         .filter_map(|h| stdout.find(h).map(|pos| (pos, *h)))
         .collect();
+    let mut compared = 0;
     for (i, &(pos, header)) in positions.iter().enumerate() {
         let Some(claimed) = cargo_args_claimed_by(header) else {
             continue;
@@ -183,7 +184,38 @@ fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
             logged, claimed,
             "header {header:?} claims `cargo {claimed}` but the logged invocation was `cargo {logged}`"
         );
+        compared += 1;
     }
+    // `positions` only holds headers `stdout.find` actually located; a header
+    // that silently stopped printing would just shrink that list, and the
+    // loop above would compare fewer pairs without saying so. Cross-check
+    // the count against `HEADERS_IN_ORDER` itself, which doesn't depend on
+    // what `stdout` contains.
+    let claimable = HEADERS_IN_ORDER
+        .iter()
+        .filter(|h| cargo_args_claimed_by(h).is_some())
+        .count();
+    assert_eq!(
+        compared, claimable,
+        "expected {claimable} header/invocation comparisons, only made {compared} — a cargo-echoing header went unchecked:\n{stdout}"
+    );
+}
+
+/// A stage whose header line goes missing from `stdout` altogether — the
+/// clippy header is absent here, its STUB_CARGO line along with it — leaves
+/// every present header/invocation pair still agreeing, so the loop's own
+/// `assert_eq!` has nothing to object to. Only the comparison count catches
+/// the drop.
+#[test]
+#[should_panic(expected = "expected 6 header/invocation comparisons")]
+fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
+    let stdout = "\n==> cargo check\nSTUB_CARGO: check\n\
+\n==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc\nSTUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc\n\
+\n==> cargo test --release\nSTUB_CARGO: test --release\n\
+\n==> cargo doc --no-deps (rustdoc warnings deny)\nSTUB_CARGO: doc --no-deps\n\
+\n==> cargo fmt --all -- --check\nSTUB_CARGO: fmt --all -- --check\n\
+\n==> explain artifacts up to date (no drift after regeneration)\n";
+    assert_cargo_headers_agree_with_invocations(stdout);
 }
 
 #[test]
