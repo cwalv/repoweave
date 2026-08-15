@@ -24,6 +24,11 @@
 //! that advice true; it is also the one test whose EXPECTED outcome is the
 //! tool succeeding.
 //!
+//! A missing tool below fails loudly instead of skipping quietly: a quiet
+//! skip here is exactly the unmeasured state the linkage above exists to
+//! rule out, and nothing but the real tool lifts it — a PATH shim would
+//! only prove the shim ran.
+//!
 //! Observations recorded on 2026-04-05, tool versions:
 //!   cargo  1.94.0
 //!   go     1.26.1
@@ -87,10 +92,12 @@ fn write_file(path: &Path, content: &str) {
 ///   the local version satisfies the version constraint.
 #[test]
 fn cargo_catches_workspace_version_mismatch() {
-    if !tool_available("cargo") {
-        eprintln!("SKIP: cargo not on PATH");
-        return;
-    }
+    assert!(
+        tool_available("cargo"),
+        "SKIP: cargo not on PATH. This test measures cargo's own resolver, \
+         not a stand-in for it — a PATH shim would only prove the shim ran. \
+         Install cargo to lift this."
+    );
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
@@ -186,10 +193,12 @@ fn cargo_catches_workspace_version_mismatch() {
 ///   Error contains: `github.com/test/lib@v0.0.0: reading github.com/test/lib/go.mod`
 #[test]
 fn go_work_catches_version_mismatch() {
-    if !tool_available("go") {
-        eprintln!("SKIP: go not on PATH");
-        return;
-    }
+    assert!(
+        tool_available("go"),
+        "SKIP: go not on PATH. This test measures go's own module-path \
+         resolution, not a stand-in for it — a PATH shim would only prove \
+         the shim ran. Install go to lift this."
+    );
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
@@ -282,17 +291,20 @@ fn go_work_catches_version_mismatch() {
 ///   matching published version, and errors.
 #[test]
 fn npm_workspace_checks_version_mismatch() {
-    if !tool_available("npm") {
-        eprintln!("SKIP: npm not on PATH");
-        return;
-    }
-    if tool_major_version("npm") < 10 {
-        eprintln!(
-            "SKIP: npm {} does not enforce workspace version constraints (need 10+)",
-            tool_major_version("npm")
-        );
-        return;
-    }
+    assert!(
+        tool_available("npm"),
+        "SKIP: npm not on PATH. This test measures npm's own workspace \
+         resolver, not a stand-in for it — a PATH shim would only prove \
+         the shim ran. Install npm to lift this."
+    );
+    let npm_major = tool_major_version("npm");
+    assert!(
+        npm_major >= 10,
+        "SKIP: npm {npm_major} does not enforce workspace version \
+         constraints (need 10+) — the constraint this test measures does \
+         not exist below npm 10, so nothing but a real npm 10+ exercises \
+         it. Upgrade npm to lift this."
+    );
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
@@ -375,10 +387,12 @@ fn npm_workspace_checks_version_mismatch() {
 ///   This matches pip's behavior for editable / path installs.
 #[test]
 fn uv_workspace_silently_allows_version_mismatch() {
-    if !tool_available("uv") {
-        eprintln!("SKIP: uv not on PATH");
-        return;
-    }
+    assert!(
+        tool_available("uv"),
+        "SKIP: uv not on PATH. This test measures uv's own \
+         workspace-source override, not a stand-in for it — a PATH shim \
+         would only prove the shim ran. Install uv to lift this."
+    );
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
