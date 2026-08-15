@@ -34,6 +34,10 @@ Code is cited as `file:line` against this repo. Docs are cited by path.
 **Citation base and convention.** Every `file:line` citation in this document
 was re-verified against commit `bd443d7bbd5c026414c807a932841cc2a9ecd79b`
 (2026-07-26). A `[V]` marker means "true at `bd443d7`". The implementation of
+Text added to this document *after* that base states its own — a section
+written later cannot have been verified at a commit that predates it, and one
+section (§4.4's consent-token argument) cites a module the base tree does not
+contain at all. The implementation of
 this model finished landing earlier, at `37548fd` (2026-07-25); that is still
 the commit the "Decided here" and "Decided in revision" claims in §10 shipped
 at, and it is named there rather than here, because a citation base and a
@@ -1128,6 +1132,13 @@ same pass. The three it contrasted against — `checkout`, `delete_branch`,
 sites had an answer.
 
 ### 4.4 The consent and warrant tokens — **shipped**
+
+> **Citation base for this section: `af405e1`, not the document's `bd443d7`.**
+> The passages below were written after that base and cite
+> `src/cli/consent.rs`, a file the base tree does not contain — the module was
+> extracted from `cli.rs` later. A `[V]` here therefore means "true at
+> `af405e1`"; the header's promise covers the rest of the document and cannot
+> cover text that postdates it.
 
 Homes, as specified: the two ATTACH consents live in the CLI flag module
 (`cli::consent`, `src/cli/consent.rs` — `DetachConsent` at `:50`,

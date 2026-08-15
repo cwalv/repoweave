@@ -6,8 +6,27 @@ This document owns the *cross-module* facts no single file can state. It links
 out — rather than restating — for the user-facing contracts, which live in
 `docs/` and are the published surface.
 
-Every mechanism claim below carries a `file:line` citation. Line numbers are
-against the tree at the time of writing; symbol names are the durable anchor.
+Every mechanism claim below names the symbol it is about and the file that
+holds it. It does not carry line numbers, and that is a decision rather than an
+omission: this document used to cite `file:line` against "the tree at the time
+of writing", a base no reader could check, and the numbers rotted. Measured
+before they came out, 18 of the 21 coordinates that could be checked
+mechanically were wrong — some by more than a thousand lines — while the symbol
+named beside each one was right in every case. A name survives the edit that
+moves it; a number does not, and a number nobody can date cannot even be shown
+to be stale.
+
+**Counts and file lengths in this document are verified at commit `af405e1`.**
+Those are the claims a symbol cannot carry — how many modules there are, how
+long a file is, how many of a thing exist — so they are dated instead, the same
+convention [`docs/internals/branch-model.md`](docs/internals/branch-model.md)
+uses for its own citations. A count here means "true at `af405e1`"; re-derive
+before trusting one against a later tree.
+
+The residue, stated where the rule is: a symbol that is renamed leaves this
+document wrong in a way that greps clean, because the old name simply stops
+occurring. No gate reads this file for symbol names — `check_doc_symbol_refs`
+scans comments in `.rs` sources, not markdown — so that check is a human one.
 
 ## 1. What rwv is
 
@@ -29,7 +48,7 @@ Three properties shape everything below:
   refs. Nothing rwv knows is held anywhere else.
 - **The VCS is a subprocess, not a library.** `Cargo.toml` declares no `git2`
   and no `gix`; every VCS operation shells out through one command builder
-  (`git_command`, `src/git.rs:32`).
+  (`git_command`, `src/git.rs`).
 
 Because there is no process to crash, crash recovery is a *state* question, not
 a supervision one: a multi-repo operation that dies mid-flight leaves a record
@@ -49,7 +68,7 @@ visibility.
 
 `src/main.rs` is thirteen lines whose entire body is
 `repoweave::cli::dispatch::run()`. The emptiness is load-bearing and documented
-at `src/main.rs:1-9`: a `[[bin]]` is a separate crate from the `[lib]`, so any
+at `src/main.rs`: a `[[bin]]` is a separate crate from the `[lib]`, so any
 logic placed there could only reach the library through `pub` items. Keeping it
 empty is what lets the consent tokens in `src/cli/consent.rs` stay
 `pub(in crate::cli)` (§6.1).
@@ -58,11 +77,11 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 
 | Module | Owns |
 |---|---|
-| `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` (`:24`) and `Commands` (`:66`). |
+| `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` and `Commands`. |
 | `cli::consent` (`src/cli/consent.rs`) | The seven consent tokens plus the `DriftConsent` either/or enum, each minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
-| `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` (`:321`) — argv interception, parse, the single resolution point, and the verb match. |
-| `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` (`:75`) and its `resolve` (`:549`); `Checkout` (`:163`); `Resolution` (`:1017`); the `.rwv-active` / `.rwv-workweave` marker constants (`:247`, `:250`). |
-| `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait (`:63`), `resolve_to_clone_info` (`:235`) — the shared resolution path for `fetch` and `init --adopt`. Unrelated to integrations despite the name. |
+| `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` — argv interception, parse, the single resolution point, and the verb match. |
+| `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. |
+| `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait, `resolve_to_clone_info` — the shared resolution path for `fetch` and `init --adopt`. Unrelated to integrations despite the name. |
 | `selector` (`src/selector.rs`, 438) | The shared `--role` / `--repo` filter grammar. |
 
 ### Data model
@@ -70,12 +89,12 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | Module | Owns |
 |---|---|
 | `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, and the typed rendering pair `weave_dir_name` / `parse_weave_dir_name`. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
-| `manifest` (`src/manifest.rs`, 3152) | `Manifest` (`:937`), `LockFile` (`:1112`), `Project` (`:1352`), and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
+| `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
-| `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` (`:99`) and `RefRegistry` (`:595`) — the ref-ownership receipt store. |
-| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` (`:90`) / `SyncStrategy` (`:139`), the two record fields the engine also reads. |
-| `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`, `:48`): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
+| `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` and `RefRegistry` — the ref-ownership receipt store. |
+| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` / `SyncStrategy`, the two record fields the engine also reads. |
+| `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. Used by `workweave_index` and `op_state`. |
 
 ### Verbs
@@ -89,9 +108,9 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 
 | Module | Owns |
 |---|---|
-| `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait (`:1762`), its witness and warrant types, and `VcsError` (`:296`). §6.1. |
-| `git` (`src/git.rs`, 3869) | The one implementor, `GitVcs` (`:330`, `impl` at `:731`), plus `git_command()` (`:32`). |
-| `integration` (`src/integration.rs`, 618) | The `Integration` trait (`:416`) and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` (`:302`) the trait returns. §6.2. |
+| `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait, its witness and warrant types, and `VcsError`. §6.1. |
+| `git` (`src/git.rs`, 3869) | The one implementor, `GitVcs`, plus `git_command()`. |
+| `integration` (`src/integration.rs`, 618) | The `Integration` trait and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` the trait returns. §6.2. |
 | `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
 | `integration_runner` (`src/integration_runner.rs`, 867) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
 | `plugins` (`src/plugins.rs`, 759) | External-subcommand discovery and dispatch. §6.4. |
@@ -99,29 +118,29 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 
 ## 3. Process model
 
-One process, one verb, then exit. `run()` (`src/cli/dispatch.rs:321`) proceeds
+One process, one verb, then exit. `run()` (`src/cli/dispatch.rs`) proceeds
 in five ordered steps.
 
-**1. Pre-parse argv interception** (`dispatch.rs:325-461`). A raw
+**1. Pre-parse argv interception** (`dispatch.rs`). A raw
 `std::env::args()` scan, before clap sees anything, that turns retired flag
 spellings into `exit(2)` migration errors. It also catches a mistyped
 `rwv workweave <PROJECT> <WORD>` subcommand with a Levenshtein guard
-(`SUBCOMMAND_TYPO_THRESHOLD = 2`, `dispatch.rs:447`).
+(`SUBCOMMAND_TYPO_THRESHOLD = 2`, `dispatch.rs`).
 
-**2. Command build** (`dispatch.rs:473-479`). `Cli::command()` plus a
+**2. Command build** (`dispatch.rs`). `Cli::command()` plus a
 dynamically appended "External commands" `after_help` section listing the
 plugins found on `PATH` (§6.4).
 
-**3. Parse** (`dispatch.rs:487-502`).
+**3. Parse** (`dispatch.rs`).
 
-**4. The single resolution point** (`dispatch.rs:504-561`). Two steps, in
+**4. The single resolution point** (`dispatch.rs`). Two steps, in
 order:
 
 - *Workspace origin.* With no `-C`, `workspace::acquire_origin_dir()`
-  (`src/workspace.rs:52`) — the only cwd read that feeds resolution; the one
+  (`src/workspace.rs`) — the only cwd read that feeds resolution; the one
   other reader is `workweave delete`'s step-out probe, which treats the cwd
   as an open handle to release, never as an origin. With `-C`, the
-  canonicalized override. **Resolution never `chdir`s** (`dispatch.rs:517-520`);
+  canonicalized override. **Resolution never `chdir`s** (`dispatch.rs`);
   every path is absolute from here on. The one `chdir` in the tree is that
   same step-out, long after resolution, releasing the deleting process's own
   handle on a workweave it is about to remove.
@@ -133,13 +152,13 @@ order:
 verbs that act on a project, and feeds `WorkspaceContext::resolve` as
 `project_override`.
 
-**5. The verb match** (`dispatch.rs:562-1116`), which calls one module's entry
+**5. The verb match** (`dispatch.rs`), which calls one module's entry
 point. The unmatched-verb arm falls through to plugin dispatch (§6.4).
 
 ### Where parallelism lives
 
 There are no threads outside `parallel::run_in_parallel`
-(`src/parallel.rs:175`), which runs a closure over items in a bounded
+(`src/parallel.rs`), which runs a closure over items in a bounded
 `std::thread::scope` pool and gathers results in input order. `fetch` and
 `update` default to `min(available_parallelism, 8)`; `sync`, `sync-to` and
 `push` default to serial, because their `--json` envelope is a single document
@@ -153,12 +172,12 @@ All durable rwv state is files. There is no database and no cache directory.
 |---|---|---|---|
 | `rwv.toml` | — | `projects/<name>/` | Committed intent: membership, roles, per-integration config. |
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
-| `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs:247` | weave root | Which project the primary root currently presents. Ambient default. |
-| `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs:250` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
-| `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs:99` | `projects/<project>/` | The primary's inverse view: container path, name→path map, and `RefRegistry` receipts. |
-| `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs:73` | a workspace root | The owner record of an in-flight multi-repo operation. §5. |
-| `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs:76` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
-| `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs:48` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
+| `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. |
+| `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
+| `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs` | `projects/<project>/` | The primary's inverse view: container path, name→path map, and `RefRegistry` receipts. |
+| `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a workspace root | The owner record of an in-flight multi-repo operation. §5. |
+| `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
+| `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
 
 Two ownership rules are structural rather than conventional:
 
@@ -168,14 +187,14 @@ its workweaves are. The index is **advisory** — every entry consumed from it i
 validated by round-tripping through the target's marker (`marker.primary`
 canonicalizes to this primary, `marker.project` matches). A stale or foreign
 entry degrades to `None` plus a `rwv doctor` finding; destructive operations
-hard-require the round-trip (`src/workweave_index.rs:63-79`).
+hard-require the round-trip (`src/workweave_index.rs`).
 
 **`RefRegistry` is a receipt store, not a cache.** It records that rwv created a
 particular ref name in a particular store, and it is the reason rwv can destroy
 a ref: without a receipt, a ref is somebody else's. It is homed in the
 *primary's* project checkout rather than in the workweave's marker because
 deleting a workweave is a `remove_dir_all`, which would take a marker-homed
-receipt with it (`src/workweave_index.rs:48-53`).
+receipt with it (`src/workweave_index.rs`).
 
 `.rwv-active` and `.rwv-workweave` are **mutually exclusive**; `rwv doctor`
 reports the conflict.
@@ -183,13 +202,12 @@ reports the conflict.
 ## 5. The sync phase machine
 
 `sync` and `sync-to` are one machine. `src/sync.rs` exposes four public entry
-points — `run_sync` (`:1906`), `run_sync_json` (`:5175`), `run_sync_to`
-(`:5300`), `run_sync_to_json` (`:5314`) — that all delegate to one private
-driver, `run_machine` (`:1932`).
+points — `run_sync`, `run_sync_json`, `run_sync_to`, `run_sync_to_json` — that all delegate to one private
+driver, `run_machine`.
 
 ### Shape
 
-The phase type is `op_state::OpPhase` (`src/op_state.rs:119`), a four-variant
+The phase type is `op_state::OpPhase` (`src/op_state.rs`), a four-variant
 enum that serializes kebab-case:
 
 ```rust
@@ -198,9 +216,9 @@ pub enum OpPhase { Replay, Relock, AdvanceTarget, Retire }
 
 The full lifecycle is eight stages —
 `guard → mark → savepoint → replay → relock → advance-target → retire → cleanup`
-(`src/op_state.rs:112-114`) — but only the middle four are *phases*. Guard,
+(`src/op_state.rs`) — but only the middle four are *phases*. Guard,
 mark and savepoint run once before the loop, inside `guard_and_mark`
-(`src/sync.rs:2365`); cleanup runs once after it (`src/sync.rs:4265`).
+(`src/sync.rs`); cleanup runs once after it (`src/sync.rs`).
 
 Control flow is a loop over persisted state, not a sequence of calls:
 
@@ -217,22 +235,22 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 }
 ```
 
-(`src/sync.rs:1964`.) `run_phase` (`:1986`) is a four-arm match; each arm calls
+(`src/sync.rs`.) `run_phase` is a four-arm match; each arm calls
 one phase function and returns the next phase, with `None` terminal.
-`next_after_relock` (`:2012`) is where plain `sync` and `sync-to` diverge —
+`next_after_relock` is where plain `sync` and `sync-to` diverge —
 `sync` terminates after relock, `sync-to` continues to advance-target.
 
-Per phase: `run_replay` (`:3576`), `run_relock` (`:4006`),
-`run_advance_target` (`:4097`), `run_retire` (`:4234`).
+Per phase: `run_replay`, `run_relock`,
+`run_advance_target`, `run_retire`.
 
 ### Why the loop reads from disk
 
-`op_state::set_phase` (`src/op_state.rs:696`) is the **single persistence
-point** of the whole machine. The driver loop's call (`sync.rs:1957`) is a
-*post*-transition write; resume entry (`sync.rs:2806`) writes through the same
+`op_state::set_phase` (`src/op_state.rs`) is the **single persistence
+point** of the whole machine. The driver loop's call (`sync.rs`) is a
+*post*-transition write; resume entry (`sync.rs`) writes through the same
 function before re-entering a phase, so the write itself is not ordered with
 respect to the transition — the loop's use of it is. The invariant, stated at
-`src/sync.rs:1953-1962`, is that the persisted phase is the phase in progress
+`src/sync.rs`, is that the persisted phase is the phase in progress
 and every phase is re-runnable from the record alone. That gives three crash
 positions and one rule:
 
@@ -244,72 +262,72 @@ positions and one rule:
 - after `set_phase` committed — resume enters the next phase directly.
 
 `--continue` is therefore not a separate code path: `run_machine` chooses
-`load_continuing_context` (`:2727`) over `guard_and_mark` and enters the same
+`load_continuing_context` over `guard_and_mark` and enters the same
 loop. There are no resume flags threaded through call stacks
-(`src/sync.rs:1740`).
+(`src/sync.rs`).
 
 ### What the record holds, and what it deliberately does not
 
-`OwnerRecord` (`src/op_state.rs:242`) is YAML, written only at the initiating
-workspace; other mutated workspaces get a `LeaseRecord` (`:414`) that is an id
-plus a pointer. `resolve_to_owner` (`:464`) follows the pointer, so `--continue`
+`OwnerRecord` (`src/op_state.rs`) is YAML, written only at the initiating
+workspace; other mutated workspaces get a `LeaseRecord` that is an id
+plus a pointer. `resolve_to_owner` follows the pointer, so `--continue`
 and `abort` behave identically from either side.
 
 Per-repo *progress* is not in the record — savepoint refs and the VCS's own
 mid-operation state already are that. What the record holds is per-repo
-*intent*, which the VCS cannot: `PhaseTips` (`:165`) is a two-state enum,
+*intent*, which the VCS cannot: `PhaseTips` is a two-state enum,
 `Replay(map)` before relock and `Converged(map)` after, swapped at a single
-point by `PhaseTips::converge` (`:219`). It has no serde impls of its own; the
-`WireOwnerRecord` shim (`:283`) flattens it into two independent YAML keys,
+point by `PhaseTips::converge`. It has no serde impls of its own; the
+`WireOwnerRecord` shim flattens it into two independent YAML keys,
 `advanced_tips` and `converged_tips`.
 
-That distinction is what `abort` consumes. `run_abort` (`src/sync.rs:4688`) runs
+That distinction is what `abort` consumes. `run_abort` (`src/sync.rs`) runs
 two rails per repo: it first writes a pre-abort ref at the current tip, then
 performs a **verified restore** — resetting to the savepoint only when the
 observed tip is attributable to the operation. `VerifiedRestoreOutcome`
-(`src/vcs.rs:553`) enumerates the answers, including `ForeignTip`, which is
+(`src/vcs.rs`) enumerates the answers, including `ForeignTip`, which is
 reported rather than reset and blocks the record from being cleared
-(`src/sync.rs:4935-4945`).
+(`src/sync.rs`).
 
 Savepoints are git refs under `refs/rwv/pre-op/<op-id>`; pre-abort refs under
-`refs/rwv/pre-abort/<op-id>`. `OpId` (`src/op_state.rs:90`) is nanoseconds since
-epoch, minted by `OpId::new_now()` (`:100`).
+`refs/rwv/pre-abort/<op-id>`. `OpId` (`src/op_state.rs`) is nanoseconds since
+epoch, minted by `OpId::new_now()`.
 
 ## 6. The seams
 
 ### 6.1 `Vcs`
 
-`pub trait Vcs` (`src/vcs.rs:1762`) is the whole VCS surface: every VCS
+`pub trait Vcs` (`src/vcs.rs`) is the whole VCS surface: every VCS
 operation is a method on it, wide and flat — no supertraits, no associated
 types, object-safe. One implementor exists —
-`GitVcs` (`src/git.rs:330`), a unit struct, `impl` at `src/git.rs:731`. Callers
-reach it two ways: `vcs_for(VcsType)` (`src/vcs.rs:280`) returning
+`GitVcs` (`src/git.rs`), a unit struct, `impl` at `src/git.rs`. Callers
+reach it two ways: `vcs_for(VcsType)` (`src/vcs.rs`) returning
 `Box<dyn Vcs>` for the manifest-driven paths, and direct use of the unit value
 `GitVcs` elsewhere. `manifest::VcsType` has one variant today; `jj`, `sl` and
 `hg` appear only in the trait's doc comment.
 
-The trait divides at a banner (`src/vcs.rs:2458-2477`) into a pre-branch-model
+The trait divides at a banner (`src/vcs.rs`) into a pre-branch-model
 half and the branch model proper. The second half is the part that carries
 architecture rather than mechanism: **every ref write is one of four kinds —
 MOVE, ATTACH, DESTROY, DESTROY-STORE — and each method takes the proof its kind
 requires.** The proof is a value that cannot be forged:
 
-- **Observation witnesses.** `AttachedRef` (`:1187`), `UnbornRef` (`:1248`) and
-  `DetachedHead` (`:1275`) have no public constructor. The only code that
-  builds them is the default body of `Vcs::head_attachment` (`:2499`), which
-  wraps the implementable half, `observe_head` (`:2490`) returning
-  `HeadObservation` (`:1458`). Splitting the observable enum from the witness
-  enum is what makes the witnesses unforgeable. `verify_attachment` (`:2523`)
+- **Observation witnesses.** `AttachedRef`, `UnbornRef` and
+  `DetachedHead` have no public constructor. The only code that
+  builds them is the default body of `Vcs::head_attachment`, which
+  wraps the implementable half, `observe_head` returning
+  `HeadObservation`. Splitting the observable enum from the witness
+  enum is what makes the witnesses unforgeable. `verify_attachment`
   re-observes and fails with `VcsError::StaleRefWitness` if the world moved.
-- **Ownership receipts.** `OwnedRef` (`:1066`) means rwv holds a persisted
+- **Ownership receipts.** `OwnedRef` means rwv holds a persisted
   receipt for exactly this name in exactly this store.
   `OwnedRef::from_receipt` is `pub(crate)` with two callers, both in
   `src/workweave_index.rs` — the registry read and write paths (§4). A ref rwv
   did not record creating cannot be spoken of as owned.
-- **Warrants.** `DeletionWarrant` (`:1667`) wraps a private enum with four
+- **Warrants.** `DeletionWarrant` wraps a private enum with four
   constructors, so "may I delete this" is answered by construction rather than
-  by a boolean argument. `DiscardWarrant` (`:1630`) pairs a `SavepointRef`
-  (`:1597`) with an operator consent token: a destructive reset is
+  by a boolean argument. `DiscardWarrant` pairs a `SavepointRef`
+  with an operator consent token: a destructive reset is
   representable only when a savepoint provably exists.
 - **Consent tokens.** Four of the five live in `pub mod consent`
   (`src/cli/consent.rs`), not in `vcs`, with `from_flag` constructors that are
@@ -321,8 +339,8 @@ Several witness types deliberately have **no `as_str()`** — `TrackingRef`,
 `OwnedRef`, `AttachedRef` — so a caller cannot launder a proof back into a
 bare string. `compile_fail` doctests pin this.
 
-`VcsError` (`:296`) carries a `kind()` (`:355`) of stable kebab-case tags and a
-serializable mirror, `VcsErrorOutput` (`:380`), for `--json`.
+`VcsError` carries a `kind()` of stable kebab-case tags and a
+serializable mirror, `VcsErrorOutput`, for `--json`.
 
 **What the seam holds by compiler, and what it does not.** No production frame
 outside `git.rs` spawns git or assembles its argv: `git_command` is private to
@@ -343,14 +361,14 @@ seven defaulted (`detection_manifests`, `activate_hook`, `generated_files`,
 `managed_files`, `verify`, `owned_paths_on_disk`, `member_incompatibility`).
 
 Eight built-in implementors, all unit structs, returned in fixed order by
-`builtin_integrations()` (`src/integrations/mod.rs:23`): `npm-workspaces`,
+`builtin_integrations()` (`src/integrations/mod.rs`): `npm-workspaces`,
 `pnpm-workspaces`, `go-work`, `uv-workspace`, `cargo-workspace`, `gita`,
 `vscode-workspace`, `static-files`.
 
 **There is no id-to-implementation lookup.** No map, no registry, no dynamic
 loading. The set is the fixed `Vec`, and `name()` is consulted for exactly one
 purpose: fetching that integration's config out of `manifest.integrations`
-inside `for_each_enabled` (`src/integration_runner.rs:131`). Integrations are
+inside `for_each_enabled` (`src/integration_runner.rs`). Integrations are
 compiled in; the plugin mechanism (§6.4) is unrelated and does not reach this
 trait.
 
@@ -360,19 +378,19 @@ because the two halves are easy to confuse:
 - **`integration.rs`** defines the contract and the per-integration input,
   `IntegrationContext`.
 - **`integration_runner.rs`** assembles that input once per cycle
-  (`IntegrationContextBase`, `:17`), precomputes the on-disk detection cache
-  (`build_detection_cache`, `:52`), filters by enablement, and drives six
-  entry points — `run_activations` (`:170`), `run_checks` (`:188`),
-  `run_verifications` (`:209`), `run_member_incompatibilities` (`:232`),
-  `run_activate_hooks` (`:257`), `run_deactivations` (`:276`). It does **not**
+  (`IntegrationContextBase`,), precomputes the on-disk detection cache
+  (`build_detection_cache`,), filters by enablement, and drives six
+  entry points — `run_activations`, `run_checks`,
+  `run_verifications`, `run_member_incompatibilities`,
+  `run_activate_hooks`, `run_deactivations`. It does **not**
   own the list: callers pass `&[&dyn Integration]`.
 - Errors are contained per integration: one integration returning `Err` becomes
   an `Issue` tagged with its name, and iteration continues.
 
 `src/integrations/merge.rs` is the shared managed-file engine the hybrid
-implementors call — the `ManagedDoc` trait (`:210`) and its `JsonDoc` /
-`TomlDoc` / `YamlDoc` / `GoWorkDoc` implementations, `merge_activate` (`:282`)
-/ `strip_deactivate` (`:358`), and the ownership-marker machinery — so the
+implementors call — the `ManagedDoc` trait and its `JsonDoc` /
+`TomlDoc` / `YamlDoc` / `GoWorkDoc` implementations, `merge_activate`
+/ `strip_deactivate`, and the ownership-marker machinery — so the
 hybrid-file invariants live once rather than per integration. It imports
 `Issue`, `IssueKind` and `Severity` and nothing else from core. Its contract is
 published at
@@ -394,8 +412,8 @@ scales, and they explain several otherwise-odd shapes in the tree:
 
 | Shape | Enforces |
 |---|---|
-| `ResolvedRevisionId` (`src/vcs.rs:40`) serializes but does not deserialize; `RawRevisionId` (`:166`) does both | A revision read from a lock file cannot be mistaken for one resolved against a repo. |
-| `ResolvedLockFile` (`src/manifest.rs:1153`) has no `Deserialize` | Same rule at the file level: parsing yields `LockFile`; resolution is a separate, explicit step (`resolve_versions`, `:1246`). |
+| `ResolvedRevisionId` (`src/vcs.rs`) serializes but does not deserialize; `RawRevisionId` does both | A revision read from a lock file cannot be mistaken for one resolved against a repo. |
+| `ResolvedLockFile` (`src/manifest.rs`) has no `Deserialize` | Same rule at the file level: parsing yields `LockFile`; resolution is a separate, explicit step (`resolve_versions`,). |
 | Witnesses, receipts, warrants and consent tokens (§6.1) | A destructive VCS operation is unrepresentable without the proof its class requires. |
 
 ### 6.4 Plugin dispatch
@@ -403,25 +421,25 @@ scales, and they explain several otherwise-odd shapes in the tree:
 A plugin is an executable named `rwv-<verb>` on `PATH`. There is no protocol,
 no envelope message, and no stdio contract.
 
-Discovery is `which`-based: `find_plugin` (`src/plugins.rs:303`) for a single
-lookup, `discover_plugins` (`:146`) for the `--help` listing and for
+Discovery is `which`-based: `find_plugin` (`src/plugins.rs`) for a single
+lookup, `discover_plugins` for the `--help` listing and for
 `rwv doctor`. First occurrence in `PATH` order wins; later copies are reported
 as `shadowed` rather than silently dropped. Core verbs always win — clap parses
 them before the external-subcommand fallthrough fires, so a `rwv-status` on
-`PATH` can never shadow the built-in (`src/plugins.rs:7-9`).
+`PATH` can never shadow the built-in (`src/plugins.rs`).
 
-Invocation is a plain subprocess: `build_command` (`:264`) is the single seam
-that constructs it, `dispatch_external` (`:319`) spawns and waits, and the call
-site is `src/cli/dispatch.rs:1112`. Stdio is fully inherited — the child owns
+Invocation is a plain subprocess: `build_command` is the single seam
+that constructs it, `dispatch_external` spawns and waits, and the call
+site is `src/cli/dispatch.rs`. Stdio is fully inherited — the child owns
 the terminal and rwv wraps none of its output. Exit status propagates, with
 signals mapped to `128 + sig`.
 
-**The envelope is environment variables.** `envelope_vars` (`:92`) projects
+**The envelope is environment variables.** `envelope_vars` projects
 `workspace::Resolution` (§7) into four variables: `RWV_VERSION`,
 `RWV_WORKSPACE`, `RWV_WORKWEAVE`, `RWV_PROJECT`. Presence of `RWV_WORKWEAVE`
 encodes the checkout kind; there is no `kind` field. rwv never reads these back
 — they are outputs only, and a plugin that wants to call rwv passes them as
-arguments (`src/plugins.rs:62-68`). The addressing flags rwv consumed (`-C`,
+arguments (`src/plugins.rs`). The addressing flags rwv consumed (`-C`,
 `-w`, `--project`) never appear in the child's argv.
 
 Compatibility handling is exactly one mechanism: `RWV_VERSION`. There is no
@@ -430,20 +448,19 @@ negotiation, no minimum-version check, and no capability handshake.
 ## 7. Output and generated artifacts
 
 **There is no shared output envelope.** Each `--json`-capable verb owns its own
-top-level struct — `StatusJsonOutput` (`src/status.rs:22`), `FetchJsonOutput`
-(`src/fetch.rs:60`), `UpdateJsonOutput` (`src/update.rs:75`), `PushJsonOutput`
-(`src/push.rs:91`), `SyncJsonOutput` (`src/sync.rs:484`), `SyncToJsonOutput`
-(`:509`) — each pinning its own schema URL. `rwv doctor` has no library struct
+top-level struct — `StatusJsonOutput` (`src/status.rs`), `FetchJsonOutput`
+(`src/fetch.rs`), `UpdateJsonOutput` (`src/update.rs`), `PushJsonOutput`
+(`src/push.rs`), `SyncJsonOutput` (`src/sync.rs`), `SyncToJsonOutput` — each pinning its own schema URL. `rwv doctor` has no library struct
 at all; it builds a `serde_json::Value` in `build_doctor_json`
-(`src/check.rs:8185`).
+(`src/check.rs`).
 
-What *is* shared is `Resolution` (`src/workspace.rs:1017`): every envelope
+What *is* shared is `Resolution` (`src/workspace.rs`): every envelope
 carries it, and it is the same value the plugin envelope projects (§6.4). Under
 `-j N > 1` the envelope is dropped and each per-repo record is emitted as a
 self-describing NDJSON line via `#[serde(flatten)]` wrappers.
 
 Stdout belongs to the JSON-capable verbs; operator prose goes to stderr
-(`src/workspace.rs:741-742`).
+(`src/workspace.rs`).
 
 ### Generated docs are checked into the tree
 
@@ -452,7 +469,7 @@ Stdout belongs to the JSON-capable verbs; operator prose goes to stderr
 It **assembles**: each of the 16 `docs/reference/explain/templates/<verb>.md.tmpl`
 becomes `docs/reference/explain/<verb>.md`, and for the seven verbs with a JSON
 envelope the schemars-derived schema is spliced in and also written out to
-`docs/reference/schemas/<verb>.json`. `src/explain.rs:14-30` then `include_str!`s
+`docs/reference/schemas/<verb>.json`. `src/explain.rs` then `include_str!`s
 the assembled markdown into the binary, which is how `rwv explain` works with no
 filesystem access at runtime.
 
