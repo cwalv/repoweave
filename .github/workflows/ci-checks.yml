@@ -1,14 +1,17 @@
 # The checks that decide whether a commit is releasable, on every platform a
 # release artifact targets.
 #
-# Called by ci.yml on push and pull_request, and by release.yml on a version
-# tag — declared once here so the two cannot drift, for the same reason
-# scripts/ci-local.sh exists.
+# Called by ci.yml on push and pull_request. release.yml does not re-run
+# these checks on a version tag: its require-green-ci.yml job gates the
+# artifact builds on the recorded conclusion of ci.yml's run for the tagged
+# commit — one definition here, one reader of its verdict, so CI and the
+# release gate cannot drift, for the same reason scripts/ci-local.sh exists.
 #
 # What a green run of this workflow does NOT establish is that a release is
 # safe to publish; see .githooks/pre-push, which is the gate that keeps a tag
-# off a red commit in the first place. By the time release.yml calls this, its
-# `plan` job has already run `dist host --steps=create`.
+# off a red commit in the first place. The green-CI gate is a `needs:` of the
+# artifact builds only, so release.yml's `plan` job runs
+# `dist host --steps=create` regardless of the verdict.
 name: CI checks
 
 on:
