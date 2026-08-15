@@ -110,9 +110,9 @@ only whether one exists. The observation surface is `Vcs::head_attachment`
 derives nothing from observation at all (§3.5). `add_remove.rs` reached zero
 too and has since come back to one, for a different purpose: `rwv add --new`
 reads `head_attachment` to learn what branch `git init` actually chose, and
-writes that into `version:` (`add_remove.rs:693-703`) `[V]`. That is an
-observation feeding a *tracking declaration*, not an ephemeral name — §6.2's
-`"main"` fabrication replaced by a real read.
+writes that into `version:` (the read at `add_remove.rs:693-703`, the write
+at `:709`) `[V]`. That is an observation feeding a *tracking declaration*,
+not an ephemeral name — §6.2's `"main"` fabrication replaced by a real read.
 
 Everything structural is still SHA-and-DAG:
 
