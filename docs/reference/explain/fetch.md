@@ -242,7 +242,7 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root (absolute path).",
+          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
           "type": "string"
         },
         "workweave": {

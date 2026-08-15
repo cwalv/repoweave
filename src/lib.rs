@@ -46,6 +46,7 @@ pub mod lock;
 pub mod manifest;
 pub mod op_state;
 pub mod parallel;
+pub mod path_spelling;
 pub mod plugins;
 pub mod prime;
 pub mod push;

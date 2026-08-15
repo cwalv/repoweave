@@ -94,19 +94,12 @@ role = "fork"
 
 #[test]
 fn recipe_checkout_branch_across_forks_via_jq_xargs() {
-    // The pinned recipe is Unix shell composition by design: bare `xargs`
-    // treats backslash as its escape character, so the pipeline word-splits
-    // the Windows spelling of `absolute_path`, and there is no Windows form
-    // of this recipe to pin until the how-to's plugin-tier revision gives it
-    // one. Skipped there, loudly, rather than decoupled from the doc line it
-    // quotes verbatim.
-    if cfg!(windows) {
-        eprintln!(
-            "SKIP: the pinned recipe is Unix shell composition; bare xargs \
-             cannot carry Windows path spellings"
-        );
-        return;
-    }
+    // The guard this test used to carry is gone: `absolute_path` is now
+    // minted in the wire spelling on every platform, so the value the
+    // pipeline carries has no backslash for bare `xargs` to read as an
+    // escape. That is the whole reason the wire surface owes programs
+    // forward slashes, and this recipe is the measured consumer it owes them
+    // to.
     if !ensure_tool("jq") || !ensure_tool("xargs") {
         eprintln!("skipping: jq or xargs not on PATH");
         return;
@@ -164,6 +157,13 @@ fn recipe_filter_by_role_owned_via_jq() {
     let paths = String::from_utf8(output.stdout).unwrap();
     let lines: Vec<&str> = paths.lines().collect();
     assert_eq!(lines.len(), 1, "expected one owned repo, got: {paths:?}");
-    assert!(common::path_ends_with(lines[0], "github/org/primary"));
+    // Exact spelling, not a component-wise suffix: the point of the wire
+    // mint is which bytes arrive, and a suffix match cannot see a separator
+    // change.
+    assert_eq!(
+        lines[0],
+        repoweave::path_spelling::wire_path(&ws.join("github/org/primary")),
+        "the recipe must receive the wire spelling verbatim"
+    );
     assert!(std::path::Path::new(lines[0]).is_absolute());
 }

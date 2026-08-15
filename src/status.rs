@@ -332,7 +332,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                     role: entry.role.as_str().to_string(),
                     url: entry.url.to_string(),
                     project: pname.to_string(),
-                    absolute_path: repo_abs.to_string_lossy().to_string(),
+                    absolute_path: crate::path_spelling::wire_path(&repo_abs),
                     parent: recorded_parent.as_ref().map(|parent_path| ParentInfo {
                         path: parent_path.to_string_lossy().to_string(),
                         tip: None,
@@ -380,7 +380,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                     role: entry.role.as_str().to_string(),
                     url: entry.url.to_string(),
                     project: pname.to_string(),
-                    absolute_path: repo_abs.to_string_lossy().to_string(),
+                    absolute_path: crate::path_spelling::wire_path(&repo_abs),
                     parent,
                 });
                 continue;
@@ -424,7 +424,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                 role: entry.role.as_str().to_string(),
                 url: entry.url.to_string(),
                 project: pname.to_string(),
-                absolute_path: repo_abs.to_string_lossy().to_string(),
+                absolute_path: crate::path_spelling::wire_path(&repo_abs),
                 parent,
             });
         }

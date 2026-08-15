@@ -190,7 +190,7 @@ fn sha(byte: char) -> String {
 
 fn resolution() -> Resolution {
     Resolution {
-        workspace: PathBuf::from("/ws"),
+        workspace: "/ws".to_owned(),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
         project: "proj".into(),
@@ -199,7 +199,7 @@ fn resolution() -> Resolution {
 
 fn primary_resolution() -> Resolution {
     Resolution {
-        workspace: PathBuf::from("/ws"),
+        workspace: "/ws".to_owned(),
         workweave: None,
         workweave_unregistered: false,
         project: "proj".into(),
@@ -211,7 +211,7 @@ fn primary_resolution() -> Resolution {
 /// cannot carry.
 fn unregistered_resolution() -> Resolution {
     Resolution {
-        workspace: PathBuf::from("/ws"),
+        workspace: "/ws".to_owned(),
         workweave: None,
         workweave_unregistered: true,
         project: "proj".into(),

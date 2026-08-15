@@ -98,7 +98,7 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
     let mut vars: Vec<(&'static str, String)> = Vec::new();
     vars.push(("RWV_VERSION", crate::rwv_version().to_owned()));
     if let Some(r) = resolution {
-        vars.push(("RWV_WORKSPACE", r.workspace.to_string_lossy().into_owned()));
+        vars.push(("RWV_WORKSPACE", r.workspace.clone()));
         if let Some(ww) = &r.workweave {
             vars.push(("RWV_WORKWEAVE", ww.clone()));
         }
@@ -202,7 +202,7 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
     let mut records: Vec<PluginRecord> = path_ordered
         .into_iter()
         .map(|(name, path)| {
-            let path_str = path.to_string_lossy().into_owned();
+            let path_str = crate::path_spelling::wire_path(&path);
             let winner = winner_paths.get(&name).cloned().unwrap_or_default();
             let shadowed = path_str != winner;
             PluginRecord {
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn envelope_vars_primary_checkout_no_workweave() {
         let r = crate::workspace::Resolution {
-            workspace: std::path::PathBuf::from("/ws/primary"),
+            workspace: "/ws/primary".to_owned(),
             workweave: None,
             workweave_unregistered: false,
             project: "myproj".to_owned(),
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn envelope_vars_workweave_checkout_includes_workweave() {
         let r = crate::workspace::Resolution {
-            workspace: std::path::PathBuf::from("/ws/primary"),
+            workspace: "/ws/primary".to_owned(),
             workweave: Some("myproj--fo-123".to_owned()),
             workweave_unregistered: false,
             project: "myproj".to_owned(),

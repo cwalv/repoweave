@@ -160,7 +160,7 @@ pub fn run_push(
     if let Checkout::Workweave { name, dir, .. } = &ctx.checkout {
         let addressed = match name.recorded() {
             Some(name) => format!("'{name}'"),
-            None => format!("at {}", dir.display()),
+            None => format!("at {}", crate::path_spelling::operator_path(dir)),
         };
         anyhow::bail!(
             "rwv push: refusing to push from workweave {addressed}; \
@@ -538,10 +538,7 @@ pub fn run_push(
     // records in the outcomes array / NDJSON stream.
     for (repo_path, _entry) in &default_skipped_repos {
         let path_str = repo_path.as_str().to_string();
-        let abs_str = primary_root
-            .join(repo_path.as_path())
-            .to_string_lossy()
-            .into_owned();
+        let abs_str = crate::path_spelling::wire_path(&primary_root.join(repo_path.as_path()));
         if !json {
             println!("rwv push: skipped {} (non-writable role)", path_str,);
         }
@@ -558,7 +555,7 @@ pub fn run_push(
 
     for ((repo_path, abs_path, _item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
         let path_str = repo_path.to_string();
-        let abs_str = abs_path.to_string_lossy().into_owned();
+        let abs_str = crate::path_spelling::wire_path(abs_path);
 
         let wire = match &raw {
             PushOutcome::Pushed => {

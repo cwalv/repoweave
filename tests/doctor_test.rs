@@ -1123,9 +1123,13 @@ mod doctor_json {
             .get("absolute_path")
             .and_then(|s| s.as_str())
             .expect("absolute_path");
-        assert!(
-            common::path_ends_with(abs, orphan),
-            "absolute_path={abs} should end with {orphan}"
+        // Exact spelling, not a component-wise suffix: a suffix match cannot
+        // see the separator or a verbatim prefix, which is the whole content
+        // of the wire mint.
+        assert_eq!(
+            abs,
+            repoweave::path_spelling::wire_path(&root.join(orphan)),
+            "absolute_path must be the wire spelling of {orphan}"
         );
         assert!(
             std::path::Path::new(abs).is_absolute(),

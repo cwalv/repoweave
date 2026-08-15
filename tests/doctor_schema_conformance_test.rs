@@ -138,7 +138,7 @@ fn plugins() -> Vec<PluginRecord> {
 
 fn resolution() -> Resolution {
     Resolution {
-        workspace: PathBuf::from("/ws"),
+        workspace: "/ws".to_owned(),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
         project: "proj".into(),

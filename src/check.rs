@@ -1886,10 +1886,7 @@ impl ViolationOutput {
         workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
     ) -> Self {
         fn abs(workspace_dir: &Path, repo: &RepoPath) -> String {
-            workspace_dir
-                .join(repo.as_path())
-                .to_string_lossy()
-                .into_owned()
+            crate::path_spelling::wire_path(&workspace_dir.join(repo.as_path()))
         }
         fn abs_in(
             workweave: &Option<WorkweaveName>,
@@ -1897,19 +1894,12 @@ impl ViolationOutput {
             workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
             repo: &RepoPath,
         ) -> String {
-            match workweave {
-                Some(ww) => match workweave_dirs.get(ww) {
-                    Some(dir) => dir.join(repo.as_path()).to_string_lossy().into_owned(),
-                    None => workspace_dir
-                        .join(repo.as_path())
-                        .to_string_lossy()
-                        .into_owned(),
-                },
-                None => workspace_dir
-                    .join(repo.as_path())
-                    .to_string_lossy()
-                    .into_owned(),
-            }
+            let root = workweave
+                .as_ref()
+                .and_then(|ww| workweave_dirs.get(ww))
+                .map(std::path::PathBuf::as_path)
+                .unwrap_or(workspace_dir);
+            crate::path_spelling::wire_path(&root.join(repo.as_path()))
         }
 
         match violation {
@@ -1963,10 +1953,9 @@ impl ViolationOutput {
                     .cloned()
                     .unwrap_or_else(|| workspace_dir.to_path_buf());
                 Self::WorkweaveDrift {
-                    absolute_path: dir_for_ww
-                        .join(repo.as_path())
-                        .to_string_lossy()
-                        .into_owned(),
+                    absolute_path: crate::path_spelling::wire_path(
+                        &dir_for_ww.join(repo.as_path()),
+                    ),
                     path: repo.to_string(),
                     workweave: workweave.to_string(),
                     sub_kind: kind,
@@ -2026,7 +2015,7 @@ impl ViolationOutput {
                 error,
             },
             CheckViolation::ProjectsDirUnreadable { path, error } => Self::ProjectsDirUnreadable {
-                path: path.to_string_lossy().into_owned(),
+                path: crate::path_spelling::wire_path(&path),
                 error,
             },
             CheckViolation::UnresolvableLockEntry { project, repo } => {
@@ -2041,21 +2030,21 @@ impl ViolationOutput {
                 legacy_path,
             } => Self::LegacyManifestFormat {
                 project: project.to_string(),
-                legacy_path: legacy_path.to_string_lossy().into_owned(),
+                legacy_path: crate::path_spelling::wire_path(&legacy_path),
             },
             CheckViolation::DanglingActiveProject {
                 project,
                 missing_dir,
             } => Self::DanglingActiveProject {
                 project: project.to_string(),
-                missing_dir: missing_dir.to_string_lossy().into_owned(),
+                missing_dir: crate::path_spelling::wire_path(&missing_dir),
             },
             CheckViolation::WeaveRootIdentityConflict {
                 root,
                 pointer_project,
                 sub_kind,
             } => Self::WeaveRootIdentityConflict {
-                root: root.to_string_lossy().into_owned(),
+                root: crate::path_spelling::wire_path(&root),
                 pointer_project: pointer_project.map(|p| p.to_string()),
                 sub_kind,
             },
@@ -2063,15 +2052,15 @@ impl ViolationOutput {
                 marker_path,
                 primary,
             } => Self::LegacyWorkweaveMarker {
-                marker_path: marker_path.to_string_lossy().into_owned(),
-                primary: primary.to_string_lossy().into_owned(),
+                marker_path: crate::path_spelling::wire_path(&marker_path),
+                primary: crate::path_spelling::wire_path(&primary),
             },
             CheckViolation::LegacyWorkweaveIndex {
                 project,
                 index_path,
             } => Self::LegacyWorkweaveIndex {
                 project: project.to_string(),
-                index_path: index_path.to_string_lossy().into_owned(),
+                index_path: crate::path_spelling::wire_path(&index_path),
             },
             CheckViolation::UnreadableWorkweaveIndex {
                 project,
@@ -2079,7 +2068,7 @@ impl ViolationOutput {
                 error,
             } => Self::UnreadableWorkweaveIndex {
                 project: project.to_string(),
-                index_path: index_path.to_string_lossy().into_owned(),
+                index_path: crate::path_spelling::wire_path(&index_path),
                 error,
             },
             CheckViolation::UnparseableProject {
@@ -2088,14 +2077,14 @@ impl ViolationOutput {
                 message,
             } => Self::UnparseableProject {
                 project: project.to_string(),
-                manifest_path: manifest_path.to_string_lossy().into_owned(),
+                manifest_path: crate::path_spelling::wire_path(&manifest_path),
                 message,
             },
             CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir,
                 sub_kind,
             } => Self::WorkweaveTreeIntegrity {
-                workweave_dir: workweave_dir.to_string_lossy().into_owned(),
+                workweave_dir: crate::path_spelling::wire_path(&workweave_dir),
                 sub_kind,
             },
             CheckViolation::Provenance {
@@ -2113,7 +2102,7 @@ impl ViolationOutput {
                 repo,
                 sub_kind,
             } => Self::CloneTopology {
-                absolute_path: workspace_path.to_string_lossy().into_owned(),
+                absolute_path: crate::path_spelling::wire_path(&workspace_path),
                 path: repo.to_string(),
                 sub_kind,
             },
@@ -2121,7 +2110,7 @@ impl ViolationOutput {
                 repo_path,
                 sub_kind,
             } => Self::BranchDiscipline {
-                repo_path: repo_path.to_string_lossy().into_owned(),
+                repo_path: crate::path_spelling::wire_path(&repo_path),
                 sub_kind,
             },
             CheckViolation::StaleWorktreeRegistration {
@@ -2132,14 +2121,14 @@ impl ViolationOutput {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
                 workweave: workweave.map(|w| w.to_string()),
-                missing_path: missing_path.to_string_lossy().into_owned(),
+                missing_path: crate::path_spelling::wire_path(&missing_path),
             },
             CheckViolation::StaleOpState {
                 workspace_dir: ws_dir,
                 verb,
                 started_at,
             } => Self::StaleOpState {
-                workspace_dir: ws_dir.to_string_lossy().into_owned(),
+                workspace_dir: crate::path_spelling::wire_path(&ws_dir),
                 verb,
                 started_at,
             },
@@ -2150,9 +2139,9 @@ impl ViolationOutput {
                 sub_kind,
                 created_at,
             } => Self::DeadOpLease {
-                workspace_dir: ws_dir.to_string_lossy().into_owned(),
+                workspace_dir: crate::path_spelling::wire_path(&ws_dir),
                 op_id,
-                recorded_owner: recorded_owner.to_string_lossy().into_owned(),
+                recorded_owner: crate::path_spelling::wire_path(&recorded_owner),
                 sub_kind,
                 created_at,
             },
@@ -2162,7 +2151,7 @@ impl ViolationOutput {
                 ref_name,
             } => Self::DanglingRefReceipt {
                 project: project.to_string(),
-                store_path: store_path.to_string_lossy().into_owned(),
+                store_path: crate::path_spelling::wire_path(&store_path),
                 ref_name,
             },
             CheckViolation::PreFlatRefReceipt {
@@ -2171,7 +2160,7 @@ impl ViolationOutput {
                 ref_name,
             } => Self::PreFlatRefReceipt {
                 project: project.to_string(),
-                store_path: store_path.to_string_lossy().into_owned(),
+                store_path: crate::path_spelling::wire_path(&store_path),
                 ref_name,
             },
             CheckViolation::OrphanedSavepoint {
@@ -2205,8 +2194,8 @@ impl ViolationOutput {
                 registry,
                 crate_name,
             } => Self::CargoPatchShadowing {
-                weave_config: weave_config.to_string_lossy().into_owned(),
-                member_config: member_config.to_string_lossy().into_owned(),
+                weave_config: crate::path_spelling::wire_path(&weave_config),
+                member_config: crate::path_spelling::wire_path(&member_config),
                 registry,
                 crate_name,
             },
@@ -2220,10 +2209,10 @@ impl ViolationOutput {
                     .cloned()
                     .unwrap_or_else(|| workspace_dir.to_path_buf());
                 Self::MissingCanonicalClone {
-                    absolute_path: ww_dir.join(repo.as_path()).to_string_lossy().into_owned(),
+                    absolute_path: crate::path_spelling::wire_path(&ww_dir.join(repo.as_path())),
                     path: repo.to_string(),
                     workweave: workweave.to_string(),
-                    canonical_path: canonical_path.to_string_lossy().into_owned(),
+                    canonical_path: crate::path_spelling::wire_path(&canonical_path),
                 }
             }
             CheckViolation::UninitializedSubmodule {
@@ -2232,13 +2221,11 @@ impl ViolationOutput {
                 empty_paths,
             } => {
                 let ww_dir = workweave_dirs.get(&workweave);
-                let absolute_path = match ww_dir {
-                    Some(dir) => dir.join(repo.as_path()).to_string_lossy().into_owned(),
-                    None => workspace_dir
-                        .join(repo.as_path())
-                        .to_string_lossy()
-                        .into_owned(),
-                };
+                let absolute_path = crate::path_spelling::wire_path(
+                    &ww_dir
+                        .unwrap_or(&workspace_dir.to_path_buf())
+                        .join(repo.as_path()),
+                );
                 Self::UninitializedSubmodule {
                     absolute_path,
                     path: repo.to_string(),
@@ -6955,7 +6942,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              Retire this workweave and create it again — rwv does not rename \
                              a live workweave into place, and moving it by hand strands the \
                              worktrees inside it",
-                            workweave_dir.display(),
+                            crate::path_spelling::operator_path(&workweave_dir),
                         ),
                         WorkweaveTreeIntegrityKind::MisnamedDir {
                             expected_dir_name,

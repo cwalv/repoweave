@@ -278,7 +278,7 @@ fn update_for_project(
 
     for (item, outcome) in work_items.iter().zip(outcomes) {
         let branch = item.entry.version.as_str().to_owned();
-        let abs_str = item.checkout.path().to_string_lossy().to_string();
+        let abs_str = crate::path_spelling::wire_path(item.checkout.path());
 
         let record = match outcome {
             Ok(new_sha) => {

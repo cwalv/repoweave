@@ -6840,7 +6840,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         coordinates.map(|coordinates| SyncToJsonOutput {
             schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
             source_workweave: coordinates.source_workweave,
-            target: coordinates.target.to_string_lossy().into_owned(),
+            target: crate::path_spelling::wire_path(&coordinates.target),
             retired: retired.is_some(),
             resumed,
             outcomes,

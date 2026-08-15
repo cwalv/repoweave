@@ -442,10 +442,8 @@ fn fetch_project_repos(
 
         // NDJSON mode: emit one line per repo as soon as it finishes.
         if ndjson {
-            let abs_path = workspace_root
-                .join(repo_path.as_path())
-                .to_string_lossy()
-                .into_owned();
+            let abs_path =
+                crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
             let record = match &outcome {
                 FetchOutcome::Ok { .. } => FetchOutcomeOutput {
                     path: repo_path.to_string(),
@@ -493,10 +491,7 @@ fn fetch_project_repos(
     let mut envelope_records: Vec<FetchOutcomeOutput> = Vec::new();
 
     for (outcome, (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
-        let abs_path = workspace_root
-            .join(repo_path.as_path())
-            .to_string_lossy()
-            .into_owned();
+        let abs_path = crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
         match outcome {
             FetchOutcome::Ok { add_to_lock } => {
                 succeeded += 1;

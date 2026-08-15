@@ -245,7 +245,7 @@ impl WorkweaveNameRecord {
                  directory name. This operation acts on that name. Run \
                  `rwv doctor --fix` to register this workweave, then re-run; or retire \
                  the directory and create the workweave again.",
-                dir.display(),
+                crate::path_spelling::operator_path(dir),
                 project.as_str(),
             ),
         }
@@ -446,9 +446,12 @@ fn occupant_sentence(requested: &Path, listed: Option<&str>) -> String {
         Some(listed) if Some(listed) != asked => format!(
             "{} already exists — the filesystem lists it as `{listed}` and treats the \
              two spellings as one name",
-            requested.display()
+            crate::path_spelling::operator_path(requested)
         ),
-        _ => format!("{} already exists", requested.display()),
+        _ => format!(
+            "{} already exists",
+            crate::path_spelling::operator_path(requested)
+        ),
     }
 }
 
@@ -1570,7 +1573,7 @@ impl WorkspaceContext {
     /// independently computed.
     pub fn resolution(&self) -> Option<Resolution> {
         let project = self.active_project()?;
-        let workspace = self.primary_root.clone();
+        let workspace = crate::path_spelling::wire_path(&self.primary_root);
         let (workweave, workweave_unregistered) = match &self.checkout {
             Checkout::Primary { .. } => (None, false),
             Checkout::Workweave { name, project, .. } => match name.recorded() {
@@ -1615,8 +1618,13 @@ impl WorkspaceContext {
 /// never independently computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resolution {
-    /// Primary workspace root (absolute path).
-    pub workspace: PathBuf,
+    /// Primary workspace root, in the wire spelling.
+    ///
+    /// A `String` and not a `PathBuf` so the spelling is decided at
+    /// construction rather than by serde: this is a published absolute path
+    /// and it owes programs the composable form, which
+    /// [`crate::path_spelling::wire_path`] is the only producer of.
+    pub workspace: String,
     /// Workweave identity (`<project>--<name>`), as the primary-side registry
     /// records it.
     ///
@@ -4550,7 +4558,7 @@ mod tests {
     #[test]
     fn the_representable_states_serialize_byte_for_byte_as_before() {
         let primary = Resolution {
-            workspace: PathBuf::from("/ws"),
+            workspace: "/ws".to_owned(),
             workweave: None,
             workweave_unregistered: false,
             project: "myproject".to_owned(),
@@ -4561,7 +4569,7 @@ mod tests {
         );
 
         let registered = Resolution {
-            workspace: PathBuf::from("/ws"),
+            workspace: "/ws".to_owned(),
             workweave: Some("myproject--feat".to_owned()),
             workweave_unregistered: false,
             project: "myproject".to_owned(),
@@ -4572,7 +4580,7 @@ mod tests {
         );
 
         let unregistered = Resolution {
-            workspace: PathBuf::from("/ws"),
+            workspace: "/ws".to_owned(),
             workweave: None,
             workweave_unregistered: true,
             project: "myproject".to_owned(),
