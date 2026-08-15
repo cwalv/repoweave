@@ -719,11 +719,18 @@ fn envelope_marks_an_unregistered_workweave_apart_from_primary() {
         .success();
     let primary_env = parse_env_dump(&String::from_utf8_lossy(&at_primary.get_output().stdout));
 
+    // The property first, then the variable that carries it — a mutation
+    // collapsing the two states must be reported as the collapse.
     assert_eq!(
         ww_env.get("RWV_WORKWEAVE").map(|s| s.as_str()),
         Some("UNSET"),
         "an unregistered workweave has no identity to carry; got: {ww_env:?}"
     );
+    assert_ne!(
+        ww_env, primary_env,
+        "an unregistered workweave and the primary must not hand a plugin the same environment"
+    );
+
     assert_eq!(
         ww_env.get("RWV_WORKWEAVE_UNREGISTERED").map(|s| s.as_str()),
         Some("1"),
@@ -735,10 +742,6 @@ fn envelope_marks_an_unregistered_workweave_apart_from_primary() {
             .map(|s| s.as_str()),
         Some("UNSET"),
         "the primary must be unchanged by this variable; got: {primary_env:?}"
-    );
-    assert_ne!(
-        ww_env, primary_env,
-        "the two envelopes must not be identical"
     );
 }
 

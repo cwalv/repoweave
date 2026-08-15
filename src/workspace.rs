@@ -4297,18 +4297,17 @@ mod tests {
             .resolution()
             .expect("the pointer names the project");
 
+        // The property first, then the mechanism that delivers it: a
+        // mutation collapsing the states should be reported as the states
+        // collapsing, not as one field losing its value.
         assert!(
             unregistered.workweave.is_none(),
             "an unregistered workweave has no identity to report"
         );
-        assert!(
-            unregistered.workweave_unregistered,
-            "the state must be represented, not merely absent"
-        );
         assert_ne!(
             serde_json::to_string(&unregistered).unwrap(),
             serde_json::to_string(&primary).unwrap(),
-            "the two must not serialize alike"
+            "an unregistered workweave and the primary must not serialize alike"
         );
 
         let vars = |r: &Resolution| -> std::collections::BTreeMap<String, String> {
@@ -4321,6 +4320,11 @@ mod tests {
             vars(&unregistered),
             vars(&primary),
             "the env envelope a plugin reads must not be identical either"
+        );
+
+        assert!(
+            unregistered.workweave_unregistered,
+            "the state must be represented, not merely absent"
         );
         assert_eq!(
             vars(&unregistered).get("RWV_WORKWEAVE_UNREGISTERED"),
