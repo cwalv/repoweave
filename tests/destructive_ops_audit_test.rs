@@ -335,7 +335,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"--hard\"",
         count: 2,
-        callers: &[("reset_and_drop_savepoint", 4)],
+        callers: &[("reset_and_drop_savepoint", 4), ("hard_reset", 1)],
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits. It has NO caller outside the trait \
             any more — the only one is Vcs::reset_attached_ref, so the \
