@@ -146,7 +146,7 @@ fn setup_claude_idempotent() {
 // ============================================================================
 
 #[test]
-fn setup_claude_scripts_are_executable() {
+fn setup_claude_does_not_create_hooks_dir() {
     // rwv setup claude no longer installs shell scripts; it registers
     // `rwv workweave --claude-hook` directly. Verify no scripts are installed.
     let tmp = common::tempdir().unwrap();

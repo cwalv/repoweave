@@ -305,6 +305,10 @@ fn nix_devshell_provides_rwv() {
 /// pyproject.toml's own comment names the rewrite step by its `name:` —
 /// checked here too, so a rename or removal of that step leaves the citation
 /// caught rather than quietly lying.
+///
+/// Structural pin: the property is a prohibition over an enumerable
+/// population — these two files, both named above — not a behavior the
+/// suite can drive; the rewrite only runs inside a tagged release.
 #[test]
 fn pyproject_version_is_the_release_time_placeholder() {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));

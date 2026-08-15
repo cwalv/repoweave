@@ -1,8 +1,7 @@
 //! E2E tests for `rwv` (no subcommand) context display and `rwv resolve`.
 //!
 //! These tests run the `rwv` binary via `std::process::Command` and verify
-//! exit codes and output patterns. The actual implementation lands in phase 4b;
-//! tests that require that implementation are marked `#[ignore]`.
+//! exit codes and output patterns.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
