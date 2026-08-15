@@ -100,9 +100,10 @@ impl RepoPath {
     }
 
     /// Joining the result onto a native root (`root.join(repo_path.as_path())`)
-    /// produces a path mixing native and `/` separators on Windows, because
-    /// this method leaves the forward slashes in place. Win32 accepts the
-    /// mixed form for every filesystem call this crate makes through it.
+    /// leaves the forward slashes in place, so on Windows the joined path
+    /// mixes native and `/` separators. Win32 has accepted that mixed form on
+    /// every filesystem call this crate's test suite has driven; other Win32
+    /// API classes are untested against it.
     pub fn as_path(&self) -> &Path {
         Path::new(&self.0)
     }
