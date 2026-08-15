@@ -1327,10 +1327,10 @@ mod doctor_json {
             Some("github/a/b")
         );
         assert_eq!(json.get("project").and_then(|s| s.as_str()), Some("alpha"));
-        assert!(common::same_path(
-            json.get("absolute_path").and_then(|s| s.as_str()).unwrap(),
-            "/ws/github/a/b"
-        ));
+        assert_eq!(
+            json.get("absolute_path").and_then(|s| s.as_str()),
+            Some(repoweave::path_spelling::wire_path(&workspace_dir().join("github/a/b")).as_str()),
+        );
     }
 
     #[test]
@@ -1360,10 +1360,15 @@ mod doctor_json {
             json.get("sub_kind").and_then(|s| s.as_str()),
             Some("missing")
         );
-        assert!(common::same_path(
-            json.get("absolute_path").and_then(|s| s.as_str()).unwrap(),
-            "/ws/.workweaves/proj--ww1/github/a/b"
-        ));
+        assert_eq!(
+            json.get("absolute_path").and_then(|s| s.as_str()),
+            Some(
+                repoweave::path_spelling::wire_path(
+                    &std::path::PathBuf::from("/ws/.workweaves/proj--ww1").join("github/a/b")
+                )
+                .as_str()
+            ),
+        );
     }
 
     #[test]

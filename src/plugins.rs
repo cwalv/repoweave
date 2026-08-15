@@ -193,7 +193,7 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
     for (name, path) in &path_ordered {
         winner_paths
             .entry(name.clone())
-            .or_insert_with(|| path.to_string_lossy().into_owned());
+            .or_insert_with(|| crate::path_spelling::wire_path(path));
     }
 
     // Build the output records, then sort by (name, path) for deterministic
@@ -615,14 +615,14 @@ mod tests {
         // Exactly one winner (not shadowed) and one shadowed.
         let winner_rec = result.iter().find(|r| !r.shadowed).expect("winner");
         let shadowed_rec = result.iter().find(|r| r.shadowed).expect("shadowed");
+        let winner_wire = crate::path_spelling::wire_path(&winner);
         assert_eq!(
-            winner_rec.path,
-            winner.to_string_lossy().as_ref(),
+            winner_rec.path, winner_wire,
             "wrong winner path: {winner_rec:?}"
         );
         assert_eq!(
             shadowed_rec.shadowed_by.as_deref(),
-            Some(winner.to_string_lossy().as_ref()),
+            Some(winner_wire.as_str()),
             "shadowed_by should point to winner: {shadowed_rec:?}"
         );
     }
@@ -648,13 +648,9 @@ mod tests {
         // Exactly one winner.
         let winners: Vec<&PluginRecord> = result.iter().filter(|r| !r.shadowed).collect();
         assert_eq!(winners.len(), 1, "exactly one winner: {result:?}");
-        assert_eq!(
-            winners[0].path,
-            winner.to_string_lossy().as_ref(),
-            "wrong winner: {result:?}"
-        );
+        let winner_str = crate::path_spelling::wire_path(&winner);
+        assert_eq!(winners[0].path, winner_str, "wrong winner: {result:?}");
         // Two shadowed, both pointing at the winner.
-        let winner_str = winner.to_string_lossy().into_owned();
         let shadowed: Vec<&PluginRecord> = result.iter().filter(|r| r.shadowed).collect();
         assert_eq!(shadowed.len(), 2, "two shadowed: {result:?}");
         for s in &shadowed {

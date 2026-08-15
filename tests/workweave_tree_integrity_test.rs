@@ -393,7 +393,7 @@ fn foreign_primary_other_workspace_is_visible_via_json() {
     let other_ws_canonical = other_ws.canonicalize().unwrap();
     assert_eq!(
         finding["sub_kind"]["foreign-primary-other-workspace"]["marker_primary"],
-        serde_json::Value::String(other_ws_canonical.to_string_lossy().into_owned()),
+        serde_json::Value::String(repoweave::path_spelling::wire_path(&other_ws_canonical)),
         "must name the resolved path of the other workspace"
     );
 }

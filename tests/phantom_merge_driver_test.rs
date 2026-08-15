@@ -168,10 +168,10 @@ fn a_phantom_rwv_driver_is_exactly_one_violation() {
     assert_eq!(field(v, "path"), MEMBER);
     assert_eq!(field(v, "pattern"), "docs/generated/**");
     assert_eq!(field(v, "driver"), "rwv-bogus");
-    assert!(common::same_path(
+    assert_eq!(
         field(v, "absolute_path"),
-        &*weave.member_repo().to_string_lossy()
-    ));
+        repoweave::path_spelling::wire_path(&weave.member_repo()),
+    );
 }
 
 #[test]

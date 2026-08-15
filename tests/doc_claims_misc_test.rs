@@ -131,12 +131,7 @@ fn rwv_display_shows_repos() {
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
     // Root path must appear.
-    let canonical_root = ws.canonicalize().unwrap();
-    assert!(
-        stdout.contains(canonical_root.to_str().unwrap()),
-        "output should contain the weave root path {}, got:\n{stdout}",
-        canonical_root.display()
-    );
+    common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
 
     // Active project name must appear.
     assert!(
@@ -176,11 +171,7 @@ fn rwv_display_no_active_project() {
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
     // Root path must appear.
-    let canonical_root = ws.canonicalize().unwrap();
-    assert!(
-        stdout.contains(canonical_root.to_str().unwrap()),
-        "output should contain the weave root path, got:\n{stdout}"
-    );
+    common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
 
     // The available project should be listed (the projects/ dir is scanned).
     assert!(
@@ -244,10 +235,5 @@ fn rwv_display_in_workweave() {
     );
 
     // Root path (primary weave root) must appear.
-    let canonical_root = ws.canonicalize().unwrap();
-    assert!(
-        stdout.contains(canonical_root.to_str().unwrap()),
-        "output should contain the primary root path {}, got:\n{stdout}",
-        canonical_root.display()
-    );
+    common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
 }

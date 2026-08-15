@@ -267,7 +267,7 @@ fn doctor_json_plugins_array_populated_with_fixture_plugin() {
     );
     assert_eq!(
         record["path"].as_str(),
-        Some(script.to_string_lossy().as_ref()),
+        Some(repoweave::path_spelling::wire_path(&script).as_str()),
         "wrong path: {record}"
     );
     assert_eq!(
@@ -332,15 +332,16 @@ fn doctor_json_plugins_shadowed_record_shape() {
         )
     };
     // The winner record should be the one in dir1 (first in PATH order).
+    let winner_wire = repoweave::path_spelling::wire_path(&winner);
     assert_eq!(
         winner_record["path"].as_str(),
-        Some(winner.to_string_lossy().as_ref()),
+        Some(winner_wire.as_str()),
         "winner path should be dir1's binary: {winner_record}"
     );
     // The shadowed record should point back at the winner.
     assert_eq!(
         shadowed_record["shadowed_by"].as_str(),
-        Some(winner.to_string_lossy().as_ref()),
+        Some(winner_wire.as_str()),
         "shadowed_by should point at winner: {shadowed_record}"
     );
 }

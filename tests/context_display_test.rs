@@ -42,15 +42,18 @@ fn context_display_in_primary_shows_root_and_projects() {
     // Create a project so the display has something to list
     fs::create_dir_all(root.join("projects").join("web-app")).unwrap();
 
-    Command::cargo_bin("rwv")
+    let out = Command::cargo_bin("rwv")
         .unwrap()
         .current_dir(&root)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            root.canonicalize().unwrap().to_string_lossy().as_ref(),
-        ))
-        .stdout(predicate::str::contains("web-app"));
+        .stdout(predicate::str::contains("web-app"))
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(out).expect("stdout should be valid UTF-8");
+    common::assert_weave_line(&stdout, root.canonicalize().unwrap());
 }
 
 #[test]
@@ -61,14 +64,17 @@ fn context_display_in_primary_subdir() {
     let deep = root.join("github").join("acme").join("server");
     fs::create_dir_all(&deep).unwrap();
 
-    Command::cargo_bin("rwv")
+    let out = Command::cargo_bin("rwv")
         .unwrap()
         .current_dir(&deep)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            root.canonicalize().unwrap().to_string_lossy().as_ref(),
-        ));
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(out).expect("stdout should be valid UTF-8");
+    common::assert_weave_line(&stdout, root.canonicalize().unwrap());
 }
 
 // ============================================================================

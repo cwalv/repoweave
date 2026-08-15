@@ -416,3 +416,22 @@ pub fn same_path(a: impl AsRef<std::path::Path>, b: impl AsRef<std::path::Path>)
 pub fn flatten_path_spelling(s: &str) -> String {
     s.replace('\\', "/").replace("//?/", "")
 }
+
+/// Assert the context display's `Weave:` line names `root`, in the spelling
+/// the operator seam mints for it.
+///
+/// Whole-line equality rather than containment: the simplified spelling is a
+/// substring of the verbatim one, so `stdout.contains(simplified)` is
+/// satisfied by a line that still carries the Windows `\\?\` prefix — it is
+/// green exactly when the leak it would catch is present.
+pub fn assert_weave_line(stdout: &str, root: impl AsRef<std::path::Path>) {
+    let named = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("Weave: "))
+        .unwrap_or_else(|| panic!("context display has no `Weave:` line:\n{stdout}"));
+    assert_eq!(
+        named,
+        repoweave::path_spelling::operator_path(root.as_ref()),
+        "the `Weave:` line must name the weave root in the operator spelling"
+    );
+}
