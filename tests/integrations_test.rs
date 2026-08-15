@@ -153,6 +153,190 @@ fn write_exit_code_shim(bin_dir: &Path, name: &str, exit_code: i32) {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// An `rwv.toml` naming one member and enabling exactly one integration.
+///
+/// Every other integration is switched off by name rather than left to its
+/// default, because several detect the same manifest: a `package.json` member
+/// is an npm member and a pnpm member at once, so a fixture that only enables
+/// pnpm still runs npm's hook, and on a `PATH` holding neither tool the run
+/// fails for the integration the test is not about.
+#[cfg(unix)]
+fn one_integration_rwv_toml(integration: &str) -> String {
+    let mut toml = String::from(
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/server.git\"\nversion = \"main\"\n\
+         role = \"owned\"\n",
+    );
+    for name in [
+        "npm-workspaces",
+        "pnpm-workspaces",
+        "go-work",
+        "uv-workspace",
+        "cargo-workspace",
+        "gita",
+        "vscode-workspace",
+        "static-files",
+    ] {
+        toml.push_str(&format!(
+            "\n[integrations.{name}]\nenabled = {}\n",
+            name == integration
+        ));
+    }
+    toml
+}
+
+/// `rwv doctor --json` over a throwaway weave, on a `PATH` that holds `git`
+/// and exactly the `tools` named — so whether an ecosystem tool is available
+/// is an input to the test rather than a property of the machine.
+///
+/// The integrations resolve their tool with `which::which`, which answers for
+/// the process that calls it, and those calls happen inside the library. A
+/// test that calls `check()` in-process therefore cannot decide the answer:
+/// the only lever is `PATH`, and mutating that in-process with
+/// `std::env::set_var` is unsound under a parallel runner — the reason
+/// [`write_exit_code_shim`] spawns a child in the first place. Driving the
+/// binary puts the lookup in a child whose `PATH` this test owns.
+///
+/// `git` is linked through because rwv shells out to it; nothing else is
+/// reachable from the child unless `tools` names it.
+#[cfg(unix)]
+fn doctor_json_on_tool_only_path(
+    integration: &str,
+    member_manifest: &str,
+    manifest_body: &str,
+    tools: &[&str],
+) -> String {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let bin = tmp.path().join("bin");
+    std::fs::create_dir_all(ws.join("projects/app")).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+
+    write_file(&ws, member_manifest, manifest_body);
+    write_file(
+        &ws,
+        "projects/app/rwv.toml",
+        &one_integration_rwv_toml(integration),
+    );
+    write_file(&ws, ".rwv-active", "app\n");
+
+    std::os::unix::fs::symlink(which::which("git").unwrap(), bin.join("git")).unwrap();
+    for tool in tools {
+        write_exit_code_shim(&bin, tool, 0);
+    }
+
+    let out = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .env("PATH", bin.display().to_string())
+        .output()
+        .expect("rwv should run");
+    String::from_utf8(out.stdout).expect("doctor --json emits utf-8")
+}
+
+/// Run `rwv activate` over a throwaway weave whose `PATH` carries `git` and a
+/// recording stand-in for `tool`, and report whether activation succeeded and
+/// what the hook asked the tool to do.
+///
+/// The authoring pass runs first because `activate` is a context verb: it
+/// never writes the managed file a hook needs, so without it cargo's hook
+/// declines before reaching the tool. The witness is cleared afterwards, so
+/// what it holds at the end is the audited run alone.
+///
+/// Recording the invocation is what makes both directions forceable. The old
+/// assertions read a lock file, which only a real tool produces — so the
+/// success half only ever ran where the tool happened to be installed. An
+/// argv pin says the thing the hook actually promises (it reaches the tool,
+/// with these arguments) and leaves the tool's own behaviour to `exit_code`.
+///
+/// `produces` is the output the caller's hook reads back after the tool runs:
+/// cargo's records a digest of the lock it just generated, so a stand-in that
+/// only exits leaves the hook failing on a file that was never written. Naming
+/// the artifact keeps that a property of the fixture rather than of the shim.
+#[cfg(unix)]
+fn activate_with_tool_shim(
+    integration: &str,
+    member_manifest: &str,
+    manifest_body: &str,
+    tool: &str,
+    exit_code: i32,
+    produces: &[&str],
+) -> (bool, String) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let bin = tmp.path().join("bin");
+    let witness = tmp.path().join("witness");
+    std::fs::create_dir_all(ws.join("projects/app")).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+
+    write_file(&ws, member_manifest, manifest_body);
+    write_file(
+        &ws,
+        "projects/app/rwv.toml",
+        &one_integration_rwv_toml(integration),
+    );
+    write_file(&ws, ".rwv-active", "app\n");
+    std::os::unix::fs::symlink(which::which("git").unwrap(), bin.join("git")).unwrap();
+
+    let shim = |code: i32| {
+        let path = bin.join(tool);
+        let mut script = format!("#!/bin/sh\necho \"$@\" >> {}\n", witness.display());
+        for artifact in produces {
+            script.push_str(&format!("printf '' >> {}\n", ws.join(artifact).display()));
+        }
+        script.push_str(&format!("exit {code}\n"));
+        std::fs::write(&path, script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let run = |args: &[&str]| {
+        common::rwv()
+            .args(args)
+            .current_dir(&ws)
+            .env("PATH", bin.display().to_string())
+            .output()
+            .expect("rwv should run")
+    };
+
+    shim(0);
+    run(&["doctor", "--fix"]);
+    let _ = std::fs::remove_file(&witness);
+
+    shim(exit_code);
+    let out = run(&["activate", "app"]);
+    let invoked = std::fs::read_to_string(&witness).unwrap_or_default();
+    (out.status.success(), invoked)
+}
+
+/// Whether `doctor --json` raised `tool-missing` against `integration`.
+///
+/// Reads the published `kind` out of the parsed report rather than searching
+/// its text: an integration's name appears in other findings' messages too, so
+/// a substring would answer for the wrong one. `tool-missing` is an *issue*,
+/// not a *violation* — the report carries both arrays, and reading the wrong
+/// one returns `false` for every input, which reads as "the tool was found".
+///
+/// Hence the emptiness assertion: a caller asking whether a finding is ABSENT
+/// gets a true answer from a broken enumeration just as readily as from a
+/// working one, so this refuses to answer over an array it did not find.
+#[cfg(unix)]
+fn reports_tool_missing(report: &str, integration: &str) -> bool {
+    let parsed: serde_json::Value =
+        serde_json::from_str(report).expect("doctor --json emits a JSON report");
+    let issues = parsed["issues"]
+        .as_array()
+        .expect("a doctor report carries an issues array");
+    assert!(
+        !issues.is_empty(),
+        "these fixtures always leave managed files unwritten, so an empty issues \
+         array means the report was not read: {report}"
+    );
+    issues
+        .iter()
+        .any(|v| v["kind"] == "tool-missing" && v["integration"] == integration)
+}
+
 // ===========================================================================
 // npm-workspaces
 // ===========================================================================
@@ -606,31 +790,31 @@ mod npm_workspaces {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_warns_when_npm_not_on_path() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let absent = doctor_json_on_tool_only_path(
+            "npm-workspaces",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            &[],
+        );
+        assert!(
+            reports_tool_missing(&absent, "npm-workspaces"),
+            "with npm off the child's PATH, doctor must raise tool-missing for \
+             npm-workspaces; got:\n{absent}"
+        );
 
-        touch(root, "github/acme/server/package.json");
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = NpmWorkspaces;
-        let issues = integration.check(&ctx).unwrap();
-        // We can't guarantee npm is or isn't on PATH in CI,
-        // but we can verify the check runs without error.
-        // If npm is not on PATH, there should be a warning.
-        if which::which("npm").is_err() {
-            assert!(issues
-                .iter()
-                .any(|i| i.severity == Severity::Warning && i.message.contains("npm")));
-        } else {
-            assert!(issues.is_empty());
-        }
+        let present = doctor_json_on_tool_only_path(
+            "npm-workspaces",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            &["npm"],
+        );
+        assert!(
+            !reports_tool_missing(&present, "npm-workspaces"),
+            "with a npm on the child's PATH, the finding must clear; got:\n{present}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1214,28 +1398,31 @@ mod pnpm_workspaces {
         assert!(root.join("pnpm-workspace.yaml").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_warns_when_pnpm_not_on_path() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let absent = doctor_json_on_tool_only_path(
+            "pnpm-workspaces",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            &[],
+        );
+        assert!(
+            reports_tool_missing(&absent, "pnpm-workspaces"),
+            "with pnpm off the child's PATH, doctor must raise tool-missing for \
+             pnpm-workspaces; got:\n{absent}"
+        );
 
-        touch(root, "github/acme/server/package.json");
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = PnpmWorkspaces;
-        let issues = integration.check(&ctx).unwrap();
-        if which::which("pnpm").is_err() {
-            assert!(issues
-                .iter()
-                .any(|i| i.severity == Severity::Warning && i.message.contains("pnpm")));
-        } else {
-            assert!(issues.is_empty());
-        }
+        let present = doctor_json_on_tool_only_path(
+            "pnpm-workspaces",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            &["pnpm"],
+        );
+        assert!(
+            !reports_tool_missing(&present, "pnpm-workspaces"),
+            "with a pnpm on the child's PATH, the finding must clear; got:\n{present}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1552,6 +1739,52 @@ packages:
             "single-package repo must not produce prefixed sub-entries; got:\n{content}"
         );
     }
+
+    /// This module asserts on `pnpm-workspace.yaml` by searching the whole
+    /// file for a member path, and the whole file is not the owned region:
+    /// `catalog:` and every comment are user content rwv carries through. So
+    /// a path sitting in either is enough to satisfy such a search without
+    /// being a workspace member at all.
+    ///
+    /// Latent exposure, not a live defect — no sibling fixture above puts a
+    /// member-shaped path anywhere but the list, so every one of them is
+    /// correct today. This is the fixture that tells the two apart, and it
+    /// asserts through `verify()`, which compares the on-disk `packages:`
+    /// sequence against the manifest rather than searching text.
+    #[test]
+    fn a_decoy_path_in_a_comment_or_catalog_is_not_a_workspace_member() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "pnpm-workspace.yaml",
+            "# github/acme/decoy moved out of the weave; note kept on purpose\n\
+             catalog:\n  github/acme/decoy: ^1.0.0\n",
+        );
+        touch(root, "github/acme/server/package.json");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::from_toml("enabled = true");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        PnpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+        assert!(
+            content.contains("github/acme/decoy"),
+            "fixture is inert unless the decoy survives activate; got:\n{content}"
+        );
+
+        let issues = PnpmWorkspaces.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "the decoy is user content, so the authored packages: list is exactly \
+             the manifest's members and verify has nothing to report; got: {issues:?}"
+        );
+    }
 }
 
 // ===========================================================================
@@ -1715,28 +1948,31 @@ mod go_work {
         assert!(root.join("go.work").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_warns_when_go_not_on_path() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let absent = doctor_json_on_tool_only_path(
+            "go-work",
+            "github/acme/server/go.mod",
+            "module github.com/acme/server\n\ngo 1.20\n",
+            &[],
+        );
+        assert!(
+            reports_tool_missing(&absent, "go-work"),
+            "with go off the child's PATH, doctor must raise tool-missing for \
+             go-work; got:\n{absent}"
+        );
 
-        touch(root, "github/acme/server/go.mod");
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = GoWork;
-        let issues = integration.check(&ctx).unwrap();
-        if which::which("go").is_err() {
-            assert!(issues
-                .iter()
-                .any(|i| i.severity == Severity::Warning && i.message.contains("go")));
-        } else {
-            assert!(issues.is_empty());
-        }
+        let present = doctor_json_on_tool_only_path(
+            "go-work",
+            "github/acme/server/go.mod",
+            "module github.com/acme/server\n\ngo 1.20\n",
+            &["go"],
+        );
+        assert!(
+            !reports_tool_missing(&present, "go-work"),
+            "with a go on the child's PATH, the finding must clear; got:\n{present}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1999,6 +2235,64 @@ use (
             "go.work must be deleted: only rwv-authored content (go line + use) remains"
         );
     }
+
+    /// This module asserts on `go.work` by searching the whole file for a
+    /// member path, and the whole file is not the owned region: `replace`
+    /// directives and every comment are user content rwv carries through. So a
+    /// path sitting in either is enough to satisfy such a search without being
+    /// a `use` member at all.
+    ///
+    /// Latent exposure, not a live defect — no sibling fixture above puts a
+    /// member-shaped path anywhere but the `use` block, so every one of them is
+    /// correct today. This is the fixture that tells the two apart, and it
+    /// asserts through `verify()`, which compares the on-disk `use` set against
+    /// the manifest rather than searching text.
+    ///
+    /// Pinned at `go 1.20` for the same reason the scenarios above are: with
+    /// `go` on PATH this runs the `go work` path, and 1.21 is the oldest
+    /// release that would send it to the network for a toolchain.
+    #[test]
+    fn a_decoy_path_in_a_comment_or_replace_is_not_a_use_member() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/server/go.mod",
+            "module github.com/acme/server\n\ngo 1.20\n",
+        );
+
+        write_file(
+            root,
+            "go.work",
+            r#"go 1.20
+
+// ./github/acme/decoy left the weave; the note is kept on purpose
+replace example.com/decoy => ./github/acme/decoy
+"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        GoWork.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            content.contains("github/acme/decoy"),
+            "fixture is inert unless the decoy survives activate; got:\n{content}"
+        );
+
+        let issues = GoWork.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "the decoy is user content, so the authored use set is exactly the \
+             manifest's members and verify has nothing to report; got: {issues:?}"
+        );
+    }
 }
 
 // ===========================================================================
@@ -2135,28 +2429,31 @@ mod uv_workspace {
         assert!(root.join("pyproject.toml").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_warns_when_uv_not_on_path() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let absent = doctor_json_on_tool_only_path(
+            "uv-workspace",
+            "github/acme/server/pyproject.toml",
+            "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
+            &[],
+        );
+        assert!(
+            reports_tool_missing(&absent, "uv-workspace"),
+            "with uv off the child's PATH, doctor must raise tool-missing for \
+             uv-workspace; got:\n{absent}"
+        );
 
-        touch(root, "github/acme/server/pyproject.toml");
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = UvWorkspace;
-        let issues = integration.check(&ctx).unwrap();
-        if which::which("uv").is_err() {
-            assert!(issues
-                .iter()
-                .any(|i| i.severity == Severity::Warning && i.message.contains("uv")));
-        } else {
-            assert!(issues.is_empty());
-        }
+        let present = doctor_json_on_tool_only_path(
+            "uv-workspace",
+            "github/acme/server/pyproject.toml",
+            "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
+            &["uv"],
+        );
+        assert!(
+            !reports_tool_missing(&present, "uv-workspace"),
+            "with a uv on the child's PATH, the finding must clear; got:\n{present}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2724,28 +3021,31 @@ mod cargo_workspace {
         assert!(root.join("Cargo.toml").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_warns_when_cargo_not_on_path() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let absent = doctor_json_on_tool_only_path(
+            "cargo-workspace",
+            "github/acme/server/Cargo.toml",
+            "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            &[],
+        );
+        assert!(
+            reports_tool_missing(&absent, "cargo-workspace"),
+            "with cargo off the child's PATH, doctor must raise tool-missing for \
+             cargo-workspace; got:\n{absent}"
+        );
 
-        touch(root, "github/acme/server/Cargo.toml");
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = CargoWorkspace;
-        let issues = integration.check(&ctx).unwrap();
-        if which::which("cargo").is_err() {
-            assert!(issues
-                .iter()
-                .any(|i| i.severity == Severity::Warning && i.message.contains("cargo")));
-        } else {
-            assert!(issues.is_empty());
-        }
+        let present = doctor_json_on_tool_only_path(
+            "cargo-workspace",
+            "github/acme/server/Cargo.toml",
+            "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            &["cargo"],
+        );
+        assert!(
+            !reports_tool_missing(&present, "cargo-workspace"),
+            "with a cargo on the child's PATH, the finding must clear; got:\n{present}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -6292,26 +6592,31 @@ mod gita {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_warns_when_gita_not_on_path() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
+        let absent = doctor_json_on_tool_only_path(
+            "gita",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            &[],
+        );
+        assert!(
+            reports_tool_missing(&absent, "gita"),
+            "with gita off the child's PATH, doctor must raise tool-missing for \
+             gita; got:\n{absent}"
+        );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = Gita;
-        let issues = integration.check(&ctx).unwrap();
-        if which::which("gita").is_err() {
-            assert!(issues
-                .iter()
-                .any(|i| i.severity == Severity::Warning && i.message.contains("gita")));
-        } else {
-            assert!(issues.is_empty());
-        }
+        let present = doctor_json_on_tool_only_path(
+            "gita",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            &["gita"],
+        );
+        assert!(
+            !reports_tool_missing(&present, "gita"),
+            "with a gita on the child's PATH, the finding must clear; got:\n{present}"
+        );
     }
 
     /// A repo path containing a comma must be emitted as a properly-quoted CSV
@@ -7535,47 +7840,38 @@ mod activate_hooks {
     // npm-workspaces: `npm install`
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn npm_workspaces_activate_hook_runs_npm_install() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        // Set up a repo with a valid package.json so npm integration detects it
-        write_file(
-            root,
+        let (ok, ran) = activate_with_tool_shim(
+            "npm-workspaces",
             "github/acme/server/package.json",
-            "{\"name\": \"server\", \"version\": \"0.1.0\"}",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            "npm",
+            0,
+            &[],
+        );
+        assert!(ok, "activation must succeed when the hook's tool does");
+        assert_eq!(
+            ran.trim(),
+            "install",
+            "the hook must reach `npm install`; got: {ran:?}"
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        // Activate first so the root package.json exists
-        let integration = NpmWorkspaces;
-        integration.activate(&ctx).unwrap();
-
-        // Activate hook should succeed (runs `npm install`)
-        let result = integration.activate_hook(&ctx);
-        if which::which("npm").is_ok() {
-            assert!(
-                result.is_ok(),
-                "npm activate hook should succeed when npm is available: {:?}",
-                result.err()
-            );
-            // After install, a package-lock.json should exist
-            assert!(
-                root.join("package-lock.json").exists(),
-                "npm activate hook should create package-lock.json"
-            );
-        } else {
-            assert!(
-                result.is_err(),
-                "npm activate hook should fail when npm is not available"
-            );
-        }
+        let (ok, ran) = activate_with_tool_shim(
+            "npm-workspaces",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            "npm",
+            1,
+            &[],
+        );
+        assert!(!ok, "activation must fail when the hook's tool does");
+        assert_eq!(
+            ran.trim(),
+            "install",
+            "a failing tool is still a tool the hook reached; got: {ran:?}"
+        );
     }
 
     #[test]
@@ -7606,44 +7902,36 @@ mod activate_hooks {
     // cargo-workspace: the lockfile step
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
-    fn cargo_workspace_activate_hook_produces_the_first_lock() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(
-            root,
+    fn cargo_workspace_activate_hook_reaches_cargo_and_follows_its_exit() {
+        let (ok, ran) = activate_with_tool_shim(
+            "cargo-workspace",
             "github/acme/server/Cargo.toml",
             "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            "cargo",
+            0,
+            &["projects/app/Cargo.lock"],
         );
-        write_file(root, "github/acme/server/src/lib.rs", "");
+        assert!(ok, "activation must succeed when the hook's tool does");
+        assert!(
+            !ran.trim().is_empty(),
+            "the hook must reach cargo; got: {ran:?}"
+        );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = CargoWorkspace;
-        integration.activate(&ctx).unwrap();
-
-        let result = integration.activate_hook(&ctx);
-        if which::which("cargo").is_ok() {
-            assert!(
-                result.is_ok(),
-                "cargo activate hook should succeed when cargo is available: {:?}",
-                result.err()
-            );
-            assert!(
-                root.join("Cargo.lock").exists(),
-                "cargo activate hook should create Cargo.lock"
-            );
-        } else {
-            assert!(
-                result.is_err(),
-                "cargo activate hook should fail when cargo is not available"
-            );
-        }
+        let (ok, ran) = activate_with_tool_shim(
+            "cargo-workspace",
+            "github/acme/server/Cargo.toml",
+            "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            "cargo",
+            1,
+            &["projects/app/Cargo.lock"],
+        );
+        assert!(!ok, "activation must fail when the hook's tool does");
+        assert!(
+            !ran.trim().is_empty(),
+            "a failing cargo is still a cargo the hook reached; got: {ran:?}"
+        );
     }
 
     #[test]
@@ -7874,43 +8162,38 @@ mod activate_hooks {
     // uv-workspace: `uv sync`
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn uv_workspace_activate_hook_runs_uv_sync() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(
-            root,
+        let (ok, ran) = activate_with_tool_shim(
+            "uv-workspace",
             "github/acme/server/pyproject.toml",
             "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
+            "uv",
+            0,
+            &[],
+        );
+        assert!(ok, "activation must succeed when the hook's tool does");
+        assert_eq!(
+            ran.trim(),
+            "sync",
+            "the hook must reach `uv sync`; got: {ran:?}"
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = UvWorkspace;
-        integration.activate(&ctx).unwrap();
-
-        let result = integration.activate_hook(&ctx);
-        if which::which("uv").is_ok() {
-            assert!(
-                result.is_ok(),
-                "uv activate hook should succeed when uv is available: {:?}",
-                result.err()
-            );
-            assert!(
-                root.join("uv.lock").exists(),
-                "uv activate hook should create uv.lock"
-            );
-        } else {
-            assert!(
-                result.is_err(),
-                "uv activate hook should fail when uv is not available"
-            );
-        }
+        let (ok, ran) = activate_with_tool_shim(
+            "uv-workspace",
+            "github/acme/server/pyproject.toml",
+            "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
+            "uv",
+            1,
+            &[],
+        );
+        assert!(!ok, "activation must fail when the hook's tool does");
+        assert_eq!(
+            ran.trim(),
+            "sync",
+            "a failing tool is still a tool the hook reached; got: {ran:?}"
+        );
     }
 
     #[test]
@@ -7940,43 +8223,38 @@ mod activate_hooks {
     // pnpm-workspaces: `pnpm install`
     // -----------------------------------------------------------------------
 
+    #[cfg(unix)]
     #[test]
     fn pnpm_workspaces_activate_hook_runs_pnpm_install() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(
-            root,
+        let (ok, ran) = activate_with_tool_shim(
+            "pnpm-workspaces",
             "github/acme/server/package.json",
-            "{\"name\": \"server\", \"version\": \"0.1.0\"}",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            "pnpm",
+            0,
+            &[],
+        );
+        assert!(ok, "activation must succeed when the hook's tool does");
+        assert_eq!(
+            ran.trim(),
+            "install",
+            "the hook must reach `pnpm install`; got: {ran:?}"
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::from_toml("enabled = true");
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        let integration = PnpmWorkspaces;
-        integration.activate(&ctx).unwrap();
-
-        let result = integration.activate_hook(&ctx);
-        if which::which("pnpm").is_ok() {
-            assert!(
-                result.is_ok(),
-                "pnpm activate hook should succeed when pnpm is available: {:?}",
-                result.err()
-            );
-            assert!(
-                root.join("pnpm-lock.yaml").exists(),
-                "pnpm activate hook should create pnpm-lock.yaml"
-            );
-        } else {
-            assert!(
-                result.is_err(),
-                "pnpm activate hook should fail when pnpm is not available"
-            );
-        }
+        let (ok, ran) = activate_with_tool_shim(
+            "pnpm-workspaces",
+            "github/acme/server/package.json",
+            "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+            "pnpm",
+            1,
+            &[],
+        );
+        assert!(!ok, "activation must fail when the hook's tool does");
+        assert_eq!(
+            ran.trim(),
+            "install",
+            "a failing tool is still a tool the hook reached; got: {ran:?}"
+        );
     }
 
     #[test]
@@ -9942,20 +10220,14 @@ mod s7_go_work_doctor {
     use super::*;
     use repoweave::integrations::GoWork;
 
-    // Force the hand-parse fallback (go is not on PATH in test environments).
-    // Mirror the pattern used in the go_work.rs unit tests.
-    fn force_fallback() {
-        // Set the thread-local via the public go_work module path.
-        // Since FORCE_GOWORK_FALLBACK is only visible inside go_work.rs,
-        // we rely on the activate() call being the first thing that would
-        // use go_on_path(). The fallback will be used because `go` is not
-        // on PATH in CI / test runner environments in most cases.
-        // Tests that need this guarantee should call this function.
-        //
-        // In practice: `go` is NOT on PATH in the test environment,
-        // so activate() automatically uses the fallback.  No thread-local
-        // needed externally.
-    }
+    // Whether these fixtures exercise go-work's `go work` path or its
+    // hand-parse fallback is decided by whether `go` is on PATH here, and this
+    // file cannot decide it: the `FORCE_GOWORK_FALLBACK` override is
+    // `#[cfg(test)]`-gated inside the library, so neither it nor the branch
+    // reading it exists in the build an integration test links against.
+    // Measured: forcing either answer leaves all seven green, so no assertion
+    // below separates the two paths — treat a green here as saying nothing
+    // about which one ran.
 
     fn write_go_mod(root: &Path, repo: &str) {
         write_file(
@@ -9973,7 +10245,6 @@ mod s7_go_work_doctor {
     /// Then:  verify() reports a single MISSING+safe_to_fix finding.
     #[test]
     fn s7_go_work_doctor_missing_reports_finding() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -10005,7 +10276,6 @@ mod s7_go_work_doctor {
     /// Then:  file created with marker; verify() returns CLEAN.
     #[test]
     fn s7_go_work_doctor_missing_fixed_by_activate() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -10048,7 +10318,6 @@ mod s7_go_work_doctor {
     /// Then:  verify() reports DRIFT+safe_to_fix.
     #[test]
     fn s7_go_work_doctor_drift_reports_finding() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -10095,7 +10364,6 @@ mod s7_go_work_doctor {
     /// Then:  verify() returns CLEAN.
     #[test]
     fn s7_go_work_doctor_drift_fixed_by_activate() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -10149,7 +10417,6 @@ mod s7_go_work_doctor {
     /// Then:  verify() reports USER-HELD+!safe_to_fix.
     #[test]
     fn s7_go_work_doctor_user_held_reports_finding() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -10196,7 +10463,6 @@ mod s7_go_work_doctor {
     /// a present-but-unmarked managed file is left strictly alone.
     #[test]
     fn s7_go_work_doctor_user_held_file_unchanged_after_activate() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
@@ -10252,7 +10518,6 @@ mod s7_go_work_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_go_work_doctor_clean_after_fresh_activate() {
-        force_fallback();
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
