@@ -85,10 +85,22 @@ The trait owns the qualifier; rwv core never spells a remote name.
 **Anchors:** commits `1b76456` (the move across the seam) and `046aafd`
 (what emptied the parameter it introduced).
 
-`Vcs::clone_repo_with_conventional_remote` and
-`Vcs::resolve_branch_on_remote` are the two methods that own the
-convention: the git impl clones with the remote named `origin` and
-qualifies a branch lookup as `origin/<branch>`.
+`Vcs::clone_repo` and `Vcs::resolve_branch_on_remote` are the two
+methods that own the convention: the git impl clones with the remote
+named `origin` and qualifies a branch lookup as `origin/<branch>`.
+
+**And the convention is not a variant a caller selects.** Naming the
+remote arrived as a second clone method beside a `clone_repo` that left
+the name to git — which resolves `clone.defaultRemoteName` from the
+operator's own config. Three callers stayed on the plain one, so an
+operator who had set that key got clones rwv made and then could not
+read back: the remote exists under their name, and every later
+`remote_url` / `add_remote` / set-head lookup asks for rwv's. A
+choice between "named by the backend" and "named by whoever ran the
+command" is not optionality either — no caller here wants the second,
+and the seam's own rule says the backend decides. So the two methods
+are one: `clone_repo` names the remote, and there is no longer a
+spelling of "clone" that opts out of the convention.
 
 **Why this is the seam shape.** Before the refactor the
 `origin/<branch>` qualifier was spelled out at several call sites in rwv
@@ -390,7 +402,13 @@ authors violated repeatedly is a preference until something refuses it.
 ## Anchoring
 
 The examples above each cite a closed work item and a landed commit. The
-sync codepath that depends on examples (b) and (c) is covered by:
+remote-naming convention (example (a)) is covered by:
+
+- `tests/clone_default_remote_name_test.rs` — drives a clone under an
+  operator `clone.defaultRemoteName` that is not the convention, and
+  asserts the clone is one rwv can still read a remote back from.
+
+The sync codepath that depends on examples (b) and (c) is covered by:
 
 - `tests/e2e_two_workweaves_test.rs` — exercises the `merge=rwv-ours`
   replay-exclusion path end-to-end.

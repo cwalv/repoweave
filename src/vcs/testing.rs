@@ -298,14 +298,6 @@ impl Vcs for FakeVcs {
         unsupported("conventional_remote_name")
     }
 
-    fn clone_repo_with_conventional_remote(
-        &self,
-        _url: &str,
-        _dest: &Path,
-    ) -> Result<(), VcsError> {
-        unsupported("clone_repo_with_conventional_remote")
-    }
-
     fn resolve_branch_on_remote(
         &self,
         _repo: &Path,

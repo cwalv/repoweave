@@ -1936,7 +1936,12 @@ pub trait Vcs: Send + Sync {
     /// `git init --initial-branch=main`.
     fn init_repo(&self, dest: &Path) -> Result<(), VcsError>;
 
-    /// Clone a remote URL into `dest`.
+    /// Clone `url` into `dest`, naming the remote by the convention this VCS
+    /// uses for a repo rwv manages.
+    ///
+    /// The name is not left to the VCS's own default: git's is settable
+    /// per-operator via `clone.defaultRemoteName`, and a clone whose remote is
+    /// named something else is one every later resolution here would miss.
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
     /// What this backend calls the remote every method here acts on.
@@ -1947,17 +1952,6 @@ pub trait Vcs: Send + Sync {
     /// know it. Reading it to render a message is the one legitimate use,
     /// and the value read is whichever backend the frame was given.
     fn conventional_remote_name(&self) -> &str;
-
-    /// Clone `url` into `dest`, naming the remote by the convention this
-    /// VCS uses for a repo rwv manages.
-    ///
-    /// Unlike [`clone_repo`], the name is not left to the VCS's own default:
-    /// git's is settable per-operator via `clone.defaultRemoteName`, and a
-    /// clone whose remote is named something else is one every later
-    /// resolution here would miss.
-    ///
-    /// [`clone_repo`]: Vcs::clone_repo
-    fn clone_repo_with_conventional_remote(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
     /// Resolve `branch` on `repo`'s conventional remote.
     ///

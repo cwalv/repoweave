@@ -1260,21 +1260,15 @@ impl Vcs for GitVcs {
 
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
         let dest_str = path_as_git_arg(dest, "destination path")?;
-        Self::run(&["clone", url, dest_str], Path::new("."))?;
-        Ok(())
-    }
-
-    fn conventional_remote_name(&self) -> &str {
-        GIT_DEFAULT_REMOTE_NAME
-    }
-
-    fn clone_repo_with_conventional_remote(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
-        let dest_str = path_as_git_arg(dest, "destination path")?;
         Self::run(
             &["clone", "--origin", GIT_DEFAULT_REMOTE_NAME, url, dest_str],
             Path::new("."),
         )?;
         Ok(())
+    }
+
+    fn conventional_remote_name(&self) -> &str {
+        GIT_DEFAULT_REMOTE_NAME
     }
 
     fn resolve_branch_on_remote(
@@ -3615,22 +3609,6 @@ mod branch_model_tests {
             panic!("fixture should be attached");
         };
         PublishRef::from_attached(&a)
-    }
-
-    #[test]
-    fn clone_repo_with_conventional_remote_names_the_remote_origin() {
-        let (tmp, _clone, bare) = clone_of_bare_origin();
-        let dest = tmp.path().join("conventional-clone");
-
-        GitVcs
-            .clone_repo_with_conventional_remote(bare.to_str().unwrap(), &dest)
-            .unwrap();
-
-        assert_eq!(
-            git(&dest, &["remote"]),
-            "origin",
-            "the name every later resolution in this impl spells"
-        );
     }
 
     #[test]
