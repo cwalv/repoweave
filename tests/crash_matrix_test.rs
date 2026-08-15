@@ -722,7 +722,10 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
 
     run_abort_ok(&ww.root, "M(replay)/sync/owner/abort");
     // Server must be back at the savepoint (mid-op classification + reset).
-    assert!(!mid_rebase(&ww.server_dir), "abort must cancel the mid-rebase");
+    assert!(
+        !mid_rebase(&ww.server_dir),
+        "abort must cancel the mid-rebase"
+    );
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ww.server_dir),
         sha,
