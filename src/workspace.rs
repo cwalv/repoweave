@@ -558,22 +558,20 @@ fn slash_separated<'a>(components: impl Iterator<Item = Component<'a>>) -> Strin
         .join("/")
 }
 
-/// The project a directory belongs to, from either a weave-relative path or an
-/// absolute one: everything below the last `projects/` segment, so
-/// `/w/projects/chatly/web-app` yields `chatly/web-app`.
+/// The project `dir` holds, named relative to `root`'s projects tree, so
+/// `/w` + `/w/projects/chatly/web-app` yields `chatly/web-app`.
 ///
-/// `None` when there is no such segment — a bare directory that is not sited
-/// in a weave at all.
-pub(crate) fn project_name_from_dir(dir: &Path) -> Option<String> {
-    if let Some(rest) = strip_projects_prefix(dir) {
-        let name = slash_separated(rest.components());
-        return (!name.is_empty()).then_some(name);
-    }
-    let components: Vec<_> = dir.components().collect();
-    let idx = components
-        .iter()
-        .rposition(|c| c.as_os_str() == PROJECTS_DIR)?;
-    let name = slash_separated(components[idx + 1..].iter().copied());
+/// `None` when `dir` is not inside `root`'s projects tree at all.
+///
+/// The root is a parameter because without it the answer is a guess. A name
+/// may contain `/`, and no rule bars the segment `projects` from appearing in
+/// one, so a path holds no mark saying which of its `projects` components
+/// belongs to the weave and which belongs to the name. Searching for one — the
+/// first, the last — answers a different question than the caller asked, and
+/// silently, for every name of that shape.
+pub(crate) fn project_name_from_dir(root: &Path, dir: &Path) -> Option<String> {
+    let rest = dir.strip_prefix(projects_dir(root)).ok()?;
+    let name = slash_separated(rest.components());
     (!name.is_empty()).then_some(name)
 }
 
@@ -833,17 +831,16 @@ fn undotted_child_dirs(dir: &Path) -> Vec<PathBuf> {
 /// keeps [`ProjectScan::projectless`] to outermost directories: a level
 /// records its barren children only once something below it is a project,
 /// and otherwise hands its own emptiness to its parent to record.
-fn collect_projects_below(dir: &Path, scan: &mut ProjectScan) -> bool {
+fn collect_projects_below(dir: &Path, rel: &Path, scan: &mut ProjectScan) -> bool {
     if dir.join(Manifest::FILE_NAME).is_file() {
-        if let Some(derived) = project_name_from_dir(dir) {
-            match ProjectName::new(derived.clone()) {
-                Ok(name) => scan.projects.push(name),
-                Err(error) => scan.unnameable.push(UnnameableProjectDir {
-                    dir: dir.to_path_buf(),
-                    derived,
-                    error,
-                }),
-            }
+        let derived = slash_separated(rel.components());
+        match ProjectName::new(derived.clone()) {
+            Ok(name) => scan.projects.push(name),
+            Err(error) => scan.unnameable.push(UnnameableProjectDir {
+                dir: dir.to_path_buf(),
+                derived,
+                error,
+            }),
         }
         return true;
     }
@@ -851,7 +848,10 @@ fn collect_projects_below(dir: &Path, scan: &mut ProjectScan) -> bool {
     let mut barren = Vec::new();
     let mut holds_project = false;
     for child in undotted_child_dirs(dir) {
-        if collect_projects_below(&child, scan) {
+        let Some(segment) = child.file_name() else {
+            continue;
+        };
+        if collect_projects_below(&child, &rel.join(segment), scan) {
             holds_project = true;
         } else {
             barren.push(child);
@@ -878,7 +878,10 @@ pub fn scan_projects(root: &Path) -> ProjectScan {
     let mut scan = ProjectScan::default();
     let mut barren = Vec::new();
     for child in undotted_child_dirs(&projects_dir(root)) {
-        if !collect_projects_below(&child, &mut scan) {
+        let Some(segment) = child.file_name() else {
+            continue;
+        };
+        if !collect_projects_below(&child, Path::new(segment), &mut scan) {
             barren.push(child);
         }
     }
@@ -911,7 +914,7 @@ pub fn enclosing_project(root: &Path, name: &str) -> Option<String> {
         .into_iter()
         .skip(1)
         .find(|d| d.join(Manifest::FILE_NAME).is_file())
-        .and_then(|d| project_name_from_dir(&d))
+        .and_then(|d| project_name_from_dir(root, &d))
 }
 
 /// The project names an error offers the reader as a menu.
@@ -2531,19 +2534,22 @@ mod tests {
 
     #[test]
     fn nested_project_name_drops_the_spelling_of_the_path_it_came_from() {
-        let name = project_name_from_dir(Path::new("projects//chatly//web-app")).unwrap();
+        let name =
+            project_name_from_dir(Path::new(""), Path::new("projects//chatly//web-app")).unwrap();
         ProjectName::new(name.clone())
             .expect("a derived project name must construct a ProjectName");
         assert_eq!(name, "chatly/web-app");
     }
 
-    /// The relative and absolute spellings reach different arms, and on a host
-    /// whose separator is already `/` they cannot disagree — the equality is
+    /// Relative and absolute spellings answer alike, and on a host whose
+    /// separator is already `/` they cannot disagree — the equality is
     /// load-bearing only where `std::path::MAIN_SEPARATOR` is a backslash.
     #[test]
     fn nested_project_name_is_the_same_relative_and_absolute() {
-        let relative = project_name_from_dir(Path::new("projects/chatly/web-app")).unwrap();
+        let relative =
+            project_name_from_dir(Path::new(""), Path::new("projects/chatly/web-app")).unwrap();
         let absolute = project_name_from_dir(
+            Path::new("/w"),
             &Path::new("/w")
                 .join("projects")
                 .join("chatly")
@@ -2553,6 +2559,29 @@ mod tests {
         ProjectName::new(absolute.clone())
             .expect("a derived project name must construct a ProjectName");
         assert_eq!(relative, absolute);
+    }
+
+    /// A name may contain the layout segment. The weave's `projects` is the
+    /// one the root names; every later one belongs to the project.
+    #[test]
+    fn a_name_may_contain_the_layout_segment_and_keeps_all_of_it() {
+        let root = Path::new("/w");
+        let dir = projects_dir(root).join("a").join("projects").join("b");
+        assert_eq!(
+            project_name_from_dir(root, &dir).as_deref(),
+            Some("a/projects/b")
+        );
+    }
+
+    /// A directory outside the root's projects tree has no name here, and
+    /// saying so is the answer — the previous reading searched the path for a
+    /// `projects` component and answered anyway.
+    #[test]
+    fn a_directory_outside_the_projects_tree_has_no_project_name() {
+        assert_eq!(
+            project_name_from_dir(Path::new("/w"), Path::new("/elsewhere/projects/x")),
+            None
+        );
     }
 
     // ========================================================================

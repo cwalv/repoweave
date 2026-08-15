@@ -25,6 +25,12 @@
 //! that performs it. The two claims are different and neither replaces the
 //! other.
 //!
+//! The function reads one way, not two. It used to answer from a
+//! weave-relative path by stripping a leading `projects/` and from an absolute
+//! one by searching for the last `projects` component — readings that disagree
+//! for a name that itself contains that segment. It now strips the root's
+//! projects directory and nothing else, so there is a single body to scan.
+//!
 //! Residue. The body is located by two production-code anchors, so a rewrite
 //! of either fails the vacuity guard below rather than letting the main
 //! assertion pass over an empty slice. The needles name three spellings of
@@ -38,7 +44,7 @@ mod common;
 use common::src_scan::{production_lines, SourceLine};
 
 const OWNER: &str = "workspace.rs";
-const BLOCK_START: &str = "fn project_name_from_dir(dir: &Path) -> Option<String> {";
+const BLOCK_START: &str = "fn project_name_from_dir(root: &Path, dir: &Path) -> Option<String> {";
 const BLOCK_AFTER: &str = "fn workspace_marker_names() -> Vec<String> {";
 
 /// The spellings that turn a `Path` or `PathBuf` into text using the host's
@@ -47,7 +53,7 @@ const BLOCK_AFTER: &str = "fn workspace_marker_names() -> Vec<String> {";
 /// leave the main assertion passing over nothing.
 const RENDER_NEEDLES: &[&str] = &["to_string_lossy", ".display()", "PathBuf"];
 
-/// The helper that writes the separator explicitly, one call per arm.
+/// The helper that writes the separator explicitly.
 const EXPLICIT_JOIN: &str = "slash_separated(";
 
 /// `project_name_from_dir`'s body: the production lines between the two
@@ -124,7 +130,7 @@ fn the_name_is_not_rendered_from_a_path() {
 }
 
 #[test]
-fn both_arms_join_the_components_explicitly() {
+fn the_name_is_joined_explicitly() {
     let lines = production_lines();
     let body = body_lines(&lines).expect("checked by the scan-reach test above");
 
@@ -134,12 +140,11 @@ fn both_arms_join_the_components_explicitly() {
         .count();
 
     assert!(
-        calls >= 2,
-        "`project_name_from_dir` has two arms — one for a weave-relative path, \
-         one for an absolute path — and each must write the separator itself. \
-         Found {calls} call(s) to `{EXPLICIT_JOIN}` in the body, so at least \
-         one arm produces its name some other way. The absence assertion above \
-         cannot see that on its own: an arm that stopped returning a name at \
-         all would satisfy it."
+        calls >= 1,
+        "`project_name_from_dir` must write the separator itself. Found \
+         {calls} call(s) to `{EXPLICIT_JOIN}` in the body, so the name is \
+         produced some other way. The absence assertion above cannot see that \
+         on its own: a body that stopped returning a name at all would \
+         satisfy it."
     );
 }
