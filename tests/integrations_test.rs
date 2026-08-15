@@ -5645,7 +5645,7 @@ mod s7_cargo_doctor {
     // covered by the e2e battery in e2e_cargo_test.rs.
     // -----------------------------------------------------------------------
 
-    use repoweave::integrations::merge::stamp_owned_digest;
+    use repoweave::owned_state::stamp_owned_digest;
 
     /// The R34 regression test proper.
     ///

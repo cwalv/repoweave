@@ -34,8 +34,8 @@ use repoweave::check::{
     build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, WeaveRootIdentityConflictKind,
     WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
 };
+use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
-use repoweave::integrations::merge::MemberIncompatibility;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::plugins::PluginRecord;
 use repoweave::vcs::ResolvedRevisionId;

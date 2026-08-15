@@ -110,7 +110,7 @@ fn weave(root: &Path) -> PathBuf {
 
     // The lock and its attestation, as the hook would have left them.
     std::fs::write(project_dir.join("Cargo.lock"), LOCK).unwrap();
-    repoweave::integrations::merge::stamp_owned_digest(&project_dir, "Cargo.lock", LOCK.as_bytes())
+    repoweave::owned_state::stamp_owned_digest(&project_dir, "Cargo.lock", LOCK.as_bytes())
         .unwrap();
 
     for file in ["Cargo.toml", "Cargo.lock", "gita/repos.csv", "notes.md"] {

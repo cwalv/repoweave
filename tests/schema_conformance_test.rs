@@ -73,8 +73,8 @@ use repoweave::fetch::{
     FetchJsonOutput, FetchOutcomeNdjsonRecord, FetchOutcomeOutput, FetchOutcomeStatus,
     FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
 };
+use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
-use repoweave::integrations::merge::MemberIncompatibility;
 use repoweave::op_state::{OpPhase, OpVerb, Override};
 use repoweave::push::{
     PushJsonOutput, PushOutcomeNdjsonRecord, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL,

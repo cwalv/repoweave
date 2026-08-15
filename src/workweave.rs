@@ -1814,7 +1814,7 @@ pub fn create_workweave(
     // workspace it forked from; copying is what makes the two agree.
     if project_dir.exists() && project_wt_dest.exists() {
         if let Err(e) =
-            crate::integrations::merge::carry_attested_owned_files(&project_dir, &project_wt_dest)
+            crate::owned_state::carry_attested_owned_files(&project_dir, &project_wt_dest)
         {
             eprintln!(
                 "rwv workweave create: warning: could not carry rwv-owned generated files \

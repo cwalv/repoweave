@@ -43,10 +43,10 @@ use crate::integration_runner::{
     run_activate_hooks, run_activations, run_checks, run_deactivations, run_verifications,
 };
 use crate::integrations::builtin_integrations;
-use crate::integrations::merge::{
+use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+use crate::owned_state::{
     attested_owned_files, drifted_attested_owned_files, forget_owned_digest, stamp_owned_digest,
 };
-use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::symlink::LinkTarget;
 use crate::workspace::{
     observe_root, project_dir, project_rel_dir, strip_projects_prefix, workspace_marker_names,
@@ -2131,7 +2131,7 @@ mod tests {
     mod arrived_drift {
         use super::*;
         use crate::cli::consent::{AdoptDriftedConsent, RegenerateDriftedConsent};
-        use crate::integrations::merge::{check_owned_digest, OwnedDigestCheck};
+        use crate::owned_state::{check_owned_digest, OwnedDigestCheck};
 
         /// A directory where `name` was accepted holding `accepted`, and now
         /// holds `on_disk`.

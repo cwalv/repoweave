@@ -8425,14 +8425,12 @@ enum Repair {
 /// the operator may not be reading and is then gone; this is derivable from
 /// present state whenever they ask, and from this checkout alone — no source
 /// workspace, no history.
-fn stale_generation_findings(
-    world: &DoctorWorld,
-) -> Vec<crate::integrations::merge::StaleGeneration> {
+fn stale_generation_findings(world: &DoctorWorld) -> Vec<crate::owned_state::StaleGeneration> {
     let mut findings = Vec::new();
     for project in &world.input.projects {
         let project_dir =
             crate::workspace::project_dir(&world.workspace_dir, project.name.as_str());
-        findings.extend(crate::integrations::merge::stale_generations(
+        findings.extend(crate::owned_state::stale_generations(
             &project_dir,
             &project.name,
             &world.workspace_dir,
@@ -8442,7 +8440,7 @@ fn stale_generation_findings(
 }
 
 /// The operator's rendering of a stale generation.
-fn stale_generation_issue(finding: &crate::integrations::merge::StaleGeneration) -> Issue {
+fn stale_generation_issue(finding: &crate::owned_state::StaleGeneration) -> Issue {
     use crate::integration::Severity;
 
     let cause = if finding.provenance_unknown() {
@@ -8471,7 +8469,7 @@ fn stale_generation_issue(finding: &crate::integrations::merge::StaleGeneration)
 /// The same finding as the typed advisory `rwv sync --json` already emits, so
 /// an agent branches on one vocabulary rather than two.
 fn stale_generation_advisory(
-    finding: &crate::integrations::merge::StaleGeneration,
+    finding: &crate::owned_state::StaleGeneration,
 ) -> crate::workspace::AdvisoryOutput {
     crate::workspace::AdvisoryOutput {
         kind: crate::workspace::AdvisoryKindOutput::DerivedStateStale,

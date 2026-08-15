@@ -21,10 +21,10 @@
 mod common;
 
 use common::src_scan::{production_lines, string_arguments_to, struct_literal_needle};
-use repoweave::integration::{Integration, IntegrationContext, IssueKind};
+use repoweave::integration::{Integration, IntegrationContext, IssueKind, MemberIncompatibility};
 use repoweave::integration_runner::{detection_vocabulary, IntegrationContextBase};
 use repoweave::integrations::builtin_integrations;
-use repoweave::integrations::merge::{drift_issues, missing_issue, MemberIncompatibility};
+use repoweave::integrations::merge::{drift_issues, missing_issue};
 use std::collections::BTreeSet;
 use std::path::Path;
 

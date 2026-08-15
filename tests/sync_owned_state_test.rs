@@ -155,7 +155,7 @@ impl Fixture {
     /// generation, the way an activation hook's acceptance would.
     fn accept_source_lock(&self, content: &str) {
         std::fs::write(self.source_lock(), content).unwrap();
-        repoweave::integrations::merge::stamp_owned_digest(
+        repoweave::owned_state::stamp_owned_digest(
             &self.source_project_dir,
             "Cargo.lock",
             content.as_bytes(),
@@ -460,12 +460,12 @@ fn sync_leaves_the_child_on_its_create_time_attested_lock() {
     let child_recorded = recorded_lock_digest(&f.ww_digest_state())
         .expect("the child should still record a digest for its lock");
     assert_eq!(
-        repoweave::integrations::merge::check_owned_digest(
+        repoweave::owned_state::check_owned_digest(
             &f.ww_dir.join("projects/web-app"),
             "Cargo.lock",
             SOURCE_LOCK.as_bytes(),
         ),
-        repoweave::integrations::merge::OwnedDigestCheck::Matches,
+        repoweave::owned_state::OwnedDigestCheck::Matches,
         "the child's ledger must still attest the lock it holds (recorded: \
          {child_recorded}) — lock and ledger stay stale TOGETHER, which is \
          what keeps the checkout self-consistent"

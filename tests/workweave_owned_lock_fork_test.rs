@@ -192,12 +192,8 @@ fn fixture(source_lock: Option<&str>) -> Fixture {
 
     if let Some(content) = source_lock {
         std::fs::write(project_dir.join("Cargo.lock"), content).unwrap();
-        repoweave::integrations::merge::stamp_owned_digest(
-            &project_dir,
-            "Cargo.lock",
-            content.as_bytes(),
-        )
-        .expect("stamping the source lock should succeed");
+        repoweave::owned_state::stamp_owned_digest(&project_dir, "Cargo.lock", content.as_bytes())
+            .expect("stamping the source lock should succeed");
 
         // The carry, not the worktree checkout, is the only route this lock
         // can reach a workweave by.

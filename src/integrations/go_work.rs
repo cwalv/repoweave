@@ -55,11 +55,13 @@
 //! declared.  Tests set it to `true` to guarantee the hand-parse path is
 //! taken regardless of whether `go` happens to be on PATH in the test runner.
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, MemberIncompatibility, OwnedPath, Severity,
+};
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
-    orphaned_region_issues, strip_deactivate, GoWorkDoc, KeyPath, ManagedDoc,
-    MemberIncompatibility, OwnedValue, Ownership,
+    orphaned_region_issues, strip_deactivate, GoWorkDoc, KeyPath, ManagedDoc, OwnedValue,
+    Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;

@@ -25,9 +25,9 @@ use std::path::Path;
 mod common;
 
 use repoweave::integration::{Integration, IntegrationContext};
-use repoweave::integrations::merge::stamp_owned_digest;
 use repoweave::integrations::{CargoWorkspace, NpmWorkspaces, UvWorkspace};
 use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
+use repoweave::owned_state::stamp_owned_digest;
 use repoweave::workspace::ContainerKind;
 
 // ---------------------------------------------------------------------------

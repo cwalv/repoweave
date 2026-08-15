@@ -7,7 +7,7 @@
 use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, WorkweaveConfig};
 use crate::workspace::ContainerKind;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Integration context — shared input for all integrations
@@ -168,7 +168,7 @@ pub enum IssueKind {
     ConfigRejected,
     /// An `Ownership::DefaultOnly` value that is incompatible with what the
     /// members require. Carries the observation the predicate made.
-    MemberIncompatibility(Box<crate::integrations::merge::MemberIncompatibility>),
+    MemberIncompatibility(Box<MemberIncompatibility>),
     /// Generated state whose attested inputs no longer describe the checkout.
     /// The condition `rwv sync` announces once, standing.
     DerivedStateStale,
@@ -256,6 +256,149 @@ pub struct Issue {
     /// `false` for USER-HELD findings where the user holds the pen on a managed
     /// file region and automatic overwrite would silently destroy user content.
     pub safe_to_fix: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Member incompatibility
+// ---------------------------------------------------------------------------
+//
+// `Ownership::DefaultOnly` (rule 5, `crate::integrations::merge::Ownership`)
+// conflates two predicates that only coincide at seed time:
+//
+// - PREFERENCE: divergence from *rwv's seeded default*. The user's business —
+//   `verify()` is right to report CLEAN and say nothing.
+// - INCOMPATIBILITY: divergence from *what the members require*. Not a
+//   preference: the ecosystem toolchain rejects the configuration outright.
+//   rwv computed the requirement (that is where the default came from) and can
+//   see the breach.
+//
+// This category carries the second fact and nothing else. It is **not drift**:
+// rule 5 is untouched, `verify()` still reports `DefaultOnly` divergence as
+// CLEAN, and the two coexist on the same file. Nothing gates on it — `doctor`
+// and `update` report; neither refuses.
+
+/// An on-disk `Ownership::DefaultOnly` value that is incompatible with what
+/// the workspace members require.
+///
+/// Constructed by an integration's `member_incompatibility` predicate (see
+/// [`Integration::member_incompatibility`]) and converted to
+/// an [`Issue`] by [`MemberIncompatibility::into_issue`] — the only route from
+/// this type to a reportable finding.
+///
+/// # Why the fields are facts and the prose is not
+///
+/// The struct carries only *observations*; the message template lives here, in
+/// Core. Two properties fall out of that and are not left to each construction
+/// site to remember:
+///
+/// 1. **`safe_to_fix` is always `false`.** There is no field for it. `--fix`
+///    re-runs `activate()`, which by rule-5 contract refuses to overwrite an
+///    existing `DefaultOnly` value, so an automated repair does not exist. A
+///    finding of this kind cannot be constructed claiming otherwise.
+/// 2. **The message never advertises `--fix`.** It names the two remedies that
+///    are actually available, both of which are the operator's: raise the
+///    managed value, or lower the members' requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberIncompatibility {
+    /// Integration name (goes into `Issue::integration`).
+    integration: String,
+    /// The managed file holding the incompatible value.
+    path: PathBuf,
+    /// Display form of the `DefaultOnly` key (e.g. `go`).
+    key: String,
+    /// The value currently on disk.
+    on_disk: String,
+    /// The strongest value the members require.
+    required: String,
+    /// Where that requirement comes from — the member file that carries it
+    /// (e.g. `github/org/module-a/go.mod`). Named so the operator can go
+    /// straight to the other end of the remedy.
+    required_by: String,
+}
+
+impl MemberIncompatibility {
+    /// Record an incompatibility between a managed `DefaultOnly` value and the
+    /// members' requirement.
+    ///
+    /// Every argument is an observation the predicate made from member files
+    /// and the managed file. No wall-clock, no environment, no tooling probe —
+    /// the category only carries statements that are true of the files on disk.
+    pub fn new(
+        integration: &str,
+        path: &Path,
+        key: &str,
+        on_disk: &str,
+        required: &str,
+        required_by: &str,
+    ) -> Self {
+        Self {
+            integration: integration.to_string(),
+            path: path.to_path_buf(),
+            key: key.to_string(),
+            on_disk: on_disk.to_string(),
+            required: required.to_string(),
+            required_by: required_by.to_string(),
+        }
+    }
+
+    /// The managed file holding the incompatible value.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Display form of the `DefaultOnly` key.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The value currently on disk.
+    pub fn on_disk(&self) -> &str {
+        &self.on_disk
+    }
+
+    /// The strongest value the members require.
+    pub fn required(&self) -> &str {
+        &self.required
+    }
+
+    /// The member file carrying that requirement.
+    pub fn required_by(&self) -> &str {
+        &self.required_by
+    }
+
+    /// Render this observation as the informational [`Issue`] both `rwv doctor`
+    /// and `rwv update` surface.
+    ///
+    /// `safe_to_fix` is `false` and the message names both operator remedies;
+    /// neither is a per-call-site choice (see the type docs). The observation
+    /// itself rides on [`Issue::kind`], so a surface that wants the four facts
+    /// reads them rather than parsing them back out of the sentence.
+    pub fn into_issue(self) -> Issue {
+        let message = format!(
+            "{tag}: {} sets `{}` to `{}`, but the members \
+             require `{}` (from {}) — the toolchain rejects this configuration. \
+             rwv seeded this key once and never overwrites it, so this is not drift \
+             and no automated repair applies: either raise `{}` to `{}` in {}, \
+             or lower the requirement in {}.",
+            self.path.display(),
+            self.key,
+            self.on_disk,
+            self.required,
+            self.required_by,
+            self.key,
+            self.required,
+            self.path.display(),
+            self.required_by,
+            tag = IssueKind::MEMBER_INCOMPATIBILITY,
+        );
+        Issue {
+            integration: self.integration.clone(),
+            severity: Severity::Warning,
+            message,
+            kind: IssueKind::MemberIncompatibility(Box::new(self)),
+            safe_to_fix: false,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -438,7 +581,7 @@ pub trait Integration {
     /// `DefaultOnly` divergence is CLEAN there — permanently, by contract. This
     /// hook answers a different question, "would the ecosystem tool accept this
     /// configuration", and the two coexist on the same file. See
-    /// [`crate::integrations::merge::MemberIncompatibility`] for the category
+    /// [`MemberIncompatibility`] for the category
     /// and its message discipline.
     ///
     /// **Default returns `None`** — an integration whose `DefaultOnly` keys are
@@ -462,7 +605,7 @@ pub trait Integration {
     fn member_incompatibility(
         &self,
         _ctx: &IntegrationContext,
-    ) -> anyhow::Result<Option<crate::integrations::merge::MemberIncompatibility>> {
+    ) -> anyhow::Result<Option<MemberIncompatibility>> {
         Ok(None)
     }
 }

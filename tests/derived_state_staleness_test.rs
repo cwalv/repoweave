@@ -115,11 +115,11 @@ fn weave(root: &Path) -> PathBuf {
 
     std::fs::write(project_dir.join("Cargo.lock"), LOCK).unwrap();
     let project = repoweave::manifest::ProjectName::new("app").unwrap();
-    repoweave::integrations::merge::stamp_owned_generation(
+    repoweave::owned_state::stamp_owned_generation(
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::integrations::merge::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
     )
     .unwrap();
     ws
@@ -197,7 +197,7 @@ fn an_entry_with_no_recorded_inputs_reads_stale_and_is_clearable() {
     let project_dir = ws.join("projects/app");
 
     // The pre-amendment spelling: a bare digest, no inputs.
-    repoweave::integrations::merge::stamp_owned_digest(&project_dir, "Cargo.lock", LOCK.as_bytes())
+    repoweave::owned_state::stamp_owned_digest(&project_dir, "Cargo.lock", LOCK.as_bytes())
         .unwrap();
 
     let (_, report) = rwv(&["doctor"], &ws);
@@ -233,11 +233,11 @@ fn an_input_that_appeared_since_the_generation_counts_as_moved() {
 
     std::fs::remove_file(project_dir.join("rwv.lock")).unwrap();
     let project = repoweave::manifest::ProjectName::new("app").unwrap();
-    repoweave::integrations::merge::stamp_owned_generation(
+    repoweave::owned_state::stamp_owned_generation(
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::integrations::merge::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
     )
     .unwrap();
     assert!(
@@ -341,11 +341,11 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
 
     std::fs::write(project_dir.join("Cargo.lock"), LOCK).unwrap();
     let project = repoweave::manifest::ProjectName::new("app").unwrap();
-    repoweave::integrations::merge::stamp_owned_generation(
+    repoweave::owned_state::stamp_owned_generation(
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::integrations::merge::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
     )
     .unwrap();
     ws

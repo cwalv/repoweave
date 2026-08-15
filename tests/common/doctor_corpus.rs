@@ -13,9 +13,9 @@ use repoweave::check::{
     IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, ProvenanceKind, ReplayExclusionKind,
     WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
+use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
-use repoweave::integrations::merge::MemberIncompatibility;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::op_state::OpVerb;
 use repoweave::vcs::ResolvedRevisionId;

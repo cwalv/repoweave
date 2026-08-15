@@ -143,13 +143,15 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
 use crate::integrations::merge::{
-    check_owned_digest, drift_issues, fully_owned_digest_mismatch_issue,
-    fully_owned_parse_fail_issue, generation_inputs, holds_owned_region, keypath, merge_activate,
-    missing_issue, orphaned_region_issues, stamp_owned_generation, strip_deactivate,
-    toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedDigestCheck, OwnedValue, Ownership,
-    TomlDoc,
+    drift_issues, fully_owned_parse_fail_issue, holds_owned_region, keypath, merge_activate,
+    missing_issue, orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath,
+    ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
+use crate::owned_state::{
+    check_owned_digest, fully_owned_digest_mismatch_issue, generation_inputs,
+    stamp_owned_generation, OwnedDigestCheck,
+};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
