@@ -716,7 +716,7 @@ fn doctor_canonical_intact_classification_unchanged() {
 
     // Must NOT emit the canonical-missing finding (canonical is fine).
     assert!(
-        !stdout.contains("canonical clone") || stdout.contains("safe to --fix"),
+        !stdout.contains("canonical clone"),
         "doctor must NOT emit canonical-missing when canonical is present; got:\n{stdout}"
     );
 }
