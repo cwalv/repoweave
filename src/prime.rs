@@ -65,10 +65,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
             project.as_ref()
         }
         Checkout::Workweave {
-            name,
-            dir,
-            project,
-            ..
+            name, dir, project, ..
         } => {
             out.push_str(&format!("- **Workweave**: `{}`\n", dir.display()));
             out.push_str(&format!(

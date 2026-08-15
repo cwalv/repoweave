@@ -266,7 +266,10 @@ fn unregistered_workweave_is_addressed_by_directory_in_push_refusal() {
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(!out.status.success(), "push must refuse: {stderr}");
     assert!(
-        stderr.contains(&format!("workweave at {}", dir.canonicalize().unwrap().display())),
+        stderr.contains(&format!(
+            "workweave at {}",
+            dir.canonicalize().unwrap().display()
+        )),
         "the refusal must address the workweave by directory: {stderr}"
     );
 }
@@ -440,16 +443,16 @@ fn body_text(body: &[SourceLine]) -> String {
 /// to the canonicalized-path comparison and the whole suite stays green.
 #[test]
 fn the_registry_match_reads_filesystem_identity() {
-    let matcher = body_text(&function_body(
-        "workweave_index.rs",
-        "fn same_directory(",
-    ));
+    let matcher = body_text(&function_body("workweave_index.rs", "fn same_directory("));
     assert!(
         matcher.contains(".dev()") && matcher.contains(".ino()"),
         "the match must read filesystem identity: {matcher}"
     );
 
-    let lookup = body_text(&function_body("workweave.rs", "fn workweave_name_for_path("));
+    let lookup = body_text(&function_body(
+        "workweave.rs",
+        "fn workweave_name_for_path(",
+    ));
     assert!(
         lookup.contains("same_directory("),
         "the inverse lookup must compare through that one matcher: {lookup}"
