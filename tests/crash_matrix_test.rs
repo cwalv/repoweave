@@ -474,9 +474,16 @@ fn run_abort_refuses_foreign(cwd: &Path, cell_name: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// After a successful `--continue` of a plain `sync` from ww (sharing tips
-/// with primary), the markers must be cleared and the project repo must
-/// carry a well-formed lock.
-fn assert_plain_sync_continued_clean(ww: &Workspace, cell_name: &str) {
+/// with primary — no divergence is introduced ahead of the planted cell),
+/// the markers must be cleared and ww's server/project repos and lock must
+/// sit at the real tips passed in, the same end-state-equality standard
+/// `assert_sync_to_continued_clean` holds sync-to to.
+fn assert_plain_sync_continued_clean(
+    ww: &Workspace,
+    expected_server_tip: &str,
+    expected_project_tip: &str,
+    cell_name: &str,
+) {
     assert!(
         !ww.root.join(".rwv-op").exists(),
         "[cell {cell_name}] owner record must be cleared after sync --continue"
@@ -485,15 +492,27 @@ fn assert_plain_sync_continued_clean(ww: &Workspace, cell_name: &str) {
         !ww.root.join(".rwv-op-lease").exists(),
         "[cell {cell_name}] no lease should exist after plain sync"
     );
-    // The project repo should reach a state where the lock references the
-    // (shared) server tip and the file is committed; we can't enumerate every
-    // expected SHA, but lock file presence + project repo cleanliness is the
-    // contract.
-    let lock = std::fs::read_to_string(ww.project_dir.join("rwv.lock"))
-        .expect("rwv.lock must exist after sync --continue");
-    assert!(
-        lock.contains("\"repositories\""),
-        "[cell {cell_name}] lock must be well-formed after sync --continue; got:\n{lock}"
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        expected_server_tip,
+        "[cell {cell_name}] ww's server tip must equal the real pre-op tip"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        expected_project_tip,
+        "[cell {cell_name}] ww's project tip must equal the real pre-op tip"
+    );
+    let lock = repoweave::manifest::LockFile::from_path(&ww.project_dir.join("rwv.lock"))
+        .expect("rwv.lock must parse after sync --continue");
+    let server_path = repoweave::manifest::RepoPath::new(SERVER_PATH).unwrap();
+    let pinned = lock
+        .get_entry(&server_path)
+        .unwrap_or_else(|| panic!("[cell {cell_name}] lock must still carry the server entry"))
+        .version
+        .as_str();
+    assert_eq!(
+        pinned, expected_server_tip,
+        "[cell {cell_name}] lock's pinned server version must equal the real server tip"
     );
 }
 
@@ -593,8 +612,11 @@ fn cell_e_replay_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
+    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
     run_continue(Verb::Sync, &ww.root, "E(replay)/sync/owner");
-    assert_plain_sync_continued_clean(&ww, "E(replay)/sync/owner");
+    assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "E(replay)/sync/owner");
 }
 
 #[test]
@@ -751,8 +773,11 @@ fn cell_j_replay_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
+    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
     run_continue(Verb::Sync, &ww.root, "J(replay)/sync/owner");
-    assert_plain_sync_continued_clean(&ww, "J(replay)/sync/owner");
+    assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "J(replay)/sync/owner");
 }
 
 // --- E(relock), plain sync ---------------------------------------------------
@@ -779,8 +804,11 @@ fn cell_e_relock_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
+    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
     run_continue(Verb::Sync, &ww.root, "E(relock)/sync/owner");
-    assert_plain_sync_continued_clean(&ww, "E(relock)/sync/owner");
+    assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "E(relock)/sync/owner");
 }
 
 // --- M(relock), plain sync ---------------------------------------------------
@@ -816,8 +844,11 @@ fn cell_m_relock_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
+    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
     run_continue(Verb::Sync, &ww.root, "M(relock)/sync/owner");
-    assert_plain_sync_continued_clean(&ww, "M(relock)/sync/owner");
+    assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "M(relock)/sync/owner");
 }
 
 // --- J(relock), plain sync ---------------------------------------------------
@@ -843,8 +874,8 @@ fn cell_j_relock_sync_continue_drives_to_clean_end_state() {
             target: ww.root.display().to_string(),
             phase: "relock",
             converged_tips: vec![
-                (SERVER_PATH.to_owned(), server_tip),
-                ("(project)".to_owned(), project_tip),
+                (SERVER_PATH.to_owned(), server_tip.clone()),
+                ("(project)".to_owned(), project_tip.clone()),
             ],
             ..Default::default()
         },
@@ -853,7 +884,7 @@ fn cell_j_relock_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.server_dir, op_id);
 
     run_continue(Verb::Sync, &ww.root, "J(relock)/sync/owner");
-    assert_plain_sync_continued_clean(&ww, "J(relock)/sync/owner");
+    assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "J(relock)/sync/owner");
 }
 
 // ===========================================================================
