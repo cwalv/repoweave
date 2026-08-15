@@ -2689,6 +2689,17 @@ role = "owned"
     /// Pinned with a name that deliberately disagrees with the directory's own
     /// basename: while the name was re-derived from the path, this assertion
     /// could not have held at all.
+    ///
+    /// **This is a structural pin, and deliberately not a behavioural one.**
+    /// Taking the name as a parameter changed no output on any reachable
+    /// input — that was measured, not assumed. Every caller already held the
+    /// name and rendered the directory from it, so for a name the derivation
+    /// got right the two agree; and for the one class it got wrong, the
+    /// discovery walk mis-derives the name before any loader is reached, so
+    /// nothing downstream ever saw the difference. What this test guards is
+    /// therefore the shape rather than a symptom: that a second source for
+    /// the identity does not reappear here. The class the derivation gets
+    /// wrong is a separate defect, in the walk, with its own end-to-end pin.
     #[test]
     fn from_dir_returns_the_name_it_was_given_not_one_read_off_the_path() {
         let base = tempfile::tempdir().unwrap();
