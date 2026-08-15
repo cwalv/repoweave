@@ -104,6 +104,49 @@ fn end_of_gated_item(lines: &[&str], start: usize) -> usize {
     lines.len()
 }
 
+/// The name of the item on a top-level `fn` line, `None` for anything else.
+/// Indented lines are skipped, so a nested closure never re-attributes a site.
+pub fn top_level_fn_name(text: &str) -> Option<&str> {
+    if text.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let rest = text
+        .strip_prefix("pub(crate) ")
+        .or_else(|| text.strip_prefix("pub "))
+        .unwrap_or(text);
+    let rest = rest.strip_prefix("async ").unwrap_or(rest);
+    let rest = rest.strip_prefix("fn ")?;
+    rest.split(['(', '<', ' ']).next()
+}
+
+/// The production lines of `file` inside top-level `fn name`, ending at the
+/// function's own closing brace.
+///
+/// The brace is found as a line that is exactly `}`, which is where rustfmt
+/// puts a top-level item's close. Two rules a caller would otherwise have to
+/// rediscover are why this is not a depth count: a wrapped signature puts
+/// `) -> T {` at column 0 without ending anything, and `'{'` and `'"'` are
+/// legal char literals, so a scanner counting braces or tracking quotes reads
+/// past the end of any function containing one.
+///
+/// Scope: a `}` at column 0 inside a multi-line raw string would end the body
+/// early. `src/` holds none, and a needle is missed rather than invented.
+pub fn body_of(lines: &[SourceLine], file: &str, name: &str) -> Vec<SourceLine> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in lines.iter().filter(|l| l.file == file) {
+        if !inside {
+            inside = top_level_fn_name(&line.text) == Some(name);
+            continue;
+        }
+        if line.text == "}" {
+            break;
+        }
+        out.push(line.clone());
+    }
+    out
+}
+
 /// The struct-literal needle for `T`, derived from `T`'s own type name rather
 /// than spelled out: `repoweave::integration::IntegrationContext<'_>` yields
 /// `IntegrationContext {`. A rename moves the needle with the type.

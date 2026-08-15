@@ -38,44 +38,13 @@
 
 mod common;
 
-use common::src_scan::{production_lines, SourceLine};
+use common::src_scan::{body_of, production_lines, top_level_fn_name, SourceLine};
 
 const OWNER: &str = "sync.rs";
 
-/// The name of the item on a top-level `fn` line, `None` for anything else.
-/// Indented lines are skipped, so a nested closure never re-attributes a site.
-fn top_level_fn_name(text: &str) -> Option<&str> {
-    if text.starts_with(char::is_whitespace) {
-        return None;
-    }
-    let rest = text
-        .strip_prefix("pub(crate) ")
-        .or_else(|| text.strip_prefix("pub "))
-        .unwrap_or(text);
-    let rest = rest.strip_prefix("async ").unwrap_or(rest);
-    let rest = rest.strip_prefix("fn ")?;
-    rest.split(['(', '<', ' ']).next()
-}
-
-/// The production lines of `src/sync.rs` inside top-level `fn name`.
-fn body_of(lines: &[SourceLine], name: &str) -> Vec<SourceLine> {
-    let mut inside = false;
-    let mut out = Vec::new();
-    for l in lines.iter().filter(|l| l.file == OWNER) {
-        if let Some(found) = top_level_fn_name(&l.text) {
-            inside = found == name;
-            continue;
-        }
-        if inside {
-            out.push(l.clone());
-        }
-    }
-    out
-}
-
 /// Sites in `name`'s body mentioning any of `needles`.
 fn sites_naming(lines: &[SourceLine], name: &str, needles: &[&str]) -> Vec<String> {
-    body_of(lines, name)
+    body_of(lines, OWNER, name)
         .iter()
         .filter(|l| needles.iter().any(|n| l.text.contains(n)))
         .map(|l| format!("{} {}", l.site(), l.text.trim()))
@@ -105,7 +74,7 @@ fn the_scan_reaches_the_functions_it_pins() {
              would read an empty body and pass on nothing"
         );
         assert!(
-            !body_of(&lines, name).is_empty(),
+            !body_of(&lines, OWNER, name).is_empty(),
             "the body scan for `{name}` came back empty, so every assertion \
              against it holds vacuously"
         );

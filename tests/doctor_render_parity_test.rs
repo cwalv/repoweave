@@ -212,6 +212,9 @@ fn the_corpus_covers_every_kind_and_is_not_empty() {
 /// The function the whole doctor collects through.
 const PIPELINE: &str = "collect_doctor_violations";
 
+/// The file every reachability walk below reads.
+const CHECK: &str = "check.rs";
+
 /// Top-level function bodies in a Rust source file, keyed by name.
 ///
 /// Crude on purpose: a top-level `fn` starts at column zero and ends at the
@@ -333,9 +336,21 @@ fn unreachable_collectors(source: &str, pipeline: &str) -> Vec<String> {
         .collect()
 }
 
+/// `src/check.rs` as production text: comment lines dropped and
+/// `#[cfg(test)]` items skipped, so a scan named in a comment or quoted by a
+/// fixture is not read as a call site.
 fn check_source() -> String {
-    std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/check.rs"))
-        .expect("src/check.rs is readable from the test binary")
+    production_text(CHECK)
+}
+
+/// The production lines of one `src/` file, rejoined.
+fn production_text(file: &str) -> String {
+    src_scan::production_lines()
+        .iter()
+        .filter(|l| l.file == file)
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[test]
@@ -706,11 +721,9 @@ const ISSUE_PIPELINE: &str = "collect_doctor_issues";
 /// derived from the sources rather than listed, so a hook added tomorrow is in
 /// the set the moment it is written.
 fn issue_producers() -> Vec<String> {
+    let lines = src_scan::production_lines();
     let mut out = Vec::new();
-    for line in src_scan::production_lines() {
-        if line.file == "check.rs" {
-            continue;
-        }
+    for line in lines.iter().filter(|l| l.file != CHECK) {
         let Some(rest) = line.text.strip_prefix("pub fn ") else {
             continue;
         };
@@ -721,21 +734,21 @@ fn issue_producers() -> Vec<String> {
         if name.is_empty() {
             continue;
         }
-        let source = std::fs::read_to_string(src_scan::src_dir().join(&line.file))
-            .expect("the scanned file is readable");
-        let body: String = source
-            .lines()
-            .skip(line.line - 1)
-            .take_while(|l| !l.contains(" {"))
+        let declaration: Vec<String> = std::iter::once(line.text.clone())
             .chain(
-                source
-                    .lines()
-                    .skip(line.line - 1)
-                    .find(|l| l.contains(" {")),
+                src_scan::body_of(&lines, &line.file, &name)
+                    .into_iter()
+                    .map(|l| l.text),
             )
+            .collect();
+        let signature = declaration
+            .iter()
+            .take_while(|l| !l.contains(" {"))
+            .chain(declaration.iter().find(|l| l.contains(" {")))
+            .cloned()
             .collect::<Vec<_>>()
             .join(" ");
-        if body.contains("-> Vec<") && body.contains("Issue> {") {
+        if signature.contains("-> Vec<") && signature.contains("Issue> {") {
             out.push(name);
         }
     }

@@ -25,7 +25,7 @@
 
 mod common;
 
-use common::src_scan::{production_lines, SourceLine};
+use common::src_scan::{production_lines, top_level_fn_name, SourceLine};
 use std::collections::BTreeMap;
 
 const OWNER: &str = "sync.rs";
@@ -36,21 +36,6 @@ const CHOKEPOINT: &str = "checkout_syncability";
 /// name different functions.
 fn needle() -> String {
     format!("{PREDICATE}(")
-}
-
-/// The name of the item on a top-level `fn` line, `None` for anything else.
-/// Indented lines are skipped, so a nested closure never re-attributes a site.
-fn top_level_fn_name(text: &str) -> Option<&str> {
-    if text.starts_with(char::is_whitespace) {
-        return None;
-    }
-    let rest = text
-        .strip_prefix("pub(crate) ")
-        .or_else(|| text.strip_prefix("pub "))
-        .unwrap_or(text);
-    let rest = rest.strip_prefix("async ").unwrap_or(rest);
-    let rest = rest.strip_prefix("fn ")?;
-    rest.split(['(', '<', ' ']).next()
 }
 
 /// Call sites of [`needle`] in `src/sync.rs`, keyed by enclosing function.
