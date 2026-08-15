@@ -205,7 +205,9 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
         let mut files = vec![
             (
                 "Cargo.toml".to_string(),
-                format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+                format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+                ),
             ),
             ("src/lib.rs".to_string(), String::new()),
         ];
@@ -215,8 +217,10 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
                 format!("{{\"name\": \"{package}\", \"version\": \"0.1.0\"}}\n"),
             ));
         }
-        let file_refs: Vec<(&str, &str)> =
-            files.iter().map(|(n, b)| (n.as_str(), b.as_str())).collect();
+        let file_refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_str()))
+            .collect();
         init_bare_repo(&bares.join(format!("{repo}.git")), &file_refs);
     }
 
