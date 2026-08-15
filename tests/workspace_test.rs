@@ -12,20 +12,26 @@ mod common;
 
 #[test]
 fn weave_dir_name_simple() {
-    let name = weave_dir_name("web-app", &WorkweaveName::new("agent-42").unwrap());
+    let name = weave_dir_name(
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("agent-42").unwrap(),
+    );
     assert_eq!(name, "web-app--agent-42");
 }
 
 #[test]
 fn weave_dir_name_single_word_components() {
-    let name = weave_dir_name("myproject", &WorkweaveName::new("hotfix").unwrap());
+    let name = weave_dir_name(
+        &ProjectName::new("myproject").unwrap(),
+        &WorkweaveName::new("hotfix").unwrap(),
+    );
     assert_eq!(name, "myproject--hotfix");
 }
 
 #[test]
 fn weave_dir_name_complex_primary() {
     let name = weave_dir_name(
-        "my-complex-project",
+        &ProjectName::new("my-complex-project").unwrap(),
         &WorkweaveName::new("feat-login").unwrap(),
     );
     assert_eq!(name, "my-complex-project--feat-login");
@@ -33,7 +39,10 @@ fn weave_dir_name_complex_primary() {
 
 #[test]
 fn weave_dir_name_weave_with_numbers() {
-    let name = weave_dir_name("app", &WorkweaveName::new("issue-1234").unwrap());
+    let name = weave_dir_name(
+        &ProjectName::new("app").unwrap(),
+        &WorkweaveName::new("issue-1234").unwrap(),
+    );
     assert_eq!(name, "app--issue-1234");
 }
 
@@ -120,21 +129,21 @@ fn parse_workweave_portion_with_double_dash_is_rejected() {
 
 #[test]
 fn round_trip_simple() {
-    let primary = "web-app";
+    let primary = ProjectName::new("web-app").unwrap();
     let workweave = WorkweaveName::new("agent-42").unwrap();
-    let dir_name = weave_dir_name(primary, &workweave);
+    let dir_name = weave_dir_name(&primary, &workweave);
     let (parsed_primary, parsed_workweave) = parse_weave_dir_name(&dir_name).unwrap();
-    assert_eq!(parsed_primary, primary);
+    assert_eq!(parsed_primary, primary.as_str());
     assert_eq!(parsed_workweave, workweave);
 }
 
 #[test]
 fn round_trip_single_char_components() {
-    let primary = "a";
+    let primary = ProjectName::new("a").unwrap();
     let workweave = WorkweaveName::new("b").unwrap();
-    let dir_name = weave_dir_name(primary, &workweave);
+    let dir_name = weave_dir_name(&primary, &workweave);
     let (parsed_primary, parsed_workweave) = parse_weave_dir_name(&dir_name).unwrap();
-    assert_eq!(parsed_primary, primary);
+    assert_eq!(parsed_primary, primary.as_str());
     assert_eq!(parsed_workweave, workweave);
 }
 

@@ -120,6 +120,7 @@ pub fn case_token(v: &CheckViolation) -> String {
                 WorkweaveTreeIntegrityKind::TrackedIndex { .. } => "tracked-index",
                 WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => "unreadable-marker",
                 WorkweaveTreeIntegrityKind::MisnamedDir { .. } => "misnamed-dir",
+                WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. } => "nested-workweave-dir",
             };
             format!("workweave-tree-integrity/{tail}")
         }
@@ -408,6 +409,14 @@ pub fn corpus() -> Vec<CheckViolation> {
                          records for this path is `feat-a`, so the records expect \
                          `proj--feat-a`"
                     .into(),
+            },
+        },
+        CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: path("/ws/.workweaves/chatly/web-app--feat-a"),
+            sub_kind: WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
+                project: "chatly/web-app".into(),
+                workweave_name: "feat-a".into(),
+                expected_dir_name: "chatly+web-app--feat-a".into(),
             },
         },
         CheckViolation::Provenance {

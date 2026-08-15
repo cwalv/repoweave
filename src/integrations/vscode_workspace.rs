@@ -421,7 +421,10 @@ impl Integration for VscodeWorkspace {
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let filename = format!("{}.code-workspace", ctx.project.as_str());
+        let filename = format!(
+            "{}.code-workspace",
+            crate::workspace::flat_project_segment(ctx.project)
+        );
         let filepath = ctx.output_dir.join(&filename);
 
         // Parse the existing file, bailing loudly on malformed content (fix #4).
@@ -520,7 +523,10 @@ impl Integration for VscodeWorkspace {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let filename = format!("{}.code-workspace", ctx.project.as_str());
+        let filename = format!(
+            "{}.code-workspace",
+            crate::workspace::flat_project_segment(ctx.project)
+        );
         let filepath = ctx.output_dir.join(&filename);
 
         let mut issues = Vec::new();
@@ -559,7 +565,10 @@ impl Integration for VscodeWorkspace {
     /// construction — whatever this container would not rewrite, it does not
     /// report.
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let filename = format!("{}.code-workspace", ctx.project.as_str());
+        let filename = format!(
+            "{}.code-workspace",
+            crate::workspace::flat_project_segment(ctx.project)
+        );
         let filepath = ctx.output_dir.join(&filename);
 
         // ── MISSING ────────────────────────────────────────────────────────
@@ -641,7 +650,10 @@ impl Integration for VscodeWorkspace {
     /// The project's `.code-workspace`, when it carries the `rwv.generated`
     /// marker `strip_workspace_file` keys on.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
-        let name = format!("{}.code-workspace", ctx.project.as_str());
+        let name = format!(
+            "{}.code-workspace",
+            crate::workspace::flat_project_segment(ctx.project)
+        );
         if holds_owned_region::<JsonDoc<RwvGeneratedMarker>>(&ctx.output_dir.join(&name), &[]) {
             vec![OwnedPath::MarkedRegion(name)]
         } else {
@@ -659,7 +671,10 @@ impl Integration for VscodeWorkspace {
     /// It MUST NOT appear in `generated_files()` — that would mark it
     /// gitignore-eligible and whole-deletable.
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        vec![format!("{}.code-workspace", ctx.project.as_str())]
+        vec![format!(
+            "{}.code-workspace",
+            crate::workspace::flat_project_segment(ctx.project)
+        )]
     }
 }
 

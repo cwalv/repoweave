@@ -65,6 +65,20 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
         .with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
 }
 
+/// The `-w` address for a `<project>--<name>` argument whose project half was
+/// spelled with `/`, or `None` when `raw` is not that mistake.
+///
+/// Only the project half is re-spelled: a workweave name may not contain `/`
+/// at all, so a `/` on the right of the separator is a path and not an address
+/// missing its encoding.
+fn flat_spelling_of(raw: &str) -> Option<String> {
+    let (project, name) = crate::workspace::split_at_weave_separator(raw)?;
+    let project = ProjectName::new(project).ok()?;
+    let name = WorkweaveName::new(name).ok()?;
+    let flat = crate::workspace::weave_dir_name(&project, &name);
+    looks_like_workweave_name(&flat).then_some(flat)
+}
+
 /// Returns true when `s` has no path separators and parses as the
 /// `<project>--<name>` workweave name shape via
 /// [`crate::workspace::parse_weave_dir_name`].
@@ -104,10 +118,20 @@ fn resolve_workweave_flag(
     // path addressing. Give a corrective error rather than a confusing
     // "not found" message.
     if raw.contains('/') || raw.contains('\\') {
+        if let Some(flat) = flat_spelling_of(raw) {
+            anyhow::bail!(
+                "'-w {raw}' contains a path separator. A workweave address renders a \
+                 multi-segment project name's `/` as `+`:\n\
+                 \n  rwv -w {flat} <verb>\n\
+                 \n\
+                 To address a workweave by path instead, pass -C the full path to the \
+                 workweave's directory — the address is not one."
+            );
+        }
         anyhow::bail!(
             "'-w {raw}' contains a path separator — it looks like a path, not a workweave name.\n\
              \n\
-             To address a workweave by path, use -C:\n\
+             To address a workweave by path, use -C with the full path to its directory:\n\
              \n  rwv -C {raw} <verb>\n\
              \n\
              To address by name, pass <project>--<name> with no separators."
@@ -146,10 +170,14 @@ fn resolve_workweave_flag(
         );
     }
 
+    // `-w` takes the address in the spelling `weave_dir_name` writes, so the
+    // project half is decoded through the same seam rather than read as typed:
+    // a multi-segment project's `+` stands for a `/`, and `ProjectName` rejects
+    // `+` precisely so that decode is unambiguous.
+    let (project_str, name) = crate::workspace::parse_weave_dir_name(raw)
+        .ok_or_else(|| anyhow::anyhow!("'-w {raw}' has an invalid name"))?;
     let project = ProjectName::new(project_str)
         .with_context(|| format!("'-w {raw}' has an invalid project name"))?;
-    let name =
-        WorkweaveName::new(name_str).with_context(|| format!("'-w {raw}' has an invalid name"))?;
 
     // Find the primary workspace root from the workspace_origin path (from -C
     // or process cwd). The registry lives on the primary; look up from there.

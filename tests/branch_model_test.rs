@@ -609,7 +609,7 @@ fn mint_and_weave_dir_name_agree() {
     let workweave = WorkweaveName::new("fix-42").unwrap();
     assert_eq!(
         EphemeralRefName::mint(&project, &workweave).to_string(),
-        repoweave::workspace::weave_dir_name(project.as_str(), &workweave),
+        repoweave::workspace::weave_dir_name(&project, &workweave),
     );
 }
 

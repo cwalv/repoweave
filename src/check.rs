@@ -658,6 +658,7 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
                 | WorkweaveTreeIntegrityKind::TrackedIndex { .. }
                 | WorkweaveTreeIntegrityKind::UnreadableMarker { .. }
+                | WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. }
                 | WorkweaveTreeIntegrityKind::MisnamedDir { .. } => ReportOnly,
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
@@ -1032,6 +1033,30 @@ pub enum WorkweaveTreeIntegrityKind {
     UnreadableMarker {
         /// Why the marker cannot be read, and what to write in its place.
         detail: String,
+    },
+    /// A recorded workweave whose directory lies *below* a workweave
+    /// container rather than directly in it. A multi-segment project name
+    /// used to render its `/` through into the directory name, so
+    /// `chatly/web-app` + `wtest` placed the workweave at
+    /// `<container>/chatly/web-app--wtest` and left `chatly` behind as a
+    /// directory the container scan reads as a stray.
+    ///
+    /// The scan enumerates a container's immediate children, so nothing else
+    /// in this check sees such a directory at all; this finding is emitted
+    /// from the registry side, which records the path.
+    ///
+    /// Report-only, and the remedy is retire-and-recreate rather than a
+    /// rename: the move crosses a directory boundary, which invalidates the
+    /// worktree back-pointers of every checkout inside and the recorded path
+    /// that found it. Workweaves are ephemeral by design; rwv does not
+    /// migrate a live seat in place.
+    NestedWorkweaveDir {
+        /// Project the entry belongs to.
+        project: String,
+        /// The recorded name of the workweave.
+        workweave_name: String,
+        /// The single-segment directory name the records spell today.
+        expected_dir_name: String,
     },
     /// A marker-bearing workweave directory whose basename disagrees with
     /// its records: it does not spell `{marker project}--{name}`, where the
@@ -2434,6 +2459,57 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
 /// a workspace without any registered containers (bootstrap case for a
 /// pre-registry workspace) still surfaces on-disk workweaves. Duplicates are
 /// collapsed by path to avoid double-reporting.
+/// Findings for marker-bearing directories one level below `dir`, which is
+/// itself a marker-less child of a workweave container.
+///
+/// That shape is what a multi-segment project name used to produce: the `/`
+/// rendered through into the directory name, so the workweave landed a level
+/// down and its first segment was left behind as a directory carrying no
+/// marker. The container scan reads immediate children only, so without this
+/// the workweave is invisible and the leftover segment is reported as a stray
+/// an operator is told to remove — advice that would take a live workweave
+/// with it.
+///
+/// Empty when `dir` holds no marker-bearing child, which is the ordinary
+/// stray directory the caller reports instead.
+fn nested_workweave_findings(ws_root: &Path, dir: &Path) -> Vec<CheckViolation> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let child = entry.path();
+        if !child.is_dir() {
+            continue;
+        }
+        let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&child) else {
+            continue;
+        };
+        let basename = child.file_name().map(|n| n.to_string_lossy().into_owned());
+        let name = crate::workweave::workweave_name_for_path(ws_root, marker.project(), &child)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                basename
+                    .as_deref()
+                    .and_then(crate::workspace::parse_weave_dir_name)
+                    .map(|(_, n)| n)
+            });
+        let Some(name) = name else {
+            continue;
+        };
+        found.push(CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: child.clone(),
+            sub_kind: WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
+                project: marker.project().as_str().to_string(),
+                workweave_name: name.as_str().to_string(),
+                expected_dir_name: crate::workspace::weave_dir_name(marker.project(), &name),
+            },
+        });
+    }
+    found
+}
+
 fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
     let mut containers: Vec<PathBuf> = Vec::new();
     let push_unique = |p: PathBuf, containers: &mut Vec<PathBuf>| {
@@ -3001,11 +3077,15 @@ pub fn scan_workweave_tree_integrity(
         let marker_path = crate::workspace::WorkweaveMarker::path_in(dir);
 
         if !marker_path.exists() {
-            // No marker file at all → unregistered directory.
-            violations.push(CheckViolation::WorkweaveTreeIntegrity {
-                workweave_dir: dir.clone(),
-                sub_kind: WorkweaveTreeIntegrityKind::UnregisteredDir,
-            });
+            let nested = nested_workweave_findings(ws_root, dir);
+            if nested.is_empty() {
+                violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                    workweave_dir: dir.clone(),
+                    sub_kind: WorkweaveTreeIntegrityKind::UnregisteredDir,
+                });
+            } else {
+                violations.extend(nested);
+            }
             continue;
         }
 
@@ -3086,8 +3166,7 @@ pub fn scan_workweave_tree_integrity(
             let expected_name = recorded.clone().or_else(|| parsed.map(|(_, n)| n));
             match expected_name {
                 Some(name) => {
-                    let expected_dir =
-                        crate::workspace::weave_dir_name(marker.project().as_str(), &name);
+                    let expected_dir = crate::workspace::weave_dir_name(marker.project(), &name);
                     if basename != expected_dir {
                         let name_source = if recorded.is_some() {
                             "the name the registry records for this path"
@@ -6721,6 +6800,20 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             index_path.display()
                         ),
                         WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
+                        WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
+                            project,
+                            workweave_name,
+                            expected_dir_name,
+                        } => format!(
+                            "{}: workweave `{workweave_name}` for project `{project}` sits \
+                             below its container instead of in it, from the era when a \
+                             multi-segment project name rendered its `/` into the directory \
+                             name; rwv now spells this workweave `{expected_dir_name}`. \
+                             Retire this workweave and create it again — rwv does not rename \
+                             a live workweave into place, and moving it by hand strands the \
+                             worktrees inside it",
+                            workweave_dir.display(),
+                        ),
                         WorkweaveTreeIntegrityKind::MisnamedDir {
                             expected_dir_name,
                             detail,

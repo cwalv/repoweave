@@ -1363,9 +1363,9 @@ impl WorkspaceContext {
         let workspace = self.primary_root.clone();
         let workweave = match &self.checkout {
             Checkout::Primary { .. } => None,
-            Checkout::Workweave { name, project, .. } => name
-                .recorded()
-                .map(|name| weave_dir_name(project.as_str(), name)),
+            Checkout::Workweave { name, project, .. } => {
+                name.recorded().map(|name| weave_dir_name(project, name))
+            }
         };
         Some(Resolution {
             workspace,
@@ -1440,14 +1440,37 @@ pub enum AdvisoryKindOutput {
     DerivedStateStale,
 }
 
-/// Build a workweave directory name using the `{project}--{name}` convention.
+/// Render a project name as one path segment, writing `/` as `+`.
+///
+/// A project name may be `/`-segmented, and the projects tree nests to match.
+/// Everything downstream of this function needs one segment instead: a
+/// workweave directory name, the `-w` address, a ref component, a
+/// `.code-workspace` filename. Rendering the `/` through unchanged makes each
+/// of those a path — a nested directory, an address `-w` refuses, a ref
+/// directory git will not also let be a ref file.
+///
+/// [`crate::manifest::ProjectName`] rejects `+`, so every `+` in a rendered
+/// segment is an encoded `/` and [`parse_weave_dir_name`] decodes without
+/// ambiguity. That rejection is what makes this injective; the two ship
+/// together or a pre-existing `+` name decodes as a nesting it never had.
+pub fn flat_project_segment(project: &ProjectName) -> String {
+    project.as_str().replace('/', "+")
+}
+
+/// The inverse of [`flat_project_segment`].
+fn nested_project_name(segment: &str) -> String {
+    segment.replace('+', "/")
+}
+
+/// Build a workweave directory name using the `{project}--{name}` convention,
+/// with the project half rendered as one segment.
 ///
 /// Workweaves are keyed by the project they're created for so that the directory
 /// layout makes the project explicit and `<project>--<name>` is stable across
 /// fork sources. The `.rwv-workweave` marker (see [`WorkweaveMarker`]) is
 /// authoritative for all live workweaves.
-pub fn weave_dir_name(project_name: &str, workweave_name: &WorkweaveName) -> String {
-    format!("{project_name}--{workweave_name}")
+pub fn weave_dir_name(project: &ProjectName, workweave_name: &WorkweaveName) -> String {
+    format!("{}--{workweave_name}", flat_project_segment(project))
 }
 
 /// Split `s` at the first workweave separator, without validating either
@@ -1459,15 +1482,23 @@ pub(crate) fn split_at_weave_separator(s: &str) -> Option<(&str, &str)> {
     s.split_once("--")
 }
 
-/// Parse a directory name into `(left, workweave_name)` if it matches the
-/// `{left}--{name}` shape. The `left` component is the project name. Used by
-/// resolve() to extract the workweave name from a marker-bearing directory.
-pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
+/// Parse a directory name into `(project, workweave_name)` if it matches the
+/// `{left}--{name}` shape, decoding the left half back through
+/// [`flat_project_segment`].
+///
+/// A discovery aid: it answers what a directory's own name says, which is a
+/// weaker claim than what the records say. A resolution takes the workweave's
+/// name from the registry entry recording the directory, so a decode that
+/// disagrees misdirects a scan and cannot corrupt an identity.
+pub fn parse_weave_dir_name(dir_name: &str) -> Option<(String, WorkweaveName)> {
     let (left, workweave) = split_at_weave_separator(dir_name)?;
     if left.is_empty() || workweave.is_empty() {
         return None;
     }
-    Some((left, WorkweaveName::new(workweave).ok()?))
+    Some((
+        nested_project_name(left),
+        WorkweaveName::new(workweave).ok()?,
+    ))
 }
 
 // ---------------------------------------------------------------------------

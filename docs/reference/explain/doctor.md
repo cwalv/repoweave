@@ -194,7 +194,7 @@ Every per-repo variant carries `path` (manifest-relative) and
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
-(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
+(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
 run time. Each record carries `name` (the `<verb>` in `rwv-<verb>`), `path`
@@ -2676,6 +2676,38 @@ Schema:
               "properties": {
                 "detail": {
                   "description": "Why the marker cannot be read, and what to write in its place.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A recorded workweave whose directory lies *below* a workweave container rather than directly in it. A multi-segment project name used to render its `/` through into the directory name, so `chatly/web-app` + `wtest` placed the workweave at `<container>/chatly/web-app--wtest` and left `chatly` behind as a directory the container scan reads as a stray.\n\nThe scan enumerates a container's immediate children, so nothing else in this check sees such a directory at all; this finding is emitted from the registry side, which records the path.\n\nReport-only, and the remedy is retire-and-recreate rather than a rename: the move crosses a directory boundary, which invalidates the worktree back-pointers of every checkout inside and the recorded path that found it. Workweaves are ephemeral by design; rwv does not migrate a live seat in place.",
+          "type": "object",
+          "required": [
+            "nested-workweave-dir"
+          ],
+          "properties": {
+            "nested-workweave-dir": {
+              "type": "object",
+              "required": [
+                "expected_dir_name",
+                "project",
+                "workweave_name"
+              ],
+              "properties": {
+                "expected_dir_name": {
+                  "description": "The single-segment directory name the records spell today.",
+                  "type": "string"
+                },
+                "project": {
+                  "description": "Project the entry belongs to.",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "The recorded name of the workweave.",
                   "type": "string"
                 }
               }

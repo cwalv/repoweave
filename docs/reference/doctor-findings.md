@@ -484,6 +484,27 @@ name, rename it to the `<project>--<name>` you intend, or remove the
 directory. Never auto-fixed: a directory rename under live checkouts is not
 rwv's to perform, and in the unrecoverable case the target is not derivable.
 
+#### `nested-workweave-dir`
+
+**Warning. Report-only.** A recorded workweave whose directory sits *below* a
+workweave container instead of directly in it. A multi-segment project name
+used to render its `/` straight through into the directory name, so
+`chatly/web-app` plus `wtest` placed the workweave at
+`<container>/chatly/web-app--wtest` and left `chatly` behind as a directory the
+container scan reads as a stray. rwv now writes that `/` as `+`, so a workweave
+created today is `<container>/chatly+web-app--wtest` and this finding names the
+single-segment directory the records spell.
+
+The container scan reads a container's immediate children, so nothing else in
+`workweave-tree-integrity` sees such a directory at all. This finding is
+emitted from the registry, which records the path.
+
+**What to do:** retire this workweave and create it again. Never auto-fixed,
+and the repair is not a rename: the move crosses a directory boundary, which
+invalidates the worktree back-pointers of every checkout inside it and the
+recorded path that found it. Workweaves are ephemeral by design — rwv does not
+migrate a live one in place.
+
 ### `workweave-drift`
 
 **Warning. Report-only.** A worktree the manifest lists is missing from a

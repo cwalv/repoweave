@@ -160,6 +160,11 @@ pub enum ProjectNameError {
     /// project to workweave with, letting two distinct (project, workweave)
     /// pairs mint the same name.
     AmbiguousDelimiter(String),
+    /// Contains `+`, which [`crate::workspace::flat_project_segment`] writes
+    /// in place of `/` when it renders this name as one path segment. A `+`
+    /// in the name itself would decode back as a segment boundary the name
+    /// never had, so two distinct projects could render the same segment.
+    EncodedSeparator(String),
     /// Not usable as a (possibly `/`-segmented) ref-name component.
     InvalidRef(crate::vcs::RefNameError),
 }
@@ -171,6 +176,13 @@ impl fmt::Display for ProjectNameError {
                 f,
                 "'{s}' is not a valid project name: contains `--` or starts/ends \
                  with `-`, ambiguous against the `--` that joins project to workweave"
+            ),
+            Self::EncodedSeparator(s) => write!(
+                f,
+                "'{s}' is not a valid project name: contains `+`, which rwv writes in \
+                 place of `/` when it renders a project name as one path segment \
+                 (a workweave directory, a `-w` address, a branch name). Choose a \
+                 name without `+`."
             ),
             Self::InvalidRef(e) => write!(f, "not a valid project name: {e}"),
         }
@@ -185,6 +197,9 @@ fn validate_project_name(s: &str) -> Result<(), ProjectNameError> {
         || s.ends_with('-')
     {
         return Err(ProjectNameError::AmbiguousDelimiter(s.to_owned()));
+    }
+    if s.contains('+') {
+        return Err(ProjectNameError::EncodedSeparator(s.to_owned()));
     }
     crate::vcs::validate_ref_name(s).map_err(ProjectNameError::InvalidRef)
 }

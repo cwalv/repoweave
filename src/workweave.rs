@@ -1260,7 +1260,7 @@ pub fn create_workweave(
         Some(p) => primary_root.join(p),
         None => {
             let container = workweave_container(primary_root, project)?;
-            container.join(weave_dir_name(project.as_str(), name))
+            container.join(weave_dir_name(project, name))
         }
     };
 
