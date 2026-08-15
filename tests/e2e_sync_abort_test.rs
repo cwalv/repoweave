@@ -1154,24 +1154,25 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     // Make a second commit so we have something to rebase onto.
     let sha2 = make_commit(project_dir, "extra.txt", "extra\n", "extra commit");
 
-    // Invent an op-id that abort will read from the marker file.
-    let op_id = "20991231T000000Z";
+    // Write a v2 owner record so `rwv abort` thinks an op is in progress —
+    // through the real serializer, so a field the type gains later can't
+    // silently vanish from this fixture.
+    let op_id = repoweave::op_state::OpId::new_now();
+    let owner = repoweave::op_state::OwnerRecord::new_sync(
+        &op_id,
+        repoweave::op_state::SyncStrategy::Rebase,
+        repoweave::manifest::ProjectName::new("web-app").unwrap(),
+        ws.root.clone(),
+        ws.root.clone(),
+    );
+    let op_id = owner.id.clone();
+    repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
     // Create the savepoint ref pointing at sha2 (the pre-op HEAD).
     git(
         &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &sha2],
         project_dir,
     );
-
-    // Write a v2 owner record so `rwv abort` thinks an op is in progress.
-    let op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
-         \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
-         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        root = common::json_escaped(&ws.root),
-    );
-    std::fs::write(ws.root.join(".rwv-op"), &op_state_json).unwrap();
 
     // Manufacture a mid-rebase state: create a diverging commit on a temp
     // branch, then start a rebase that will conflict.
@@ -2018,6 +2019,13 @@ fn sync_discard_local_commits_refuses_on_uncommitted_changes() {
 
 /// `discard-local-commits` override is recorded in the op record overrides field
 /// and the tombstone savepoint is preserved after a successful sync.
+///
+/// A successful run clears its op-state on exit (cleanup table), so
+/// `overrides` can only be read off a live run while the op is genuinely
+/// parked — the fixture also diverges the manifest repo so the first
+/// attempt parks on a real replay conflict, with the override already
+/// written (Mark precedes Savepoint/Replay). Resolving and continuing then
+/// exercises the tombstone half unchanged.
 #[test]
 fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
     let tmp = common::tempdir().unwrap();
@@ -2025,15 +2033,77 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
 
     // Primary advances its project past C1; ww's project stays at C1.
     primary_advance_project_one_commit(&primary, &c1);
+
+    // Diverge the manifest repo too (conflicting content), so the run parks
+    // mid-replay instead of completing in one shot.
+    let c2 = make_commit(
+        &primary.server_dir,
+        "shared.txt",
+        "primary version\n",
+        "primary: shared.txt",
+    );
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
     let primary_pre_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
 
-    // Run with --discard-local-commits; should succeed.
+    let c_ww = make_commit(
+        &ww.server_dir,
+        "shared.txt",
+        "ww version\n",
+        "ww: shared.txt (conflicts)",
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
+
+    // First attempt parks mid-replay on the real conflict.
     rwv()
         .args([
             "sync",
             &ww.root.to_string_lossy(),
+            "--strategy",
+            "rebase",
             "--discard-local-commits",
         ])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+
+    // While parked, `rwv status --json` discloses the overrides this live
+    // run recorded — the assertion `overrides` never got anywhere else.
+    let status = rwv()
+        .args(["status", "--json"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    let v: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    assert_eq!(
+        v["op"]["overrides"],
+        serde_json::json!(["discard-local-commits"]),
+        "the parked op's overrides must carry the consent this run supplied; got: {v}"
+    );
+
+    // Resolve the conflict and let the sync run to completion.
+    std::fs::write(primary.server_dir.join("shared.txt"), "resolved\n").unwrap();
+    git(&["add", "shared.txt"], &primary.server_dir);
+    let continue_out = common::git()
+        .args(["rebase", "--continue"])
+        .current_dir(&primary.server_dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+    assert!(
+        continue_out.status.success(),
+        "rebase --continue failed: {}",
+        String::from_utf8_lossy(&continue_out.stderr)
+    );
+
+    rwv()
+        .args(["sync", "--continue"])
         .current_dir(&primary.root)
         .assert()
         .success();

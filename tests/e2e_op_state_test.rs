@@ -8,10 +8,9 @@
 //! 5. Abort cross-workspace: `rwv abort` from either workspace clears both op-state files.
 //!
 //! Notes:
-//! - Tests 3 and 5 are "sync-to" scenarios (multi-workspace), but since `sync-to` is not yet
-//!   implemented (spec 1), we simulate the cross-workspace state by manually writing op-state
-//!   files and driving `rwv abort`. This mirrors the test-hook pattern requested in the spec:
-//!   manufacture mid-op state, then verify recovery.
+//! - Tests 3 and 5 are `sync-to` scenarios (multi-workspace); they drive a real `sync-to`
+//!   into a parked state via a target-side collision and recover it via `--continue` /
+//!   `rwv abort`.
 //! - Test 1 uses `rwv sync` from two directions to trigger the in-progress check.
 //! - Test 2 uses `rwv sync --strategy rebase` to induce a conflict, then `--continue`.
 //! - Test 4 uses `rwv sync` with mismatched `--strategy`.
@@ -222,55 +221,48 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 #[test]
 fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Primary advances to C2, lock updated.
+    // Primary and ww each commit conflicting content to the same file, so a
+    // rebase sync from ww genuinely conflicts and parks — a real in-flight
+    // op left on disk by the production acquire path (same recipe as
+    // atomic_lease_acquisition_test.rs), not hand-planted JSON.
     let c2 = make_commit(
         &primary.server_dir,
-        "advance.txt",
-        "advance\n",
-        "primary: C2",
+        "shared.txt",
+        "primary version\n",
+        "primary: shared.txt",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
 
-    // ww is at C1 (no changes). First sync from primary will succeed normally.
-    // We start the sync-and-kill it by writing an op-state file manually first
-    // to simulate a sync that was interrupted mid-way.
-    //
-    // Write a v2 owner record into ww's workspace (simulating an in-progress op).
-    let op_id = "test-concurrent-op-1234";
-    let op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
-         \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
-         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = common::json_escaped(&primary.root),
-        tgt = common::json_escaped(&ww.root),
+    let c_ww = make_commit(
+        &ww.server_dir,
+        "shared.txt",
+        "ww version\n",
+        "ww: shared.txt (conflicts with primary)",
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
 
-    // Also create a savepoint ref so abort can clean up later.
-    let ww_server_sha = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_server_sha,
-        ],
-        &primary.server_dir,
+    // First sync parks mid-replay on the real conflict.
+    rwv()
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--strategy",
+            "rebase",
+            "--discard-local-commits",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "the parked op must leave the owner record at ww"
     );
-    let ww_project_sha = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_project_sha,
-        ],
-        &ww.project_dir,
-    );
-    // Suppress unused var warning for c1
-    let _ = c1;
 
     // Attempt a new sync from ww while the op-state file is present.
     // It should fail with an in-progress error.
@@ -428,12 +420,13 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: Mid-step-3 resume (op-state at step3-ff → --continue → completion)
+// Test 3: Mid-step-3 resume (op-state at advance-target → --continue → completion)
 //
-// Since sync-to is not yet implemented, we simulate this by manually writing
-// an op-state at `step3-ff` phase and verifying that `--continue` picks it up
-// without the in-progress refusal. The actual FF-advance completion logic is
-// in spec 1; here we just test the op-state machinery.
+// AdvanceTarget is a sync-to-only phase (`OpPhase` doc), so the real fixture
+// is a `sync-to` parked there: the target holds an untracked file that
+// collides with a path the incoming project commit writes, so every manifest
+// repo lands but the project repo's ff-advance blocks (same recipe
+// resume_project_binding_test.rs uses to reach this phase for real).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -441,42 +434,39 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Write a v2 owner record at advance-target phase into ww's workspace.
-    let op_state_json = format!(
-        "{{\"id\": \"test-step3-ff-1234\", \"verb\": \"sync\", \"strategy\": \"ff\", \"project\": \"web-app\", \
-         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = common::json_escaped(&primary.root),
-        tgt = common::json_escaped(&ww.root),
-    );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
+    let landed = make_commit(&ww.server_dir, "advance.txt", "advance\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
+    std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
+    git(&["add", "rwv.lock", "notes.txt"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
 
-    // Create a savepoint ref so the op-id is consistent.
-    let op_id = "test-step3-ff-1234";
-    let ww_project_sha = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_project_sha,
-        ],
-        &ww.project_dir,
+    // The target holds an untracked file where the incoming project commit
+    // writes one, so the manifest repo lands but the project repo blocks —
+    // the op parks genuinely at advance-target.
+    std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "the parked op must leave the owner record in CWD"
     );
-    let ww_server_sha = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_server_sha,
-        ],
-        &primary.server_dir,
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        landed,
+        "the parked op must have landed the target's manifest repo already"
     );
 
-    // `rwv sync --continue` (alone — all params from op-state) should not produce
-    // the "in progress, resolve and rerun" refusal error.
+    // Clear the collision so the resume has a path forward.
+    std::fs::remove_file(primary.project_dir.join("notes.txt")).unwrap();
+
+    // `rwv sync-to --continue` (alone — all params from op-state) should not
+    // produce the "in progress, resolve and rerun" refusal error.
     let result = rwv()
-        .args(["sync", "--continue"])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert();
 
@@ -522,10 +512,10 @@ fn continue_with_strategy_flag_is_rejected() {
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
-    // Clap emits "cannot be used with" for conflicts_with violations.
+    // Clap's conflicts_with wording names both the flag and --continue.
     assert!(
-        stderr.contains("cannot be used with") || stderr.contains("--continue"),
-        "expected clap exclusivity error; got: {stderr}"
+        stderr.contains("cannot be used with '--continue'"),
+        "expected clap exclusivity error naming --continue as the conflict; got: {stderr}"
     );
 }
 
@@ -568,7 +558,7 @@ fn sync_continue_with_json_flag_is_rejected() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        stderr.contains("cannot be used with '--continue'"),
         "expected clap exclusivity error for sync --json + --continue; got: {stderr}"
     );
 }
@@ -587,7 +577,7 @@ fn continue_with_allow_stale_lock_flag_is_rejected() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        stderr.contains("cannot be used with '--continue'"),
         "expected clap exclusivity error for --allow-stale-lock + --continue; got: {stderr}"
     );
 }
@@ -606,7 +596,7 @@ fn continue_with_discard_local_commits_flag_is_rejected() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        stderr.contains("cannot be used with '--continue'"),
         "expected clap exclusivity error for --discard-local-commits + --continue; got: {stderr}"
     );
 }
@@ -625,7 +615,7 @@ fn sync_to_continue_with_retire_flag_is_rejected() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        stderr.contains("cannot be used with '--continue'"),
         "expected clap exclusivity error for sync-to --retire --continue; got: {stderr}"
     );
 }
@@ -644,7 +634,7 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        stderr.contains("cannot be used with '--continue'"),
         "expected clap exclusivity error for sync-to --strategy=rebase --continue; got: {stderr}"
     );
 }
@@ -695,9 +685,9 @@ fn sync_to_continue_with_no_op_in_progress_errors_clearly() {
 // ---------------------------------------------------------------------------
 // Test 5: Abort cross-workspace
 //
-// Start a sync-to (simulated by planting op-state files in two workspaces),
-// then run `rwv abort` from one workspace. Verify both op-state files are
-// removed and savepoints are restored.
+// Drive a real `sync-to` into a parked state (owner record at ww, thin lease
+// at primary — same target-side collision recipe test 3 above uses), then
+// run `rwv abort` from ww. Verify both op-state files are removed.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -705,66 +695,31 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Simulate an in-progress sync-to: plant op-state in both workspaces with
-    // the same op-id. For the abort to clean the "target" workspace (primary),
-    // the op-state in ww's workspace must record verb=sync-to and target=primary.
-    let op_id = "test-cross-abort-9999";
+    let landed = make_commit(&ww.server_dir, "advance.txt", "advance\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
+    std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
+    git(&["add", "rwv.lock", "notes.txt"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
 
-    // Create savepoint refs in both workspaces.
-    let primary_project_sha = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &primary_project_sha,
-        ],
-        &primary.project_dir,
-    );
-    let primary_server_sha = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &primary_server_sha,
-        ],
-        &primary.server_dir,
-    );
-    let ww_project_sha = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_project_sha,
-        ],
-        &ww.project_dir,
-    );
-    let ww_server_sha = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &ww_server_sha,
-        ],
-        &primary.server_dir, // ww's server dir is a worktree of primary's
-    );
+    // The target holds an untracked file where the incoming project commit
+    // writes one, so the manifest repo lands but the project repo blocks —
+    // ww ends up the owner (CWD/source of sync-to), primary the target with
+    // the thin lease.
+    std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
 
-    // v2: ww is the owner (CWD/source of sync-to) → owner record at ww.root/.rwv-op.
-    // primary is the target workspace → thin lease at primary.root/.rwv-op-lease.
-    let ww_op_state_json = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync-to\", \"strategy\": \"ff\", \"project\": \"web-app\", \"source\": \"{src}\", \
-         \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
-         \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = common::json_escaped(&ww.root),
-        tgt = common::json_escaped(&primary.root),
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "the parked op must leave the owner record in CWD"
     );
-    std::fs::write(ww.root.join(".rwv-op"), &ww_op_state_json).unwrap();
-
-    // Thin lease in primary (target workspace): just {id, owner, created_at}.
-    let primary_lease_json = format!(
-        "{{\"id\": \"{op_id}\", \"owner\": \"{owner}\", \"created_at\": \"2026-05-27T10:00:00Z\"}}",
-        owner = common::json_escaped(&ww.root),
+    assert!(
+        primary.root.join(".rwv-op-lease").exists(),
+        "the parked op must leave the lease at the target"
     );
-    std::fs::write(primary.root.join(".rwv-op-lease"), &primary_lease_json).unwrap();
 
     // Run `rwv abort` from ww.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
@@ -1041,26 +996,80 @@ fn sync_continue_flag_is_recognized() {
 // Unit-level: op_state module round-trip (smoke test via rwv binary)
 // ---------------------------------------------------------------------------
 
+/// A parked op is the deterministic fixture for observing mid-flight
+/// presence: a live process exits before a test could race-read its
+/// filesystem state, so the file has to be caught while a real op sits
+/// stalled on a genuine conflict, not while one is merely running.
 #[test]
 fn op_state_file_written_during_sync_and_removed_on_success() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Primary advances to C2.
+    // Both sides make conflicting changes to the same file, so the first
+    // attempt parks mid-replay with the op-state file left on disk.
     let c2 = make_commit(
         &primary.server_dir,
-        "advance-op.txt",
-        "advance\n",
-        "primary: C2",
+        "shared.txt",
+        "primary version\n",
+        "primary: add shared.txt",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &primary.project_dir);
     git(&["commit", "-m", "lock: C2"], &primary.project_dir);
 
-    // Sync ww from primary. The op-state file should be written during the op
-    // and removed on success.
+    let c_ww = make_commit(
+        &ww.server_dir,
+        "shared.txt",
+        "ww version\n",
+        "ww: add shared.txt (conflicts with primary)",
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
+
     rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--strategy",
+            "rebase",
+            "--discard-local-commits",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+
+    // Mid-flight: the parked replay conflict leaves the op-state file on
+    // disk — the observation this test's name promises.
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "op-state file must be present while the op is parked mid-sync"
+    );
+
+    // Resolve the conflict. `ww.server_dir` is a linked worktree, so its
+    // rebase-in-progress state lives under the primary checkout's
+    // `.git/worktrees/`, not under `ww.server_dir/.git` (a gitlink file) —
+    // git resolves that transparently when invoked with `ww.server_dir` as
+    // its working directory.
+    std::fs::write(ww.server_dir.join("shared.txt"), "resolved version\n").unwrap();
+    git(&["add", "shared.txt"], &ww.server_dir);
+    let continue_out = common::git()
+        .args(["rebase", "--continue"])
+        .current_dir(&ww.server_dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+    assert!(
+        continue_out.status.success(),
+        "rebase --continue failed: {}",
+        String::from_utf8_lossy(&continue_out.stderr)
+    );
+
+    rwv()
+        .args(["sync", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
