@@ -1,8 +1,6 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
-use crate::manifest::{
-    LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile, WorkweaveName,
-};
+use crate::manifest::{LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile};
 use crate::vcs::{project_vcs, vcs_for, HeadAttachment, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
@@ -67,17 +65,14 @@ fn build_commit_message(
 pub fn generate_lock(
     manifest: &Manifest,
     workspace_root: &Path,
-    workweave: Option<(&WorkweaveName, &Path)>,
+    workweave_dir: Option<&Path>,
     dirty: bool,
 ) -> anyhow::Result<ResolvedLockFile> {
     let mut repositories = BTreeMap::new();
 
     for (repo_path, entry) in &manifest.repositories {
-        let checkout = crate::workspace::member_checkout_dir(
-            repo_path,
-            workspace_root,
-            workweave.map(|(_, wd)| wd),
-        );
+        let checkout =
+            crate::workspace::member_checkout_dir(repo_path, workspace_root, workweave_dir);
         let repo_dir = checkout.path();
 
         let vcs = vcs_for(entry.vcs_type);
@@ -330,14 +325,12 @@ pub(crate) fn write_project_lock(
         crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     }
 
-    let (project_name, workweave_name, workweave_dir) = match &ctx.checkout {
+    let (project_name, workweave_dir) = match &ctx.checkout {
         Checkout::Primary { .. } => {
             let name = ctx.require_active_project_on_disk()?.clone();
-            (name, None, None)
+            (name, None)
         }
-        Checkout::Workweave {
-            name, dir, project, ..
-        } => (project.clone(), Some(name.clone()), Some(dir.clone())),
+        Checkout::Workweave { dir, project, .. } => (project.clone(), Some(dir.clone())),
     };
 
     let project_dir = project_dir(ctx.active_path(), project_name.as_str());
@@ -353,8 +346,12 @@ pub(crate) fn write_project_lock(
     let project = Project::from_dir_skip_lock(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
-    let workweave_pair = workweave_name.as_ref().zip(workweave_dir.as_deref());
-    let lock = generate_lock(&project.manifest, ctx.primary_path(), workweave_pair, dirty)?;
+    let lock = generate_lock(
+        &project.manifest,
+        ctx.primary_path(),
+        workweave_dir.as_deref(),
+        dirty,
+    )?;
 
     let lock_path = project_dir.join(LockFile::FILE_NAME);
     // Read old lock before overwriting so the commit message can list what

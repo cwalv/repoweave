@@ -443,6 +443,11 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
             .context("failed to serialize status to JSON")?;
         println!("{out}");
     } else {
+        if let Checkout::Workweave { name, .. } = &ctx.checkout {
+            if name.recorded().is_none() {
+                eprintln!("{}", crate::workspace::UNREGISTERED_WORKWEAVE_NOTICE);
+            }
+        }
         if let Some(op) = &op {
             print_op_header(op);
         }

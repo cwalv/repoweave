@@ -210,6 +210,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
+    common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
     // The pointer is primary-only: the workweave's marker already names its
     // project, and a root carrying both files is refused at resolution.
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
@@ -426,6 +427,7 @@ fn sync_post_refresh_clears_stale_index() {
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
+    common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
     // Action verbs need the primary's pointer (or --project); in the
     // workweave the marker names the project, and a root carrying both files
     // is refused at resolution.

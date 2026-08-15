@@ -130,8 +130,8 @@ fn write_workweave_marker(ww_dir: &Path, primary: &Path, project: &str, workweav
     // <project name>, "parent": <absolute path of the workspace this was
     // forked from>}
     let marker = common::workweave_marker(primary, project, primary);
-    let _ = workweave_name; // stored in the dir name; marker itself doesn't need it
     std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
+    common::register_workweave(primary, project, workweave_name, ww_dir);
 }
 
 /// A workspace layout with a primary weave and one workweave sharing repos via

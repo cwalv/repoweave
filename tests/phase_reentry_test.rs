@@ -665,7 +665,8 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 ///
 /// The marker records the primary root, project name, and parent workspace
 /// (here the primary, since this is a direct child of primary).
-fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
+fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path, name: &str) {
+    common::register_workweave(primary_root, "web-app", name, workweave_dir);
     let content = common::workweave_marker(primary_root, "web-app", primary_root);
     std::fs::write(workweave_dir.join(".rwv-workweave"), content).unwrap();
 }
@@ -711,7 +712,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     );
     // The marker is this root's only identity file — no `.rwv-active` beside
     // it, which resolution refuses.
-    write_workweave_marker(&ww_root, &primary.root);
+    write_workweave_marker(&ww_root, &primary.root, "ww");
 
     let ww = Workspace {
         root: ww_root,

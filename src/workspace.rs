@@ -181,7 +181,7 @@ pub enum Checkout {
     Primary { project: Option<ProjectName> },
     /// The origin dir resolved into a workweave (worktrees on ephemeral branches).
     Workweave {
-        name: WorkweaveName,
+        name: WorkweaveNameRecord,
         /// The workweave directory path (e.g., `.workweaves/feat/` or `root/../ws--feat/`).
         dir: PathBuf,
         /// The project this workweave belongs to.
@@ -203,6 +203,63 @@ impl Checkout {
         }
     }
 }
+
+/// What the primary-side registry calls the workweave a resolution landed in,
+/// or the absence of any record naming it.
+///
+/// The name comes from the index entry whose recorded path is this directory,
+/// matched by filesystem identity. The directory's own basename is discovery
+/// and legibility — nothing derives a name from it, so a marker-bearing
+/// directory the registry does not record has no name at all rather than a
+/// name spelled the way the shell happened to reach it.
+///
+/// [`Unregistered`](Self::Unregistered) is that absence carried forward, not a
+/// signal to fall back: a surface that reports what it found calls
+/// [`recorded`](Self::recorded), and an operation that acts on the identity
+/// calls [`require`](Self::require) and refuses without one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkweaveNameRecord {
+    Recorded(WorkweaveName),
+    Unregistered,
+}
+
+impl WorkweaveNameRecord {
+    /// The recorded name for a surface that reports what the records hold and
+    /// keeps working when they hold nothing.
+    pub fn recorded(&self) -> Option<&WorkweaveName> {
+        match self {
+            Self::Recorded(name) => Some(name),
+            Self::Unregistered => None,
+        }
+    }
+
+    /// The recorded name for an operation that acts on the workweave's
+    /// identity and has nothing to act on without one.
+    pub fn require(&self, dir: &Path, project: &ProjectName) -> anyhow::Result<&WorkweaveName> {
+        match self {
+            Self::Recorded(name) => Ok(name),
+            Self::Unregistered => anyhow::bail!(
+                "the workweave at {} carries a `.rwv-workweave` marker for project `{}`, \
+                 but no entry in that project's workweave index records this directory, \
+                 so rwv has no recorded name for it and will not take one from the \
+                 directory name. This operation acts on that name. Run \
+                 `rwv doctor --fix` to register this workweave, then re-run; or retire \
+                 the directory and create the workweave again.",
+                dir.display(),
+                project.as_str(),
+            ),
+        }
+    }
+}
+
+/// What a diagnostic surface says about a workweave no registry entry names.
+///
+/// One home so that every verb which reports the state rather than refusing on
+/// it reports the same state in the same words.
+pub const UNREGISTERED_WORKWEAVE_NOTICE: &str =
+    "Warning: no workweave index entry records this directory, so it has no recorded \
+     name and verbs that act on the workweave's identity will refuse. Run \
+     `rwv doctor --fix` to register it.";
 
 /// [`Checkout`] without its payload — what an integration needs to know
 /// about the container it is running in, and all it needs: which of the two
@@ -776,19 +833,17 @@ impl RootSite {
         marker: WorkweaveMarker,
         binding: ProjectBinding,
     ) -> anyhow::Result<WorkspaceContext> {
-        let dir_basename = self
-            .dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-        // Workweave directories follow `<project>--<name>`. Strip the
-        // `<project>--` prefix so the workweave name can be resolved via the
-        // primary-side registry for delete / retire flows.
-        // parse_weave_dir_name returns the right-hand side; fall back to the
-        // full basename for exotic shapes that don't parse.
-        let name = match parse_weave_dir_name(dir_basename) {
-            Some((_, n)) => n,
-            None => WorkweaveName::new(dir_basename)?,
+        let name = match crate::workweave::workweave_name_for_path(
+            &marker.primary,
+            &marker.project,
+            &self.dir,
+        ) {
+            Ok(Some(recorded)) => WorkweaveNameRecord::Recorded(recorded),
+            Ok(None) => WorkweaveNameRecord::Unregistered,
+            // An index that cannot be read names nothing, and doctor reports
+            // the unreadable file itself. Resolution proceeds so that the
+            // diagnostic verbs which deliver that report can run at all.
+            Err(_) => WorkweaveNameRecord::Unregistered,
         };
         let (project, provenance) = match binding {
             ProjectBinding::Flag(p) => (p, ProjectProvenance::Flag),
@@ -1245,7 +1300,7 @@ impl WorkspaceContext {
                     }
                 }
             }
-            Checkout::Workweave { name: _, dir, .. } => {
+            Checkout::Workweave { name, dir, .. } => {
                 lines.push(format!("Workweave: {}", dir.display()));
                 lines.push(format!("Weave: {}", self.primary_root.display()));
                 if let Some(p) = &active {
@@ -1255,6 +1310,9 @@ impl WorkspaceContext {
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
+                }
+                if name.recorded().is_none() {
+                    lines.push(UNREGISTERED_WORKWEAVE_NOTICE.to_owned());
                 }
             }
         }
@@ -1287,9 +1345,11 @@ impl WorkspaceContext {
     /// from `--json` output entirely.
     ///
     /// The returned value is a pure projection: `workspace` is the primary root
-    /// (abs path), `workweave` is the full `<project>--<name>` identity when in
-    /// a workweave (absent at primary — presence IS the checkout kind), and
-    /// `project` is the resolved project name. Results only; resolution
+    /// (abs path), `workweave` is the full `<project>--<name>` identity the
+    /// registry records for this workweave, and `project` is the resolved
+    /// project name. `workweave` is absent at the primary and absent for a
+    /// workweave no registry entry names, since neither has such an identity
+    /// to project. Results only; resolution
     /// provenance (which chain step chose the project) is human-surface only
     /// (stderr target line) and is deliberately excluded from this struct.
     ///
@@ -1303,9 +1363,9 @@ impl WorkspaceContext {
         let workspace = self.primary_root.clone();
         let workweave = match &self.checkout {
             Checkout::Primary { .. } => None,
-            Checkout::Workweave { name, project, .. } => {
-                Some(weave_dir_name(project.as_str(), name))
-            }
+            Checkout::Workweave { name, project, .. } => name
+                .recorded()
+                .map(|name| weave_dir_name(project.as_str(), name)),
         };
         Some(Resolution {
             workspace,
@@ -1319,10 +1379,9 @@ impl WorkspaceContext {
 /// env-var envelope.
 ///
 /// Carries exactly the three result fields — `workspace` (primary root abs
-/// path), `workweave` (`<project>--<name>` identity when in a workweave,
-/// absent at primary), and `project` (resolved project name). Presence of
-/// `workweave` encodes the checkout kind; no separate `kind` or `location`
-/// field is needed.
+/// path), `workweave` (the `<project>--<name>` identity the registry records,
+/// absent at primary and for an unregistered workweave), and `project`
+/// (resolved project name). No separate `kind` or `location` field.
 ///
 /// Results only — provenance (which chain step resolved the project, which
 /// flag addressed the workspace) is deliberately excluded: anything in
@@ -1338,10 +1397,13 @@ impl WorkspaceContext {
 pub struct Resolution {
     /// Primary workspace root (absolute path).
     pub workspace: PathBuf,
-    /// Workweave identity (`<project>--<name>`).
+    /// Workweave identity (`<project>--<name>`), as the primary-side registry
+    /// records it.
     ///
-    /// Present when the invocation resolved into a workweave; absent at the
-    /// primary. Presence encodes the checkout kind — no separate `kind` field.
+    /// Absent at the primary, and absent for a workweave whose directory no
+    /// registry entry names — identity is by record, so an unregistered
+    /// workweave has no identity to report and rwv will not spell one from the
+    /// directory name. `rwv doctor --fix` registers such a directory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workweave: Option<String>,
     /// Resolved project name.
@@ -2070,6 +2132,21 @@ mod tests {
         std::fs::create_dir_all(root.join("github")).unwrap();
         std::fs::create_dir_all(root.join("projects")).unwrap();
         root
+    }
+
+    /// Record `dir` under `name` in `project`'s primary-side index — the
+    /// registration `workweave create` performs, and the only thing that gives
+    /// a marker-bearing directory a name a resolution can find.
+    fn register_workweave(primary: &Path, project: &str, name: &str, dir: &Path) {
+        let project = ProjectName::new(project).unwrap();
+        std::fs::create_dir_all(project_dir(primary, project.as_str())).unwrap();
+        crate::workweave_index::record_workweave(
+            primary,
+            &project,
+            name,
+            crate::workweave_index::canonical_recorded_path(dir),
+        )
+        .unwrap();
     }
 
     // ========================================================================
@@ -2880,6 +2957,7 @@ mod tests {
             parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
+        register_workweave(&primary_canon, "web-app", "feat", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), primary_canon);
@@ -2887,7 +2965,7 @@ mod tests {
             Checkout::Workweave {
                 name, dir, project, ..
             } => {
-                assert_eq!(name.as_str(), "feat");
+                assert_eq!(name.recorded().unwrap().as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
             }
@@ -3002,6 +3080,7 @@ mod tests {
             parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
+        register_workweave(&primary_canon, "web-app", "feat", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
@@ -3009,7 +3088,7 @@ mod tests {
             Checkout::Workweave {
                 name, dir, project, ..
             } => {
-                assert_eq!(name.as_str(), "feat");
+                assert_eq!(name.recorded().unwrap().as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
             }
@@ -3035,16 +3114,14 @@ mod tests {
             parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
+        register_workweave(&primary_canon, "marker-project", "dash-name", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         // Marker takes precedence for project (from marker, not from the
-        // directory's left component). Workweave name comes from the
-        // right-hand side of `<project>--<name>` so downstream lookups
-        // (list, delete) can find the on-disk directory through the
-        // primary-side `.rwv-workweave-index` registry.
+        // directory's left component).
         match &ctx.checkout {
             Checkout::Workweave { name, project, .. } => {
-                assert_eq!(name.as_str(), "dash-name");
+                assert_eq!(name.recorded().unwrap().as_str(), "dash-name");
                 assert_eq!(project.as_str(), "marker-project");
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -3157,6 +3234,7 @@ mod tests {
         .write(&dir)
         .unwrap();
         std::fs::write(dir.join(ACTIVE_PROJECT_FILE), "other-project\n").unwrap();
+        register_workweave(&primary_canon, "web-app", "feat", &dir);
         (root, dir)
     }
 
@@ -3196,7 +3274,7 @@ mod tests {
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
         match &ctx.checkout {
             Checkout::Workweave { name, project, .. } => {
-                assert_eq!(name.as_str(), "feat");
+                assert_eq!(name.recorded().unwrap().as_str(), "feat");
                 assert_eq!(project.as_str(), "web-app");
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -4030,7 +4108,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         let primary_canon = root.canonicalize().unwrap();
 
-        // Create a workweave directory with the marker.
+        // Create a registered workweave directory with the marker.
         let weave_dir = tmp.path().join("ws--fo-abc");
         std::fs::create_dir_all(&weave_dir).unwrap();
         let marker = WorkweaveMarker {
@@ -4039,6 +4117,7 @@ mod tests {
             parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
+        register_workweave(&primary_canon, "myproject", "fo-abc", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         let res = ctx
@@ -4109,6 +4188,7 @@ mod tests {
             parent: CanonicalPath::of(&primary_canon),
         };
         marker.write(&weave_dir).unwrap();
+        register_workweave(&primary_canon, "myproject", "fo-abc", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         let res = ctx.resolution().unwrap();

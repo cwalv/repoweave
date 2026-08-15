@@ -65,7 +65,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
             project.as_ref()
         }
         Checkout::Workweave {
-            name: _,
+            name,
             dir,
             project,
             ..
@@ -75,6 +75,12 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
                 "- **Weave**: `{}`\n",
                 ctx.primary_path().display()
             ));
+            if name.recorded().is_none() {
+                out.push_str(&format!(
+                    "- {}\n",
+                    crate::workspace::UNREGISTERED_WORKWEAVE_NOTICE
+                ));
+            }
             Some(project)
         }
     };

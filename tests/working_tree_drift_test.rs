@@ -184,6 +184,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
+    common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
 
     (
         Workspace {
@@ -390,6 +391,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
+    common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
     // Action verbs need the primary's pointer (or --project); in the
     // workweave the marker names the project, and a root carrying both files
     // is refused at resolution.
@@ -497,6 +499,7 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
         .to_string();
     let marker2 = common::workweave_marker(&primary_canon2, "web-app", &primary_canon2);
     std::fs::write(ww2_root.join(".rwv-workweave"), marker2).unwrap();
+    common::register_workweave(&primary_canon2, "web-app", "ww2", &ww2_root);
 
     // Commit C2 and make BOTH workweaves stale.
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");

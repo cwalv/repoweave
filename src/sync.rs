@@ -180,17 +180,24 @@ impl ReplayBaseline {
     }
 }
 
-/// Display name for a workspace: the workweave name when in a workweave,
-/// otherwise the basename of the primary path.
-fn workspace_name(ctx: &WorkspaceContext) -> String {
+/// Display name for a workspace: the workweave's recorded name when in a
+/// workweave, otherwise the basename of the primary path.
+///
+/// Refuses for a workweave the registry does not name. Sync writes this string
+/// into the auto-relock commit message, where it becomes the durable record of
+/// which workspace a landing came from; a name invented for the occasion would
+/// outlive every chance to correct it.
+fn workspace_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
     match &ctx.checkout {
-        Checkout::Workweave { name, .. } => name.as_str().to_owned(),
-        Checkout::Primary { .. } => ctx
+        Checkout::Workweave {
+            name, dir, project, ..
+        } => Ok(name.require(dir, project)?.as_str().to_owned()),
+        Checkout::Primary { .. } => Ok(ctx
             .primary_path()
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
-            .to_owned(),
+            .to_owned()),
     }
 }
 
@@ -680,8 +687,7 @@ pub struct SyncToJsonOutput {
     pub retired: bool,
     /// The phase the interrupted op had reached when `--continue` resumed it;
     /// absent on a fresh run. Presence encodes "this envelope describes a
-    /// resumed op", the same way `resolution.workweave`'s presence encodes the
-    /// checkout kind.
+    /// resumed op".
     ///
     /// Decides what `outcomes` below describes. `replay` means replay re-ran
     /// in this invocation, so `outcomes` carries every repo (already-converged
@@ -1599,7 +1605,10 @@ fn materialize_missing_repo(
     }
 
     match &ctx.checkout {
-        Checkout::Workweave { name, .. } => {
+        Checkout::Workweave {
+            name, dir, project, ..
+        } => {
+            let name = name.require(dir, project)?;
             // Canonical clone lives at primary.
             let canonical = ctx.primary_path().join(repo_path.as_path());
             if !canonical.exists() {
@@ -2471,7 +2480,9 @@ fn run_machine(
     // invoked with.
     handler.record_coordinates(OpCoordinates {
         source_workweave: match &ctx.cwd_ctx.checkout {
-            Checkout::Workweave { name, .. } => Some(name.as_str().to_owned()),
+            Checkout::Workweave {
+                name, dir, project, ..
+            } => Some(name.require(dir, project)?.as_str().to_owned()),
             Checkout::Primary { .. } => None,
         },
         target: ctx.dest_workspace_dir.clone(),
@@ -2755,7 +2766,7 @@ fn run_preconditions_after_acquire(
     // the acquired op-state is cleaned up by the caller on Err).
     let cwd_project = Project::from_dir(cwd_project_dir)
         .context("failed to load CWD project for guard preconditions")?;
-    let cwd_workspace_name_str = workspace_name(cwd_ctx);
+    let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
 
     // === Benign-staleness classification ===
     //
@@ -3053,7 +3064,7 @@ fn guard_and_mark<'a>(
         (
             dir,
             root,
-            workspace_name(&source_ctx),
+            workspace_name(&source_ctx)?,
             cwd_project_name.clone(),
             is_workweave,
         )
@@ -3496,7 +3507,7 @@ fn load_continuing_context<'a>(
         (
             dir,
             root,
-            workspace_name(&source_ctx),
+            workspace_name(&source_ctx)?,
             cwd_project_name.clone(),
             is_workweave,
         )
@@ -5329,7 +5340,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 ctx.project_vcs.as_ref(),
                 &ctx.cwd_ctx,
                 dir,
-                name,
+                name.require(dir, project)?,
                 project,
                 &ctx.cwd_project_dir,
                 &ctx.dest_workspace_dir,
@@ -5897,15 +5908,15 @@ fn regenerate_lock_phase3(
     cwd_project: &Project,
     source_workspace_name: &str,
 ) -> anyhow::Result<Option<ResolvedLockFile>> {
-    let workweave_pair = match &ctx.checkout {
-        Checkout::Workweave { name, dir, .. } => Some((name, dir.as_path())),
+    let workweave_dir = match &ctx.checkout {
+        Checkout::Workweave { dir, .. } => Some(dir.as_path()),
         Checkout::Primary { .. } => None,
     };
 
     let new_lock = generate_lock(
         &cwd_project.manifest,
         ctx.primary_path(),
-        workweave_pair,
+        workweave_dir,
         true, // dirty: skip uncommitted-changes check; sync may have produced WT churn
     )
     .context("failed to generate lock")?;
@@ -7862,6 +7873,13 @@ mod tests {
         )
         .write(&ww)
         .unwrap();
+        crate::workweave_index::record_workweave(
+            &primary_canon,
+            &ProjectName::new("web-app").unwrap(),
+            "feat",
+            crate::workweave_index::canonical_recorded_path(&ww),
+        )
+        .unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&ww, None)
             .expect("the marker names the primary weave");
@@ -8007,6 +8025,13 @@ mod tests {
             &primary_canon,
         )
         .write(&ww)
+        .unwrap();
+        crate::workweave_index::record_workweave(
+            &primary_canon,
+            &ProjectName::new("web-app").unwrap(),
+            "feat",
+            crate::workweave_index::canonical_recorded_path(&ww),
+        )
         .unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&ww, None)

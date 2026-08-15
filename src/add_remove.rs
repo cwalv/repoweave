@@ -221,7 +221,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                         dir,
                         &repo_path,
                         project,
-                        name,
+                        name.require(dir, project)?,
                     )?;
                 }
             }
@@ -330,7 +330,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             dir,
             &repo_path,
             project,
-            name,
+            name.require(dir, project)?,
         )?;
     }
 
@@ -720,7 +720,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
             dir,
             &repo_path,
             project,
-            name,
+            name.require(dir, project)?,
         )?;
     }
 

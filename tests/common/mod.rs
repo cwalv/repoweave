@@ -116,6 +116,39 @@ pub fn workweave_marker(
     )
 }
 
+/// Record `dir` as `project`'s workweave `name` in the primary-side index.
+///
+/// The companion to [`workweave_marker`]: `workweave create` writes both, and
+/// a resolution reads the workweave's own name back out of this entry. A
+/// fixture that plants a marker and stops there builds a directory rwv treats
+/// as unregistered — a repair state, not the steady one most fixtures mean.
+pub fn register_workweave(
+    primary: impl AsRef<std::path::Path>,
+    project: &str,
+    name: &str,
+    dir: impl AsRef<std::path::Path>,
+) {
+    let primary = primary.as_ref();
+    let dir = dir.as_ref();
+    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let index_path = primary
+        .join("projects")
+        .join(project)
+        .join(".rwv-workweave-index");
+    let mut index: serde_json::Value = match std::fs::read_to_string(&index_path) {
+        Ok(raw) => serde_json::from_str(&raw).expect("fixture: index should parse"),
+        Err(_) => serde_json::json!({
+            "container": canonical.parent().expect("a workweave dir has a parent"),
+            "workweaves": {},
+            "receipts": [],
+        }),
+    };
+    index["workweaves"][name] = serde_json::json!(canonical);
+    std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    std::fs::write(&index_path, serde_json::to_string(&index).unwrap())
+        .unwrap_or_else(|e| panic!("write {}: {e}", index_path.display()));
+}
+
 /// `read_to_string` modulo git's eol filter: under `core.autocrlf` a
 /// checkout spells text content CRLF, which is the same content to git and
 /// not what a content assertion is about.

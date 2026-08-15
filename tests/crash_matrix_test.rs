@@ -1683,6 +1683,7 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
     // state this design removed.
     let marker = common::workweave_marker(&primary.root, "web-app", &primary.root);
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
+    common::register_workweave(&primary.root, "web-app", "ww", &ww_root);
 
     let _ = initial_sha;
     RetireFixture {

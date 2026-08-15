@@ -227,6 +227,30 @@ pub(crate) fn canonical_recorded_path(dir: &Path) -> PathBuf {
     }
 }
 
+/// Whether two paths denote the same directory object on disk.
+///
+/// The question a recorded path answers is "which object is this", and the
+/// filesystem is authoritative for it in a way string comparison is not: on a
+/// case-folding filesystem `canonicalize` hands back the spelling it was
+/// asked with rather than the one on disk, so two spellings of one directory
+/// compare unequal while `(dev, ino)` identifies them as one object.
+///
+/// Windows has no file-identity accessor in stable Rust, and its
+/// `canonicalize` does resolve to the on-disk spelling, so there the recorded
+/// path convention is the whole answer. It is also the fallback wherever the
+/// identity cannot be read — a recorded entry whose directory is gone has no
+/// identity to compare.
+pub(crate) fn same_directory(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(a_meta), Ok(b_meta)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+            return (a_meta.dev(), a_meta.ino()) == (b_meta.dev(), b_meta.ino());
+        }
+    }
+    canonical_recorded_path(a) == canonical_recorded_path(b)
+}
+
 /// Read the index file for `(primary_root, project)`.
 ///
 /// Returns `Ok(None)` if the file does not exist (bootstrap case: workspace

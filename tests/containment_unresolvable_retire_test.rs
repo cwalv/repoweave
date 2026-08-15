@@ -141,9 +141,10 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     )
 }
 
-fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
+fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path, name: &str) {
     let content = common::workweave_marker(primary_root, "web-app", primary_root);
     std::fs::write(workweave_dir.join(".rwv-workweave"), content).unwrap();
+    common::register_workweave(primary_root, "web-app", name, workweave_dir);
 }
 
 /// Build primary plus a workweave whose PROJECT repo is worktree-linked (the
@@ -172,7 +173,7 @@ fn make_disconnected_retire_workspaces(parent: &Path) -> (Workspace, Workspace) 
     let ww_server = ww_root.join(SERVER_PATH);
     init_independent_repo(&ww_server, "ww-independent-clone");
 
-    write_workweave_marker(&ww_root, &primary.root);
+    write_workweave_marker(&ww_root, &primary.root, "ww");
 
     let ww = Workspace {
         root: ww_root,

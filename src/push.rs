@@ -157,12 +157,15 @@ pub fn run_push(
     json: bool,
 ) -> anyhow::Result<()> {
     // 1. Workspace precondition — refuse from a workweave.
-    if let Checkout::Workweave { name, .. } = &ctx.checkout {
+    if let Checkout::Workweave { name, dir, .. } = &ctx.checkout {
+        let addressed = match name.recorded() {
+            Some(name) => format!("'{name}'"),
+            None => format!("at {}", dir.display()),
+        };
         anyhow::bail!(
-            "rwv push: refusing to push from workweave '{}'; \
+            "rwv push: refusing to push from workweave {addressed}; \
              workweave branches shouldn't leak to shared remotes. \
-             Run `rwv sync-to` from the workweave to land changes on the parent first.",
-            name
+             Run `rwv sync-to` from the workweave to land changes on the parent first."
         );
     }
 

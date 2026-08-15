@@ -897,6 +897,7 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
     // Write the workweave marker. Format: JSON with `primary`, `project`, `parent`.
     let marker_yaml = common::workweave_marker(&s.workspace, "my-app", &s.workspace);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker_yaml).unwrap();
+    common::register_workweave(&s.workspace, "my-app", "dev", &workweave_dir);
 
     // Run in-place fetch from INSIDE the workweave.
     let output = rwv()

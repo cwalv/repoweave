@@ -149,20 +149,18 @@ pub fn run_update(
     // exits, via the SAME guard the sync engine uses — no new lease machinery.
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
 
-    let (project_name, workweave_name, workweave_dir) = match &ctx.checkout {
+    let (project_name, workweave_dir) = match &ctx.checkout {
         Checkout::Primary { .. } => {
             let name = ctx.require_active_project_on_disk()?.clone();
-            (name, None, None)
+            (name, None)
         }
-        Checkout::Workweave {
-            name, dir, project, ..
-        } => (project.clone(), Some(name.clone()), Some(dir.clone())),
+        Checkout::Workweave { dir, project, .. } => (project.clone(), Some(dir.clone())),
     };
 
     update_for_project(
         ctx,
         &project_name,
-        workweave_name.as_ref().zip(workweave_dir.as_deref()),
+        workweave_dir.as_deref(),
         dirty,
         commit,
         json,
@@ -198,7 +196,7 @@ struct WorkItem {
 fn update_for_project(
     ctx: &WorkspaceContext,
     project_name: &ProjectName,
-    workweave: Option<(&crate::manifest::WorkweaveName, &Path)>,
+    workweave_dir: Option<&Path>,
     dirty: bool,
     commit: bool,
     json: bool,
@@ -224,7 +222,6 @@ fn update_for_project(
     //
     // Capture the old SHA before the advance so JSON output can report
     // the before/after delta. Missing-repo clones produce `old_sha = None`.
-    let workweave_dir = workweave.map(|(_, wd)| wd);
     let work_items: Vec<WorkItem> = project
         .manifest
         .iter_entries()
@@ -401,10 +398,8 @@ fn update_for_project(
     // alone and `rwv doctor --fix` remains the repair path.
     let mut authored = BTreeSet::new();
     if filter.is_empty() {
-        match workweave {
-            Some((_, dir)) => {
-                crate::activate::activate_workweave_intent(project_name.as_str(), dir)
-            }
+        match workweave_dir {
+            Some(dir) => crate::activate::activate_workweave_intent(project_name.as_str(), dir),
             None => crate::activate::activate_intent(project_name.as_str(), ctx),
         }
         .context("failed to regenerate integration content after update")?;

@@ -201,8 +201,8 @@ pub fn resolve_registered_workweave(
 }
 
 /// The reverse of [`resolve_registered_workweave`]: given `path`, the name
-/// `project`'s registry has recorded for it, found by canonicalized
-/// comparison against every recorded entry.
+/// `project`'s registry has recorded for it, found by matching filesystem
+/// identity against every recorded entry.
 ///
 /// For a caller that holds a path and needs the identity the registry gave
 /// it — never for guessing a name from the path's own shape, which is a
@@ -217,10 +217,10 @@ pub fn workweave_name_for_path(
         Some(idx) => idx,
         None => return Ok(None),
     };
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let found = index.workweaves.into_iter().find(|(_, recorded)| {
-        recorded.canonicalize().unwrap_or_else(|_| recorded.clone()) == canonical
-    });
+    let found = index
+        .workweaves
+        .into_iter()
+        .find(|(_, recorded)| workweave_index::same_directory(recorded, path));
     Ok(found.and_then(|(name, _)| WorkweaveName::new(name).ok()))
 }
 
@@ -3284,7 +3284,12 @@ pub fn workweave_log(
             dir,
             project,
             parent,
-        } => (name.clone(), dir.clone(), project.clone(), parent.clone()),
+        } => (
+            name.require(dir, project)?.clone(),
+            dir.clone(),
+            project.clone(),
+            parent.clone(),
+        ),
         Checkout::Primary { .. } => {
             bail!(
                 "`rwv workweave log` reports a workweave's history relative to its \

@@ -1000,6 +1000,7 @@ fn setup_workweave_for_add_tests(
     let primary_canonical = primary.canonicalize().unwrap();
     let marker = common::workweave_marker(&primary_canonical, "test-project", &primary_canonical);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
+    common::register_workweave(&primary_canonical, "test-project", "feat", &workweave_dir);
 
     // Workweave's own copy of the project dir (its own git repo to mirror
     // the worktree contract — a worktree of primary's project repo. A plain
