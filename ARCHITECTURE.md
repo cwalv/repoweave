@@ -61,19 +61,19 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` (`:24`) and `Commands` (`:66`). |
 | `cli::consent` (`src/cli/consent.rs`) | The seven consent tokens plus the `DriftConsent` either/or enum, each minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
 | `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` (`:321`) — argv interception, parse, the single resolution point, and the verb match. |
-| `workspace` (`src/workspace.rs`, 2521) | `WorkspaceContext` (`:75`) and its `resolve` (`:549`); `Checkout` (`:163`); `Resolution` (`:1017`); the `.rwv-active` / `.rwv-workweave` marker constants (`:247`, `:250`). |
-| `registry` (`src/registry.rs`, 707) | Host-to-local-prefix mapping. `Registry` trait (`:63`), `resolve_to_clone_info` (`:235`) — the shared resolution path for `fetch` and `init --adopt`. Unrelated to integrations despite the name. |
-| `selector` (`src/selector.rs`, 460) | The shared `--role` / `--repo` filter grammar. |
+| `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` (`:75`) and its `resolve` (`:549`); `Checkout` (`:163`); `Resolution` (`:1017`); the `.rwv-active` / `.rwv-workweave` marker constants (`:247`, `:250`). |
+| `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait (`:63`), `resolve_to_clone_info` (`:235`) — the shared resolution path for `fetch` and `init --adopt`. Unrelated to integrations despite the name. |
+| `selector` (`src/selector.rs`, 438) | The shared `--role` / `--repo` filter grammar. |
 
 ### Data model
 
 | Module | Owns |
 |---|---|
 | `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, and the typed rendering pair `weave_dir_name` / `parse_weave_dir_name`. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
-| `manifest` (`src/manifest.rs`, 2666) | `Manifest` (`:937`), `LockFile` (`:1112`), `Project` (`:1352`), and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
-| `lock` (`src/lock.rs`, 427) | Snapshotting member HEADs into `rwv.lock`. |
-| `workweave` (`src/workweave.rs`, 3799) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
-| `workweave_index` (`src/workweave_index.rs`, 1833) | The primary-side `.rwv-workweave-index` (`:99`) and `RefRegistry` (`:595`) — the ref-ownership receipt store. |
+| `manifest` (`src/manifest.rs`, 3152) | `Manifest` (`:937`), `LockFile` (`:1112`), `Project` (`:1352`), and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
+| `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
+| `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
+| `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` (`:99`) and `RefRegistry` (`:595`) — the ref-ownership receipt store. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` (`:90`) / `SyncStrategy` (`:139`), the two record fields the engine also reads. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`, `:48`): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. Used by `workweave_index` and `op_state`. |
@@ -89,13 +89,13 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 
 | Module | Owns |
 |---|---|
-| `vcs` (`src/vcs.rs`, 3087) | The `Vcs` trait (`:1762`), its witness and warrant types, and `VcsError` (`:296`). §6.1. |
-| `git` (`src/git.rs`, 3088) | The one implementor, `GitVcs` (`:330`, `impl` at `:731`), plus `git_command()` (`:32`). |
+| `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait (`:1762`), its witness and warrant types, and `VcsError` (`:296`). §6.1. |
+| `git` (`src/git.rs`, 3869) | The one implementor, `GitVcs` (`:330`, `impl` at `:731`), plus `git_command()` (`:32`). |
 | `integration` (`src/integration.rs`, 618) | The `Integration` trait (`:416`) and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` (`:302`) the trait returns. §6.2. |
 | `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
-| `integration_runner` (`src/integration_runner.rs`, 786) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
-| `plugins` (`src/plugins.rs`, 726) | External-subcommand discovery and dispatch. §6.4. |
-| `parallel` (`src/parallel.rs`, 579) | Bounded per-repo fan-out for the network-bound verbs. |
+| `integration_runner` (`src/integration_runner.rs`, 867) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
+| `plugins` (`src/plugins.rs`, 759) | External-subcommand discovery and dispatch. §6.4. |
+| `parallel` (`src/parallel.rs`, 676) | Bounded per-repo fan-out for the network-bound verbs. |
 
 ## 3. Process model
 
@@ -337,10 +337,10 @@ well. The published contract for this seam, and that residue in full, is
 
 ### 6.2 `Integration`
 
-`pub trait Integration` (`src/integration.rs:416`) is ten methods: five
+`pub trait Integration` (`src/integration.rs`) is twelve methods: five
 required (`name`, `default_enabled`, `activate`, `deactivate`, `check`) and
-five defaulted (`activate_hook`, `generated_files`, `managed_files`, `verify`,
-`member_incompatibility`).
+seven defaulted (`detection_manifests`, `activate_hook`, `generated_files`,
+`managed_files`, `verify`, `owned_paths_on_disk`, `member_incompatibility`).
 
 Eight built-in implementors, all unit structs, returned in fixed order by
 `builtin_integrations()` (`src/integrations/mod.rs:23`): `npm-workspaces`,
@@ -470,10 +470,10 @@ tree against the index, so it cannot pass with an uncommitted regeneration.
 
 Three tiers.
 
-- **Unit tests in `src/`** — 21 of the 29 files directly under `src/` carry
-  `#[cfg(test)] mod tests`. The exceptions are `check.rs`, `integration.rs`,
-  `lock.rs`, `explain.rs`, `init.rs` and `update.rs`, plus `lib.rs` and
-  `main.rs`, which hold no logic.
+- **Unit tests in `src/`** — 26 of the 36 files directly under `src/` carry
+  `#[cfg(test)] mod tests`. The exceptions are `check.rs`, `cli.rs`,
+  `explain.rs`, `init.rs`, `integration.rs`, `lock.rs`, `schema_url.rs` and
+  `update.rs`, plus `lib.rs` and `main.rs`, which hold no logic.
 - **Integration tests** — `tests/*.rs`, each its own binary, driving the `rwv`
   executable across the process boundary via `assert_cmd`. `tests/common/mod.rs`
   supplies a `git()` builder that strips every inherited `GIT_*` variable, so a
