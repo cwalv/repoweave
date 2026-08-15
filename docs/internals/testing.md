@@ -75,6 +75,12 @@ Obligations that come with the license:
 - **Suppression scope equals naming scope.** If findings are reported
   per-file, exemptions are per-file too. A global exemption fed by a local
   mention widens the blind spot beyond the file that earned it.
+- **Justification prose follows the same rule.** An allowlist entry whose
+  justification names a type gate (a receipt parameter, a sealed
+  constructor) survives new callers; one that enumerates callers rots
+  silently. Prefer the type-gate claim; where only a caller enumeration is
+  available, assert the measured caller count so a new caller reddens the
+  entry rather than the prose.
 
 ## Mutation evidence
 
@@ -117,6 +123,13 @@ surviving instrument reddens — plus a control showing the removed test used
 to. Green with both removed proves the coverage never existed, which is a
 different finding.
 
+Complementarity claims carry the same burden again: when two instruments
+are described as complements ("variant width is that file's job;
+byte-level minting is this one's"), the claim must name a defect each
+alone would miss and show the other catches it. A claimed division of
+labour can have a hole in the middle that each half's own stated remit
+hides.
+
 ## Fixture discipline
 
 - **For every input a fixture holds constant, ask whether production
@@ -139,6 +152,11 @@ different finding.
 - **An existing test may encode the defect.** A red under your fix can be
   the old wrong behavior written down. Reread the failing assertion against
   the promise, not against the previous output.
+- **A shared fixture serving several pins owes its own scope statement** —
+  the inputs it holds constant and the members it never samples — and a
+  compensating fixture elsewhere owes a back-pointer from the shared
+  fixture. A silence stated only at the consuming site is invisible from
+  the instrument.
 
 ## Low-signal marks
 
