@@ -163,13 +163,13 @@ Under `patch: derived`, rwv:
    patch is *skipped* and a warning is printed to stderr naming the
    crate, in-weave version, and the member's requirement. This is
    necessary because cargo's mismatch diagnostic misleadingly points
-   at crates.io (probe P6 in the design doc).
+   at crates.io.
 5. Runs a same-key shadowing precheck: if a member's own
    `.cargo/config.toml` declares the same `[patch.<reg>].<crate>` key
    that rwv is about to write, cargo's closest-config-wins-per-key rule
    silently voids the weave-level entry. rwv surfaces the shadowing as
    a stderr warning at generation time so the operator sees it
-   *before* cargo emits its misleading diagnostic (probe P5b).
+   *before* cargo emits its misleading diagnostic.
 
 **Tier boundary (documented, not a bug):** a member depending on an
 *unpublished* crate name resolves only inside the weave. Standalone
@@ -233,7 +233,7 @@ Since our `.cargo/` sits directly under the project root, member paths
 in the generated config stay **weave-root-relative**
 (`github/acme/lib`), the same shape the manifest surface writes. No
 `../` prefix. No canonicalization — this preserves symlinked `.cargo/`
-surfacing at the weave root (probe P1).
+surfacing at the weave root.
 
 ### Same-key shadowing
 
@@ -241,7 +241,7 @@ A member's own `.cargo/config.toml` declaring the same
 `[patch.<reg>].<crate>` key silently overrides the weave-level entry
 (cargo's closest-config-wins per key). The `scan_patch_shadowing`
 observatory in `rwv doctor` detects this against both surfaces —
-under `cargo-config` the check is equally load-bearing (probe P5b).
+under `cargo-config` the check is equally load-bearing.
 Generation time surfaces the same warning to stderr.
 
 ### Housekeeping — untracked project state
