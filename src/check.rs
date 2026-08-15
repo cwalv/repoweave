@@ -8274,6 +8274,46 @@ fn apply_finding_repairs(
 ) -> Vec<CheckViolation> {
     let vcs = world.vcs.as_ref();
 
+    let location_of = |workweave: &Option<WorkweaveName>, repo: &RepoPath| match workweave {
+        Some(ww) => format!("{ww}/{repo}"),
+        None => format!("{repo}"),
+    };
+
+    // A stale worktree registration is what makes git refuse the branch
+    // delete below: pruned here, ahead of fix_stale_ephemeral_branches,
+    // rather than in the loop past it, so the delete never meets that
+    // guard within the same --fix pass.
+    let (registrations, violations): (Vec<_>, Vec<_>) = violations
+        .into_iter()
+        .partition(|v| matches!(v, CheckViolation::StaleWorktreeRegistration { .. }));
+
+    let mut kept = Vec::with_capacity(violations.len() + registrations.len());
+    for v in registrations {
+        let CheckViolation::StaleWorktreeRegistration { workweave, repo, .. } = &v else {
+            unreachable!()
+        };
+        let repaired = match repo_locations.get(&(workweave.clone(), repo.clone())) {
+            Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
+                Ok(true) => {
+                    println!(
+                        "[fixed] core: stale-worktree-registration for {}: pruned",
+                        location_of(workweave, repo)
+                    );
+                    true
+                }
+                Ok(false) => false,
+                Err(e) => {
+                    fix_errors.push(format!("state-hygiene --fix failed: {e}"));
+                    true
+                }
+            },
+            None => false,
+        };
+        if !repaired {
+            kept.push(v);
+        }
+    }
+
     let (deleted, delete_errs) = fix_stale_ephemeral_branches(
         ctx.primary_path(),
         vcs,
@@ -8291,12 +8331,6 @@ fn apply_finding_repairs(
     let deleted_keys: std::collections::HashSet<(PathBuf, String)> = deleted.into_iter().collect();
     fix_errors.extend(delete_errs);
 
-    let location_of = |workweave: &Option<WorkweaveName>, repo: &RepoPath| match workweave {
-        Some(ww) => format!("{ww}/{repo}"),
-        None => format!("{repo}"),
-    };
-
-    let mut kept = Vec::with_capacity(violations.len());
     for v in violations {
         if matches!(v.fix_disposition(), FixDisposition::ReportOnly) {
             kept.push(v);
@@ -8444,29 +8478,18 @@ fn apply_finding_repairs(
             },
 
             // The auto-fixable state-hygiene set; `fix_state_hygiene` carries
-            // the policy for why the rest are left alone.
-            CheckViolation::StaleWorktreeRegistration {
-                workweave, repo, ..
-            }
-            | CheckViolation::OrphanedSavepoint {
+            // the policy for why the rest are left alone. Stale worktree
+            // registrations are pruned in the pre-pass above, not here.
+            CheckViolation::OrphanedSavepoint {
                 workweave,
                 repo,
+                op_id,
                 sub_kind: OrphanedSavepointKind::Redundant,
-                ..
             } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
                 Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
                     Ok(true) => {
-                        let (kind_label, extra) = match &v {
-                            CheckViolation::StaleWorktreeRegistration { .. } => {
-                                ("stale-worktree-registration", "pruned".to_string())
-                            }
-                            CheckViolation::OrphanedSavepoint { op_id, .. } => {
-                                ("orphaned-savepoint", format!("dropped op_id={op_id}"))
-                            }
-                            _ => ("state-hygiene", String::new()),
-                        };
                         println!(
-                            "[fixed] core: {kind_label} for {}: {extra}",
+                            "[fixed] core: orphaned-savepoint for {}: dropped op_id={op_id}",
                             location_of(workweave, repo)
                         );
                         true

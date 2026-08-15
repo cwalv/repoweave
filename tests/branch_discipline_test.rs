@@ -1135,6 +1135,84 @@ fn a_dead_seats_branch_is_still_classified_stale() {
     );
 }
 
+/// The ordinary route to the fixture above — no `--dir`, no hand-edited
+/// index — reached by driving `rwv workweave create` and then `rm -rf`ing
+/// the seat the way an operator removes one without `rwv workweave delete`.
+///
+/// `apply_finding_repairs` used to call `fix_stale_ephemeral_branches`
+/// before the loop that prunes `stale-worktree-registration`, so the branch
+/// delete ran while git's own worktree table still held the (prunable)
+/// entry and git refused it — a raw `[error]` on the first `--fix`, self-
+/// healing on the second because the prune had landed by then. The first
+/// pass must now finish both repairs with nothing left for a second run.
+#[test]
+fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let project_dir = ws.join("projects").join("myproj");
+    init_repo_with_commit(&project_dir);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    git_in(&project_dir, &["add", "rwv.toml"]);
+    git_in(&project_dir, &["commit", "-q", "-m", "add manifest"]);
+
+    rwv()
+        .args(["workweave", "myproj", "create", "seat"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let list = git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&canonical)
+        .output()
+        .unwrap();
+    let canonical_canon = canonical.canonicalize().unwrap();
+    let seat_checkout = String::from_utf8_lossy(&list.stdout)
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .find(|p| p.canonicalize().map(|c| c != canonical_canon).unwrap_or(true))
+        .expect("`workweave create` should have registered a second worktree");
+
+    // Advance main past the seat's tip: what earns the safe-class warrant.
+    add_commit(&canonical, "f2.txt", "second");
+
+    let seat_dir = workweaves_dir(&ws).join("myproj--seat");
+    assert!(
+        seat_checkout.starts_with(&seat_dir),
+        "fixture: `create` should place the seat's checkout under the \
+         container path {}; got {}",
+        seat_dir.display(),
+        seat_checkout.display()
+    );
+    std::fs::remove_dir_all(&seat_dir).unwrap();
+
+    let fix_out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix_out.stdout);
+
+    assert!(
+        !fix_stdout.contains("failed to delete safe-class stale ephemeral branch"),
+        "the first --fix pass must not attempt the delete before the \
+         registration guarding it is pruned; got:\n{fix_stdout}"
+    );
+    assert!(
+        !fix_stdout.contains("[error]"),
+        "no raw git error should reach the operator on the first pass; \
+         got:\n{fix_stdout}"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--seat"),
+        "the branch must be gone after the FIRST --fix pass, not the \
+         second; doctor said:\n{fix_stdout}"
+    );
+}
+
 /// The same blind spot in the one class discovered by shape rather than by
 /// record, which is why the guard sits in both loops.
 ///
