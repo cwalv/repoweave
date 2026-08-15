@@ -155,6 +155,29 @@ fn ref_exists(repo: &Path, refname: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// A linked worktree's `.git` is a pointer file, not a directory, so
+/// mid-rebase state never lives at `<repo>/.git/rebase-merge` there — only
+/// `git rev-parse --git-path` resolves the real location.
+fn mid_rebase(repo: &Path) -> bool {
+    repo.join(".git/rebase-merge").exists()
+        || repo.join(".git/rebase-apply").exists()
+        || git_path_exists(repo, "rebase-merge")
+        || git_path_exists(repo, "rebase-apply")
+}
+
+fn git_path_exists(repo: &Path, name: &str) -> bool {
+    let out = common::git()
+        .args(["rev-parse", "--git-path", name])
+        .current_dir(repo)
+        .output()
+        .expect("git rev-parse failed");
+    if !out.status.success() {
+        return false;
+    }
+    let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    repo.join(&p).exists() || Path::new(&p).exists()
+}
+
 // ---------------------------------------------------------------------------
 // Workspace setup — mirrors phase_reentry_test / e2e_sync_abort_test style
 // ---------------------------------------------------------------------------
@@ -680,41 +703,10 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
         .env("GIT_COMMITTER_NAME", "Test")
         .env("GIT_COMMITTER_EMAIL", "t@example.com")
         .output();
-    // For linked worktrees, git stores per-worktree mid-op state under
-    // `<main>/.git/worktrees/<name>/`. Use `mid_op_label` semantics via
-    // `git status --porcelain=v2 --branch` would be ideal, but the
-    // existing pattern (file/dir check) works once we accept either
-    // worktree variant.
-    let in_rebase = ww.server_dir.join(".git/rebase-merge").exists()
-        || ww.server_dir.join(".git/rebase-apply").exists()
-        || {
-            // Resolve worktree's gitdir via `git rev-parse --git-path rebase-merge`.
-            let out = common::git()
-                .args(["rev-parse", "--git-path", "rebase-merge"])
-                .current_dir(&ww.server_dir)
-                .output()
-                .expect("git rev-parse failed");
-            if !out.status.success() {
-                false
-            } else {
-                let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                ww.server_dir.join(&p).exists() || Path::new(&p).exists()
-            }
-        }
-        || {
-            let out = common::git()
-                .args(["rev-parse", "--git-path", "rebase-apply"])
-                .current_dir(&ww.server_dir)
-                .output()
-                .expect("git rev-parse failed");
-            if !out.status.success() {
-                false
-            } else {
-                let p = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                ww.server_dir.join(&p).exists() || Path::new(&p).exists()
-            }
-        };
-    assert!(in_rebase, "fixture must leave ww's server mid-rebase");
+    assert!(
+        mid_rebase(&ww.server_dir),
+        "fixture must leave ww's server mid-rebase"
+    );
 
     plant_owner_record(
         &ww.root,
@@ -730,11 +722,7 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
 
     run_abort_ok(&ww.root, "M(replay)/sync/owner/abort");
     // Server must be back at the savepoint (mid-op classification + reset).
-    assert!(
-        !ww.server_dir.join(".git/rebase-merge").exists()
-            && !ww.server_dir.join(".git/rebase-apply").exists(),
-        "abort must cancel the mid-rebase"
-    );
+    assert!(!mid_rebase(&ww.server_dir), "abort must cancel the mid-rebase");
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ww.server_dir),
         sha,
