@@ -61,7 +61,9 @@ const ALLOWLIST: &[Allowed] = &[Allowed {
          core happens to phrase — a message is rewritten at will, an \
          identifier consumers match on is not. The render text quoted here \
          echoes the kind, so respelling it alone would leave the finding \
-         reading as a different thing from the kind it reports under.",
+         reading as a different thing from the kind it reports under. The \
+         decision and what it was weighed against are in \
+         docs/explanation/joints/vcs-as-seam.md.",
 }];
 
 /// Whether `text` writes the remote's name as a standalone word.

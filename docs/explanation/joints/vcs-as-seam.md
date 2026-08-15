@@ -402,10 +402,10 @@ carries git's vocabulary across the seam:
   too — the case below.
 - **A published identifier carrying the name.** The doctor finding kind
   `origin-url-mismatch`, and the render text that echoes it. This one is
-  not a message someone can rephrase — it is the token `--json`
-  consumers match on and `rwv doctor --kind` accepts, published under a
-  promise of stability, so it is decided on a cost model of its own
-  rather than on the rule above.
+  not a message someone can rephrase — it is a token `--json` consumers
+  match on, published under a promise of stability. It is a **stated
+  exception**, decided under "A published identifier is not a message"
+  below.
 
   It is also the reason enforcement here is a scan at all, where it once
   could not be. The argument against one used to be precision — a
@@ -423,6 +423,64 @@ carries git's vocabulary across the seam:
 - **A user-facing git-vocabulary string.** ("rebase", "cherry-pick",
   "merge --continue".) Per-VCS phrasing belongs in a trait method like
   `conflict_resolution_hint`.
+
+### A published identifier is not a message
+
+`origin-url-mismatch` names a git remote in the one namespace consumers
+script against, and it stays. The decision is recorded here because the
+rule above would otherwise read as covering it.
+
+**Where the token is published.** The `sub_kind` of a `provenance`
+finding in `rwv doctor --json`; an `enum` member of the committed
+`docs/reference/schemas/doctor.json`; the generated
+`docs/reference/explain/doctor.md`; and a heading in
+`docs/reference/doctor-findings.md`, whose opening line promises "a
+stable kebab-case `kind` tag" and whose lookup contract is one entry per
+token, so that a finding met in the terminal is found without
+translation. It is **not** a `--kind` filter value — that flag takes
+top-level kinds, so `--kind origin-url-mismatch` refuses. The token is
+something consumers read, not something they type.
+
+**Rename.** `remote-url-mismatch` would be the better name under a
+second backend. The cost is that every `--json` consumer matching the
+current token stops matching, and stops **silently** — a `jq` selector
+against a renamed key yields nothing rather than erroring, so the
+failure looks like a clean repo. That set is not enumerable: this is a
+published contract of a released version, and there is no register of
+who reads it. The work itself is cheap and mechanical (the variant, the
+regenerated schema and explain artifacts, the reference page, the
+corpus mapping in `tests/`). The price is entirely paid by people
+outside this repository, for a name nothing here branches on.
+
+**Alias.** Publishing both spellings avoids the break and buys a second
+namespace to keep in step forever — two schema members and two reference
+entries for one condition, and consumers obliged to match both. It also
+contradicts the reference page's own one-entry-per-token contract. This
+repo has already written down that a second namespace "is a thing to
+keep in sync, not a feature".
+
+**Why the exception is principled and not merely cheapest.** The seam
+exists so rwv core does not *depend* on a backend's vocabulary — so that
+adding a second VCS is not a hunt through dozens of modules. A wire kind
+creates no such dependency: no code branches on the word in it, no
+resolution passes through it, and deleting the git backend tomorrow
+would leave this token a naming wart rather than a compile error. What
+the seam rule catches is core spelling a name it should have asked the
+backend for. This is a name the outside world has already been told,
+which is a different thing and carries a different cost.
+
+The moment a rename buys something is the change that adds a second
+backend, because that is when the token becomes genuinely ambiguous
+rather than merely git-flavoured — and that change can carry the break
+with a reason a consumer can read. Paying it now buys a better name for
+a backend nobody has.
+
+**What keeps this honest.** The exception is not prose alone.
+`tests/core_remote_name_literal_test.rs` reports the site and exempts it
+by file, with this reasoning at the entry, and the exemption is checked
+in both directions: if the site stops existing, the standing entry fails
+the test rather than sitting there. So the day someone does rename the
+kind, the exemption comes out in the same change.
 
 Each of the four worked examples above started as a change that
 initially put VCS-specific code in rwv core; each one was refactored to

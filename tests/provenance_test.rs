@@ -317,3 +317,63 @@ fn json_output_includes_provenance_kind() {
         "doctor --json must include a provenance violation; violations: {violations:?}"
     );
 }
+
+/// The wire token for this finding is `origin-url-mismatch`, and it names a
+/// git remote on purpose.
+///
+/// Renaming it to something backend-neutral is a decision this repo has
+/// weighed and declined — the token is published in the committed schema and
+/// keyed in the reference page, and a `--json` consumer matching it stops
+/// matching *silently* when it moves, because a selector against a renamed key
+/// yields nothing rather than erroring. The reasoning, and what it was weighed
+/// against, is in `docs/explanation/joints/vcs-as-seam.md`.
+///
+/// This is the pin that makes the decision a decision rather than an
+/// accident. Regenerating the committed schema after a rename produces a diff
+/// a reviewer has to notice; nothing else fails. A test that names the token
+/// turns a silent wire break into a conversation with the choice above.
+///
+/// Asserted on the key of the `sub_kind` object, which is where the token
+/// actually reaches a consumer — not on the rendered message, whose "origin
+/// URL mismatch" phrasing is satisfied whatever the kind is called.
+#[test]
+fn the_provenance_sub_kind_token_is_origin_url_mismatch() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "https://github.com/myorg/myrepo.git");
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/myorg/myrepo",
+            "https://gitlab.com/myorg/myrepo.git",
+            "owned",
+        )],
+    );
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+
+    let tokens: Vec<String> = json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .filter(|v| v["kind"] == "provenance")
+        .filter_map(|v| v["sub_kind"].as_object())
+        .flat_map(|o| o.keys().cloned())
+        .collect();
+
+    assert!(
+        tokens.iter().any(|t| t == "origin-url-mismatch"),
+        "the published sub_kind token must stay `origin-url-mismatch`; got {tokens:?}"
+    );
+}
