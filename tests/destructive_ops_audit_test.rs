@@ -18,8 +18,13 @@
 //! Counts are per file and exclude comment lines, so prose mentioning a
 //! pattern does not trip the wire. Audit each new site against the
 //! policy linked above before bumping its count.
+//!
+//! A literal count cannot see a new CALLER of an already-counted site,
+//! which is the same hazard one step out — so an entry whose justification
+//! enumerates callers instead of naming a type gate also carries the
+//! measured caller count, repo-wide, in `callers`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// One audited (file, pattern) entry: how many call sites are allowed and
@@ -29,6 +34,12 @@ struct Allowed {
     file: &'static str,
     pattern: &'static str,
     count: usize,
+    /// Wrappers whose callers the justification below ENUMERATES, with the
+    /// number of call sites that enumeration accounts for. Empty where the
+    /// justification rests on a type gate instead — a receipt parameter or a
+    /// sealed constructor binds a new caller exactly as it binds an old one,
+    /// so such an entry survives one; a prose enumeration does not.
+    callers: &'static [(&'static str, usize)],
     justification: &'static str,
 }
 
@@ -70,6 +81,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "sync.rs",
         pattern: "remove_dir_all",
         count: 2,
+        callers: &[],
         justification: "prune_dropped_repo, both arms behind the \
             uncommitted-changes refusal at the top of the function (fails \
             safe: unwrap_or(true) refuses when git cannot be asked). \
@@ -118,6 +130,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "workweave.rs",
         pattern: "remove_dir_all",
         count: 4,
+        callers: &[],
         justification: "(1) CreateRollbackGuard::drop: removes the \
             partially-built workweave of a failed create. \
             (2) CreateRollbackGuard::rollback_and_collect_failures: same \
@@ -137,6 +150,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "workweave.rs",
         pattern: "symlink::remove(",
         count: 1,
+        callers: &[],
         justification: "delete_workweave: unlinks a reference-repo SYMLINK \
             (classify_checkout == ReferenceAlias) before any git call. \
             symlink::remove unlinks the link itself by its Windows type, \
@@ -150,6 +164,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "symlink.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "the unlink primitive inside symlink::remove, the \
             typed-unlink seam every symlink removal routes through; its \
             callers are the destructive sites and are audited under the \
@@ -161,6 +176,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "add_remove.rs",
         pattern: "remove_dir_all",
         count: 1,
+        callers: &[],
         justification: "rwv remove --delete on the canonical clone. A \
             DESTROY-STORE: it removes an entire ref \
             store and object database at once, so no ref-level rule can gate \
@@ -185,6 +201,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"-D\"",
         count: 1,
+        callers: &[],
         justification: "destroy_local_ref, and nothing else — the two \
             unguarded sites this entry used to cover are gone. \
             create_worktree's force-delete-and-retry (whose \"deletes a STALE \
@@ -211,6 +228,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"worktree\", \"remove\"",
         count: 1,
+        callers: &[("remove_worktree", 5), ("prune_orphan_worktrees_for", 3)],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
             named per caller — the previous blanket \"every caller checks \
@@ -245,13 +263,14 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "push(\"--force\")",
         count: 1,
+        callers: &[],
         justification: "push_ref: force only when the operator passed \
             rwv push --force; lock-freshness and branch preconditions run \
             first. The branch-model form takes the ref to publish as a \
             parameter (PublishRef) instead of reading whatever branch the \
-            checkout happens to be on, so the choice is made at one site in \
-            push.rs rather than inside the VCS impl \
-            (Q6 decides what that site passes). Its predecessor \
+            checkout happens to be on, so the choice belongs to the caller \
+            rather than to the VCS impl, and no caller can publish a ref it \
+            did not name (Q6 decides what push.rs passes). Its predecessor \
             push_with_role — which read `current_ref` inside the impl — was \
             deleted, so there is no longer a publish path \
             that force-pushes a ref nobody chose.",
@@ -260,6 +279,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"checkout\"",
         count: 4,
+        callers: &[("restore_paths_from_head", 2)],
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
@@ -315,6 +335,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"--hard\"",
         count: 2,
+        callers: &[("reset_and_drop_savepoint", 4)],
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits. It has NO caller outside the trait \
             any more — the only one is Vcs::reset_attached_ref, so the \
@@ -353,6 +374,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"update-ref\"",
         count: 3,
+        callers: &[],
         justification: "(1) savepoint create, (2) savepoint drop, both \
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
             sync.rs). (3) create_pre_abort_ref(): writes \
@@ -369,6 +391,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "workspace.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[("clear_active_project", 2)],
         justification: "clear_active_project: the one site that removes the \
             .rwv-active pointer (rwv-internal state). Unconditional here by \
             design — the pointer's owner cannot know which caller's \
@@ -400,6 +423,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "activate.rs",
         pattern: "symlink::remove(",
         count: 2,
+        callers: &[],
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
             (2) foreign-shared-name cleanup: only top-level symlinks whose \
@@ -412,6 +436,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "activate.rs",
         pattern: "remove_file",
         count: 2,
+        callers: &[],
         justification: "deactivate's .rwv-active removal moved to \
             workspace.rs's clear_active_project, audited above; the two \
             symlink unlinks moved behind symlink::remove, audited under \
@@ -446,6 +471,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "op_state.rs",
         pattern: "remove_file",
         count: 2,
+        callers: &[],
         justification: "(1) clear_owner: removing the .rwv-op owner record (rwv-internal). \
             (2) clear_lease: removing the .rwv-op-lease thin lease (rwv-internal). \
             Both operate on rwv-internal bookkeeping, never user data. The temp-file \
@@ -455,6 +481,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "durable_file.rs",
         pattern: "remove_file",
         count: 3,
+        callers: &[],
         justification: "Temp-file cleanup for the two publish modes, and never \
             able to name the published file itself. (1) staged_temp, when the \
             content write or its fsync failed. (2) replace, when the rename \
@@ -475,6 +502,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/merge.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "strip_deactivate: marker-gated; file deleted only \
             when semantically empty after stripping rwv-owned keys — \
             user-held files (no marker) are never touched.",
@@ -483,6 +511,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/vscode_workspace.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "strip_workspace_file: marker-gated; deletes the \
             .code-workspace only when the strip leaves nothing but rwv's own \
             seeded git.* settings still at their seeded values. A user-added \
@@ -493,6 +522,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/uv_workspace.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "strip_workspace_sources: removes `[tool.uv.sources]` \
             entries whose value is `{ workspace = true }`, prunes the \
             emptied parent tables, and deletes pyproject.toml only when the \
@@ -510,6 +540,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/npm_workspaces.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "package-lock.json removal on deactivate, gated on \
             rwv's ownership marker in package.json.",
     },
@@ -517,6 +548,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/gita.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "gita/repos.csv + groups.csv are fully rwv-owned \
             generated files; the directory itself survives if the user \
             added anything to it.",
@@ -525,6 +557,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/cargo_workspace.rs",
         pattern: "remove_file",
         count: 1,
+        callers: &[],
         justification: "prune_empty_cargo_config on deactivate: deletes \
             <root>/.cargo/config.toml ONLY when it's semantically empty \
             (parse-checked; unparseable content is left alone). The \
@@ -539,6 +572,7 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/go_work.rs",
         pattern: "remove_file",
         count: 2,
+        callers: &[],
         justification: "both sites unlink `<workspace_root>/go.work`, never \
             the canonical `<output_dir>/go.work`: the post-copy unlink sits \
             inside `if !same_file`, whose canonicalized comparison exists \
@@ -658,6 +692,59 @@ fn scan() -> BTreeMap<(String, &'static str), usize> {
     counts
 }
 
+/// Call sites of `name` on one already-trimmed source line: the bare name at
+/// identifier boundaries, immediately followed by `(`.
+///
+/// That paren is what separates a call from a name quoted in a string, which
+/// is followed by its closing quote; the `fn` before it is what separates a
+/// call from the trait declaration, the impl, and the `vcs/testing.rs` stub.
+fn calls_to(line: &str, name: &str) -> usize {
+    let mut found = 0;
+    let mut from = 0;
+    while let Some(rel) = line[from..].find(name) {
+        let at = from + rel;
+        let before = &line[..at];
+        let after = &line[at + name.len()..];
+        let head = before.trim_end();
+        let declares = head.strip_suffix("fn").is_some_and(|preceding| {
+            !preceding.ends_with(|c: char| c.is_alphanumeric() || c == '_')
+        });
+        if after.starts_with('(')
+            && !before.ends_with(|c: char| c.is_alphanumeric() || c == '_')
+            && !declares
+        {
+            found += 1;
+        }
+        from = at + name.len();
+    }
+    found
+}
+
+/// Call sites in `src/` of every wrapper the allowlist names a caller count
+/// for, keyed by wrapper name. Repo-wide, not per file: a destructive
+/// wrapper's callers live wherever the verbs that reach it do.
+fn scan_wrapper_callers() -> BTreeMap<&'static str, usize> {
+    let names: BTreeSet<&'static str> = ALLOWLIST
+        .iter()
+        .flat_map(|a| a.callers.iter().map(|&(name, _)| name))
+        .collect();
+
+    let src = src_dir();
+    let mut files = Vec::new();
+    rust_files(&src, &mut files);
+
+    let mut counts: BTreeMap<&'static str, usize> = names.iter().map(|&n| (n, 0)).collect();
+    for file in files {
+        let text = std::fs::read_to_string(&file).expect("read source file");
+        for trimmed in scanned_lines(&text) {
+            for (&name, found) in counts.iter_mut() {
+                *found += calls_to(trimmed, name);
+            }
+        }
+    }
+    counts
+}
+
 #[test]
 fn destructive_call_sites_match_audited_allowlist() {
     let actual = scan();
@@ -717,7 +804,54 @@ fn destructive_call_sites_match_audited_allowlist() {
     );
 }
 
-/// The scan reads `src/vcs.rs` below the `mod <name>;` it gates its stub
+/// Callers of the destructive wrappers whose justifications enumerate them.
+///
+/// The inventory above counts LITERALS, so a new caller of an
+/// already-counted site is invisible to it: no literal moved, the count
+/// still matches, and the justification's enumeration silently goes false —
+/// while the caller itself is a fresh route into the destructive operation,
+/// reaching it under conditions that enumeration never considered.
+///
+/// Scope: the same lines as the inventory — every `.rs` file under `src/`,
+/// comment lines skipped, in-file test module bodies cut — and within them a
+/// bare wrapper name at identifier boundaries followed by `(`. Invisible to
+/// it: a route that reaches the wrapper under some other name, one a macro
+/// expands to, and any caller inside a test module. Entries whose
+/// justification rests on a type gate name no wrapper here and are measured
+/// by nothing — deliberately, since the gate is what survives a new caller.
+#[test]
+fn enumerated_wrapper_callers_match_audited_counts() {
+    let actual = scan_wrapper_callers();
+    assert!(
+        !actual.is_empty(),
+        "no allowlist entry enumerates callers — this test asserts on nothing"
+    );
+
+    let mut problems: Vec<String> = Vec::new();
+    for a in ALLOWLIST {
+        for &(name, want) in a.callers {
+            let found = actual[name];
+            if found != want {
+                problems.push(format!(
+                    "src/{}: {} — {name} has {found} call sites in src/, this entry's \
+                     justification accounts for {want}. A caller is a route into the \
+                     destructive operation, so audit the new one against the policy in \
+                     this file's header before extending the count.\n    \
+                     audited callers: {}",
+                    a.file, a.pattern, a.justification
+                ));
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "destructive-wrapper callers drifted from the audited justifications:\n  {}\n",
+        problems.join("\n  ")
+    );
+}
+
+/// Both passes read `src/vcs.rs` below the `mod <name>;` it gates its stub
 /// impl with.
 ///
 /// That declaration sits in the file's first twenty lines, so reading it as
