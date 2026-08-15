@@ -23,6 +23,8 @@ use std::process;
 
 mod common;
 
+use common::src_scan::{production_lines, SourceLine};
+
 fn rwv() -> Command {
     common::rwv()
 }
@@ -390,4 +392,70 @@ fn doctor_fix_restores_the_recorded_name_the_refusals_named() {
     // remedy honest about being a repair rather than a restoration: the name
     // that came back is the one the directory spells.
     assert_eq!(identity, "web-app--feat");
+}
+
+// ---------------------------------------------------------------------------
+// The matcher itself, which no run on a non-folding filesystem can see
+// ---------------------------------------------------------------------------
+
+/// The body of the production function named `needle`, comments dropped.
+fn function_body(file: &str, needle: &str) -> Vec<SourceLine> {
+    let lines = production_lines();
+    let start = lines
+        .iter()
+        .position(|l| l.file == file && l.text.contains(needle))
+        .unwrap_or_else(|| panic!("`{needle}` must exist in {file}"));
+    let mut body = Vec::new();
+    for line in &lines[start..] {
+        body.push(line.clone());
+        if line.text == "}" && body.len() > 1 {
+            break;
+        }
+    }
+    assert!(
+        body.len() >= 3 && body.last().expect("non-empty").text == "}",
+        "the slicer must yield a whole body for `{needle}`, not {} lines ending `{}`",
+        body.len(),
+        body.last().map(|l| l.text.as_str()).unwrap_or("")
+    );
+    body
+}
+
+fn body_text(body: &[SourceLine]) -> String {
+    body.iter()
+        .map(|l| l.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A recorded path and the directory a resolution walked into are compared by
+/// asking the filesystem which object each one is, not by comparing their
+/// spellings. On a folding filesystem `canonicalize` hands back the spelling
+/// it was asked with, so two spellings of one workweave compare unequal and
+/// the entry recording it is never found.
+///
+/// This is a source pin because it is not observable at runtime here: on a
+/// case-sensitive filesystem `canonicalize` resolves every alias, so the two
+/// matchers agree on every directory a test can build. Reduce `same_directory`
+/// to the canonicalized-path comparison and the whole suite stays green.
+#[test]
+fn the_registry_match_reads_filesystem_identity() {
+    let matcher = body_text(&function_body(
+        "workweave_index.rs",
+        "fn same_directory(",
+    ));
+    assert!(
+        matcher.contains(".dev()") && matcher.contains(".ino()"),
+        "the match must read filesystem identity: {matcher}"
+    );
+
+    let lookup = body_text(&function_body("workweave.rs", "fn workweave_name_for_path("));
+    assert!(
+        lookup.contains("same_directory("),
+        "the inverse lookup must compare through that one matcher: {lookup}"
+    );
+    assert!(
+        !lookup.contains("canonicalize"),
+        "the inverse lookup must not compare paths itself: {lookup}"
+    );
 }
