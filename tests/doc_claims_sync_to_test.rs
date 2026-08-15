@@ -4,15 +4,27 @@
 //!
 //!   - `rwv sync-to --json` (serial, `-j 1` or no `-j`) emits the envelope
 //!     `{"$schema": "<url>", "outcomes": [<SyncOutcomeOutput>, ...]}`.
-//!   - Under `-j N` with `N > 1`, `--json` switches to NDJSON streaming.
-//!   - The `$schema` URL points at `docs/reference/schemas/sync-to.json`.
-//!   - The outcome shape is identical to `rwv sync --json` — same `kind` tags,
-//!     same fields — only the `$schema` URL differs.
+//!   - The `$schema` URL points at `docs/reference/schemas/sync-to.json`, and
+//!     is not `rwv sync`'s.
+//!   - `rwv explain sync-to` prints sync-to's own bundle.
+//!   - `--allow-stale-lock` is refused-then-named on both the CWD and the
+//!     target side, and bypasses each.
 //!   - The target-side dirty preflight refuses on uncommitted TRACKED changes
 //!     only; a non-colliding untracked file in the target does not block the
 //!     sync. A target-side untracked file that collides with a path the
 //!     fast-forward writes still refuses, but at step 3 rather than up front,
 //!     naming the path and leaving the op resumable via `sync-to --continue`.
+//!   - A successful sync-to leaves no pre-op savepoint on either side.
+//!
+//! Pinned elsewhere, and deliberately not duplicated here: NDJSON streaming
+//! under `-j N` with `N > 1` is driven in
+//! `tests/schema_conformance_wire_test.rs`, which validates the emitted
+//! records against the published schema rather than merely parsing them.
+//!
+//! `SyncToJsonOutput` is not `SyncJsonOutput` with a different URL — it adds
+//! `source_workweave`, `target`, `retired`, `resumed`,
+//! `project_repo_advance`, and a per-outcome `step3_advance` — so a test
+//! written from "the shapes are identical" would be pinning something untrue.
 //!
 //! This test mirrors `tests/doc_claims_sync_test.rs` for the sync-to verb.
 
@@ -282,26 +294,38 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
 // ===========================================================================
 // 3. Explain verb works for sync-to
 //
-// Doc claim: `rwv explain sync-to` returns a non-empty markdown bundle.
+// Doc claim: `rwv explain sync-to` returns the sync-to bundle — the four
+// sections every `--json`-capable verb's bundle carries, and the schema
+// generated from sync-to's own output type.
 // ===========================================================================
 
+/// `rwv explain sync-to` prints sync-to's bundle, not `rwv sync`'s.
+///
+/// The two are neighbouring entries in one dispatch table, so a swapped
+/// mapping is the defect here — and containment on `"sync-to"` is blind to
+/// it: the sync bundle names `rwv sync-to` in its own prose eight times, and
+/// describes steps of its own. Two things are the sync-to bundle's alone: the
+/// heading it opens with, and the title of the schema block, which the
+/// generator writes from the Rust type backing `sync-to --json`.
 #[test]
-fn explain_sync_to_returns_content() {
+fn explain_sync_to_returns_the_sync_to_bundle() {
     let assert = rwv().args(["explain", "sync-to"]).assert().success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
-    assert!(
-        stdout.contains("sync-to"),
-        "explain sync-to should mention sync-to; got:\n{stdout}"
+    assert_eq!(
+        stdout.lines().next(),
+        Some("# rwv sync-to"),
+        "the bundle opens with its own heading; got:\n{stdout}"
     );
+    for section in ["## Purpose", "## Invocation", "## Output", "## Exit codes"] {
+        assert!(
+            stdout.lines().any(|line| line == section),
+            "the bundle is missing its `{section}` section; got:\n{stdout}"
+        );
+    }
     assert!(
-        stdout.contains("three") || stdout.contains("step") || stdout.contains("Step"),
-        "explain sync-to should describe the three-step orchestration; got:\n{stdout}"
-    );
-    assert!(
-        stdout.len() > 200,
-        "explain sync-to should return a substantial bundle; got {} bytes",
-        stdout.len()
+        stdout.contains(r#""title": "SyncToJsonOutput""#),
+        "the schema block must be generated from sync-to's own output type; got:\n{stdout}"
     );
 }
 

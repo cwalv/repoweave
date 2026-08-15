@@ -439,6 +439,18 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
 // `ff-impossible`). Consumers branch on these tags without parsing prose.
 // ===========================================================================
 
+/// The one-repo manifest diverged under the default strategy mints exactly
+/// one outcome, `failed`, whose `failure.kind` is `ff-impossible`.
+///
+/// The value is what the fixture was measured to produce, not what the
+/// documented tag set permits: an OR over the three tags is satisfied by a
+/// default strategy that silently became `rebase`, and by a divergence the
+/// engine mistook for an unreadable HEAD. Both mint a documented tag.
+///
+/// The three wire tags themselves — that `FastForwardImpossible` serializes
+/// `ff-impossible` and not `fast-forward-impossible` — are pinned by direct
+/// serde round-trip in `sync_json_test.rs`, which is why this test asserts a
+/// value rather than a character class.
 #[test]
 fn sync_json_failed_outcome_has_stable_kebab_kind() {
     let tmp = common::tempdir().unwrap();
@@ -484,34 +496,22 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
         .as_array()
         .expect("envelope must carry outcomes");
 
-    // Find the failed outcome for the server repo.
-    let failed = outcomes
-        .iter()
-        .find(|o| {
-            o.get("kind").and_then(Value::as_str) == Some("failed")
-                && o.get("path").and_then(Value::as_str) == Some(SERVER_PATH)
-        })
-        .unwrap_or_else(|| panic!("expected a failed outcome for {SERVER_PATH}:\n{stdout}"));
+    assert_eq!(
+        outcomes.len(),
+        1,
+        "the manifest names one repo, so one outcome is owed:\n{stdout}"
+    );
+    let failed = &outcomes[0];
+    assert_eq!(failed["path"], Value::from(SERVER_PATH), "\n{stdout}");
+    assert_eq!(failed["kind"], Value::from("failed"), "\n{stdout}");
 
-    // The inner `failure.kind` is the stable kebab-case discriminator.
     let failure = failed.get("failure").unwrap_or_else(|| {
         panic!("failed outcome must carry an inner `failure` object:\n{stdout}")
     });
     let kind = failure["kind"]
         .as_str()
         .unwrap_or_else(|| panic!("failure.kind must be a string:\n{stdout}"));
-    assert!(
-        kind == "ff-impossible" || kind == "rebase-failed" || kind == "head-unreadable",
-        "failure.kind must be a stable kebab-case tag from the documented \
-         set (ff-impossible / rebase-failed / head-unreadable); \
-         got: {kind}\nstdout:\n{stdout}"
-    );
-    // The tag must be kebab-case: lowercase + hyphens only (no
-    // snake_case / camelCase drift).
-    assert!(
-        kind.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
-        "failure.kind must be kebab-case; got: {kind}"
-    );
+    assert_eq!(kind, "ff-impossible", "\n{stdout}");
 }
 
 /// `sync --discard-local-commits` consents to discarding committed divergence
