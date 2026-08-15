@@ -37,7 +37,12 @@ fn git(args: &[&str], dir: &Path) {
 fn init_bare_repo_with_commit(bare: &Path) {
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
     git(
-        &["init", "--bare", "--initial-branch=main", &bare.to_string_lossy()],
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            &bare.to_string_lossy(),
+        ],
         bare.parent().unwrap(),
     );
     let seed = bare.with_extension("seed");
