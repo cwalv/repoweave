@@ -38,6 +38,16 @@ jobs:
       - name: Install uv (required by uv-workspace e2e tests)
         uses: astral-sh/setup-uv@v5
 
+      - name: Install Go (required by go-work e2e tests)
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Install Node.js (required by npm-workspace e2e tests; ships npm 10+)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
       - name: Configure git identity (required by sync merge/rebase tests)
         run: |
           git config --global user.email "ci@example.com"
