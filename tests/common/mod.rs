@@ -476,3 +476,36 @@ pub fn assert_names_operator_path(text: &str, path: impl AsRef<std::path::Path>)
          {minted}, which is what `crate::path_spelling::operator_path` mints. Got:\n{text}"
     );
 }
+
+/// Every `--long-flag` clap offers, read out of `--help` output as whole
+/// tokens.
+///
+/// A documented flag is checked by asking whether this list holds it, never
+/// by asking whether the help text contains its spelling: `--frozen` is a
+/// substring of `--frozen-lockfile`, so containment answers yes for a flag
+/// clap would reject, and answers yes for a flag named only in a paragraph
+/// about some other verb.
+///
+/// Scans whitespace-separated tokens, strips surrounding punctuation
+/// (backticks, parens, commas) while keeping hyphens in the stem, truncates
+/// at `=` or `<`, and lowercases. Callers comparing a documented spelling
+/// lowercase it too.
+pub fn extract_long_flags_from_help(text: &str) -> Vec<String> {
+    let mut flags = Vec::new();
+    for word in text.split_whitespace() {
+        let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+        if trimmed.starts_with("--") {
+            let stem: String = trimmed
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '-')
+                .collect::<String>()
+                .to_lowercase();
+            if stem.len() > 2 {
+                flags.push(stem);
+            }
+        }
+    }
+    flags.sort();
+    flags.dedup();
+    flags
+}

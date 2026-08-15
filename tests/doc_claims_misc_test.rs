@@ -2,6 +2,15 @@
 //!
 //! Doc IDs referenced:
 //!   - project-reporoot-0ptp: rwv display context
+//!
+//! `tests/context_display_test.rs` drives the same no-subcommand surface from
+//! an earlier generation, and the overlap is narrower than it looks. Its
+//! fixtures write a manifest with no entries, so the `Repos:` line is one no
+//! fixture there ever produces; it reaches `Project:` only from a workweave
+//! marker, and asserts it by containment over the whole of stdout. Whole-line
+//! equality on `Project:` and `Repos:` lives here and nowhere else in the
+//! suite — a display that printed a repo count for the wrong project would be
+//! caught by no other test.
 
 use assert_cmd::Command;
 use std::path::Path;
@@ -108,10 +117,22 @@ role = "owned"
 //
 // Doc claim: "`rwv` (no subcommand) shows root, project, workweave, repos"
 //
-// With an active project, the output must contain the weave root path, the
-// active project name, and evidence of the repos from the manifest.
+// With an active project, the output carries the weave root path, the active
+// project name, and the count of repos the active project's manifest names.
 // ---------------------------------------------------------------------------
 
+/// The display names the active project and counts its manifest's repos.
+///
+/// Both are whole-line equalities because every weaker form is satisfied by
+/// the fixture's own scaffolding: this workspace's paths already spell
+/// `web-app`, and a bare digit `2` appears in temp-directory names often
+/// enough to be no evidence at all. The count in particular has to be read as
+/// a value — a display that reported the repos of some other project, or
+/// stopped counting `reference` entries, prints a number either way.
+///
+/// The repo NAMES are deliberately not asserted: the line is a count, and a
+/// test looking for `alpha` would be looking for output this surface has
+/// never produced.
 #[test]
 fn rwv_display_shows_repos() {
     let tmp = common::tempdir().unwrap();
@@ -130,20 +151,17 @@ fn rwv_display_shows_repos() {
 
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
-    // Root path must appear.
     common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
 
-    // Active project name must appear.
-    assert!(
-        stdout.contains("web-app"),
-        "output should contain the active project name 'web-app', got:\n{stdout}"
-    );
-
-    // The manifest has 2 repos; the display reports the repo count.
-    assert!(
-        stdout.contains('2') || stdout.contains("alpha") || stdout.contains("beta"),
-        "output should reference the repos from the manifest, got:\n{stdout}"
-    );
+    let line = |prefix: &str| {
+        stdout
+            .lines()
+            .find(|l| l.starts_with(prefix))
+            .unwrap_or_else(|| panic!("context display has no `{prefix}` line:\n{stdout}"))
+            .to_owned()
+    };
+    assert_eq!(line("Project:"), "Project: web-app");
+    assert_eq!(line("Repos:"), "Repos: 2");
 }
 
 // ---------------------------------------------------------------------------
@@ -222,16 +240,17 @@ fn rwv_display_in_workweave() {
 
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
-    // Output must mention "workweave" (case-insensitive).
-    assert!(
-        stdout.to_lowercase().contains("workweave"),
-        "output should contain 'workweave' when run from inside a workweave, got:\n{stdout}"
-    );
-
-    // Output must contain the workweave name.
-    assert!(
-        stdout.contains("display-test"),
-        "output should contain the workweave name 'display-test', got:\n{stdout}"
+    // Whole-line equality, not containment: the workweave directory's own
+    // path spells both `workweave` and `display-test`, so a run that printed
+    // the path under any other label — or under none — satisfies a search for
+    // either word. The label and the value have to be read together.
+    let named = stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("Workweave: "))
+        .unwrap_or_else(|| panic!("context display has no `Workweave:` line:\n{stdout}"));
+    assert_eq!(
+        named,
+        repoweave::path_spelling::operator_path(&ww_dir.canonicalize().unwrap())
     );
 
     // Root path (primary weave root) must appear.

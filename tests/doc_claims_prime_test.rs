@@ -9,8 +9,11 @@
 //! Scan all inline backtick-quoted `rwv <verb> [--flag...]` occurrences in
 //! overview.md (table cells, prose, code fences).  For every invocation that
 //! has explicit `--flag` tokens, run `rwv <verb> --help` and assert the flag
-//! appears in the help output.  Catches `rwv fetch --locked` class of
-//! stale-flag drift (a flag renamed or removed while the doc still lists it).
+//! is one of the whole tokens clap offers, via
+//! `common::extract_long_flags_from_help` — containment would accept a
+//! documented `--frozen` against an offered `--frozen-lockfile`, which is a
+//! flag clap rejects.  Catches `rwv fetch --locked` class of stale-flag drift
+//! (a flag renamed or removed while the doc still lists it).
 //!
 //! **Class 2 - Verb-shape verification.**
 //! For each row of the "Essential commands" / "Sync family" tables, parse the
@@ -232,14 +235,15 @@ fn class1_prime_flag_claims_exist_in_help() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        let offered = common::extract_long_flags_from_help(&combined);
 
         for flag in flags {
             assert!(
-                combined.contains(flag.as_str()),
-                "Flag `{flag}` claimed for `rwv {verb}` in overview.md is not present \
-                 in `rwv {verb} --help` output.\n\
+                offered.contains(&flag.to_lowercase()),
+                "Flag `{flag}` claimed for `rwv {verb}` in overview.md is not a flag \
+                 `rwv {verb}` accepts.\n\
                  This indicates stale documentation - the flag may have been renamed \
-                 or removed.\nHelp output:\n{combined}"
+                 or removed.\nFlags offered: {offered:?}\nHelp output:\n{combined}"
             );
         }
     }

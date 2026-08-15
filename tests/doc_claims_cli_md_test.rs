@@ -83,34 +83,7 @@ fn help_text(args: &[&str]) -> String {
 /// Run `rwv <args>` and return the stdout of `--help`.
 fn help_flags(args: &[&str]) -> Vec<String> {
     // Extract every --long-flag name from help output.
-    extract_long_flags_from_help(&help_text(args))
-}
-
-/// Extract `--flag` long-option names from `--help` output text.
-///
-/// Scans every whitespace-separated token for a `--` prefix. Strips
-/// surrounding punctuation (backticks, parens, commas) but keeps hyphens in
-/// the flag stem.
-fn extract_long_flags_from_help(text: &str) -> Vec<String> {
-    let mut flags = Vec::new();
-    for word in text.split_whitespace() {
-        // Strip leading/trailing punctuation common in help output.
-        let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
-        if trimmed.starts_with("--") {
-            // Truncate at `=`, `<`, whitespace — keep the flag stem only.
-            let stem: String = trimmed
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '-')
-                .collect::<String>()
-                .to_lowercase();
-            if stem.len() > 2 {
-                flags.push(stem);
-            }
-        }
-    }
-    flags.sort();
-    flags.dedup();
-    flags
+    common::extract_long_flags_from_help(&help_text(args))
 }
 
 /// Extract `--flag` long-option names from a cli.md flag table section.
