@@ -5,7 +5,6 @@
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
 
-use crate::git::GIT_DEFAULT_REMOTE_NAME;
 use crate::manifest::{LockFile, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
@@ -442,11 +441,12 @@ pub fn run_push(
     if dry_run {
         println!("rwv push (dry-run):");
         for item in &plan {
+            let vcs = vcs_for(item.vcs_type);
             println!(
                 "  {}: would push {} -> {}",
                 item.repo_path.as_str(),
                 item.branch,
-                GIT_DEFAULT_REMOTE_NAME,
+                vcs.conventional_remote_name(),
             );
         }
         for (repo_path, _) in &default_skipped_repos {
@@ -456,8 +456,10 @@ pub fn run_push(
             );
         }
         println!(
-            "  projects/{}: would push {} -> origin (last)",
-            project_name, project_current,
+            "  projects/{}: would push {} -> {} (last)",
+            project_name,
+            project_current,
+            project_vcs.conventional_remote_name(),
         );
         return Ok(());
     }
@@ -631,8 +633,10 @@ pub fn run_push(
 
     if !json {
         println!(
-            "rwv push: pushing project repo projects/{} ({} -> origin)",
-            project_name, project_current,
+            "rwv push: pushing project repo projects/{} ({} -> {})",
+            project_name,
+            project_current,
+            project_vcs.conventional_remote_name(),
         );
     }
     let project_push_result = project_vcs.push_ref(&project_dir, &project_publish_ref, force);
@@ -764,7 +768,7 @@ fn push_one(
         "rwv push: pushing {} ({} -> {})",
         item.repo_path.as_str(),
         item.branch,
-        GIT_DEFAULT_REMOTE_NAME,
+        vcs.conventional_remote_name(),
     ));
     match vcs.push_ref(&repo_dir, &item.publish_ref, force) {
         Ok(()) => PushOutcome::Pushed,

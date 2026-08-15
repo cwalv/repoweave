@@ -24,7 +24,6 @@
 //! Running `rwv init` in a non-empty, non-workspace directory is refused with
 //! a clear actionable error.
 
-use crate::git::GIT_DEFAULT_REMOTE_NAME;
 use crate::manifest::{LockFile, Manifest, RepoUrl};
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::project_vcs;
@@ -176,13 +175,8 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
             anyhow::anyhow!("registry '{}' does not support clone URLs", registry_name)
         })?;
 
-        vcs.add_remote(&project_dir, GIT_DEFAULT_REMOTE_NAME, &url.to_string())
-            .with_context(|| {
-                format!(
-                    "failed to add the {GIT_DEFAULT_REMOTE_NAME} remote in {}",
-                    project_dir.display()
-                )
-            })?;
+        vcs.add_remote(&project_dir, &url.to_string())
+            .with_context(|| format!("failed to add the remote in {}", project_dir.display()))?;
     }
 
     eprintln!(

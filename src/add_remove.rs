@@ -1,7 +1,6 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
 use crate::activate::{activate_intent, activate_workweave_intent};
-use crate::git::GIT_DEFAULT_REMOTE_NAME;
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
@@ -351,19 +350,21 @@ fn run_add_from_local_path(
     role: Role,
     manifest_path: &Path,
 ) -> anyhow::Result<()> {
-    // Read the origin URL from the existing clone.
+    // Read the recorded URL from the existing clone.
     let raw_url = vcs
-        .remote_url(clone_dir, GIT_DEFAULT_REMOTE_NAME)
+        .remote_url(clone_dir)
         .with_context(|| {
             format!(
-                "could not determine the {GIT_DEFAULT_REMOTE_NAME} URL for '{}'",
+                "could not determine the {} URL for '{}'",
+                vcs.conventional_remote_name(),
                 clone_dir.display()
             )
         })?
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "'{}' has no {GIT_DEFAULT_REMOTE_NAME} remote to read a URL from",
-                clone_dir.display()
+                "'{}' has no {} remote to read a URL from",
+                clone_dir.display(),
+                vcs.conventional_remote_name()
             )
         })?;
 

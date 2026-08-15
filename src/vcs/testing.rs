@@ -294,13 +294,8 @@ impl Vcs for FakeVcs {
         unsupported("clone_repo")
     }
 
-    fn clone_repo_with_remote_name(
-        &self,
-        _url: &str,
-        _dest: &Path,
-        _remote_name: &str,
-    ) -> Result<(), VcsError> {
-        unsupported("clone_repo_with_remote_name")
+    fn conventional_remote_name(&self) -> &str {
+        unsupported("conventional_remote_name")
     }
 
     fn clone_repo_with_conventional_remote(
@@ -371,7 +366,7 @@ impl Vcs for FakeVcs {
         unsupported("commit")
     }
 
-    fn add_remote(&self, _repo: &Path, _name: &str, _url: &str) -> Result<(), VcsError> {
+    fn add_remote(&self, _repo: &Path, _url: &str) -> Result<(), VcsError> {
         unsupported("add_remote")
     }
 
@@ -541,7 +536,7 @@ impl Vcs for FakeVcs {
         unsupported("refresh_working_tree_to_head_if_safe")
     }
 
-    fn remote_url(&self, _repo: &Path, _remote: &str) -> Result<Option<String>, VcsError> {
+    fn remote_url(&self, _repo: &Path) -> Result<Option<String>, VcsError> {
         unsupported("remote_url")
     }
 

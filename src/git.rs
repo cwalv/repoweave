@@ -83,10 +83,14 @@ fn path_as_git_arg<'a>(path: &'a Path, subject: &str) -> Result<&'a str, VcsErro
 }
 
 /// The one remote name this backend clones to, resolves against, and
-/// pushes to. Other production sites that need the same name (`push.rs`,
-/// `init.rs`, `add_remove.rs`, `check.rs`) read it from here rather than
-/// minting their own literal.
-pub const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
+/// pushes to.
+///
+/// Private on purpose. rwv core reaches a remote through the methods that
+/// act on it, and renders its name through
+/// [`Vcs::conventional_remote_name`]; a `use` of this constant from
+/// outside is `error[E0603]`, which is the seam rule holding at compile
+/// time rather than by review.
+const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
 
 // ---------------------------------------------------------------------------
 // Replay-exclusion (rwv.lock) — merge-driver constants
@@ -1260,22 +1264,17 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn clone_repo_with_remote_name(
-        &self,
-        url: &str,
-        dest: &Path,
-        remote_name: &str,
-    ) -> Result<(), VcsError> {
-        let dest_str = path_as_git_arg(dest, "destination path")?;
-        Self::run(
-            &["clone", "--origin", remote_name, url, dest_str],
-            Path::new("."),
-        )?;
-        Ok(())
+    fn conventional_remote_name(&self) -> &str {
+        GIT_DEFAULT_REMOTE_NAME
     }
 
     fn clone_repo_with_conventional_remote(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
-        self.clone_repo_with_remote_name(url, dest, GIT_DEFAULT_REMOTE_NAME)
+        let dest_str = path_as_git_arg(dest, "destination path")?;
+        Self::run(
+            &["clone", "--origin", GIT_DEFAULT_REMOTE_NAME, url, dest_str],
+            Path::new("."),
+        )?;
+        Ok(())
     }
 
     fn resolve_branch_on_remote(
@@ -1412,8 +1411,8 @@ impl Vcs for GitVcs {
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(&["commit", "-m", message], repo).map(|_| ())
     }
-    fn add_remote(&self, repo: &Path, name: &str, url: &str) -> Result<(), VcsError> {
-        Self::run(&["remote", "add", name, url], repo).map(|_| ())
+    fn add_remote(&self, repo: &Path, url: &str) -> Result<(), VcsError> {
+        Self::run(&["remote", "add", GIT_DEFAULT_REMOTE_NAME, url], repo).map(|_| ())
     }
 
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
@@ -2131,13 +2130,13 @@ impl Vcs for GitVcs {
         }
     }
 
-    fn remote_url(&self, repo: &Path, remote: &str) -> Result<Option<String>, VcsError> {
+    fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError> {
         let output = git_command()
-            .args(["remote", "get-url", remote])
+            .args(["remote", "get-url", GIT_DEFAULT_REMOTE_NAME])
             .current_dir(repo)
             .output()
             .map_err(|e| VcsError::Io {
-                ctx: format!("failed to spawn git remote get-url {remote}"),
+                ctx: format!("failed to spawn git remote get-url {GIT_DEFAULT_REMOTE_NAME}"),
                 source: e,
             })?;
 
@@ -2148,7 +2147,11 @@ impl Vcs for GitVcs {
                 return Ok(None);
             }
             return Err(VcsError::CommandFailed {
-                args: vec!["remote".into(), "get-url".into(), remote.into()],
+                args: vec![
+                    "remote".into(),
+                    "get-url".into(),
+                    GIT_DEFAULT_REMOTE_NAME.into(),
+                ],
                 repo: repo.to_path_buf(),
                 stderr: stderr.into_owned(),
             });
@@ -2157,7 +2160,11 @@ impl Vcs for GitVcs {
         let url = String::from_utf8(output.stdout)
             .map(|s| s.trim().to_string())
             .map_err(|_| VcsError::CommandFailed {
-                args: vec!["remote".into(), "get-url".into(), remote.into()],
+                args: vec![
+                    "remote".into(),
+                    "get-url".into(),
+                    GIT_DEFAULT_REMOTE_NAME.into(),
+                ],
                 repo: repo.to_path_buf(),
                 stderr: "git output not valid UTF-8".into(),
             })?;

@@ -339,18 +339,41 @@ reviewer should read a green build as having already answered them.
    a backend with no manifest entry to resolve from documents why git is
    the only answer it can give.
 3. **Spawning git from scratch.** The same gate refuses
-   `Command::new("git")` outside `src/git.rs`. Both rules stop at the
+   `Command::new("git")` outside `src/git.rs`.
+4. **Building a path out of git's on-disk layout.** The same gate
+   refuses `.git`-shaped path construction outside `src/git.rs`, and
+   names the helper to call instead. These three gate rules stop at the
    first test module, under any name: a `#[cfg(test)]` module may build
    a concrete backend.
+5. **Naming the remote.** Two halves, both the compiler's. The constant
+   holding the name is private to `src/git.rs`, so a `use` of it from
+   core is `error[E0603]`; and no method on the `Vcs` trait accepts a
+   remote name, so there is no parameter for a caller to spell one into.
+   rwv manages one remote per clone: core reaches it through the methods
+   that act on it — clone, push, resolve, add, read-URL — and renders
+   its name, when a message needs it, through
+   `Vcs::conventional_remote_name`, which answers for whichever backend
+   the frame was given.
 
 `scripts/ci-local.sh` runs the gate. It fails naming the file, the line
-and which of the two bypasses it is.
+and which bypass it is.
 
 What is left for a human is the part no gate can see — whether a *name*
 carries git's vocabulary across the seam:
 
-- **A remote name.** ("origin", "upstream", "fork".) The naming policy
-  belongs behind the trait; git uses `origin`.
+- **A remote name, in operator text.** Item 5 closes every path that
+  *acts* on a remote; it does not close the sentences that *mention*
+  one. Four message sites in core still write `origin` as a literal:
+  three telling the operator that `origin/HEAD` is unset and how to
+  record it (`rwv add` twice, `rwv push` once), and one doctor finding
+  for a URL mismatch, whose wire `kind` carries the word too. Those
+  three are really the third item in this list rather than this one —
+  they spell a git command, `git remote set-head origin -a`, and
+  respelling the remote name alone would leave the command standing.
+  They are the residue, and they are the reason item 5's enforcement is
+  the compiler and not a scan for the literal: a matcher over `"origin"`
+  reports exactly these four, and a matcher that reports code someone
+  deliberately left is a matcher that gets turned off.
 - **A `.git*` file convention.** (`.gitattributes`, `.gitignore`,
   `.gitmodules`.) The convention belongs in `src/git.rs`; a caller
   outside it that needs one is in the wrong module.

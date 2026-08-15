@@ -3,7 +3,7 @@
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
 
-use crate::git::{GIT_DEFAULT_REMOTE_NAME, RWV_MERGE_DRIVER_PREFIX};
+use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::{ReplayExclusionState, ResolvedRevisionId};
@@ -3582,9 +3582,9 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
             }
 
             let manifest_url = entry.url.to_string();
-            let actual_url = match vcs.remote_url(&repo_abs, GIT_DEFAULT_REMOTE_NAME) {
+            let actual_url = match vcs.remote_url(&repo_abs) {
                 Ok(Some(u)) => u,
-                Ok(None) => continue, // no `origin` remote — not this check's concern
+                Ok(None) => continue, // no remote recorded — not this check's concern
                 Err(_) => continue,   // can't read remote — skip silently
             };
 

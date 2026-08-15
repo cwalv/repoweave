@@ -360,19 +360,31 @@ fn push_dry_run_prints_plan_and_does_not_push() {
         stdout.contains("dry-run"),
         "dry-run output should announce itself; got: {stdout}"
     );
+    // Read the claim off the line that makes it. Asserting the tokens
+    // against the whole of stdout lets any line answer for any other, and
+    // an `||` between them lets the always-present half carry the pair —
+    // which is how the remote name went unread here for as long as it did.
+    // Fork is checked on the same terms as Owned, which is the claim about
+    // fork this test carries.
+    for repo in ["local/org/lib", "local/org/forklib"] {
+        let line = stdout
+            .lines()
+            .find(|l| l.contains(repo))
+            .unwrap_or_else(|| panic!("dry-run printed no plan line for {repo}; got: {stdout}"));
+        assert!(
+            line.contains("would push") && line.trim_end().ends_with("-> origin"),
+            "the plan line for {repo} should say what it would push and to which remote; \
+             got: {line}"
+        );
+    }
+    let project_line = stdout
+        .lines()
+        .find(|l| l.contains("projects/alpha"))
+        .unwrap_or_else(|| panic!("dry-run printed no project-repo line; got: {stdout}"));
     assert!(
-        stdout.contains("local/org/lib")
-            && (stdout.contains("would push") || stdout.contains("origin")),
-        "dry-run should describe the would-push for the primary repo; got: {stdout}"
-    );
-    assert!(
-        stdout.contains("local/org/forklib")
-            && (stdout.contains("would push") || stdout.contains("origin")),
-        "dry-run should describe the would-push for the fork repo (same as Owned); got: {stdout}"
-    );
-    assert!(
-        stdout.contains("projects/alpha"),
-        "dry-run should include a line for the project repo; got: {stdout}"
+        project_line.contains("would push")
+            && project_line.trim_end().ends_with("-> origin (last)"),
+        "the project-repo line should name the remote and that it goes last; got: {project_line}"
     );
 
     // No bare moved.

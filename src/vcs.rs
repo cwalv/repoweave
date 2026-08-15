@@ -2043,14 +2043,14 @@ pub trait Vcs: Send + Sync {
     /// Clone a remote URL into `dest`.
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
-    /// Clone a remote URL into `dest`, naming the remote `remote_name`
-    /// instead of the VCS default (`origin` for git).
-    fn clone_repo_with_remote_name(
-        &self,
-        url: &str,
-        dest: &Path,
-        remote_name: &str,
-    ) -> Result<(), VcsError>;
+    /// What this backend calls the remote every method here acts on.
+    ///
+    /// For operator output only. No method on this trait accepts a remote
+    /// name: rwv manages one remote per clone, the backend names it, and a
+    /// caller that has to hand the name back in is a caller that had to
+    /// know it. Reading it to render a message is the one legitimate use,
+    /// and the value read is whichever backend the frame was given.
+    fn conventional_remote_name(&self) -> &str;
 
     /// Clone `url` into `dest`, naming the remote by the convention this
     /// VCS uses for a repo rwv manages.
@@ -2178,13 +2178,13 @@ pub trait Vcs: Send + Sync {
     /// `git commit -m <message>`.
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError>;
 
-    /// Register `url` under `name` as a remote of `repo`.
+    /// Register `url` as `repo`'s conventional remote.
     ///
-    /// Fails when a remote of that name already exists.
+    /// Fails when that remote already exists.
     ///
     /// For git: runs
-    /// `git remote add <name> <url>`.
-    fn add_remote(&self, repo: &Path, name: &str, url: &str) -> Result<(), VcsError>;
+    /// `git remote add origin <url>`.
+    fn add_remote(&self, repo: &Path, url: &str) -> Result<(), VcsError>;
 
     /// Return the tag name pointing at HEAD, if any.
     ///
@@ -2704,14 +2704,14 @@ pub trait Vcs: Send + Sync {
     /// that remote does not exist.
     ///
     /// For git: runs
-    /// `git remote get-url <remote>`. Returns `None` when the remote is
+    /// `git remote get-url origin`. Returns `None` when the remote is
     /// absent (git exits non-zero with "No such remote"). Returns
     /// `Some(url)` with the URL string as git reports it. Other errors
     /// (I/O failures, non-UTF-8 output) propagate as [`VcsError`].
     ///
     /// Used by `rwv doctor`'s provenance checks to compare the clone's
-    /// `origin` URL against the manifest URL.
-    fn remote_url(&self, repo: &Path, remote: &str) -> Result<Option<String>, VcsError>;
+    /// recorded URL against the manifest URL.
+    fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError>;
 
     /// Return `true` when `sha` names a commit object that exists in
     /// `repo`'s object store.

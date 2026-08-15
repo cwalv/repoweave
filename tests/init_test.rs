@@ -295,6 +295,18 @@ fn init_with_provider_sets_git_remote() {
         remotes.contains("github.com") && remotes.contains("acme"),
         "remote should reference the provider, got: {remotes}"
     );
+    // And its name is as load-bearing as its URL: every later rwv operation
+    // on this repo resolves against the conventional remote, so one created
+    // under any other name is one nothing here can push or fetch.
+    let name = remotes
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().next())
+        .expect("a remote line to read a name from");
+    assert_eq!(
+        name, "origin",
+        "the configured remote should carry the conventional name, got: {remotes}"
+    );
 }
 
 #[test]

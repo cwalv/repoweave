@@ -323,11 +323,15 @@ bare string. `compile_fail` doctests pin this.
 `VcsError` (`:296`) carries a `kind()` (`:355`) of stable kebab-case tags and a
 serializable mirror, `VcsErrorOutput` (`:380`), for `--json`.
 
-**The seam is not airtight.** `git.rs` is not the only module that runs git: 24
-non-test call sites across `lock.rs`, `update.rs`, `workweave.rs`, `init.rs`,
-`add_remove.rs` and `check.rs` build commands via `crate::git::git_command()`
-directly, and `src/check.rs:2211` bypasses even that with a raw
-`Command::new("git")`. The published contract for this seam is
+**What the seam holds by compiler, and what it does not.** No production frame
+outside `git.rs` spawns git or assembles its argv: `git_command` is private to
+the module, and the only `Command::new("git")` elsewhere in `src/` are two
+`#[cfg(test)]` fixtures in `sync.rs`. The remote name is held the same way — the
+constant is private and no trait method accepts one — so core can neither spell
+it nor be handed a parameter to spell it into. What is not mechanised is git
+vocabulary in *operator text*: four message sites in core still write `origin`
+as a literal, three of them inside recovery advice that names a git command as
+well. The published contract for this seam, and that residue in full, is
 [`docs/explanation/joints/vcs-as-seam.md`](docs/explanation/joints/vcs-as-seam.md).
 
 ### 6.2 `Integration`
