@@ -19,16 +19,27 @@
 //! compare and throws the fold away; nothing stores it, nothing resolves
 //! through it, and two names differing by case remain two identities.
 //!
-//! WHAT THIS FILE CANNOT REACH, stated because it changes how to read every
-//! test below. The host is case-sensitive ext4 with no casefold support
-//! (`chattr +F` returns "Operation not supported"), so a collision here always
-//! means the requested spelling exists as an entry — the occupant's listed
-//! name therefore always equals the requested one. The divergence the occupant
-//! naming exists for is unreachable, and only the mechanism that would find it
-//! is pinned, not its result.
+//! Mechanisms 1 and 3 answer differently depending on whether the filesystem
+//! under the fixture folds case, so the tests that reach them ask it —
+//! [`filesystem_folds_case`] creates a directory and its case twin and reads
+//! what the second create says — and assert the arm that answer names. A
+//! `cfg(target_os)` would model the filesystem instead of consulting it, and
+//! would be wrong on both of the hosts it looks certain about: APFS ships
+//! case-insensitive but formats case-sensitive on request, and ext4 folds in
+//! any directory carrying `casefold`.
+//!
+//! WHAT A CASE-SENSITIVE HOST CANNOT REACH, stated because it changes how to
+//! read every test below. Where nothing folds, a collision always means the
+//! requested spelling exists as an entry, so the occupant's listed name always
+//! equals the requested one. The folding arms — the refusal at the second
+//! `create_dir`, and the occupant named by filesystem identity in a spelling
+//! the operator never asked for — execute only where the filesystem folds; on
+//! a case-sensitive host only the mechanism that would find the divergence is
+//! pinned, not its result.
 
 use assert_cmd::Command;
-use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
+use repoweave::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
+use repoweave::path_spelling::operator_path;
 use repoweave::workspace::{confusable_siblings, describe_existing, diverged_occupant};
 use std::path::{Path, PathBuf};
 use std::process;
@@ -39,6 +50,67 @@ use common::src_scan::production_lines;
 
 fn rwv() -> Command {
     common::rwv()
+}
+
+fn doctor_output(ws: &Path) -> String {
+    let out = rwv().args(["doctor"]).current_dir(ws).output().unwrap();
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// Whether `dir` holds one entry for two spellings that differ only by ASCII
+/// case, asked of `dir` itself.
+///
+/// The twin is derived from the one base name rather than written twice, so no
+/// edit can leave a pair that is not a pair and answer "does not fold" for
+/// that reason. `dir` is left as it was found.
+fn filesystem_folds_case(dir: &Path) -> bool {
+    const PROBE: &str = "rwv-case-probe";
+    let one = dir.join(PROBE);
+    let twin = dir.join(PROBE.to_ascii_uppercase());
+
+    std::fs::create_dir(&one).expect("the probe must be creatable");
+    let twin_created = std::fs::create_dir(&twin);
+    let folds = match &twin_created {
+        Ok(()) => false,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => true,
+        Err(e) => panic!("the probe must be answered, not refused for another reason: {e}"),
+    };
+
+    std::fs::remove_dir(&one).unwrap();
+    if twin_created.is_ok() {
+        std::fs::remove_dir(&twin).unwrap();
+    }
+    folds
+}
+
+/// The probe decides which arm every test below runs, so its answer is checked
+/// against a second reading of the same directory: a filesystem that refused
+/// the twin lists one entry afterwards, and one that took it lists two. A
+/// probe that answered without asking, or that left its own directories
+/// behind, disagrees with the count.
+#[test]
+fn the_case_probe_agrees_with_what_the_directory_lists() {
+    let tmp = common::tempdir().unwrap();
+    let dir = tmp.path().join("probe-parent");
+    std::fs::create_dir(&dir).unwrap();
+
+    let folds = filesystem_folds_case(&dir);
+
+    std::fs::create_dir(dir.join("twin")).unwrap();
+    let twin_taken = std::fs::create_dir(dir.join("TWIN")).is_ok();
+    assert_eq!(
+        folds, !twin_taken,
+        "the probe must report what a create of an independent twin reports"
+    );
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        if folds { 1 } else { 2 },
+        "and the listing must hold those entries and nothing the probe left"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +219,7 @@ fn minting_a_project_over_an_occupied_path_refuses() {
         "the refusal must say what happened: {stderr}"
     );
     assert!(
-        stderr.contains(&ws.join("projects/chatly").display().to_string()),
+        stderr.contains(&operator_path(&ws.join("projects").join("chatly"))),
         "the refusal must name the occupied path: {stderr}"
     );
 }
@@ -255,11 +327,16 @@ fn an_agreeing_spelling_is_not_reported_as_divergence() {
 // Mechanism 3: the lint, at mint and at doctor
 // ---------------------------------------------------------------------------
 
-/// Mint WARNS and does not refuse. That was an operator fork and warn is what
-/// ships: a warning can tighten into a refusal later, while a refusal shipped
-/// wrongly needs an escape hatch.
+/// Where the filesystem distinguishes the two spellings, mint WARNS and does
+/// not refuse. That was an operator fork and warn is what ships: a warning can
+/// tighten into a refusal later, while a refusal shipped wrongly needs an
+/// escape hatch. Turn the warning into a `bail!` and this fails on the exit
+/// status.
 ///
-/// Turn the warning into a `bail!` and this fails on the exit status.
+/// Where the filesystem folds them there is no pair to lint and never will be:
+/// the create that asks the question is refused by the filesystem itself,
+/// before the lint runs, and the refusal names the occupant in the spelling
+/// the parent lists rather than the one the operator typed.
 #[test]
 fn a_confusable_sibling_warns_at_mint_and_is_still_created() {
     let tmp = common::tempdir().unwrap();
@@ -270,6 +347,8 @@ fn a_confusable_sibling_warns_at_mint_and_is_still_created() {
         .current_dir(&ws)
         .assert()
         .success();
+    let folds = filesystem_folds_case(&ws.join("projects"));
+
     let out = rwv()
         .args(["init", "Chatly"])
         .current_dir(&ws)
@@ -277,26 +356,57 @@ fn a_confusable_sibling_warns_at_mint_and_is_still_created() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
-    assert!(
-        out.status.success(),
-        "the mint must succeed — this is a warning, not a refusal: {stderr}"
-    );
-    assert!(
-        ws.join("projects/Chatly").is_dir(),
-        "the project must exist afterwards"
-    );
-    assert!(
-        ws.join("projects/chatly").is_dir(),
-        "and so must the one it resembles"
-    );
-    assert!(
-        stderr.contains("differ only by ASCII case"),
-        "the pair must be reported at mint: {stderr}"
-    );
+    if folds {
+        assert!(
+            !out.status.success(),
+            "one entry cannot answer to two spellings, so the mint must refuse: {stderr}"
+        );
+        assert!(
+            stderr.contains(&operator_path(&ws.join("projects").join("Chatly"))),
+            "the refusal must name the path that was asked for: {stderr}"
+        );
+        assert!(
+            stderr.contains("lists it as `chatly`"),
+            "and must name the occupant as the parent lists it, not as it was \
+             requested — the whole reason the lookup is not a canonicalize: {stderr}"
+        );
+        assert!(
+            !stderr.contains("differ only by ASCII case"),
+            "the create is the consult and it refused; the lint never ran: {stderr}"
+        );
+        assert!(
+            ws.join("projects/chatly").is_dir(),
+            "the refusal must leave the occupant where it was"
+        );
+    } else {
+        assert!(
+            out.status.success(),
+            "the mint must succeed — this is a warning, not a refusal: {stderr}"
+        );
+        assert!(
+            ws.join("projects/Chatly").is_dir(),
+            "the project must exist afterwards"
+        );
+        assert!(
+            ws.join("projects/chatly").is_dir(),
+            "and so must the one it resembles"
+        );
+        assert!(
+            stderr.contains("differ only by ASCII case"),
+            "the pair must be reported at mint: {stderr}"
+        );
+    }
 }
 
-/// And at doctor, on this case-sensitive host, where both names are legal and
-/// nothing is broken — which is exactly when saying so is useful.
+/// And at doctor. Where the filesystem distinguishes the two spellings both
+/// names are legal and nothing is broken — which is exactly when saying so is
+/// useful.
+///
+/// Where it folds them the pair cannot reach `projects/` at all, so the
+/// namespace the lint still reaches is the record: repository paths sharing
+/// one parent, which the manifest holds and no filesystem gets a vote on. The
+/// two doctor runs on that arm are one seeded pair — silence while the record
+/// holds no twins, the finding once it does.
 #[test]
 fn a_confusable_sibling_is_reported_by_doctor() {
     let tmp = common::tempdir().unwrap();
@@ -306,25 +416,66 @@ fn a_confusable_sibling_is_reported_by_doctor() {
         .current_dir(&ws)
         .assert()
         .success();
-    rwv()
+    let folds = filesystem_folds_case(&ws.join("projects"));
+
+    if !folds {
+        rwv()
+            .args(["init", "Chatly"])
+            .current_dir(&ws)
+            .assert()
+            .success();
+        let combined = doctor_output(&ws);
+        assert!(
+            combined.contains("`Chatly` and `chatly`"),
+            "doctor must name both spellings: {combined}"
+        );
+        assert!(
+            combined.contains("differ only by ASCII case"),
+            "doctor must say what the relation is: {combined}"
+        );
+        return;
+    }
+
+    let out = rwv()
         .args(["init", "Chatly"])
         .current_dir(&ws)
-        .assert()
-        .success();
-
-    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "the pair cannot reach the disk here: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    let unseeded = doctor_output(&ws);
     assert!(
-        combined.contains("`Chatly` and `chatly`"),
-        "doctor must name both spellings: {combined}"
+        !unseeded.contains("differ only by ASCII case"),
+        "the filesystem refused the pair, so there is none to report: {unseeded}"
+    );
+
+    std::fs::write(
+        ws.join("projects/chatly").join(Manifest::FILE_NAME),
+        r#"[repositories."github/acme/Server"]
+type = "git"
+url = "https://example.com/acme/Server.git"
+version = "main"
+role = "owned"
+
+[repositories."github/acme/server"]
+type = "git"
+url = "https://example.com/acme/server.git"
+version = "main"
+role = "owned"
+"#,
+    )
+    .unwrap();
+    let seeded = doctor_output(&ws);
+    assert!(
+        seeded.contains("`Server` and `server`"),
+        "doctor must name both spellings: {seeded}"
     );
     assert!(
-        combined.contains("differ only by ASCII case"),
-        "doctor must say what the relation is: {combined}"
+        seeded.contains("differ only by ASCII case"),
+        "doctor must say what the relation is: {seeded}"
     );
 }
 
@@ -345,12 +496,7 @@ fn distinct_project_names_produce_no_finding() {
         .assert()
         .success();
 
-    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let combined = doctor_output(&ws);
     assert!(
         !combined.contains("differ only by ASCII case"),
         "no pair exists here: {combined}"
@@ -415,12 +561,7 @@ fn case_drift_between_the_record_and_the_disk_is_reported() {
     index["workweaves"]["feat"] = serde_json::json!(drifted.canonicalize().unwrap());
     std::fs::write(&index_path, serde_json::to_string(&index).unwrap()).unwrap();
 
-    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let combined = doctor_output(&ws);
     assert!(
         combined.contains("disagrees with its records"),
         "the drift must reach the misnamed-dir finding: {combined}"
