@@ -77,6 +77,6 @@ See [verb-vs-composition](../explanation/joints/verb-vs-composition.md) for the 
 ## Related
 
 - [reference/cli — push](../reference/cli.md#push) — full flag surface
-- [vcs-as-seam](../explanation/joints/vcs-as-seam.md) — `Vcs::push_ref` and per-role policy
+- [vcs-as-seam](../explanation/joints/vcs-as-seam.md) — `Vcs::push_ref`, and where remote-naming policy lives
 - [run a command across repos](./run-a-command-across-repos.md) — when unix composition is the right shape
 - [bring workweave work home](./bring-workweave-work-home.md) — push usually follows sync

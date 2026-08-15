@@ -6,7 +6,7 @@
 use crate::cli::consent::{
     AdoptDetachedConsent, DetachConsent, DiscardUnmergedConsent, ReattachConsent,
 };
-use crate::manifest::{ProjectName, Role, WorkweaveName};
+use crate::manifest::{ProjectName, WorkweaveName};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::fmt;
@@ -997,15 +997,13 @@ impl TrackingRef {
         Ok(Self(raw.0))
     }
 
-    /// The remote branch this declaration names, under `role`.
+    /// The remote branch this declaration names.
     ///
-    /// Which *remote* a role selects is a VCS convention (git today maps
-    /// every role to `origin`), so the projection stops at the (role,
-    /// branch) pair and the VCS impl resolves the remote name. That keeps
-    /// `origin` out of the seam.
-    pub fn on_remote(&self, role: Role) -> RemoteRef {
+    /// The projection stops at the branch: which *remote* carries it is a
+    /// VCS convention, and naming it here would put `origin` on the domain
+    /// side of the seam.
+    pub fn on_remote(&self) -> RemoteRef {
         RemoteRef {
-            role,
             branch: self.0.clone(),
         }
     }
@@ -1029,23 +1027,17 @@ impl fmt::Display for TrackingRef {
     }
 }
 
-/// A branch on a remote, named by role rather than by remote name.
+/// A branch in the remote namespace, carrying no remote name.
 ///
-/// Produced by [`TrackingRef::on_remote`]. The VCS impl maps `role` to its
-/// own remote-naming convention.
+/// Produced by [`TrackingRef::on_remote`]. Which remote holds it is the
+/// backend's to decide.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteRef {
-    role: Role,
     branch: String,
 }
 
 impl RemoteRef {
-    /// The role whose remote convention selects the remote.
-    pub fn role(&self) -> Role {
-        self.role
-    }
-
-    /// The branch name on that remote.
+    /// The branch name on the remote.
     pub fn branch(&self) -> &str {
         &self.branch
     }
@@ -1053,7 +1045,7 @@ impl RemoteRef {
 
 impl fmt::Display for RemoteRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} on the {} remote", self.branch, self.role.as_str())
+        write!(f, "{} on the remote", self.branch)
     }
 }
 
@@ -2060,20 +2052,21 @@ pub trait Vcs: Send + Sync {
         remote_name: &str,
     ) -> Result<(), VcsError>;
 
-    /// Clone `url` into `dest`, naming the remote according to the
-    /// convention this VCS uses for the given [`Role`].
+    /// Clone `url` into `dest`, naming the remote by the convention this
+    /// VCS uses for a repo rwv manages.
     ///
-    /// Pushing remote-naming policy into the VCS layer keeps VCS-specific
-    /// vocabulary out of the manifest types. For git: every role, `Role::Fork`
-    /// included, clones to `origin`. Other VCS impls choose their own
-    /// conventions.
-    fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError>;
+    /// Unlike [`clone_repo`], the name is not left to the VCS's own default:
+    /// git's is settable per-operator via `clone.defaultRemoteName`, and a
+    /// clone whose remote is named something else is one every later
+    /// resolution here would miss.
+    ///
+    /// [`clone_repo`]: Vcs::clone_repo
+    fn clone_repo_with_conventional_remote(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
-    /// Resolve `branch` on the remote associated with `role` in `repo`.
+    /// Resolve `branch` on `repo`'s conventional remote.
     ///
-    /// For git: builds the qualified ref
-    /// `"origin/{branch}"` regardless of `role`, and resolves it via
-    /// [`resolve_revision`]. There is no bare-branch fallback — a missing
+    /// For git: builds the qualified ref `"origin/{branch}"` and resolves it
+    /// via [`resolve_revision`]. There is no bare-branch fallback — a missing
     /// `origin` remote yields [`VcsError::RevisionNotFound`] so callers
     /// don't silently advance to the local branch tip.
     ///
@@ -2081,7 +2074,6 @@ pub trait Vcs: Send + Sync {
     fn resolve_branch_on_remote(
         &self,
         repo: &Path,
-        role: Role,
         branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError>;
 
@@ -2637,8 +2629,7 @@ pub trait Vcs: Send + Sync {
     fn cancel_in_flight_op(&self, repo: &Path);
 
     /// Return `true` when `branch` in `repo` has a counterpart on the
-    /// role-conventional remote (`refs/remotes/origin/<branch>` for git,
-    /// regardless of role).
+    /// conventional remote (`refs/remotes/origin/<branch>` for git).
     ///
     /// Used by `prune_dropped_repo` to refuse pruning a clone that has
     /// local-only branches: a branch with no remote counterpart is
@@ -2647,11 +2638,10 @@ pub trait Vcs: Send + Sync {
         &self,
         repo: &Path,
         branch: &RefName,
-        role: Role,
     ) -> Result<bool, VcsError>;
 
     /// Count commits reachable from `branch` but not from its
-    /// role-conventional remote counterpart in `repo`.
+    /// conventional remote counterpart in `repo`.
     ///
     /// Returns 0 when the branch is fully merged into its counterpart, and
     /// `>0` when it carries unique local commits. Caller is responsible
@@ -2667,7 +2657,6 @@ pub trait Vcs: Send + Sync {
         &self,
         repo: &Path,
         branch: &RefName,
-        role: Role,
     ) -> Result<usize, VcsError>;
 
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
@@ -3172,7 +3161,6 @@ pub trait Vcs: Send + Sync {
         &self,
         url: &str,
         dest: &Path,
-        role: Role,
         name: &LocalRefName,
         at: &RawRevisionId,
     ) -> Result<ResolvedRevisionId, VcsError>;
@@ -3374,19 +3362,13 @@ pub trait Vcs: Send + Sync {
 
     // ---- publish ----------------------------------------------------------
 
-    /// Push `r` to the remote `role` selects.
+    /// Push `r` to `repo`'s conventional remote.
     ///
     /// The ref is a **parameter**, so the choice of what to publish is made
     /// at one site in `push.rs` instead of being implicit inside the VCS
     /// impl. What that site passes is still policy; this signature only
     /// makes the decision visible.
-    fn push_ref(
-        &self,
-        repo: &Path,
-        role: Role,
-        r: &PublishRef,
-        force: bool,
-    ) -> Result<(), VcsError>;
+    fn push_ref(&self, repo: &Path, r: &PublishRef, force: bool) -> Result<(), VcsError>;
 
     /// The remote's declared primary branch, or `None` when it is unset or
     /// malformed. **No fallback** — see [`RemoteDefaultBranch`].

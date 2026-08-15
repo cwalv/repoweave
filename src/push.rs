@@ -423,7 +423,6 @@ pub fn run_push(
         plan.push(PushPlanItem {
             repo_path: repo_path.clone(),
             branch: attached.to_string(),
-            role: entry.role,
             vcs_type: entry.vcs_type,
             publish_ref: PublishRef::from_attached(attached),
         });
@@ -447,7 +446,7 @@ pub fn run_push(
                 "  {}: would push {} -> {}",
                 item.repo_path.as_str(),
                 item.branch,
-                remote_label(item.role),
+                GIT_DEFAULT_REMOTE_NAME,
             );
         }
         for (repo_path, _) in &default_skipped_repos {
@@ -490,7 +489,6 @@ pub fn run_push(
         .map(|(_, _, item)| PushPlanItem {
             repo_path: item.repo_path.clone(),
             branch: item.branch.clone(),
-            role: item.role,
             vcs_type: item.vcs_type,
             publish_ref: item.publish_ref.clone(),
         })
@@ -627,10 +625,7 @@ pub fn run_push(
     // 7. Project-repo push (gated). The project repo's committed lock pins
     //    the manifest SHAs we just pushed — pushing it last preserves the
     //    invariant that the remote-side lock never references unpushed
-    //    objects. Use the same trait method so role policy stays in one
-    //    place; the project repo is always Role::Owned at the trait
-    //    layer (it's the canonical-tip carrier; not declared in any
-    //    manifest).
+    //    objects.
     let project_path_str = project_rel_path(project_name.as_str());
     let project_abs_str = project_dir.to_string_lossy().into_owned();
 
@@ -640,8 +635,7 @@ pub fn run_push(
             project_name, project_current,
         );
     }
-    let project_push_result =
-        project_vcs.push_ref(&project_dir, Role::Owned, &project_publish_ref, force);
+    let project_push_result = project_vcs.push_ref(&project_dir, &project_publish_ref, force);
 
     let project_wire = match &project_push_result {
         Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
@@ -718,9 +712,9 @@ fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
     }
 }
 
-/// One manifest repo's resolved plan entry — what branch it's on and what
-/// role drives the remote selection. Built up-front so the dry-run output
-/// and the actual push loop share the same shape.
+/// One manifest repo's resolved plan entry — what branch it's on and which
+/// backend publishes it. Built up-front so the dry-run output and the
+/// actual push loop share the same shape.
 ///
 /// `publish_ref` is the typed ref `push_one` hands to `Vcs::push_ref` —
 /// computed once, at plan time, from the same `AttachedRef` witness
@@ -730,7 +724,6 @@ fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
 struct PushPlanItem {
     repo_path: RepoPath,
     branch: String,
-    role: Role,
     vcs_type: VcsType,
     publish_ref: PublishRef,
 }
@@ -749,10 +742,10 @@ enum PushOutcome {
 }
 
 /// Per-repo worker: push one manifest entry on its current branch via the
-/// role-conventional remote (`origin` for all roles). All user-facing output
-/// is routed through `reporter`, which prefixes `[<repo>]` and serialises
-/// writes under `-j > 1`; under `-j 1` the reporter is a no-prefix
-/// passthrough that matches the pre-`-j` serial output exactly.
+/// conventional remote. All user-facing output is routed through
+/// `reporter`, which prefixes `[<repo>]` and serialises writes under
+/// `-j > 1`; under `-j 1` the reporter is a no-prefix passthrough that
+/// matches the pre-`-j` serial output exactly.
 ///
 /// `Vcs::push_ref` captures stdout/stderr; we don't stream git's output
 /// line-by-line. The user-visible signal under parallel mode is the
@@ -771,18 +764,12 @@ fn push_one(
         "rwv push: pushing {} ({} -> {})",
         item.repo_path.as_str(),
         item.branch,
-        remote_label(item.role),
+        GIT_DEFAULT_REMOTE_NAME,
     ));
-    match vcs.push_ref(&repo_dir, item.role, &item.publish_ref, force) {
+    match vcs.push_ref(&repo_dir, &item.publish_ref, force) {
         Ok(()) => PushOutcome::Pushed,
         Err(e) => PushOutcome::Failed(format!("{}: git push failed: {e}", item.repo_path.as_str())),
     }
-}
-
-/// Display the remote name for a role — all roles push to `origin`.
-fn remote_label(role: Role) -> &'static str {
-    let _ = role;
-    GIT_DEFAULT_REMOTE_NAME
 }
 
 /// Abbreviate a SHA to 7 chars (matches lock-commit-message convention).
@@ -814,37 +801,6 @@ mod tests {
     use crate::manifest::RepoPath;
     use crate::vcs::RawRevisionId;
     use std::collections::BTreeMap;
-
-    // --- remote_label ------------------------------------------------------
-
-    #[test]
-    fn remote_label_owned_is_origin() {
-        assert_eq!(remote_label(Role::Owned), "origin");
-    }
-
-    #[test]
-    fn remote_label_dependency_is_origin() {
-        assert_eq!(remote_label(Role::Dependency), "origin");
-    }
-
-    #[test]
-    fn remote_label_reference_is_origin() {
-        assert_eq!(remote_label(Role::Reference), "origin");
-    }
-
-    /// Fork is now treated identically to Owned — both push to `origin`.
-    #[test]
-    fn remote_label_fork_is_origin() {
-        assert_eq!(remote_label(Role::Fork), "origin");
-    }
-
-    /// remote_label returns `&'static str` — no allocation per call.
-    /// (Compile-time check via the function signature; this test just
-    /// keeps the intent grep-discoverable.)
-    #[test]
-    fn remote_label_returns_static_str() {
-        let _s: &'static str = remote_label(Role::Owned);
-    }
 
     // --- short_sha ---------------------------------------------------------
 
@@ -925,13 +881,11 @@ mod tests {
         let item = PushPlanItem {
             repo_path: RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
             branch: "main".to_string(),
-            role: Role::Owned,
             vcs_type: VcsType::Git,
             publish_ref: test_publish_ref("main"),
         };
         assert_eq!(item.repo_path.as_str(), "github/cwalv/repoweave");
         assert_eq!(item.branch, "main");
-        assert_eq!(item.role, Role::Owned);
     }
 
     /// Sorted iteration is what the verb actually does — pin the
@@ -943,27 +897,22 @@ mod tests {
             PushPlanItem {
                 repo_path: RepoPath::new("a").expect("known-safe literal"),
                 branch: "main".into(),
-                role: Role::Owned,
                 vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("b").expect("known-safe literal"),
                 branch: "main".into(),
-                role: Role::Fork,
                 vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("c").expect("known-safe literal"),
                 branch: "main".into(),
-                role: Role::Dependency,
                 vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
             },
         ];
-        let labels: Vec<&str> = plan.iter().map(|i| remote_label(i.role)).collect();
-        assert_eq!(labels, vec!["origin", "origin", "origin"]);
         let paths: Vec<&str> = plan.iter().map(|i| i.repo_path.as_str()).collect();
         assert_eq!(paths, vec!["a", "b", "c"]);
     }

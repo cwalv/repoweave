@@ -271,7 +271,7 @@ rwv update --project web-app
 - *clone missing on disk* — a manifest entry references a repo that isn't
   cloned on disk; run `rwv fetch` (no SOURCE) from the workspace to
   re-materialize missing manifest members, then re-run `rwv update`.
-- *could not resolve branch on role-conventional remote* — the branch named
+- *could not resolve branch on the remote* — the branch named
   in the manifest's `version:` field doesn't exist on the upstream remote;
   verify the branch name and remote configuration.
 - *git fetch failed* — network error or remote authentication problem;

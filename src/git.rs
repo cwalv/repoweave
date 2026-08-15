@@ -1,6 +1,5 @@
 //! Git implementation of the [`Vcs`] trait.
 
-use crate::manifest::Role;
 use crate::vcs::{
     CommitSummary, ConflictOp, DerivedContentPolicy, DerivedContentResolution, ForeignTipPolicy,
     HeadAttachment, HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName,
@@ -83,11 +82,10 @@ fn path_as_git_arg<'a>(path: &'a Path, subject: &str) -> Result<&'a str, VcsErro
         })
 }
 
-/// Remote name every [`Role`] clones to, resolves against, and pushes to.
-/// [`Vcs::clone_with_role`] and [`Vcs::resolve_branch_on_remote`] do not
-/// vary this by role; other production sites that need the same remote
-/// name (`push.rs`, `init.rs`, `add_remove.rs`, `check.rs`) read it from
-/// here rather than minting their own literal.
+/// The one remote name this backend clones to, resolves against, and
+/// pushes to. Other production sites that need the same name (`push.rs`,
+/// `init.rs`, `add_remove.rs`, `check.rs`) read it from here rather than
+/// minting their own literal.
 pub const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
 
 // ---------------------------------------------------------------------------
@@ -1276,18 +1274,15 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError> {
-        let _ = role; // role label kept for signal value; all clones use `origin`
+    fn clone_repo_with_conventional_remote(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
         self.clone_repo_with_remote_name(url, dest, GIT_DEFAULT_REMOTE_NAME)
     }
 
     fn resolve_branch_on_remote(
         &self,
         repo: &Path,
-        role: Role,
         branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError> {
-        let _ = role; // all remotes use `origin`
         let qualified = format!("origin/{}", branch.as_str());
         self.resolve_revision(repo, &qualified)
     }
@@ -2073,9 +2068,7 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         branch: &RefName,
-        role: Role,
     ) -> Result<bool, VcsError> {
-        let _ = role; // all remotes use `origin`
         let qualified = format!("refs/remotes/origin/{}", branch.as_str());
         let status = git_command()
             .args(["rev-parse", "--verify", "--quiet", &qualified])
@@ -2098,9 +2091,7 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         branch: &RefName,
-        role: Role,
     ) -> Result<usize, VcsError> {
-        let _ = role; // all remotes use `origin`
         let range = format!(
             "refs/remotes/origin/{}..{}",
             branch.as_str(),
@@ -2491,11 +2482,9 @@ impl Vcs for GitVcs {
         &self,
         url: &str,
         dest: &Path,
-        role: Role,
         name: &LocalRefName,
         at: &RawRevisionId,
     ) -> Result<ResolvedRevisionId, VcsError> {
-        let _ = role; // role label kept for signal value; all clones use `origin`
         let dest_str = path_as_git_arg(dest, "destination path")?;
         // `--no-checkout`: the working tree is never materialized at the
         // remote tip. Cloning still writes the remote's default branch as a
@@ -2638,14 +2627,7 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn push_ref(
-        &self,
-        repo: &Path,
-        role: Role,
-        r: &PublishRef,
-        force: bool,
-    ) -> Result<(), VcsError> {
-        let _ = role; // all remotes use `origin`
+    fn push_ref(&self, repo: &Path, r: &PublishRef, force: bool) -> Result<(), VcsError> {
         let mut args: Vec<&str> = vec!["push"];
         if force {
             args.push("--force");
@@ -3629,46 +3611,19 @@ mod branch_model_tests {
     }
 
     #[test]
-    fn clone_with_role_names_the_remote_origin_whatever_the_role() {
-        // `Role::Fork` used to clone to `upstream`, so a stray push
-        // wouldn't target the source-of-record; that convention is
-        // dropped and every role now clones to `origin`. Asserted
-        // per-role rather than once, so a future impl that reintroduces
-        // a role-specific remote name fails here.
+    fn clone_repo_with_conventional_remote_names_the_remote_origin() {
         let (tmp, _clone, bare) = clone_of_bare_origin();
+        let dest = tmp.path().join("conventional-clone");
 
-        for role in Role::ALL.iter().copied() {
-            let dest = tmp.path().join(format!("{role:?}-clone"));
-            GitVcs
-                .clone_with_role(bare.to_str().unwrap(), &dest, role)
-                .unwrap();
-            assert_eq!(
-                git(&dest, &["remote"]),
-                "origin",
-                "{role:?} should have cloned to a single `origin` remote"
-            );
-        }
-    }
+        GitVcs
+            .clone_repo_with_conventional_remote(bare.to_str().unwrap(), &dest)
+            .unwrap();
 
-    #[test]
-    fn push_ref_publishes_to_origin_whatever_the_role() {
-        // Every role pushes to `origin`; the parameter is kept for signal
-        // value. Asserted per-role rather than once, so a future impl that
-        // routes one role elsewhere fails here and not in a verb test.
-        for role in [Role::Owned, Role::Fork, Role::Dependency] {
-            let (_tmp, clone, bare) = clone_of_bare_origin();
-            let tip = commit(&clone, &format!("advance-{role:?}"));
-
-            GitVcs
-                .push_ref(&clone, role, &publish_ref_of(&clone), false)
-                .unwrap();
-
-            assert_eq!(
-                git_bare(&bare, &["rev-parse", "main"]),
-                tip.as_str(),
-                "{role:?} should have landed the local tip on origin/main"
-            );
-        }
+        assert_eq!(
+            git(&dest, &["remote"]),
+            "origin",
+            "the name every later resolution in this impl spells"
+        );
     }
 
     #[test]
@@ -3690,7 +3645,7 @@ mod branch_model_tests {
         let local_tip = commit(&clone, "local");
 
         let err = GitVcs
-            .push_ref(&clone, Role::Owned, &publish_ref_of(&clone), false)
+            .push_ref(&clone, &publish_ref_of(&clone), false)
             .expect_err("a non-fast-forward push must refuse without force");
         assert_eq!(err.kind(), "command-failed");
         assert_eq!(
@@ -3700,7 +3655,7 @@ mod branch_model_tests {
         );
 
         GitVcs
-            .push_ref(&clone, Role::Owned, &publish_ref_of(&clone), true)
+            .push_ref(&clone, &publish_ref_of(&clone), true)
             .expect("force should overwrite the divergent remote tip");
         assert_eq!(git_bare(&bare, &["rev-parse", "main"]), local_tip.as_str());
     }
@@ -3720,9 +3675,7 @@ mod branch_model_tests {
         let side_tip = commit(&clone, "on-sideshow");
         assert_ne!(main_tip, side_tip, "the two branches must differ");
 
-        GitVcs
-            .push_ref(&clone, Role::Owned, &publish, false)
-            .unwrap();
+        GitVcs.push_ref(&clone, &publish, false).unwrap();
 
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),

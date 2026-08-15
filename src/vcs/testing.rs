@@ -303,14 +303,17 @@ impl Vcs for FakeVcs {
         unsupported("clone_repo_with_remote_name")
     }
 
-    fn clone_with_role(&self, _url: &str, _dest: &Path, _role: Role) -> Result<(), VcsError> {
-        unsupported("clone_with_role")
+    fn clone_repo_with_conventional_remote(
+        &self,
+        _url: &str,
+        _dest: &Path,
+    ) -> Result<(), VcsError> {
+        unsupported("clone_repo_with_conventional_remote")
     }
 
     fn resolve_branch_on_remote(
         &self,
         _repo: &Path,
-        _role: Role,
         _branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError> {
         unsupported("resolve_branch_on_remote")
@@ -514,7 +517,6 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _branch: &RefName,
-        _role: Role,
     ) -> Result<bool, VcsError> {
         unsupported("branch_has_remote_counterpart")
     }
@@ -523,7 +525,6 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _branch: &RefName,
-        _role: Role,
     ) -> Result<usize, VcsError> {
         unsupported("count_commits_ahead_of_remote")
     }
@@ -615,7 +616,6 @@ impl Vcs for FakeVcs {
         &self,
         _url: &str,
         _dest: &Path,
-        _role: Role,
         _name: &LocalRefName,
         _at: &RawRevisionId,
     ) -> Result<ResolvedRevisionId, VcsError> {
@@ -643,13 +643,7 @@ impl Vcs for FakeVcs {
         unsupported("birth_ref_at_head")
     }
 
-    fn push_ref(
-        &self,
-        _repo: &Path,
-        _role: Role,
-        _r: &PublishRef,
-        _force: bool,
-    ) -> Result<(), VcsError> {
+    fn push_ref(&self, _repo: &Path, _r: &PublishRef, _force: bool) -> Result<(), VcsError> {
         unsupported("push_ref")
     }
 

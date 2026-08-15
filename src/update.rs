@@ -450,7 +450,7 @@ fn update_for_project(
     Ok(())
 }
 
-/// Per-repo worker: `git fetch --all --tags`, resolve the role-conventional
+/// Per-repo worker: `git fetch --all --tags`, resolve the conventional
 /// remote branch, then advance the checkout onto it ([`advance_checkout`]).
 ///
 /// Returns `Ok(new_sha)` on success (the SHA the repo is now at) or
@@ -529,18 +529,17 @@ fn advance_one(
         return Err(format!("{}: git fetch {suffix}", repo_path.as_str()));
     }
 
-    // Resolve the branch HEAD on the role-conventional remote. The VCS
-    // layer owns the per-role naming policy, so this is one call rather
-    // than a fallback chain. No bare-branch fallback —
-    // missing-remote produces a clear error rather than silently
-    // resolving to the local branch tip.
+    // Resolve the branch HEAD on the conventional remote. The VCS layer
+    // owns the naming policy, so this is one call rather than a fallback
+    // chain. No bare-branch fallback — missing-remote produces a clear
+    // error rather than silently resolving to the local branch tip.
     //
     // When `--prune` above removed a stale remote-tracking ref for
     // `branch`, this resolution will now correctly fail rather than
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
     let branch_ref = RefName::new(branch);
-    let resolved = match vcs.resolve_branch_on_remote(repo_dir, entry.role, &branch_ref) {
+    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &branch_ref) {
         Ok(r) => r,
         Err(_) => {
             return Err(format!(
@@ -575,7 +574,7 @@ fn advance_one(
 }
 
 /// Advance one checkout onto `target`, the tracking branch's tip on the
-/// role-conventional remote.
+/// conventional remote.
 ///
 /// Which ref is the legal object of the move depends on the checkout:
 ///

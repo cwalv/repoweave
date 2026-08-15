@@ -197,12 +197,10 @@ typed `RefName` and migrating it is separate work (§4.2).
 Note precisely what `version:` names: a branch **on the remote**. `rwv update`
 resolves it through `Vcs::resolve_branch_on_remote`, which explicitly refuses
 a bare-branch fallback so callers "don't silently advance to the local branch
-tip" (`vcs.rs:1895-1911`) `[V]`. That trait method's doc comment also claims
-`upstream/<branch>` for `Role::Fork`; the shipped `GitVcs` impl still does not
-implement that half — every role resolves to `origin`, `let _ = role; // all …
-use origin` at `git.rs:813-822` and again in `push_ref` at `git.rs:2111` `[V]`
-— drift already on record from a separate audit and out of this
-document's scope to fix. The manifest's `version:` and any local branch of
+tip" (`vcs.rs:1895-1911`) `[V]`. That trait method's doc comment once claimed
+`upstream/<branch>` for the fork role while no implementor routed by role at
+all — drift recorded here, and since resolved by deleting the parameter that
+carried the role rather than by making the claim true. The manifest's `version:` and any local branch of
 the same name are different objects in different namespaces that happen to
 share a spelling; `TrackingRef::local_counterpart` (`vcs.rs:876-878`) is now
 the one named function where that projection is made, per §4.2.
@@ -890,8 +888,9 @@ impl TrackingRef { pub fn parse(raw: RawRefName) -> Result<Self, RefNameError>; 
 
 // The remote branch `version:` actually names. Already existed in spirit as
 // Vcs::resolve_branch_on_remote (vcs.rs:1879-1895) — "in spirit" is load-
-// bearing: its Role::Fork -> upstream claim is itself stale (§1.3).
-impl TrackingRef { pub fn on_remote(&self, role: Role) -> RemoteRef; }
+// bearing: the remote it resolves against is the backend's to name, so the
+// projection stops at the branch (§1.3).
+impl TrackingRef { pub fn on_remote(&self) -> RemoteRef; }
 
 // "The local branch of the same name." NOT an identity — a projection across
 // namespaces, and the doc comment is where the assumption is stated.
@@ -1091,7 +1090,7 @@ fn delete_owned_ref(&self, repo: &Path, branch: &OwnedRef,
 // under a rule). Until Q6 closes, the constructor is the one place the
 // open question is visible — a deferred decision with a producer, not a
 // placeholder without one.
-fn push_ref(&self, repo: &Path, role: Role, r: &PublishRef, force: bool)
+fn push_ref(&self, repo: &Path, r: &PublishRef, force: bool)
     -> Result<(), VcsError>;                                                // :3027
 
 // ---- listing -----------------------------------------------------------
@@ -1786,7 +1785,7 @@ one names where.
 | `sync-to` (landing) | advances the *target's* ref (`ff_advance_repo`, `sync.rs:5458-5554`) `[V]` | MOVE | **Shipped.** `62af89f` added the runtime refusal; this model replaced it with the witness (`:5477-5506`), closing the "landed onto nothing, then deleted the only ref" chain by construction — see §4.6(1) for the one residual (the function's own argument list). |
 | `abort` | resets the current ref to the savepoint (`sync.rs:4975-5003` → `git.rs:2200-2210`) `[V]` | MOVE | Legal, unchanged. Already verified attributability (`git.rs:1324-1405`) `[V]`. |
 | `fetch` (present clone) | `realign_present_clone` (`fetch.rs:717-809`) `[V]` | ATTACH | **Shipped as specified.** On the tracking counterpart: no-op when equal (`:782-784`), `advance_attached_ref` when an advance (`:789-792`), refuse-or-`detach_head` on a non-fast-forward (`:794-808`). Attached to any *other* ref: refuses, naming `--detach-checkouts` (`:763-776`, §5.3). Already-detached repos stay detached via `advance_detached_head` (`:735`), subject to §3.6. `Unborn` is its own refusal (`:737-745`). |
-| `fetch` (absent clone) | `clone_attached_at` (`fetch.rs:946-952`) `[V]` | birth | **Shipped as specified**, and by a better route than the row predicted: rather than clone-then-align, the birth is a single call that attaches at the lock revision (R1's birth-target rule), so bootstrapping a weave from a lock behind origin performs no MOVE and needs no consent. `clone_with_role` survives only for the additive path where the lock has no entry (`fetch.rs:962`) `[V]`. |
+| `fetch` (absent clone) | `clone_attached_at` (`fetch.rs:946-952`) `[V]` | birth | **Shipped as specified**, and by a better route than the row predicted: rather than clone-then-align, the birth is a single call that attaches at the lock revision (R1's birth-target rule), so bootstrapping a weave from a lock behind origin performs no MOVE and needs no consent. `clone_repo_with_conventional_remote` survives only for the additive path where the lock has no entry (`fetch.rs:962`) `[V]`. |
 | `update` (canonical, on a branch) | `advance_checkout` (`update.rs:620-728`) `[V]` | ATTACH | **Shipped.** Fast-forwards the attached ref when it is the tracking counterpart (`:687`, `:709-711`, §5.3); refuses a non-fast-forward naming the two exits — reconcile yourself per §8.7, or `--detach-checkouts` (`:714-728`). |
 | `update` (inside a workweave) | the workweave arm of `advance_checkout` (`update.rs:655-671`) `[V]` | ATTACH | **Q8 answered and shipped:** advances the ephemeral ref when that is a fast-forward; refuses otherwise and points at `rwv sync` — deliberately *without* offering `--detach-checkouts`, since detaching a workweave checkout has no meaning R1 would sanction. No longer a detach. |
 | `lock` | none (reads HEAD) | — | **Shipped.** Matches all three `HeadAttachment` arms (`lock.rs:113-119`), warns from the `DetachedHead` witness (`:139-147`), and refuses by name on an unreadable ref database instead of falling silent `[V]`. |

@@ -1,5 +1,4 @@
 use repoweave::git::git_vcs;
-use repoweave::manifest::Role;
 use repoweave::vcs::{
     ConflictOp, DerivedContentPolicy, RefName, ReplayExclusionState, ResolvedRevisionId, VcsError,
 };
@@ -635,7 +634,7 @@ fn raw_revision_id_tag_resolves_to_head_sha() {
 }
 
 // ============================================================================
-// Vcs::resolve_branch_on_remote — role-aware remote ref resolution
+// Vcs::resolve_branch_on_remote
 // ============================================================================
 
 /// Build a workspace with two repos: a "remote" with one commit on `main`,
@@ -667,63 +666,27 @@ fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
 }
 
 #[test]
-fn resolve_branch_on_remote_fork_uses_origin() {
-    // Role::Fork now resolves `origin/{branch}` — same as every other role.
+fn resolve_branch_on_remote_resolves_against_origin() {
     let (_ws, local) = repo_with_remote("origin");
     let expected_sha = git(&local, &["rev-parse", "origin/main"]);
 
     let vcs = git_vcs();
     let resolved = vcs
-        .resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"))
+        .resolve_branch_on_remote(&local, &RefName::new("main"))
         .unwrap();
 
     assert_eq!(resolved.as_str(), &expected_sha);
-    assert_eq!(resolved.display_str(), "origin/main");
-}
-
-#[test]
-fn resolve_branch_on_remote_primary_uses_origin() {
-    let (_ws, local) = repo_with_remote("origin");
-    let expected_sha = git(&local, &["rev-parse", "origin/main"]);
-
-    let vcs = git_vcs();
-    let resolved = vcs
-        .resolve_branch_on_remote(&local, Role::Owned, &RefName::new("main"))
-        .unwrap();
-
-    assert_eq!(resolved.as_str(), &expected_sha);
-    assert_eq!(resolved.display_str(), "origin/main");
-}
-
-#[test]
-fn resolve_branch_on_remote_dependency_uses_origin() {
-    let (_ws, local) = repo_with_remote("origin");
-    let vcs = git_vcs();
-    let resolved = vcs
-        .resolve_branch_on_remote(&local, Role::Dependency, &RefName::new("main"))
-        .unwrap();
-    assert_eq!(resolved.display_str(), "origin/main");
-}
-
-#[test]
-fn resolve_branch_on_remote_reference_uses_origin() {
-    let (_ws, local) = repo_with_remote("origin");
-    let vcs = git_vcs();
-    let resolved = vcs
-        .resolve_branch_on_remote(&local, Role::Reference, &RefName::new("main"))
-        .unwrap();
     assert_eq!(resolved.display_str(), "origin/main");
 }
 
 #[test]
 fn resolve_branch_on_remote_missing_remote_errors() {
     // Repo has a remote named `other` but not `origin` — resolution must fail
-    // clearly rather than silently falling back to a local branch tip. All
-    // roles now use `origin`.
+    // clearly rather than silently falling back to a local branch tip.
     let (_ws, local) = repo_with_remote("other");
 
     let vcs = git_vcs();
-    let result = vcs.resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"));
+    let result = vcs.resolve_branch_on_remote(&local, &RefName::new("main"));
 
     let err = result.expect_err("missing origin remote must error");
     assert!(
@@ -749,8 +712,7 @@ fn resolve_branch_on_remote_missing_branch_errors() {
     let (_ws, local) = repo_with_remote("origin");
 
     let vcs = git_vcs();
-    let result =
-        vcs.resolve_branch_on_remote(&local, Role::Owned, &RefName::new("nonexistent-branch"));
+    let result = vcs.resolve_branch_on_remote(&local, &RefName::new("nonexistent-branch"));
 
     let err = result.expect_err("nonexistent branch on remote must error");
     assert!(

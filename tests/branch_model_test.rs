@@ -23,7 +23,7 @@
 //! `tests/branch_model_compile_fail_test.rs`.
 
 use repoweave::git::git_vcs;
-use repoweave::manifest::{ProjectName, Role, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::vcs::{
     EphemeralRefName, HeadAttachment, RawRefName, RefNameError, ResolvedRevisionId, TrackingRef,
     VcsError,
@@ -574,10 +574,9 @@ fn tracking_ref_projections_are_named_not_implicit() {
     // Two different questions, two different projections. Neither is an
     // identity, and each has a function whose doc states the assumption.
     assert_eq!(t.local_counterpart().as_str(), "main");
-    let remote = t.on_remote(Role::Owned);
+    let remote = t.on_remote();
     assert_eq!(remote.branch(), "main");
-    assert_eq!(remote.role(), Role::Owned);
-    assert_eq!(remote.to_string(), "main on the owned remote");
+    assert_eq!(remote.to_string(), "main on the remote");
 }
 
 // ---------------------------------------------------------------------------

@@ -283,7 +283,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        vcs.clone_with_role(url, &dest, role)
+        vcs.clone_repo_with_conventional_remote(url, &dest)
             .with_context(|| format!("failed to clone '{}' into {}", url, dest.display()))?;
     }
 

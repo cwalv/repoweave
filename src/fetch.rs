@@ -932,7 +932,6 @@ fn fetch_one(
         if let Err(e) = vcs.clone_attached_at(
             &entry.url.to_string(),
             &dest,
-            entry.role,
             &declared.local_counterpart(),
             &lock_entry.version,
         ) {
@@ -948,7 +947,7 @@ fn fetch_one(
         return FetchOutcome::Ok { add_to_lock };
     }
 
-    if let Err(e) = vcs.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
+    if let Err(e) = vcs.clone_repo_with_conventional_remote(&entry.url.to_string(), &dest) {
         return FetchOutcome::Failed {
             msg: format!(
                 "{}: failed to clone {} into {}: {e}",

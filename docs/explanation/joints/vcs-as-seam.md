@@ -7,7 +7,8 @@ system as a seam: a single layer where VCS-specific knowledge lives, and
 everywhere else in rwv core uses the abstraction. This joint states the
 principle and walks through four worked examples — each one a closed
 refactor that pulled VCS-specific behavior across the seam, behind the
-Vcs trait.
+Vcs trait. The first carries a correction as well as a lesson: it is
+where the seam once kept a parameter no backend ever read.
 
 This joint is the inner-boundary counterpart to
 [verb-vs-composition](./verb-vs-composition.md), which is the
@@ -34,9 +35,9 @@ Vcs impl (inner).
 
 Each of these is a place where a single concept manifests differently
 per VCS. Centralizing the concept-to-detail mapping in the Vcs impl
-keeps rwv core readable: the higher layer says "push this branch on the
-remote associated with this role" without needing to know which remote
-name the VCS implementation uses for a given role.
+keeps rwv core readable: the higher layer says "push this branch to the
+remote this repo publishes to" without needing to know what that remote
+is called.
 
 Future implementations (jj, hg, sl) would each own their own module; rwv
 core consumes the trait, not any one impl.
@@ -64,10 +65,10 @@ Two failure modes the seam prevents:
   proposal "add a new VCS" hits a wall composed of dozens of
   unrelated patches.
 - **Conceptually duplicated state.** Without the seam, the same
-  concept ("the remote for a fork") gets coded in three places that
-  drift apart. The push path computes one name; the fetch path
-  computes a different one; the dry-run output disagrees with the
-  actual run. Single-source-of-truth at the seam prevents this
+  concept ("the remote a managed clone publishes to") gets coded in
+  three places that drift apart. The push path computes one name; the
+  fetch path computes a different one; the dry-run output disagrees with
+  the actual run. Single-source-of-truth at the seam prevents this
   category of bug entirely.
 
 The principle is also a code-review tool. If a PR adds a git command,
@@ -76,34 +77,68 @@ back: the abstraction belongs in the Vcs trait.
 
 ## Worked examples
 
-### (a) `Vcs::resolve_branch_on_remote` + role-accepting remote resolution
+### (a) `Vcs::resolve_branch_on_remote`, and the parameter it no longer takes
 
-**Concept:** "look up branch X on whichever remote a repo of this role
-uses." The trait accepts a `Role` so future VCS impls can route
-differently per role. The git impl accepts and ignores the role: all
-clones use `origin` regardless of role (the `role` parameter is kept
-as a signal value — a future VCS impl could route differently).
+**Concept:** "look up branch X on the remote this repo publishes to."
+The trait owns the qualifier; rwv core never spells a remote name.
 
-**Anchor:** commit `1b76456`.
+**Anchors:** commits `1b76456` (the move across the seam) and `046aafd`
+(what emptied the parameter it introduced).
 
-`Vcs::clone_with_role` and `Vcs::resolve_branch_on_remote` both take the
-role; the git impl discards it, clones with the remote named `origin`,
-and qualifies a branch lookup as `origin/<branch>`.
+`Vcs::clone_repo_with_conventional_remote` and
+`Vcs::resolve_branch_on_remote` are the two methods that own the
+convention: the git impl clones with the remote named `origin` and
+qualifies a branch lookup as `origin/<branch>`.
 
-**Why this is the seam shape.** Before the refactor, the
+**Why this is the seam shape.** Before the refactor the
 `origin/<branch>` qualifier was spelled out at several call sites in rwv
-core. Exposing role-aware resolution as a trait method means:
+core, and the fork convention lived on the manifest's `Role` type, as a
+method handing back the literal strings `"upstream"` and `"origin"` from
+a domain type. Moving both behind trait methods means:
 
 - rwv core never spells `origin` directly.
 - The remote convention is decided once, in the VCS impl.
 - A different VCS impl can choose a different convention (jj's `default`
   / hg's `default-push`) without rwv core caring.
 
-There is no bare-branch fallback in the trait surface: when the role's
+There is no bare-branch fallback in the trait surface: when the
 conventional remote doesn't have the branch, the trait returns
 `VcsError::RevisionNotFound`, not the local branch tip. This prevents
 the silent "we advanced to the local working state instead of the
 remote target" failure mode.
+
+**What this example teaches second, and the reason it is first.** When
+those methods were introduced they took the manifest's `Role`, and the
+git impl mapped the fork role to a remote named `upstream`. The
+parameter was load-bearing then — passing the role across the seam was
+the mechanism that got git's remote names *out* of the domain type.
+`046aafd` later dropped fork-specific routing as a product decision, and
+from that commit on every implementor discarded the argument: six trait
+methods, six ignoring bindings in the git impl and six more in the test
+double, and three call sites in rwv core with no role to hand over,
+naming the owned role to satisfy a signature.
+
+It was kept anyway — as optionality for a backend that might one day
+route differently — and guarded by tests asserting per role that every
+role still resolved to the same remote. Both moves are ones a seam
+invites, and both are wrong:
+
+- **A parameter no implementor reads is not optionality, it is a
+  fossil.** Nothing exercises it, so nothing reports when its meaning
+  drifts; and it obliges callers that hold no such value to invent one,
+  which is a defect no test on the implementor side can see.
+- **A tripwire is the wrong instrument for a property available by
+  construction.** With the parameter gone, "backends do not route by
+  role" is a fact about the trait rather than a fact the suite rechecks,
+  and reintroducing role routing becomes a visible trait change touching
+  every implementor. Asserting per role that the roles agree only
+  watches for a fossil starting to move.
+
+So the parameter is gone from all six methods, and the seam states its
+rule more simply than it could before: the remote name is entirely the
+backend's business, selected by nothing on the domain side. A backend
+that genuinely needs to route by role gets the parameter back in the
+same change that gives it a reader.
 
 ### (b) `Vcs::conflict_resolution_hint`
 
@@ -243,18 +278,16 @@ in a project the report had called clean.
 
 ### (d) `Vcs::push_ref`
 
-**Concept:** push a named ref on the remote associated with the given
-role. For git, this ignores the role (all roles push to `origin` — see
-example (a)) and runs `git push origin <ref>`.
+**Concept:** push a named ref to the repo's conventional remote. For
+git, `git push origin <ref>`.
 
-**Anchor:** commit `6066ce1`, for a predecessor that took the role but
-not the ref. The ref became a parameter when the branch model landed.
+**Anchor:** commit `6066ce1`, for a predecessor that took a role but not
+the ref. The ref became a parameter when the branch model landed; the
+role left by the route example (a) describes.
 
 The impl owns the mechanism:
 
-- The remote name selection (all roles push to `origin`; the `role`
-  parameter is accepted and ignored, kept for signal value and future
-  VCS impl flexibility — see example (a)).
+- The remote name.
 - The force-push flag spelling.
 - The argument shape `git push <remote> <ref>`.
 
@@ -275,23 +308,20 @@ precondition — but never invokes git directly.
 
 **Why this is the seam shape.** Before this method existed, the
 push-loop draft constructed `git push` argument strings inline. Per the
-verbs design discussion ("the trait captures the per-role push policy
-— refs come from the manifest, not from `git push` argument
-parsing"), the right shape was a trait method whose contract names the
-*intent* ("publish this ref on the role-conventional remote") and
-hides the *mechanism* (`git push origin <ref>` or some entirely
-different command on another VCS).
+verbs design discussion ("refs come from the manifest, not from
+`git push` argument parsing"), the right shape was a trait method whose
+contract names the *intent* ("publish this ref on the repo's
+conventional remote") and hides the *mechanism* (`git push origin <ref>`
+or some entirely different command on another VCS).
 
-Note the trait-level Fork policy is *neutral*: pushing a fork goes to
-`origin` just like any other role. The plan-time default scope (owned +
-fork; dependency and reference excluded before the loop) lives in the
-push verb. The trait stays a thin shell over the VCS surface; the policy
-of which roles to include in the push loop lives where the loop lives.
-The asymmetry is deliberate: it keeps the trait composable (a future
-verb that wants to push only owned repos calls `push_ref` after
-filtering out forks) and keeps verb-level policy debuggable — the
-default-scope choice is one visible location rather than a rule
-distributed across the seam.
+Which repos get pushed at all is verb policy, and the trait cannot see
+it: the plan-time default scope (owned + fork; dependency and reference
+excluded before the loop) lives in the push verb, and `push_ref` is
+never told which role it is publishing. The asymmetry is deliberate. It
+keeps the trait composable — a verb that wants to push only owned repos
+filters first and then calls `push_ref` — and keeps verb-level policy
+debuggable, because the default-scope choice sits in one visible
+location instead of being distributed across the seam.
 
 ## What enforces this
 
@@ -320,7 +350,7 @@ What is left for a human is the part no gate can see — whether a *name*
 carries git's vocabulary across the seam:
 
 - **A remote name.** ("origin", "upstream", "fork".) The naming policy
-  belongs behind the trait; git uses `origin` for all roles.
+  belongs behind the trait; git uses `origin`.
 - **A `.git*` file convention.** (`.gitattributes`, `.gitignore`,
   `.gitmodules`.) The convention belongs in `src/git.rs`; a caller
   outside it that needs one is in the wrong module.

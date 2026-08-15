@@ -72,23 +72,23 @@ Reads `rwv.lock`, materializes constituent clones to the recorded
 SHAs. Bootstrap when no lock exists.
 
 - *Per-repo policy from role?* Yes — role determines which repos are
-  fetched and to which recorded SHA; the VCS impl routes all roles
-  through `origin` but the manifest knows which SHAs to target.
+  fetched and to which recorded SHA; the VCS impl owns the remote name
+  but the manifest knows which SHAs to target.
 - *Cross-repo dependency ordering?* The project repo must come first
   to read the lock; manifest repos follow.
 - *rwv-owned state?* The lock is read.
 
 Pass. The "fetch all my repos" composition exists (`rwv status --json
-| jq -r '.repos[].path' | xargs ...`) but cannot route role-conventional
-remote naming, and cannot read the lock-target SHA for each repo.
+| jq -r '.repos[].path' | xargs ...`) but has to spell the remote name
+itself, and cannot read the lock-target SHA for each repo.
 
 ### `rwv update`
 
 Advances each manifest repo to its branch HEAD and re-snapshots the
 lock.
 
-- *Per-repo policy from role?* Yes — same role-conventional remote
-  selection.
+- *Per-repo policy from role?* No — the remote is the backend's to
+  name, and it names one for every repo.
 - *Cross-repo ordering?* The manifest repos must advance before the
   lock is regenerated; the lock generation is the verb's whole point.
 - *rwv-owned state?* The lock is written.
@@ -189,8 +189,8 @@ non-trivial coordination logic.
 Proposed as a symmetry-with-push counterpart: "fetch and merge in all
 manifest repos."
 
-- *Per-repo policy from role?* Same role-conventional remote
-  selection as `rwv fetch` (all roles use `origin` in the git impl).
+- *Per-repo policy from role?* No — the same backend-named remote
+  `rwv fetch` uses (`origin` in the git impl).
 - *Cross-repo ordering?* No — pull is per-repo independent.
 - *rwv-owned state?* The lock would have to be updated (pulling
   changes the manifest tips); but at that point the verb is just

@@ -9,7 +9,7 @@ use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
     project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath,
-    ResolvedLockFile, Role, WorkweaveName, WorkweaveNameError,
+    ResolvedLockFile, WorkweaveName, WorkweaveNameError,
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
@@ -1833,17 +1833,13 @@ fn prune_dropped_repo(
         Checkout::Primary { .. } => {
             // Primary: refuse if local-only branches with unique commits exist.
             // Conservative — any branch with commits not on origin is grounds.
-            // We don't know the manifest role of this dropped repo at prune
-            // time (the lock entry is gone); Role::Owned selects the
-            // canonical-clone remote convention (`origin` for git)
-            // which matches what every non-fork lock entry was cloned with.
             let any_local_only = match vcs.list_local_branch_names(&dest) {
                 Ok(names) => {
                     let mut any = false;
                     for branch in &names {
                         let short = RefName::new(branch.as_str().to_owned());
                         let has_counterpart = vcs
-                            .branch_has_remote_counterpart(&dest, &short, Role::Owned)
+                            .branch_has_remote_counterpart(&dest, &short)
                             .unwrap_or(false);
                         if !has_counterpart {
                             any = true;
@@ -1856,7 +1852,7 @@ fn prune_dropped_repo(
                         // Refuse on the same terms as an unreadable branch
                         // list below, and say which of the two happened.
                         let count = vcs
-                            .count_commits_ahead_of_remote(&dest, &short, Role::Owned)
+                            .count_commits_ahead_of_remote(&dest, &short)
                             .with_context(|| {
                                 format!(
                                     "{repo_path}: dropped from lock, but counting {short}'s \
@@ -7824,11 +7820,7 @@ mod tests {
         std::fs::write(&dangling, "1111111111111111111111111111111111111111\n").unwrap();
         assert!(
             git_vcs()
-                .branch_has_remote_counterpart(
-                    &store,
-                    &RefName::new("main".to_owned()),
-                    Role::Owned
-                )
+                .branch_has_remote_counterpart(&store, &RefName::new("main".to_owned()))
                 .unwrap(),
             "the fixture must still pass the counterpart probe, or the refusal \
              under test is never reached"
@@ -8044,7 +8036,7 @@ mod tests {
             vcs_type: crate::manifest::VcsType::Git,
             url: "https://example.com/server.git".parse().unwrap(),
             version: crate::vcs::RefName::new("main"),
-            role: Role::Owned,
+            role: crate::manifest::Role::Owned,
         };
         (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
     }
