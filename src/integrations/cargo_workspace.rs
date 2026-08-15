@@ -103,6 +103,18 @@
 //! coordinate across two files. One surface at a time keeps the invariant
 //! local.
 //!
+//! **Compiler wrapper (`rustc-wrapper` config).** An opt-in knob naming a
+//! wrapper binary (sccache is the intended one). Activation looks the name
+//! up on `PATH`: present, a marked `[build] rustc-wrapper` key is merged
+//! into the generated `.cargo/config.toml`; absent, the marked key is
+//! stripped. The key therefore exists exactly on hosts that can run the
+//! wrapper, converging at each materialization — which is what makes the
+//! knob committable in `rwv.toml` at all, since cargo hard-errors on a
+//! wrapper it cannot spawn. Installing or removing the wrapper takes
+//! effect at the NEXT materialization, not immediately; until then verify
+//! reports the difference as drift. Same per-key marker discipline as the
+//! patch entries: an unmarked user-authored key holds the pen.
+//!
 //! **Housekeeping — project-dir untracked state.** Under `cargo-config`
 //! surface the project dir carries a generated `.cargo/config.toml`
 //! alongside the pre-existing `Cargo.toml` and `.rwv-owned-digests`. All
@@ -688,6 +700,8 @@ impl Integration for CargoWorkspace {
             }
         }
 
+        Self::apply_rustc_wrapper(ctx, &cfg)?;
+
         // `MergeResult.deferred` lists keys the user took the pen on (a
         // hand-written `[workspace]` block with no marker). The trigger-model
         // story is that context verbs verify-and-warn rather than author, and
@@ -974,11 +988,13 @@ impl Integration for CargoWorkspace {
         let mut issues = self.verify_cargo_toml(ctx, &cfg)?;
         issues.extend(self.verify_cargo_lock(ctx));
         // The `.cargo/config.toml` is hybrid ONLY when the config-surface
-        // option is selected AND the patch mode is non-off — otherwise
-        // rwv never writes it and it's a plain user file. verify skips it
-        // in every other configuration (matching how `managed_files`
-        // scopes surfacing).
-        if cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches() {
+        // option is selected AND the patch mode is non-off, or when the
+        // rustc-wrapper knob is set — otherwise rwv never writes it and
+        // it's a plain user file. verify skips it in every other
+        // configuration (matching how `managed_files` scopes surfacing).
+        if (cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches())
+            || cfg.rustc_wrapper.is_some()
+        {
             issues.extend(self.verify_cargo_config(ctx, &cfg)?);
         }
         Ok(issues)
@@ -1022,7 +1038,14 @@ impl Integration for CargoWorkspace {
             // mode actually emits entries — the file is not generated in
             // any other combination, so it must not appear in the surfacing
             // set (the framework would try to symlink a dangling target).
-            if cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches() {
+            // The wrapper arm keys on the materialized file, not a fresh
+            // PATH probe — activation already answered the probe, and a
+            // second answer here could disagree with the first and surface
+            // a dangling symlink.
+            if (cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches())
+                || (cfg.rustc_wrapper.is_some()
+                    && ctx.output_dir.join(".cargo").join("config.toml").is_file())
+            {
                 files.push(".cargo/config.toml".to_string());
             }
         }
@@ -1186,6 +1209,15 @@ impl CargoWorkspace {
             expected_keys.insert((p.registry.clone(), p.crate_name.clone()));
         }
 
+        // The wrapper key rides the same key-set comparison as the patch
+        // entries, value included — a stale wrapper NAME is drift just as a
+        // stale entry set is. Detection answers for THIS host, which is the
+        // knob's contract: the key exists exactly where the binary does.
+        let expected_wrapper = Self::detected_wrapper(cfg);
+        if let Some(name) = &expected_wrapper {
+            expected_keys.insert(("build".to_string(), format!("rustc-wrapper = \"{name}\"")));
+        }
+
         // ── MISSING ───────────────────────────────────────────────────
         if !path.exists() {
             if expected_keys.is_empty() {
@@ -1223,6 +1255,21 @@ impl CargoWorkspace {
             }
         }
 
+        let build_table = doc.get("build").and_then(|i| i.as_table());
+        let wrapper_value = build_table
+            .and_then(|t| t.get("rustc-wrapper"))
+            .and_then(|i| i.as_str());
+        let wrapper_marked =
+            build_table.is_some_and(|t| TomlDoc::key_has_marker(t, "rustc-wrapper"));
+        if let Some(v) = wrapper_value {
+            let key = ("build".to_string(), format!("rustc-wrapper = \"{v}\""));
+            if wrapper_marked {
+                on_disk_marked.insert(key);
+            } else {
+                on_disk_unmarked.insert(key);
+            }
+        }
+
         // ── USER-HELD ────────────────────────────────────────────────
         // User holds the pen when an expected key is on disk but WITHOUT
         // the marker AND no rwv-marker entries exist at all. If rwv has
@@ -1231,8 +1278,14 @@ impl CargoWorkspace {
         // matching unmarked keys the user overwrote or hand-authored our
         // territory — verify-and-warn.
         if on_disk_marked.is_empty() {
+            // A user-held wrapper key shadows the expected one whatever its
+            // VALUE — the merge defers on any unmarked key, so a divergent
+            // name still blocks the write. Same-value shadowing is already
+            // covered by the set containment below.
+            let user_shadows_wrapper =
+                expected_wrapper.is_some() && wrapper_value.is_some() && !wrapper_marked;
             let user_shadows_expected = expected_keys.iter().any(|k| on_disk_unmarked.contains(k));
-            if user_shadows_expected {
+            if user_shadows_expected || user_shadows_wrapper {
                 return Ok(drift_issues(
                     self.name(),
                     &path,
@@ -1241,8 +1294,8 @@ impl CargoWorkspace {
                     None,
                     &[],
                     "Cut over manually by removing the conflicting \
-                     `[patch.<registry>].<crate>` key from the file or by \
-                     exercising the intent-mode merge",
+                     `[patch.<registry>].<crate>` or `[build].rustc-wrapper` \
+                     key from the file or by exercising the intent-mode merge",
                     "",
                 ));
             }
@@ -1282,10 +1335,12 @@ impl CargoWorkspace {
             Some(&on_disk_repr),
             &expected_repr,
             "Cut over manually by adding the `# managed by rwv` \
-             marker to the intended `[patch.<registry>].<crate>` keys \
-             or by exercising the intent-mode merge",
-            "on-disk `[patch.*]` entries in .cargo/config.toml differ \
-             from the set derived from rwv.toml.",
+             marker to the intended `[patch.<registry>].<crate>` or \
+             `[build].rustc-wrapper` keys or by exercising the \
+             intent-mode merge",
+            "on-disk rwv-marked keys in .cargo/config.toml (`[patch.*]` \
+             entries, `[build].rustc-wrapper`) differ from the set derived \
+             from rwv.toml and this host's wrapper detection.",
         ))
     }
 
@@ -1441,6 +1496,8 @@ impl CargoWorkspace {
         let cargo_config = root.join(".cargo").join("config.toml");
         Self::strip_marked_patch_entries(&cargo_config)
             .with_context(|| format!("strip-patch {}", cargo_config.display()))?;
+        Self::strip_marked_rustc_wrapper(&cargo_config)
+            .with_context(|| format!("strip-rustc-wrapper {}", cargo_config.display()))?;
         // If the `.cargo/config.toml` becomes empty after the strip, delete
         // it, then delete an empty `.cargo/` dir. Symmetric with the
         // `strip_deactivate` file-deletion rule for hybrid files.
@@ -2135,6 +2192,115 @@ impl CargoWorkspace {
                 .with_context(|| format!("writing {}", path.display()))?;
         }
         Ok(())
+    }
+
+    /// Route the weave's builds through `cfg.rustc_wrapper` when the host
+    /// can run it: present on `PATH`, merge a marked `[build] rustc-wrapper`
+    /// key into the generated `.cargo/config.toml`; absent or unconfigured,
+    /// strip the marked key, so each materialization converges the file to
+    /// this host. The conditionality is load-bearing — cargo hard-errors on
+    /// a wrapper it cannot spawn, so the key must never outlive the binary.
+    fn apply_rustc_wrapper(
+        ctx: &IntegrationContext,
+        cfg: &CargoWorkspaceConfig,
+    ) -> anyhow::Result<()> {
+        let path = ctx.output_dir.join(".cargo").join("config.toml");
+        match Self::detected_wrapper(cfg) {
+            Some(name) => Self::merge_rustc_wrapper(&path, &name)
+                .with_context(|| format!("merge-rustc-wrapper {}", path.display())),
+            None => {
+                Self::strip_marked_rustc_wrapper(&path)
+                    .with_context(|| format!("strip-rustc-wrapper {}", path.display()))?;
+                Self::prune_empty_cargo_config(ctx.output_dir)
+                    .with_context(|| format!("prune-cargo-config {}", ctx.output_dir.display()))
+            }
+        }
+    }
+
+    /// The configured wrapper iff the host can run it — the one lookup the
+    /// write path and verify both answer from.
+    fn detected_wrapper(cfg: &CargoWorkspaceConfig) -> Option<String> {
+        cfg.rustc_wrapper
+            .as_ref()
+            .filter(|name| which::which(name.as_str()).is_ok())
+            .cloned()
+    }
+
+    /// Merge `[build] rustc-wrapper = "<name>"` into `path` with the
+    /// `# managed by rwv` marker on the leaf key. Same verify-and-warn
+    /// contract as [`Self::merge_patch_entries_multi_registry`]: an unmarked
+    /// on-disk key is the user's — left alone.
+    fn merge_rustc_wrapper(path: &Path, name: &str) -> anyhow::Result<()> {
+        let text = if path.exists() {
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?
+        } else {
+            String::new()
+        };
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", path.display()))?;
+
+        let build = doc
+            .as_table_mut()
+            .entry("build")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+        let build_table = match build {
+            toml_edit::Item::Table(t) => t,
+            _ => anyhow::bail!("`build` is present but is not a table"),
+        };
+
+        let user_holds_pen = build_table.contains_key("rustc-wrapper")
+            && !TomlDoc::key_has_marker(build_table, "rustc-wrapper");
+        if user_holds_pen {
+            return Ok(());
+        }
+
+        build_table.insert(
+            "rustc-wrapper",
+            toml_edit::Item::Value(toml_edit::Value::String(toml_edit::Formatted::new(
+                name.to_string(),
+            ))),
+        );
+        TomlDoc::decorate_key(build_table, "rustc-wrapper");
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("creating parent dir {} for wrapper write", parent.display())
+            })?;
+        }
+        std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
+    }
+
+    /// Remove a marker-decorated `[build] rustc-wrapper` from `path`, then
+    /// prune an emptied `[build]` table. Unmarked keys survive.
+    fn strip_marked_rustc_wrapper(path: &Path) -> anyhow::Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", path.display()))?;
+
+        let marked = doc
+            .get("build")
+            .and_then(|i| i.as_table())
+            .is_some_and(|t| TomlDoc::key_has_marker(t, "rustc-wrapper"));
+        if !marked {
+            return Ok(());
+        }
+        if let Some(build) = doc.get_mut("build").and_then(|i| i.as_table_mut()) {
+            build.remove("rustc-wrapper");
+        }
+        let prune_build = doc
+            .get("build")
+            .and_then(|i| i.as_table())
+            .is_some_and(|t| t.is_empty());
+        if prune_build {
+            doc.as_table_mut().remove("build");
+        }
+        std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
     }
 
     /// Delete `<root>/.cargo/config.toml` if it's semantically empty

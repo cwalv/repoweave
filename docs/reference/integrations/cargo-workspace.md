@@ -255,6 +255,38 @@ them to a hand-authored `.gitignore` if they prefer local
 regeneration on activation. Same policy applies to all
 rwv-generated files in the project dir.
 
+## Compiler wrapper (`rustc-wrapper`)
+
+An opt-in knob that routes the weave's cargo builds through a compiler
+wrapper — sccache is the intended one — **when the host has it**:
+
+```toml
+[integrations.cargo-workspace]
+rustc-wrapper = "sccache"
+```
+
+At each activation/materialization (which `rwv fetch` runs on a fresh
+machine), the named binary is looked up on `PATH`:
+
+- **Present** — a `# managed by rwv`-marked `[build] rustc-wrapper` key is
+  merged into the generated `.cargo/config.toml`. Cargo discovers that file
+  upward from any member directory, so every in-weave build routes through
+  the wrapper.
+- **Absent** — the key is omitted, and a previously written marked key is
+  stripped (the file and `.cargo/` dir are pruned when nothing else
+  remains).
+
+The conditionality is what makes the knob committable at all: cargo
+hard-errors on a wrapper it cannot spawn, so an unconditional key would
+break every machine without the tool. Installing or removing the wrapper
+takes effect at the **next** materialization (`rwv activate`,
+`rwv materialize`, `rwv doctor --fix`), not immediately; until then the
+verify pass reports the difference as auto-fixable drift.
+
+Hybrid ownership is the same as for patch entries: an unmarked
+user-authored `[build] rustc-wrapper` key holds the pen — rwv neither
+overwrites nor strips it, and verify surfaces the conflict as USER-HELD.
+
 ## Nested workspaces
 
 Cargo refuses to nest workspaces. If a member repo declares its own `[workspace]` section in its root `Cargo.toml` — including a *virtual workspace* (a `Cargo.toml` with `[workspace]` and no `[package]`) — cargo would fail with "multiple workspace roots found in the same workspace".
@@ -292,9 +324,10 @@ The detection only inspects the **root** `Cargo.toml` of each repo (unless the r
 
 <!-- pending C7 -->
 Strips only the managed keys (`members`, `resolver`, when configured
-`[workspace.package]`, and any rwv-marker-decorated
+`[workspace.package]`, any rwv-marker-decorated
 `[patch.<registry>].<crate>` entries from either `committed-paths` or
-`derived` mode) from `Cargo.toml`. User-authored content — `[profile.*]`,
+`derived` mode, and a marked `[build] rustc-wrapper` in
+`.cargo/config.toml`) from the files rwv authors. User-authored content — `[profile.*]`,
 `[workspace.dependencies]`, `[workspace.lints.*]`, user-authored
 `[patch.*]` entries — survives. Emptied `[patch.<registry>]` sub-tables
 and an emptied `[patch]` table are pruned. The file itself is deleted

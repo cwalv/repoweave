@@ -4508,6 +4508,236 @@ acme-lib = { path = "../github/acme/lib" }
         );
     }
 
+    /// The wrapper name every test on this page can rely on being
+    /// runnable: the binary running this test suite.
+    const PRESENT_WRAPPER: &str = "cargo";
+    const ABSENT_WRAPPER: &str = "rwv-test-absent-wrapper";
+
+    fn wrapper_ctx_parts(root: &Path) -> (Manifest, ProjectName) {
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        (
+            make_manifest(vec![("github/acme/app", Role::Owned)]),
+            ProjectName::new("test-project").unwrap(),
+        )
+    }
+
+    #[test]
+    fn rustc_wrapper_writes_marked_build_key_when_on_path() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let (manifest, project) = wrapper_ctx_parts(root);
+        let config =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"\n"));
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(
+            content.contains("[build]"),
+            "wrapper key must land under [build]; got:\n{content}"
+        );
+        assert!(
+            content.contains(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"")),
+            "wrapper key must carry the configured name; got:\n{content}"
+        );
+        assert!(
+            content.contains("managed by rwv"),
+            "wrapper key must carry the rwv marker; got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn rustc_wrapper_writes_nothing_when_binary_is_absent() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let (manifest, project) = wrapper_ctx_parts(root);
+        let config =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{ABSENT_WRAPPER}\"\n"));
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "no wrapper on PATH must mean no generated .cargo/config.toml — \
+             cargo hard-errors on a wrapper it cannot spawn"
+        );
+    }
+
+    #[test]
+    fn rustc_wrapper_strips_marked_key_when_detection_turns_off() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let (manifest, project) = wrapper_ctx_parts(root);
+        let cache = HashMap::new();
+
+        let with =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"\n"));
+        let ctx = make_ctx(root, &project, &manifest, &with, &cache);
+        CargoWorkspace.activate(&ctx).unwrap();
+        assert!(root.join(".cargo").join("config.toml").exists());
+
+        // The uninstall path: detection answers None (here via a name that
+        // resolves nowhere), and the marked key — whatever value it holds —
+        // must go, taking the emptied file and dir with it.
+        let without =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{ABSENT_WRAPPER}\"\n"));
+        let ctx = make_ctx(root, &project, &manifest, &without, &cache);
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "stripping the only marked key must prune the file"
+        );
+        assert!(
+            !root.join(".cargo").exists(),
+            "an emptied .cargo/ dir must be pruned"
+        );
+    }
+
+    #[test]
+    fn rustc_wrapper_defers_to_a_user_authored_key() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let (manifest, project) = wrapper_ctx_parts(root);
+        write_file(
+            root,
+            ".cargo/config.toml",
+            "[build]\nrustc-wrapper = \"mine\"\njobs = 4\n",
+        );
+        let config =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"\n"));
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(
+            content.contains("rustc-wrapper = \"mine\""),
+            "an unmarked user key holds the pen; got:\n{content}"
+        );
+        assert!(
+            !content.contains("managed by rwv"),
+            "deferring must not decorate the user's key; got:\n{content}"
+        );
+        assert!(
+            content.contains("jobs = 4"),
+            "unrelated user keys must survive; got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn rustc_wrapper_coexists_with_cargo_config_patches() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project").unwrap();
+        let cache = HashMap::new();
+
+        let both = IntegrationConfig::from_toml(&format!(
+            "patch = \"derived\"\npatch-surface = \"cargo-config\"\n\
+             rustc-wrapper = \"{PRESENT_WRAPPER}\"\n"
+        ));
+        let ctx = make_ctx(root, &project, &manifest, &both, &cache);
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(content.contains("[patch.crates-io"), "got:\n{content}");
+        assert!(
+            content.contains(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"")),
+            "got:\n{content}"
+        );
+
+        // Dropping the wrapper must strip only the [build] key — the patch
+        // entries and their file survive.
+        let patches_only =
+            IntegrationConfig::from_toml("patch = \"derived\"\npatch-surface = \"cargo-config\"\n");
+        let ctx = make_ctx(root, &project, &manifest, &patches_only, &cache);
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(content.contains("[patch.crates-io"), "got:\n{content}");
+        assert!(
+            !content.contains("rustc-wrapper"),
+            "wrapper key must be stripped; got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn deactivate_strips_the_marked_wrapper_key() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let (manifest, project) = wrapper_ctx_parts(root);
+        let config =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"\n"));
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        CargoWorkspace.activate(&ctx).unwrap();
+        assert!(root.join(".cargo").join("config.toml").exists());
+
+        CargoWorkspace.deactivate(root).unwrap();
+
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "deactivate must strip the marked wrapper key and prune the file"
+        );
+    }
+
+    #[test]
+    fn verify_is_clean_after_wrapper_activation_and_drifts_on_a_stale_key() {
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let (manifest, project) = wrapper_ctx_parts(root);
+        let cache = HashMap::new();
+
+        // The lock is activate_hook's product, which this test does not run.
+        write_file(root, "Cargo.lock", "version = 3\n");
+
+        let with =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{PRESENT_WRAPPER}\"\n"));
+        let ctx = make_ctx(root, &project, &manifest, &with, &cache);
+        CargoWorkspace.activate(&ctx).unwrap();
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "verify must be clean right after activation; got: {issues:?}"
+        );
+
+        // Config now expects no wrapper (detection answers None), but the
+        // marked key is still on disk — the stale-key drift an operator
+        // sees between an uninstall and the next materialization.
+        let without =
+            IntegrationConfig::from_toml(&format!("rustc-wrapper = \"{ABSENT_WRAPPER}\"\n"));
+        let ctx = make_ctx(root, &project, &manifest, &without, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.iter().any(|i| i.message.contains("rustc-wrapper")),
+            "a marked wrapper key with no detected binary must read as drift; got: {issues:?}"
+        );
+    }
+
     /// Structural: `PatchSurface` is an ENUM (not two booleans), so
     /// enabling both surfaces at once is impossible by construction —
     /// a `patch-surface` field can only carry ONE value. This is the

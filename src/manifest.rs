@@ -742,6 +742,23 @@ pub struct CargoWorkspaceConfig {
         skip_serializing_if = "is_false"
     )]
     pub workspace_package: bool,
+
+    /// Compiler-wrapper binary to route the weave's cargo builds through,
+    /// when the host has it. At each activation/materialization the named
+    /// binary is looked up on `PATH`: present, rwv writes a marked
+    /// `[build] rustc-wrapper` key into the generated `.cargo/config.toml`;
+    /// absent, the key is omitted and a previously-written one is stripped,
+    /// so the file converges to each host at each materialization. The
+    /// conditionality is the point — cargo hard-errors on a wrapper it
+    /// cannot spawn, so an unconditionally committed key breaks every
+    /// machine without the tool. `sccache` is the intended value; any
+    /// binary name works.
+    #[serde(
+        default,
+        rename = "rustc-wrapper",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rustc_wrapper: Option<String>,
 }
 
 fn is_false(b: &bool) -> bool {

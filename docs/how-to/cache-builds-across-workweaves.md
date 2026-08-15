@@ -8,7 +8,8 @@ This page covers host-level cache strategies, per ecosystem, that preserve isola
 
 | Ecosystem | Strategy | Concurrency-safe? | Setup needed? |
 |---|---|---|---|
-| Rust / cargo | sccache via `RUSTC_WRAPPER` | Yes | Install sccache; export one env var |
+| Rust / cargo | sccache via the `rustc-wrapper` integration knob | Yes | Install sccache; one line in `rwv.toml` |
+| Rust / cargo | sccache via `RUSTC_WRAPPER` env var | Yes | Install sccache; export one env var per shell |
 | Rust / cargo | Shared `CARGO_TARGET_DIR` | No — contended | Not recommended for concurrent workweaves |
 | Node / pnpm | pnpm content-addressed store | Yes | None — already shared by default |
 | Node / npm | (no equivalent) | — | No safe shared cache available |
@@ -27,13 +28,35 @@ cargo install sccache
 # or via your OS package manager / prebuilt release
 ```
 
-**Enable globally** by adding to your shell profile (`~/.zshenv`, `~/.bashrc`, etc.):
+**Enable via the integration knob** (preferred — travels with the project):
+
+```toml
+# rwv.toml
+[integrations.cargo-workspace]
+rustc-wrapper = "sccache"
+```
+
+At each activation/materialization — including the one `rwv fetch` runs on
+a fresh machine — rwv looks sccache up on `PATH` and, when present, writes
+`[build] rustc-wrapper = "sccache"` into the generated
+`.cargo/config.toml`. Machines without sccache get no key and build
+unwrapped; installing sccache later takes effect at the next
+materialization. No shell configuration anywhere. See
+[reference/integrations/cargo-workspace](../reference/integrations/cargo-workspace.md)
+for the ownership and drift semantics.
+
+**Or enable globally via the environment** (host-level alternative) by
+adding to your shell profile (`~/.zshenv`, `~/.bashrc`, etc.):
 
 ```bash
 export RUSTC_WRAPPER=sccache
 ```
 
-No per-workweave configuration is needed. Each `cargo build` in any workweave routes through sccache automatically. The cache directory defaults to `~/.cache/sccache` (Linux/macOS) and is shared across all workweaves and all shells.
+The env var wins over the config-file key when both are set, and covers
+cargo invocations outside any weave. Each `cargo build` routes through
+sccache automatically either way. The cache directory defaults to
+`~/.cache/sccache` (Linux/macOS) and is shared across all workweaves and
+all shells.
 
 **Verify it is active:**
 
