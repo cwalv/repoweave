@@ -179,11 +179,17 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
     // returns them: directory order from $PATH, entries within a dir in readdir
     // order). The first occurrence of each name in this PATH-order list is the
     // exec-time winner — that determines the `shadowed` flag.
-    let path_ordered: Vec<(String, PathBuf)> = found
+    //
+    // `shadowed` is an equality between two of these strings, so the wire
+    // spelling is minted once per discovered path here rather than at each
+    // consumer: a path minted at one site and stringified at another compares
+    // unequal to itself wherever the two spellings differ, which marks the
+    // winner as shadowed by itself.
+    let path_ordered: Vec<(String, String)> = found
         .into_iter()
         .filter_map(|p| {
             let name = p.file_name()?.to_str()?.strip_prefix("rwv-")?.to_owned();
-            Some((name, p))
+            Some((name, crate::path_spelling::wire_path(&p)))
         })
         .collect();
 
@@ -193,7 +199,7 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
     for (name, path) in &path_ordered {
         winner_paths
             .entry(name.clone())
-            .or_insert_with(|| crate::path_spelling::wire_path(path));
+            .or_insert_with(|| path.clone());
     }
 
     // Build the output records, then sort by (name, path) for deterministic
@@ -202,13 +208,12 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
     let mut records: Vec<PluginRecord> = path_ordered
         .into_iter()
         .map(|(name, path)| {
-            let path_str = crate::path_spelling::wire_path(&path);
             let winner = winner_paths.get(&name).cloned().unwrap_or_default();
-            let shadowed = path_str != winner;
+            let shadowed = path != winner;
             PluginRecord {
                 shadowed_by: if shadowed { Some(winner) } else { None },
                 name,
-                path: path_str,
+                path,
                 shadowed,
             }
         })

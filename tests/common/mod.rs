@@ -387,32 +387,31 @@ pub fn node_tool(name: &str) -> String {
     }
 }
 
-/// Whether `path`'s trailing components equal `suffix`'s, whatever separator
-/// or absolute prefix the platform spelled the path with. The suffix is an
-/// identity written with `/`; the path under test is whatever a surface
-/// printed. Pinning arrival of the right components without blessing any one
-/// spelling is what keeps these assertions platform-honest while the spelling
-/// itself stays an open design question.
-pub fn path_ends_with(path: impl AsRef<str>, suffix: &str) -> bool {
-    let path = path.as_ref();
-    let hay: Vec<&str> = path.split(['/', '\\']).filter(|s| !s.is_empty()).collect();
-    let want: Vec<&str> = suffix.split('/').filter(|s| !s.is_empty()).collect();
-    hay.len() >= want.len() && hay[hay.len() - want.len()..] == want[..]
-}
-
 /// Whether two spellings denote one path: compared by components with the
 /// Windows verbatim prefix simplified away, so `\\?\C:\ws\x`, `C:\ws/x` and
-/// `C:/ws/x` are one path and a genuinely different file never is. For
-/// asserting a surface named the right file without pinning which spelling
-/// the surface uses — the spelling itself is an open design question.
+/// `C:/ws/x` are one path and a genuinely different file never is.
+///
+/// Which spelling a published path is owed is settled, not open: `wire_path`
+/// for a `--json` field, `operator_path` for text a person reads. This helper
+/// sees neither, so a site reading through it is green whether or not the
+/// surface it reads still leaks the internal spelling — it cannot be the pin
+/// for a surface that mints. Reach for it only where the render under test
+/// stringifies the path itself, and replace the call when that render moves
+/// onto a seam; the assertion becomes an exact comparison against the mint.
 pub fn same_path(a: impl AsRef<std::path::Path>, b: impl AsRef<std::path::Path>) -> bool {
     dunce::simplified(a.as_ref()) == dunce::simplified(b.as_ref())
 }
 
 /// Flatten path spelling inside prose: separators to `/`, the verbatim
-/// prefix dropped. For asserting a message names a file when the message
-/// holds whatever spelling a surface printed — compare both sides through
-/// this, never one.
+/// prefix dropped. Compare both sides through this, never one.
+///
+/// Blind in the same way [`same_path`] is, and for the same reason — it is
+/// green whether or not the message it reads carries the spelling that message
+/// is owed. Two kinds of call site keep it. One reads a render that still
+/// stringifies its own path, and gives the call up when that render moves onto
+/// `operator_path`. The other reads text this repository does not author:
+/// `git worktree list --porcelain` answers in git's spelling, which no decision
+/// here governs, and flattening is the only honest comparison available.
 pub fn flatten_path_spelling(s: &str) -> String {
     s.replace('\\', "/").replace("//?/", "")
 }
