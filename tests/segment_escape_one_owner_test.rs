@@ -20,6 +20,13 @@
 //! turns off. Measured across `src/` at the time of writing, the three needles
 //! below hit exactly one line each and all three are in the owner.
 //!
+//! Two more sites are excluded by the needles being whole spellings rather
+//! than prefixes: `src/symlink.rs` and `src/workweave.rs` both call
+//! `replace('/', …)`, writing `\` and `-` respectively. They have the encode
+//! needle's shape and a different replacement, so a needle shortened to
+//! `replace('/'` would report them. Those two plus the version split are the
+//! population this scan was measured against before its needles were fixed.
+//!
 //! Residue. A fourth spelling reached some other way — `char::from_u32(43)`,
 //! a byte literal, a `+` inside a larger `replace` chain, a format string
 //! writing it positionally — is not their shape and this scan will not see it.
