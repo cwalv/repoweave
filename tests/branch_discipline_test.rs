@@ -1025,6 +1025,148 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
     );
 }
 
+/// **A ref a live checkout is on is not a leak, whatever the record says.**
+///
+/// The safe-class fixture above plus one thing: a worktree sitting on the
+/// branch, placed where neither of rwv's own liveness sources can see it —
+/// outside every container the walk knows (a `--dir` seat) and absent from
+/// the workweave index (what a lost, hand-edited or restored index leaves
+/// behind, which is the state the reconciliation pass exists for). Both
+/// sources therefore answer "no workweave mints this", and the receipt plus
+/// the ancestry then read as safe-class: a deleted workweave's leftover.
+///
+/// Driven against the binary this fixture was written for, doctor said
+/// exactly that and `--fix` ran `git branch -D` on the branch the seat had
+/// checked out. Git refused, and rwv reported git's refusal as a raw
+/// `[error]` — so the only thing standing between a live seat and a deleted
+/// branch was a guard rwv does not own. Both halves are asserted below: the
+/// finding is not raised, and the delete is not attempted.
+#[test]
+fn a_live_checkouts_branch_is_not_classified_stale() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // The seat: a workweave directory no container holds, on its own
+    // ephemeral branch.
+    let seat = tmp.path().join("elsewhere").join("unrelated-name");
+    write_marker(&seat, &ws, "myproj", &ws);
+    let seat_checkout = seat.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(seat_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &seat_checkout, "myproj--seat");
+    record_receipt(&ws, "myproj", "seat", &canonical);
+
+    // Advance the canonical past the seat's tip: what would otherwise earn
+    // the `Merged` warrant and put this in the auto-fixable class.
+    add_commit(&canonical, "f2.txt", "second");
+
+    // Non-vacuity: without the receipt this branch is the operator's and
+    // every assertion below would hold for the wrong reason.
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--seat"),
+        "fixture: the receipt is what makes this ref rwv's to destroy"
+    );
+
+    let sub_kinds = branch_discipline_sub_kinds(&ws);
+    assert!(
+        !sub_kinds
+            .iter()
+            .any(|k| k.starts_with("stale-ephemeral-branch")),
+        "a branch a live checkout holds is not stale in any class: {sub_kinds:?}"
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("stale-ephemeral-branch"),
+        "and the text surface must not say so either; got:\n{stdout}"
+    );
+
+    let fix_out = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix_out.stdout);
+    assert!(
+        branch_exists(&canonical, "myproj--seat"),
+        "the live seat's branch must survive `doctor --fix`; doctor said:\n{fix_stdout}"
+    );
+    assert!(
+        !fix_stdout.contains("failed to delete safe-class stale ephemeral branch"),
+        "and rwv must not have attempted the delete: surviving because git \
+         refused is the defect, not the fix; got:\n{fix_stdout}"
+    );
+}
+
+/// The negative control for the test above, and the reason the guard reads
+/// git's worktree table for *live* checkouts rather than for registrations.
+///
+/// Same seat, its directory removed the way an operator removes one — by
+/// hand, without `rwv workweave delete`. The registration outlives the
+/// directory (that is what `stale-worktree-registration` reports and what
+/// `worktree prune` drops), and git refuses to delete a branch it holds just
+/// as firmly. A guard that keyed on the registration would therefore be
+/// green here too — and would have silently emptied the class this whole
+/// section is about.
+#[test]
+fn a_dead_seats_branch_is_still_classified_stale() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let seat = tmp.path().join("elsewhere").join("unrelated-name");
+    write_marker(&seat, &ws, "myproj", &ws);
+    let seat_checkout = seat.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(seat_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &seat_checkout, "myproj--seat");
+    record_receipt(&ws, "myproj", "seat", &canonical);
+    add_commit(&canonical, "f2.txt", "second");
+
+    std::fs::remove_dir_all(&seat).unwrap();
+
+    let sub_kinds = branch_discipline_sub_kinds(&ws);
+    assert!(
+        sub_kinds.contains(&"stale-ephemeral-branch-safe".to_string()),
+        "a receipted branch whose seat is gone is still the safe class, \
+         registration or no registration: {sub_kinds:?}"
+    );
+}
+
+/// The same blind spot in the one class discovered by shape rather than by
+/// record, which is why the guard sits in both loops.
+///
+/// A seat that predates the flat-name cutover and never migrated holds a
+/// `<project>--<name>/<segment>` branch that no receipt names. Placed where
+/// neither of rwv's records can see it, its namespace is not among the live
+/// ones either — so the unowned arm reported the branch a live checkout is
+/// sitting on as one no workweave claims, and that finding's standing advice
+/// is to remove it by hand. Report-only makes rwv not the one deleting it;
+/// it does not make the sentence true.
+#[test]
+fn a_live_checkouts_pre_flat_branch_is_not_reported_unowned() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
+
+    let seat = tmp.path().join("elsewhere").join("unrelated-name");
+    write_marker(&seat, &ws, "myproj", &ws);
+    let seat_checkout = seat.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(seat_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &seat_checkout, "myproj--seat/main");
+
+    let sub_kinds = branch_discipline_sub_kinds(&ws);
+    assert!(
+        !sub_kinds.contains(&"stale-ephemeral-branch-unowned".to_string()),
+        "a live checkout's own branch is not an orphan of the cutover: \
+         {sub_kinds:?}"
+    );
+}
+
 // ===========================================================================
 // (c) stale-ephemeral-branches: unowned class — THE headline change
 // ===========================================================================

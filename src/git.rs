@@ -2252,6 +2252,36 @@ impl Vcs for GitVcs {
         Ok(stale)
     }
 
+    fn live_worktree_branches(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
+        // Same records as `list_stale_worktree_registrations`, read for the
+        // other two lines: `branch <fullref>`, absent on a detached record,
+        // and `prunable`, which disqualifies the registration.
+        let output = Self::run(&["worktree", "list", "--porcelain"], repo)?;
+        let mut held: Vec<RawRefName> = Vec::new();
+        let mut current_branch: Option<RawRefName> = None;
+        let mut current_prunable = false;
+        for line in output.lines() {
+            if line.is_empty() {
+                let branch = current_branch.take();
+                if !current_prunable {
+                    held.extend(branch);
+                }
+                current_prunable = false;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("branch refs/heads/") {
+                current_branch = Some(RawRefName::new(rest));
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                current_prunable = true;
+            }
+        }
+        // Flush the final record (porcelain output may not end with a blank line).
+        if !current_prunable {
+            held.extend(current_branch.take());
+        }
+        Ok(held)
+    }
+
     fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
         // `git for-each-ref` over the savepoint namespace returns every
         // savepoint ref this repo holds. Strip the prefix to recover the

@@ -844,6 +844,12 @@ the finding names the `git switch` that would repair it and nothing moves.
 A `<project>--<workweave>` branch in a canonical clone whose workweave is no
 longer on disk. Three classes, and only one is removable.
 
+"No longer on disk" is asked of three sources: the container walk, the
+workweave index, and git's own worktree table. The third is what keeps a
+workweave placed outside every container (`rwv workweave <project> create
+<name> --dir <path>`) whose index entry has been lost out of all three
+classes — a branch a live checkout is sitting on is never reported here.
+
 #### `stale-ephemeral-branch-safe`
 
 **Warning. Auto-fixable.** rwv holds a receipt for the ref and its tip is

@@ -552,6 +552,10 @@ impl Vcs for FakeVcs {
         unsupported("list_stale_worktree_registrations")
     }
 
+    fn live_worktree_branches(&self, _repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
+        unsupported("live_worktree_branches")
+    }
+
     fn list_savepoint_op_ids(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
         unsupported("list_savepoint_op_ids")
     }

@@ -2796,6 +2796,24 @@ pub trait Vcs: Send + Sync {
     /// [`worktree_prune`]: Vcs::worktree_prune
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
+    /// The local branch each **live** worktree of `repo` has checked out —
+    /// the complement of [`list_stale_worktree_registrations`] over the same
+    /// listing, minus the detached ones, which hold no name.
+    ///
+    /// A branch in this set cannot be deleted: git refuses to delete a
+    /// branch a worktree is on. A registration whose directory is gone is
+    /// refused too, and is deliberately **not** reported here — that one is
+    /// a stale registration, which has its own finding and its own prune,
+    /// and a delete blocked by it is blocked by a pointer rather than by a
+    /// checkout.
+    ///
+    /// For git: parses `git worktree list --porcelain` and returns the
+    /// `branch` line of every record not marked `prunable`, stripped to the
+    /// name `list_local_branch_names` would report.
+    ///
+    /// [`list_stale_worktree_registrations`]: Vcs::list_stale_worktree_registrations
+    fn live_worktree_branches(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError>;
+
     /// List the opaque `op_id` strings of every savepoint currently
     /// recorded in `repo`.
     ///

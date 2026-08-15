@@ -4691,6 +4691,12 @@ fn canonical_stores(
 /// is an ancestor of the store's tip, so a [`Merged`] warrant can be
 /// established) and live (the tip carries commits the store's tip does not).
 ///
+/// "No longer does" is asked of three sources, because the two that are
+/// rwv's own record both miss a seat placed outside every container whose
+/// index entry was lost: the container walk, the workweave index, and
+/// [`crate::vcs::Vcs::live_worktree_branches`], which is git's worktree
+/// table and holds such a seat by absolute path.
+///
 /// One class survives outside the record —
 /// [`StaleEphemeralBranchUnowned`]: a pre-flat-shaped branch that no receipt
 /// names and no live workweave's namespace claims. It is discovered by shape
@@ -4789,6 +4795,14 @@ fn scan_canonical_stores(
         // `head_revision` call.
         let primary_tip = vcs.head_revision(abs).ok();
 
+        // Every ref this store's live checkouts hold, from git's own
+        // worktree table. Unreadable is treated as "cannot answer", which
+        // skips (c) for this store — the same direction the arms above take
+        // on a store they cannot read.
+        let Ok(held_by_live_worktrees) = vcs.live_worktree_branches(abs) else {
+            continue;
+        };
+
         for rec in &store_receipts {
             // A receipt whose workweave is still on disk is not leaked at
             // all. The receipt is the authority when the container scan
@@ -4797,6 +4811,17 @@ fn scan_canonical_stores(
             // leak is the exact failure the receipt rule exists to
             // prevent.
             if rec.live_workweave.is_some() {
+                continue;
+            }
+            // Liveness above is rwv's own record, and a `--dir` placement
+            // whose index entry was lost is in none of it. The worktree
+            // table is where such a seat is still visible — git records
+            // every checkout by absolute path, and refuses to delete a
+            // branch one of them is on.
+            if held_by_live_worktrees
+                .iter()
+                .any(|held| held == rec.owned.name())
+            {
                 continue;
             }
             // The ref may be gone: that is the dangling-receipt state, which
@@ -4875,6 +4900,13 @@ fn scan_canonical_stores(
                 .iter()
                 .any(|flat| crate::vcs::LegacyEphemeralRefName::claim(flat, name).is_some())
             {
+                continue;
+            }
+            // `live_namespaces` is built from the same two records the
+            // receipt loop consults, so it has the same blind spot, and here
+            // the report says outright that no workweave claims the branch
+            // and invites the operator to remove it.
+            if held_by_live_worktrees.iter().any(|held| held == name) {
                 continue;
             }
             out.push(CheckViolation::BranchDiscipline {
