@@ -8289,7 +8289,10 @@ fn apply_finding_repairs(
 
     let mut kept = Vec::with_capacity(violations.len() + registrations.len());
     for v in registrations {
-        let CheckViolation::StaleWorktreeRegistration { workweave, repo, .. } = &v else {
+        let CheckViolation::StaleWorktreeRegistration {
+            workweave, repo, ..
+        } = &v
+        else {
             unreachable!()
         };
         let repaired = match repo_locations.get(&(workweave.clone(), repo.clone())) {

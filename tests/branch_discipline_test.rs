@@ -1173,7 +1173,11 @@ fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
         .lines()
         .filter_map(|l| l.strip_prefix("worktree "))
         .map(PathBuf::from)
-        .find(|p| p.canonicalize().map(|c| c != canonical_canon).unwrap_or(true))
+        .find(|p| {
+            p.canonicalize()
+                .map(|c| c != canonical_canon)
+                .unwrap_or(true)
+        })
         .expect("`workweave create` should have registered a second worktree");
 
     // Advance main past the seat's tip: what earns the safe-class warrant.
