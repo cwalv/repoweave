@@ -210,12 +210,10 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // ---------------------------------------------------------------------------
 // Test 1: Concurrent-op detection
 //
-// Start a sync-to (simulated by writing an op-state file directly, since
-// sync-to doesn't exist yet). Then attempt another `rwv sync` from either the
-// CWD or the target workspace — both should refuse with the in-progress error.
-//
-// We use `rwv sync` with a manually planted `.rwv-op` file to simulate the
-// cross-workspace concurrency guard without implementing sync-to.
+// An in-progress op-state file blocks a new `rwv sync` from either the CWD
+// or the target workspace. The first test parks a real op via a genuine
+// rebase conflict; the second constructs an owner record directly at the
+// `relock` phase, which that recipe cannot reach organically.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -283,33 +281,61 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     );
 }
 
+const STALE_STARTED_AT: &str = "2020-01-01T00:00:00Z";
+const STALE_STARTED_AT_UNIX: u64 = 1_577_836_800;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
 #[test]
 fn concurrent_op_detection_error_names_phase_and_start_time() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Write a v2 owner record at a specific phase.
-    let op_state_json = format!(
-        "{{\"id\": \"test-phase-detect\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
-         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"relock\", \
-         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\"}}",
-        src = common::json_escaped(&primary.root),
-        tgt = common::json_escaped(&ww.root),
+    let op_id = repoweave::op_state::OpId::new_now();
+    let mut owner = repoweave::op_state::OwnerRecord::new_sync(
+        &op_id,
+        repoweave::op_state::SyncStrategy::Rebase,
+        repoweave::manifest::ProjectName::new("web-app").unwrap(),
+        primary.root.clone(),
+        ww.root.clone(),
     );
-    std::fs::write(ww.root.join(".rwv-op"), &op_state_json).unwrap();
+    owner.phase = repoweave::op_state::OpPhase::Relock;
+    owner.started_at = STALE_STARTED_AT.to_owned();
+    repoweave::op_state::write_owner(&ww.root, &owner).unwrap();
 
+    let before = unix_now();
     let assertion = rwv()
         .args(["sync", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)
         .assert()
         .failure();
+    let after = unix_now();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
-    // [v1→v2: phase "step1-rebase" → "relock" in v2 schema.]
     assert!(
         stderr.contains("relock"),
         "error should mention the in-progress phase; got: {stderr}"
+    );
+
+    // started_at is fixed decades in the past, so the elapsed hours the
+    // refusal reports are pinned to this record's own started_at and not
+    // satisfiable by an arbitrary or defaulted timestamp. The window between
+    // `before` and `after` covers the rare case where the real clock crosses
+    // an hour boundary mid-run.
+    let hours_lo = (before - STALE_STARTED_AT_UNIX) / 3600;
+    let hours_hi = (after - STALE_STARTED_AT_UNIX) / 3600;
+    let candidates: Vec<String> = (hours_lo..=hours_hi)
+        .map(|h| format!("started {h}h ago"))
+        .collect();
+    assert!(
+        candidates.iter().any(|c| stderr.contains(c.as_str())),
+        "error should report elapsed time computed from this op's own started_at \
+         ({STALE_STARTED_AT}); expected one of {candidates:?}; got: {stderr}"
     );
 }
 
