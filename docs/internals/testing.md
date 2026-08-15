@@ -88,6 +88,10 @@ defect it guards:
   If a script applies the seed, the script must assert its anchor matched —
   a patch that silently no-ops gates an unmutated tree and reads as
   evidence.
+- **A compile failure is a void run, not a red.** A mutated tree that fails
+  to build looks, at a glance, exactly like the red the mutation was meant
+  to produce. A mutation is evidence only if the tree still compiles and a
+  named assertion fired; record which.
 - **Undo mutations by reversing the patch, never by checkout** — checkout
   restores the committed state and destroys uncommitted work.
 - **Check which assertion fired.** An older assertion may catch the
@@ -195,6 +199,9 @@ Gates, scans, and summaries are tested like the code they guard:
 - Feed a known red through any new summary or filter before trusting its
   green — field-separator quirks and pattern edge cases drop lines
   silently.
+- Per-suite numbers require self-labelling output — invoke one suite at a
+  time, or pair each result block with the header naming its suite.
+  Positional reading of multi-unit output fabricates attributions.
 - Prove the gate cannot print green on failure: a terminal "all passed"
   line is stage-relative; the evidence is the enumeration of stages run,
   not the sentence.
