@@ -207,7 +207,7 @@ fn update_for_project(
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
     let project_dir = crate::workspace::project_dir(active_root, project_name.as_str());
-    let project = Project::from_dir(&project_dir)
+    let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
     // Snapshot the repo list into a Vec so the parallel loop can index by

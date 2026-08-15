@@ -510,7 +510,8 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
 
     // Now the submodule dir exists but is empty → should be detected.
     let project_dir = ws.join("projects/proj");
-    let project = Project::from_dir(&project_dir).expect("project should load");
+    let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap())
+        .expect("project should load");
 
     let violations =
         scan_uninitialized_submodules_in_workweaves(&ws, std::slice::from_ref(&project));
@@ -551,7 +552,8 @@ fn doctor_scan_silent_for_repo_without_gitmodules() {
     .expect("create should succeed");
 
     let project_dir = ws.join("projects/proj");
-    let project = Project::from_dir(&project_dir).expect("project should load");
+    let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap())
+        .expect("project should load");
 
     let violations =
         scan_uninitialized_submodules_in_workweaves(&ws, std::slice::from_ref(&project));

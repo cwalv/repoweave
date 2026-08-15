@@ -1627,20 +1627,13 @@ pub struct Project {
 }
 
 impl Project {
-    /// Derive a project name from a project directory path, falling back to
-    /// the last path component for a directory that is not sited in a weave
-    /// (e.g., a bare temp dir used in tests).
-    fn name_from_dir(dir: &Path) -> String {
-        if let Some(name) = crate::workspace::project_name_from_dir(dir) {
-            return name;
-        }
-        dir.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| dir.to_string_lossy().into_owned())
-    }
-
-    /// Load a project from its directory.
-    pub fn from_dir(dir: &Path) -> anyhow::Result<Self> {
+    /// Load the project named `name` from `dir`.
+    ///
+    /// The name is the caller's to supply, not this loader's to re-derive: a
+    /// caller reaches a project directory by rendering a name it already
+    /// holds, so deriving one back out of the path is a second source for a
+    /// value that has an owner, and the two can disagree.
+    pub fn from_dir(dir: &Path, name: ProjectName) -> anyhow::Result<Self> {
         // Neither loader is wrapped here. Each already names its own file and
         // path, and a caller that reports this error has no other way to tell
         // which of the two files failed.
@@ -1652,15 +1645,9 @@ impl Project {
             None
         };
 
-        // Derive project name from directory structure.
-        // `projects/web-app/` → "web-app"
-        // `projects/chatly/web-app/` → "chatly/web-app"
-        // `/abs/path/projects/web-app/` → "web-app"
-        let name = Self::name_from_dir(dir);
-
         Ok(Self {
             dir: dir.to_path_buf(),
-            name: ProjectName::new(name)?,
+            name,
             manifest,
             lock,
         })
@@ -1677,18 +1664,12 @@ impl Project {
     ///
     /// The returned `Project` always has `lock: None`, regardless of whether
     /// `rwv.lock` exists or what it contains.
-    pub fn from_dir_skip_lock(dir: &Path) -> anyhow::Result<Self> {
+    pub fn from_dir_skip_lock(dir: &Path, name: ProjectName) -> anyhow::Result<Self> {
         let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
-
-        // Derive project name from directory structure.
-        // `projects/web-app/` → "web-app"
-        // `projects/chatly/web-app/` → "chatly/web-app"
-        // `/abs/path/projects/web-app/` → "web-app"
-        let name = Self::name_from_dir(dir);
 
         Ok(Self {
             dir: dir.to_path_buf(),
-            name: ProjectName::new(name)?,
+            name,
             manifest,
             lock: None,
         })
@@ -2400,8 +2381,8 @@ role = "owned"
         assert_eq!(ProjectName::new("web-app").unwrap().as_str(), "web-app");
     }
 
-    /// The multi-segment shape `name_from_dir` derives for nested projects
-    /// must keep working — `/` is not one of the rejected characters.
+    /// A nested project's name carries its `/` — that character is not one of
+    /// the rejected ones, and the projects tree nests to match.
     #[test]
     fn project_name_new_multi_segment_slash_accepted() {
         assert_eq!(
@@ -2549,7 +2530,7 @@ role = "owned"
     #[test]
     fn project_from_dir_no_manifest() {
         let dir = tempfile::tempdir().unwrap();
-        let result = Project::from_dir(dir.path());
+        let result = Project::from_dir(dir.path(), ProjectName::new("proj").unwrap());
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(
@@ -2569,7 +2550,7 @@ role = "owned"
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
 
-        let project = Project::from_dir(&project_dir).unwrap();
+        let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
         assert!(project.lock.is_none());
         assert_eq!(project.manifest.repositories.len(), 1);
         assert_eq!(project.dir, project_dir);
@@ -2584,7 +2565,7 @@ role = "owned"
         std::fs::write(dir.path().join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         std::fs::write(dir.path().join(LockFile::FILE_NAME), "{{bad").unwrap();
 
-        let result = Project::from_dir(dir.path());
+        let result = Project::from_dir(dir.path(), ProjectName::new("proj").unwrap());
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(
@@ -2620,12 +2601,13 @@ role = "owned"
 
         // Strict loader must fail.
         assert!(
-            Project::from_dir(&project_dir).is_err(),
+            Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).is_err(),
             "from_dir must fail when rwv.lock contains conflict markers"
         );
 
         // Lockless loader must succeed and return lock: None.
-        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
+        let project =
+            Project::from_dir_skip_lock(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
         assert!(
             project.lock.is_none(),
             "from_dir_skip_lock must return lock: None regardless of rwv.lock content"
@@ -2649,7 +2631,8 @@ role = "owned"
         std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         // No rwv.lock written.
 
-        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
+        let project =
+            Project::from_dir_skip_lock(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
         assert!(
             project.lock.is_none(),
             "from_dir_skip_lock must return lock: None when rwv.lock is absent"
@@ -2672,12 +2655,13 @@ role = "owned"
 
         // Strict loader must fail on an empty file.
         assert!(
-            Project::from_dir(&project_dir).is_err(),
+            Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).is_err(),
             "from_dir must fail when rwv.lock is empty"
         );
 
         // Lockless loader must succeed.
-        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
+        let project =
+            Project::from_dir_skip_lock(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
         assert!(
             project.lock.is_none(),
             "from_dir_skip_lock must return lock: None when rwv.lock is empty"
@@ -2691,7 +2675,7 @@ role = "owned"
         let dir = tempfile::tempdir().unwrap();
         // Neither rwv.toml nor rwv.lock is present.
 
-        let result = Project::from_dir_skip_lock(dir.path());
+        let result = Project::from_dir_skip_lock(dir.path(), ProjectName::new("proj").unwrap());
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
         assert!(
@@ -2700,77 +2684,25 @@ role = "owned"
         );
     }
 
+    /// The loaded identity is the caller's, and the directory has no vote.
+    ///
+    /// Pinned with a name that deliberately disagrees with the directory's own
+    /// basename: while the name was re-derived from the path, this assertion
+    /// could not have held at all.
     #[test]
-    fn project_name_from_projects_relative_path() {
-        // Relative path starting with "projects/" — prefix is stripped.
-        let name = Project::name_from_dir(Path::new("projects/my-app"));
-        assert_eq!(name, "my-app");
-    }
-
-    #[test]
-    fn project_name_nested_under_projects() {
-        // Nested relative path — multi-segment name is preserved.
-        let name = Project::name_from_dir(Path::new("projects/chatly/web-app"));
-        assert_eq!(name, "chatly/web-app");
-    }
-
-    #[test]
-    fn project_name_from_absolute_path_is_short_name() {
-        // Absolute path: name_from_dir must return just the short name, not the
-        // full absolute path. This is the regression guarded against here.
+    fn from_dir_returns_the_name_it_was_given_not_one_read_off_the_path() {
         let base = tempfile::tempdir().unwrap();
-        let project_dir = base.path().join("projects").join("my-app");
+        let project_dir = base.path().join("projects").join("on-disk-basename");
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
 
-        // Verify name_from_dir directly with the absolute path.
-        let name = Project::name_from_dir(&project_dir);
-        assert_eq!(
-            name, "my-app",
-            "absolute path should yield short project name, not full path"
-        );
+        let declared = ProjectName::new("chatly/web-app").unwrap();
 
-        // Also verify end-to-end via from_dir (which is what callers use).
-        let project = Project::from_dir(&project_dir).unwrap();
-        assert_eq!(
-            project.name.as_str(),
-            "my-app",
-            "from_dir with absolute path must return short project name"
-        );
-    }
+        let project = Project::from_dir(&project_dir, declared.clone()).unwrap();
+        assert_eq!(project.name, declared);
 
-    #[test]
-    fn project_name_nested_absolute_path_multi_segment() {
-        // Absolute path with nested project (e.g., chatly/web-app under projects/).
-        let base = tempfile::tempdir().unwrap();
-        let project_dir = base.path().join("projects").join("chatly").join("web-app");
-        std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
-
-        let name = Project::name_from_dir(&project_dir);
-        assert_eq!(
-            name, "chatly/web-app",
-            "absolute nested path should yield multi-segment project name"
-        );
-
-        let project = Project::from_dir(&project_dir).unwrap();
-        assert_eq!(project.name.as_str(), "chatly/web-app");
-    }
-
-    #[test]
-    fn project_name_from_dir_skip_lock_absolute_path() {
-        // from_dir_skip_lock must also derive the correct short name.
-        let base = tempfile::tempdir().unwrap();
-        let project_dir = base.path().join("projects").join("my-service");
-        std::fs::create_dir_all(&project_dir).unwrap();
-        std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
-
-        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
-        assert_eq!(
-            project.name.as_str(),
-            "my-service",
-            "from_dir_skip_lock with absolute path must return short project name"
-        );
+        let lockless = Project::from_dir_skip_lock(&project_dir, declared.clone()).unwrap();
+        assert_eq!(lockless.name, declared);
     }
 
     // ========================================================================
@@ -2889,7 +2821,7 @@ copy = [".env"]
         std::fs::write(project_dir.join(Manifest::FILE_NAME), VALID_MANIFEST).unwrap();
         std::fs::write(project_dir.join("rwv.lock"), VALID_LOCK).unwrap();
 
-        let project = Project::from_dir(&project_dir).unwrap();
+        let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
         assert!(project.lock.is_some());
         let lock = project.lock.unwrap();
         assert_eq!(lock.repositories.len(), 1);

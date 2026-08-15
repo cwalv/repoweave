@@ -1,5 +1,6 @@
 use repoweave::manifest::{
-    CargoWorkspaceConfig, LockFile, Manifest, PatchMode, Project, RepoPath, Role, VcsType,
+    CargoWorkspaceConfig, LockFile, Manifest, PatchMode, Project, ProjectName, RepoPath, Role,
+    VcsType,
 };
 use repoweave::vcs::{RawRevisionId, RefName};
 
@@ -262,7 +263,7 @@ fn project_from_dir_manifest_only() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST).unwrap();
 
-    let project = Project::from_dir(&project_dir).unwrap();
+    let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
     assert_eq!(project.manifest.len(), 1);
     assert!(project.lock.is_none());
     assert_eq!(project.dir, project_dir);
@@ -276,7 +277,7 @@ fn project_from_dir_manifest_and_lock() {
     std::fs::write(project_dir.join("rwv.toml"), FULL_MANIFEST).unwrap();
     std::fs::write(project_dir.join("rwv.lock"), LOCK_JSON).unwrap();
 
-    let project = Project::from_dir(&project_dir).unwrap();
+    let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
     assert_eq!(project.manifest.len(), 4);
     let lock = project.lock.as_ref().unwrap();
     assert_eq!(lock.len(), 2);
@@ -286,37 +287,8 @@ fn project_from_dir_manifest_and_lock() {
 fn project_from_dir_missing_manifest_errors() {
     let dir = common::tempdir().unwrap();
     // No rwv.toml written — from_dir should fail.
-    let result = Project::from_dir(dir.path());
+    let result = Project::from_dir(dir.path(), ProjectName::new("proj").unwrap());
     assert!(result.is_err());
-}
-
-#[test]
-fn project_name_derived_from_dir() {
-    let dir = common::tempdir().unwrap();
-    let project_dir = dir.path().join("proj");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST).unwrap();
-
-    let project = Project::from_dir(&project_dir).unwrap();
-    // Name is derived from the path; since the project dir isn't under
-    // `projects/`, the last path component is used as the name.
-    assert!(!project.name.as_str().is_empty());
-}
-
-#[test]
-fn project_name_strips_projects_prefix() {
-    let dir = common::tempdir().unwrap();
-    let project_dir = dir.path().join("projects").join("web-app");
-    std::fs::create_dir_all(&project_dir).unwrap();
-    std::fs::write(project_dir.join("rwv.toml"), MINIMAL_MANIFEST).unwrap();
-
-    // Use a relative path starting with "projects/" so strip_prefix works.
-    let nested_project_dir = dir.path().join("projects").join("web-app");
-    let project = Project::from_dir(&nested_project_dir).unwrap();
-    // The path doesn't literally start with "projects" (it's an absolute temp path),
-    // so strip_prefix falls back to the full path. That's the expected behavior
-    // for absolute paths.
-    assert!(!project.name.as_str().is_empty());
 }
 
 // ---------------------------------------------------------------------------

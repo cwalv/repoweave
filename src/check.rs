@@ -7913,7 +7913,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
 
     for pname in &project_names {
         let project_dir = project_dir(&workspace_dir, pname.as_str());
-        let project = match Project::from_dir(&project_dir) {
+        let project = match Project::from_dir(&project_dir, pname.clone()) {
             Ok(p) => p,
             Err(e) => {
                 // Warn and skip; `rwv doctor` surfaces the canonical
@@ -9178,7 +9178,7 @@ fn load_doctor_world(
             }
         }
 
-        match Project::from_dir(&dir) {
+        match Project::from_dir(&dir, name.clone()) {
             Ok(project) => {
                 // Resolving against the on-disk repos is what makes the
                 // canonical-SHA equality in `find_violations` work

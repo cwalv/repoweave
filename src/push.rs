@@ -172,7 +172,7 @@ pub fn run_push(
     let primary_root = ctx.primary_path().to_path_buf();
     let project_dir = project_dir(&primary_root, project_name.as_str());
 
-    let project = Project::from_dir(&project_dir)
+    let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
     let project_vcs = project_vcs();

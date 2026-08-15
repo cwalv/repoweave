@@ -267,7 +267,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
 
     for pname in project_names_for_ctx(ctx) {
         let project_dir = project_dir(&workspace_dir, pname.as_str());
-        let project = match Project::from_dir(&project_dir) {
+        let project = match Project::from_dir(&project_dir, pname.clone()) {
             Ok(p) => p,
             Err(e) => {
                 // Warn and skip; run `rwv doctor` to get the canonical

@@ -2703,8 +2703,9 @@ fn run_preconditions_after_acquire(
             // source lock. Scan the CWD workspace — the destination that mutates.
             // The source workspace is read-only (snapshot read only); dirt there
             // does not affect the op.
-            let cwd_project_preflight = Project::from_dir(cwd_project_dir)
-                .context("failed to load CWD project for sync dirt scan")?;
+            let cwd_project_preflight =
+                Project::from_dir(cwd_project_dir, cwd_project_name.clone())
+                    .context("failed to load CWD project for sync dirt scan")?;
             check_dirty_preflight_sync(
                 project_vcs,
                 &cwd_project_preflight,
@@ -2719,8 +2720,9 @@ fn run_preconditions_after_acquire(
             //   - detached-target: advance-target would have no branch to land on.
             // Source before target: the operator's own workspace is the first thing they
             // can fix, and a dirty source is the state we most want to define away.
-            let cwd_project_preflight = Project::from_dir(cwd_project_dir)
-                .context("failed to load CWD project for sync-to preflights")?;
+            let cwd_project_preflight =
+                Project::from_dir(cwd_project_dir, cwd_project_name.clone())
+                    .context("failed to load CWD project for sync-to preflights")?;
             check_dirty_source_preflight(
                 project_vcs,
                 &cwd_project_preflight,
@@ -2760,7 +2762,7 @@ fn run_preconditions_after_acquire(
 
     // Replay preconditions (pure reads; refusals leave no trace on-workspace —
     // the acquired op-state is cleaned up by the caller on Err).
-    let cwd_project = Project::from_dir(cwd_project_dir)
+    let cwd_project = Project::from_dir(cwd_project_dir, cwd_project_name.clone())
         .context("failed to load CWD project for guard preconditions")?;
     let cwd_workspace_name_str = workspace_name(cwd_ctx)?;
 
@@ -3257,7 +3259,10 @@ fn guard_and_mark<'a>(
         if target_presents_the_project {
             let target_project_dir = project_dir(&dest_workspace_dir, cwd_project_name.as_str());
             let _ = create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id);
-            if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(&target_project_dir) {
+            if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(
+                &target_project_dir,
+                cwd_project_name.clone(),
+            ) {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
                     let abs = dest_workspace_dir.join(repo_path.as_path());
                     // Skip reference symlinks (shared canonical store).
@@ -3595,8 +3600,9 @@ fn load_continuing_context<'a>(
     if matches!(entry_phase, op_state::OpPhase::Relock)
         && matches!(recorded_verb, MachineVerb::SyncTo)
     {
-        let cwd_project_preflight = Project::from_dir(&cwd_project_dir)
-            .context("failed to load CWD project for the resumed op's dirt scan")?;
+        let cwd_project_preflight =
+            Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
+                .context("failed to load CWD project for the resumed op's dirt scan")?;
         if let Err(e) = check_dirty_target_preflight(
             project_vcs.as_ref(),
             &cwd_project_preflight,
@@ -4576,8 +4582,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let snapshot = &ctx.snapshot;
 
     // Load CWD project (manifest + lock) from disk.
-    let cwd_project =
-        Project::from_dir(&ctx.cwd_project_dir).context("failed to load CWD project")?;
+    let cwd_project = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
+        .context("failed to load CWD project")?;
 
     // CWD project tip — read before any side effects so Phase 1' has the
     // pre-op starting state for its `cwd_tip == source_tip` short-circuit.
@@ -5094,18 +5100,19 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // Reload the project after replay (manifest may now include newly-added
     // repos brought over from source).
-    let cwd_project = Project::from_dir(&ctx.cwd_project_dir).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to reload project manifest after Phase 1' ({e}).\n\
+    let cwd_project = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "failed to reload project manifest after Phase 1' ({e}).\n\
              \n\
              The project repo was successfully rebased/merged, but the manifest \
              in {cwd_project_dir} could not be parsed. Proceeding would silently \
              omit newly-added repos from the regenerated lock.\n\
              \n\
              To recover: `rwv abort`",
-            cwd_project_dir = ctx.cwd_project_dir.display(),
-        )
-    })?;
+                cwd_project_dir = ctx.cwd_project_dir.display(),
+            )
+        })?;
 
     if let Err(e) = regenerate_lock_phase3(
         ctx.project_vcs.as_ref(),
@@ -5189,7 +5196,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         eprintln!("sync-to: fast-forwarding target to CWD's tips...");
     }
 
-    let cwd_project_final = Project::from_dir(&ctx.cwd_project_dir)
+    let cwd_project_final = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
         .context("failed to reload CWD project for advance-target")?;
 
     let mut any_ff_failure = false;
@@ -5420,7 +5427,9 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
     if presented.as_ref() != Some(&ctx.cwd_project_name) {
         return Vec::new();
     }
-    let Ok(project) = Project::from_dir_skip_lock(&ctx.cwd_project_dir) else {
+    let Ok(project) =
+        Project::from_dir_skip_lock(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
+    else {
         return Vec::new();
     };
     let builtin = builtin_integrations();
@@ -5544,7 +5553,9 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // through the canonical clone. A missing ref is a harmless no-op, so no
     // existence guard is needed (and `if abs.exists()` would re-introduce the
     // leak by skipping the now-deleted workweave paths).
-    if let Ok(project) = Project::from_dir_skip_lock(&canonical_project_dir) {
+    if let Ok(project) =
+        Project::from_dir_skip_lock(&canonical_project_dir, ctx.cwd_project_name.clone())
+    {
         for (repo_path, entry) in project.manifest.iter_entries() {
             let abs = primary.join(repo_path.as_path());
             delete_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &ctx.op_id);
@@ -5569,7 +5580,9 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             let target_project_dir =
                 project_dir(&ctx.dest_workspace_dir, ctx.cwd_project_name.as_str());
             delete_savepoint(ctx.project_vcs.as_ref(), &target_project_dir, &tsp_id);
-            if let Ok(tp) = Project::from_dir_skip_lock(&target_project_dir) {
+            if let Ok(tp) =
+                Project::from_dir_skip_lock(&target_project_dir, ctx.cwd_project_name.clone())
+            {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
                     let abs = ctx.dest_workspace_dir.join(repo_path.as_path());
                     if abs.exists() {
@@ -6057,8 +6070,8 @@ pub fn run_abort(
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
     // manifest (to enumerate repo paths); it never reads lock contents.
-    let cwd_project =
-        Project::from_dir_skip_lock(&cwd_project_dir).context("failed to load CWD project")?;
+    let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir, op_project_name.clone())
+        .context("failed to load CWD project")?;
 
     let mut any_failure = false;
     let mut any_foreign = false;
@@ -6148,7 +6161,10 @@ pub fn run_abort(
             Ok(extra_ctx) => {
                 let extra_project_dir =
                     project_dir(extra_ctx.active_path(), op_project_name.as_str());
-                let extra_project = match Project::from_dir_skip_lock(&extra_project_dir) {
+                let extra_project = match Project::from_dir_skip_lock(
+                    &extra_project_dir,
+                    op_project_name.clone(),
+                ) {
                     Ok(p) => p,
                     Err(e) => {
                         eprintln!(

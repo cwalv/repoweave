@@ -343,7 +343,7 @@ pub(crate) fn write_project_lock(
     // (it regenerates from manifest tips and reads the old lock
     // tolerantly further down via `.ok()`), so skipping the parse
     // costs nothing and closes the recovery gap.
-    let project = Project::from_dir_skip_lock(&project_dir)
+    let project = Project::from_dir_skip_lock(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
     let lock = generate_lock(
