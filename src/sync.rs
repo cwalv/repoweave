@@ -368,7 +368,11 @@ pub enum SyncFailure {
 }
 
 impl SyncFailure {
-    /// Stable variant tag suitable for `--json` output.
+    /// Stable variant tag, spelled to match [`SyncFailureOutput`]'s wire
+    /// `kind` (pinned by `sync_failure_kind_matches_wire_tag`). `rwv sync
+    /// --json` itself serializes a `SyncFailureOutput` directly and never
+    /// calls this; it exists for library consumers of this type who want
+    /// the tag without constructing the wire type.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::HeadUnreadable { .. } => "head-unreadable",
@@ -455,8 +459,9 @@ impl RepoSyncOutcome {
 /// Wire-output mirror of [`SyncFailure`] for `--json` emission.
 ///
 /// Carries the same payload as the in-memory enum but with a `cause`
-/// represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag
-/// strings match [`SyncFailure::kind`] (verified via snapshot tests).
+/// represented as the serialisable [`VcsErrorOutput`]. The `#[serde(rename)]`
+/// override below keeps the wire tag matching [`SyncFailure::kind`]
+/// (pinned by `sync_failure_kind_matches_wire_tag`).
 ///
 /// `message` is the human-readable display string of the failure (free-form
 /// text, not a typed discriminant). `cause` is the structured typed cause when
@@ -8389,32 +8394,45 @@ mod tests {
         assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
     }
 
-    #[test]
-    fn sync_failure_kind_tags_are_stable() {
-        assert_eq!(
+    /// Every `SyncFailure` variant; the match with no default arm forces
+    /// this list to grow with the enum.
+    fn all_sync_failures() -> Vec<SyncFailure> {
+        let all = vec![
             SyncFailure::HeadUnreadable {
                 error: "x".into(),
-                cause: None
-            }
-            .kind(),
-            "head-unreadable"
-        );
-        assert_eq!(
+                cause: None,
+            },
             SyncFailure::FastForwardImpossible {
                 error: "x".into(),
-                cause: None
-            }
-            .kind(),
-            "ff-impossible"
-        );
-        assert_eq!(
+                cause: None,
+            },
             SyncFailure::RebaseFailed {
                 error: "x".into(),
-                cause: None
+                cause: None,
+            },
+        ];
+        for f in &all {
+            match f {
+                SyncFailure::HeadUnreadable { .. }
+                | SyncFailure::FastForwardImpossible { .. }
+                | SyncFailure::RebaseFailed { .. } => {}
             }
-            .kind(),
-            "rebase-failed"
-        );
+        }
+        all
+    }
+
+    #[test]
+    fn sync_failure_kind_matches_wire_tag() {
+        for failure in all_sync_failures() {
+            let internal = failure.kind();
+            let wire = serde_json::to_value(SyncFailureOutput::from(&failure)).unwrap();
+            let wire_kind = wire["kind"].as_str().expect("wire kind is a string");
+            assert_eq!(
+                internal, wire_kind,
+                "SyncFailure::kind() must match SyncFailureOutput's wire tag; \
+                 got kind()={internal:?}, wire={wire_kind:?}"
+            );
+        }
     }
 
     #[test]
