@@ -1705,23 +1705,22 @@ pub(crate) fn toml_array_strings(
 // Shared verify() state machine
 // ===========================================================================
 
-/// The four states every hybrid integration's `verify()` resolves to.
+/// The states a hybrid integration's `verify()` resolves to once the managed
+/// file is known to exist.
 ///
 /// Each hybrid integration's `verify()` reduces to: detect-repos, locate the
 /// managed file + owned key, compute the expected on-disk content, read the
 /// actual on-disk content, then map the result to one of these states. The
 /// state → [`Issue`] construction (severity, `safe_to_fix`, message template)
-/// is centralized in [`drift_issues`] so the four-state dispatch and its
-/// byte-identical `Issue` values live in exactly one place.
+/// is centralized in [`drift_issues`] so the dispatch and its byte-identical
+/// `Issue` values live in exactly one place.
 ///
-/// This is the root-cause fix for the shallow-wrapper duplication that
-/// produced the pnpm false-DRIFT bug: previously each of the six integrations
-/// re-implemented the same MISSING → USER-HELD → DRIFT → CLEAN ladder and
-/// re-built the same `Severity::Warning` issues by hand.
+/// MISSING is the fourth outcome `verify()` reports and is deliberately not a
+/// variant here: it is settled by a path-existence check before the file is
+/// read, and [`missing_issue`] carries its template. A variant for it would be
+/// a state this enum can name and nothing can reach.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum VerifyState {
-    /// The managed file is absent but repos were detected. `safe_to_fix=true`.
-    Missing,
+enum VerifyState {
     /// The owned key/region is present on disk but the rwv ownership marker is
     /// absent — the user holds the pen. `safe_to_fix=false` (auto-overwrite
     /// would silently destroy user content).
@@ -1733,7 +1732,7 @@ pub enum VerifyState {
     Clean,
 }
 
-/// Classify the four-state verify outcome from the primitive inputs.
+/// Classify the verify outcome from the primitive inputs.
 ///
 /// - `marker_present`: does the file carry the rwv ownership marker?
 /// - `owned_key_present`: is the owned key/region present on disk? (USER-HELD
@@ -1816,7 +1815,6 @@ pub fn drift_issues(
     };
 
     match classify_verify(marker_present, owned_key_present, on_disk_matches) {
-        VerifyState::Missing => unreachable!("MISSING is caller-detected; use missing_issue()"),
         VerifyState::UserHeld => vec![Issue {
             integration: name.to_string(),
             severity: Severity::Warning,
