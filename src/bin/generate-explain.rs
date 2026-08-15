@@ -1940,8 +1940,41 @@ struct CommentBlock {
 }
 
 impl CommentBlock {
+    /// The block's lines, with a citation broken across a line break closed
+    /// back up onto the line it starts on.
+    ///
+    /// A reader reassembles a wrapped path without noticing. A scan that reads
+    /// one line at a time sees two fragments, and neither is the citation: the
+    /// head is a path prefix with no filename, the tail is a filename with no
+    /// path. Every finding a wrapped citation produces is therefore attributed
+    /// to the line the citation **starts** on — the line an author edits to fix
+    /// it — and the tail line reports nothing.
+    ///
+    /// The head must contain a `/` for the break to close. Without that guard
+    /// an ordinary wrapped sentence joins: the last word of one line and a
+    /// filename opening the next would fuse into a token nobody wrote, and the
+    /// gate would report a citation it invented.
+    fn rejoined(&self) -> Vec<(usize, String)> {
+        let mut lines = self.lines.clone();
+        for i in (1..lines.len()).rev() {
+            let head = trailing_path_run(&lines[i - 1].1);
+            let tail = leading_path_run(&lines[i].1);
+            if !head.contains('/')
+                || tail.is_empty()
+                || !is_doc_token(&format!("{head}{}", tail.trim_end_matches('.')))
+            {
+                continue;
+            }
+            let (moved, rest) = lines[i].1.split_at(tail.len());
+            let (moved, rest) = (moved.to_owned(), rest.to_owned());
+            lines[i - 1].1.push_str(&moved);
+            lines[i].1 = rest;
+        }
+        lines
+    }
+
     fn text(&self) -> String {
-        self.lines
+        self.rejoined()
             .iter()
             .map(|(_, t)| t.as_str())
             .collect::<Vec<_>>()
@@ -1991,18 +2024,36 @@ fn comment_blocks(content: &str) -> Vec<CommentBlock> {
 /// Markdown and rustdoc link punctuation is outside the character run, so
 /// ``[clone-topology](../../docs/explanation/joints/clone-topology.md)`` and
 /// ``[`docs/explanation/joints/clone-topology.md`]`` both yield the path
-/// alone. A path wrapped across two comment lines is not seen — the line break
-/// splits the run — which is a miss, not a false report.
+/// alone. A line break splits a run, so a caller scanning comments feeds this
+/// `CommentBlock::rejoined`'s lines rather than the file's.
 fn doc_path_tokens(text: &str) -> Vec<&str> {
-    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-')))
+    text.split(|c: char| !is_path_char(c))
         .map(|run| run.trim_end_matches('.'))
-        .filter(|tok| {
-            tok.rsplit('/')
-                .next()
-                .and_then(|last| last.rsplit_once('.'))
-                .is_some_and(|(stem, ext)| !stem.is_empty() && DOC_PATH_EXTENSIONS.contains(&ext))
-        })
+        .filter(|tok| is_doc_token(tok))
         .collect()
+}
+
+fn is_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-')
+}
+
+/// True if `token` is what `doc_path_tokens` keeps: a path whose last
+/// component is `<stem>.<ext>` with a non-empty `stem` and `ext` in
+/// `DOC_PATH_EXTENSIONS`.
+fn is_doc_token(token: &str) -> bool {
+    token
+        .rsplit('/')
+        .next()
+        .and_then(|last| last.rsplit_once('.'))
+        .is_some_and(|(stem, ext)| !stem.is_empty() && DOC_PATH_EXTENSIONS.contains(&ext))
+}
+
+fn leading_path_run(text: &str) -> &str {
+    text.split(|c: char| !is_path_char(c)).next().unwrap_or("")
+}
+
+fn trailing_path_run(text: &str) -> &str {
+    text.rsplit(|c: char| !is_path_char(c)).next().unwrap_or("")
 }
 
 /// The last `/`-separated component of `token`.
@@ -2169,7 +2220,7 @@ fn is_local_ref_hatch(line: &str) -> bool {
 /// slightly further: a slashed citation naming a real document could go
 /// unreported if some unrelated operated file happens to share its
 /// basename. Measured as small in practice — the fixture names
-/// `tests_code_doc_filenames` exempts today are generic (a shared notes
+/// `tests_file_doc_filenames` exempts today are generic (a shared notes
 /// file, per-workweave feature notes) and none collides with a real
 /// document's basename under `docs`.
 fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
@@ -2187,9 +2238,9 @@ fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
     names
 }
 
-/// `src_code_doc_filenames`'s counterpart for `tests/`: every document
-/// filename a test builds as fixture content — the last component of each
-/// path-shaped token a `tests/*.rs` file writes as a string literal, outside
+/// `src_code_doc_filenames`'s counterpart for `tests/`, **for one test file**:
+/// every document filename that file builds as fixture content — the last
+/// component of each path-shaped token it writes as a string literal, outside
 /// a comment.
 ///
 /// This is what makes a fixture path exempt rather than allowlisted: a test
@@ -2202,6 +2253,12 @@ fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
 /// already test-only), so this is a no-op there, but a file that does
 /// nest one keeps its fixture-vouching-for-itself guard.
 ///
+/// One file at a time is the scope, and that is the difference from the
+/// `src/` side rather than an implementation detail. What `src/` code operates
+/// on is a fact about the program, true wherever a comment names it; what a
+/// fixture writes is a fact about that fixture, and says nothing about a
+/// comment in the test next door.
+///
 /// The residue this does not tell apart: any non-comment occurrence counts,
 /// including a string that only mentions a filename in prose rather than
 /// operating on it — an audit justification quoting a document by name reads
@@ -2209,23 +2266,20 @@ fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
 /// than `src_code_doc_filenames`'s, and it is not hypothetical:
 /// `tests/destructive_ops_audit_test.rs` used to carry a bare mention of
 /// `docs/internals/branch-model.md`'s filename inside `justification` string
-/// literals, which silently exempted every OTHER bare mention of that same
-/// filename in `tests/`, unresolvable or not, because `operated` is one set
-/// shared across the whole scan rather than kept per file. Cleared by
-/// rewriting those strings rather than by narrowing this function, because
-/// the narrower fix (matching only arguments to a known write call) would
-/// need to parse Rust rather than scan text, and would need to be redone the
-/// next time a fixture is built a new way.
-fn tests_code_doc_filenames(root: &Path) -> HashSet<String> {
+/// literals. Cleared by rewriting those strings rather than by narrowing this
+/// function, because the narrower fix (matching only arguments to a known
+/// write call) would need to parse Rust rather than scan text, and would need
+/// to be redone the next time a fixture is built a new way. What the scope
+/// above bounds is how far one such mention reaches: its own file, not every
+/// citation in `tests/`.
+fn tests_file_doc_filenames(path: &Path) -> HashSet<String> {
     let mut names = HashSet::new();
-    for path in collect_rs_files(&root.join("tests")) {
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        for line in before_test_module(&content).lines() {
-            for token in doc_path_tokens(code_on_line(line)) {
-                names.insert(token_filename(token).to_owned());
-            }
+    let Ok(content) = fs::read_to_string(path) else {
+        return names;
+    };
+    for line in before_test_module(&content).lines() {
+        for token in doc_path_tokens(code_on_line(line)) {
+            names.insert(token_filename(token).to_owned());
         }
     }
     names
@@ -2266,7 +2320,7 @@ fn tests_code_doc_filenames(root: &Path) -> HashSet<String> {
 ///   filename-alone case, where prose naming an incidental `notes.txt` is far
 ///   likelier than a citation;
 /// - a filename the code itself operates on (`src_code_doc_filenames`,
-///   `tests_code_doc_filenames`) is exempt **by basename**, slashed token or
+///   `tests_file_doc_filenames`) is exempt **by basename**, slashed token or
 ///   bare: a comment naming a file by its bare name and a fixture writing
 ///   that same name under a directory are naming the same fact, so the
 ///   exemption checks `token_filename`, not the token's own shape. A bare
@@ -2321,6 +2375,7 @@ fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String
             content.as_str()
         };
         for block in comment_blocks(scanned) {
+            let lines = block.rejoined();
             let joined = block.text();
             let block_tokens = doc_path_tokens(&joined);
             if block_tokens.is_empty() {
@@ -2336,8 +2391,8 @@ fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String
                 })
                 .map(|tok| token_filename(tok))
                 .collect();
-            for (i, (n, text)) in block.lines.iter().enumerate() {
-                if i > 0 && is_local_ref_hatch(&block.lines[i - 1].1) {
+            for (i, (n, text)) in lines.iter().enumerate() {
+                if i > 0 && is_local_ref_hatch(&lines[i - 1].1) {
                     continue;
                 }
                 for token in doc_path_tokens(text) {
@@ -2384,16 +2439,25 @@ fn src_rs_files(root: &Path) -> Vec<PathBuf> {
 
 /// `check_doc_citations` over `src/` and `tests/` together — the citation
 /// rule does not carve `tests/` out, unlike `check_doc_symbol_refs`, which
-/// stays on `src_rs_files` alone. `operated` is the union of what each
-/// side's own code hands the reader for free: `src/`'s `include_str!`s and
-/// the like, plus every fixture path a `tests/*.rs` file writes into a temp
-/// tree.
+/// stays on `src_rs_files` alone.
+///
+/// The exemption a file is checked against is what its own reader can see:
+/// `src/`'s `include_str!`s and the like everywhere, and a fixture path only
+/// in the `tests/*.rs` file that writes it. Each test file therefore gets its
+/// own call rather than one call against a set the whole tree contributed to.
 fn run_doc_citation_check(root: &Path) -> Vec<String> {
-    let mut files = src_rs_files(root);
-    files.extend(collect_rs_files(&root.join("tests")));
-    let mut operated = src_code_doc_filenames(root);
-    operated.extend(tests_code_doc_filenames(root));
-    check_doc_citations(root, &files, &operated)
+    let operated = src_code_doc_filenames(root);
+    let mut errors = check_doc_citations(root, &src_rs_files(root), &operated);
+    for path in collect_rs_files(&root.join("tests")) {
+        let mut exempt = operated.clone();
+        exempt.extend(tests_file_doc_filenames(&path));
+        errors.extend(check_doc_citations(
+            root,
+            std::slice::from_ref(&path),
+            &exempt,
+        ));
+    }
+    errors
 }
 
 /// Every identifier that appears in `src/` outside a comment.
@@ -4985,6 +5049,60 @@ mod tests {
         );
     }
 
+    /// **Pinning test for the fixture exemption's scope.** A document filename
+    /// a test file's own code names exempts citations in that file and nowhere
+    /// else.
+    ///
+    /// Both halves are asserted, because either one alone passes under a
+    /// mechanism that is simply broken: a scan-wide set silences the citation
+    /// next door, and no set at all reports the one the fixture stands behind.
+    #[test]
+    fn a_filename_one_test_files_code_names_does_not_exempt_a_citation_in_another() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+
+        fs::write(
+            root.join("tests/naming_test.rs"),
+            "// The refusal arms are the ones branch-model.md sets out.\n\
+             fn justification() -> &'static str {\n\
+             \x20   \"the ordering rule docs/internals/branch-model.md states\"\n\
+             }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("tests/citing_test.rs"),
+            "// The refusal arms are the ones branch-model.md sets out.\n\
+             fn t() {}\n",
+        )
+        .unwrap();
+
+        let findings = run_doc_citation_check(root);
+        let reported: Vec<_> = findings
+            .iter()
+            .filter(|f| f.contains("branch-model.md"))
+            .map(|f| slashed(f))
+            .collect();
+        assert!(
+            reported
+                .iter()
+                .any(|f| f.starts_with("tests/citing_test.rs")),
+            "a filename named only in another file's code must not exempt this \
+             citation, got:\n{}",
+            findings.join("\n")
+        );
+        assert!(
+            !reported
+                .iter()
+                .any(|f| f.starts_with("tests/naming_test.rs")),
+            "the file whose own code names the document keeps its exemption, \
+             got:\n{}",
+            findings.join("\n")
+        );
+    }
+
     // ── envelope-output coverage check unit tests ─────────────────────────────
 
     /// A plugin-protocol page that documents all envelope vars passes the check.
@@ -5478,6 +5596,98 @@ mod tests {
         assert!(
             errors.is_empty(),
             "the section-pointer clause itself still has no matcher, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// **Pinning test for the line-wrap evasion.** A path broken across two
+    /// comment lines is one citation to the reader, and the finding names the
+    /// whole path rather than the fragment that happens to end in an
+    /// extension.
+    ///
+    /// The shape is the one this repository actually carried, wrapped after a
+    /// `/`. Reading a line at a time saw only the tail, so the report named a
+    /// filename nobody wrote and pointed at the wrong line.
+    #[test]
+    fn a_citation_wrapped_after_a_slash_is_reported_whole_at_the_line_it_starts_on() {
+        let errors = citation_errors(
+            "// The abort journal's ordering is the one recorded in\n\
+             // projects/foundations/docs/repoweave/sync-state-space/\n\
+             // abort-intent-journal.md, and a resume replays it.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains(
+                "`projects/foundations/docs/repoweave/sync-state-space/abort-intent-journal.md`"
+            ),
+            "the finding must name the whole wrapped path, got:\n{combined}"
+        );
+        assert!(
+            combined.contains("lib.rs:2:"),
+            "the finding belongs to the line the citation starts on, got:\n{combined}"
+        );
+        assert!(
+            !combined.contains("lib.rs:3:"),
+            "the tail line carries no citation of its own, got:\n{combined}"
+        );
+    }
+
+    /// The same evasion where the break falls immediately before the
+    /// extension. Neither fragment is a document token on its own — the head
+    /// has no `.`, the tail has no stem — so this shape reported nothing at
+    /// all, rather than reporting the wrong thing.
+    #[test]
+    fn a_citation_wrapped_before_its_extension_is_reported() {
+        let errors = citation_errors(
+            "// The refusal arms are the ones set out in docs/internals/branch-model\n\
+             // .md, and the third is the one this handles.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`docs/internals/branch-model.md`"),
+            "a break before the extension hides both fragments, got:\n{combined}"
+        );
+    }
+
+    /// A wrapped path that **resolves** is followable — the reader reassembles
+    /// it — so it is silent, and it satisfies a bare filename later in the
+    /// same block exactly as an unwrapped path does.
+    ///
+    /// Reading a line at a time reported both: the tail as an unresolvable
+    /// bare filename, and the bare citation the path was standing behind. A
+    /// gate that reports a citation the reader can follow is wrong about it.
+    #[test]
+    fn a_wrapped_path_that_resolves_is_silent_and_still_satisfies_a_bare_filename() {
+        let errors = citation_errors(
+            "// The bottom tier of the stability stack is docs/explanation/joints/\n\
+             // clone-topology.md, and detached HEAD breaks the ref-namespace\n\
+             // invariant clone-topology.md records.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a wrapped path the reader can follow must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// **Pinning test for the join's guard.** Closing a break needs a path
+    /// prefix on the head side. An ordinary sentence wrapping onto a filename
+    /// must not fuse into a token nobody wrote — that would be the gate
+    /// reporting its own invention, the one failure mode worse than a miss.
+    #[test]
+    fn an_ordinary_wrapped_sentence_does_not_fuse_into_a_citation() {
+        let errors = citation_errors_with(
+            &[("src/notes.md", "# notes\n")],
+            "// Every workweave surfaces its own copy of the\n\
+             // notes.md the operator declared, so the reap stays owner-scoped.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a wrapped sentence must not manufacture a citation, got:\n{}",
             errors.join("\n")
         );
     }

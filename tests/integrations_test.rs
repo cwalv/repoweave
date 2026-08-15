@@ -8799,14 +8799,14 @@ mod static_files {
         // GIVEN root with:
         //   .prettierrc      → symlink to projects/<project>/.prettierrc  (static-files-owned)
         //   turbo.json       → symlink to <primary>/turbo.json            (workweave.link)
-        //   notes.md         → plain user file (no symlink)
+        //   a declared file the operator wrote by hand (no symlink)
         // WHEN the activation framework reaps symlinks via the owner-scoped
         //      predicate (membership ∈ static-files.files ∧ read_link →
         //      projects/<project>/<file>)
         // THEN
         //   .prettierrc is removed
         //   turbo.json symlink survives (target shape differs)
-        //   notes.md is byte-identical
+        //   the hand-written file is byte-identical
         //
         // The integration's `Integration::deactivate(root)` is a no-op, so
         // exercising this end-to-end requires the framework path that
