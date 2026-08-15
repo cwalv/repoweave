@@ -456,17 +456,18 @@ mod tests {
     }
 
     #[test]
-    fn validate_ref_name_accepts_the_flat_address_shape() {
+    fn ref_name_validation_mirrors_the_strictest_rules_rwv_targets() {
         assert!(validate_ref_name("main").is_ok());
         assert!(validate_ref_name("release/1.x").is_ok());
         assert!(validate_ref_name("p--ww").is_ok());
         assert_eq!(validate_ref_name(""), Err(RefNameError::Empty));
         for bad in [
-            "a b", "a..b", "a@{b", "a//b", "/a", "a/", "a.", "@", ".hidden",
+            "a..b", "a@{0}", "@", "a//b", "/a", "a/", "a.", ".a", "a/.b", "a.lock", "a/b.lock",
+            "a b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "a\tb",
         ] {
             assert!(
                 matches!(validate_ref_name(bad), Err(RefNameError::Malformed { .. })),
-                "{bad:?} should be malformed"
+                "{bad:?} should be Malformed"
             );
         }
     }

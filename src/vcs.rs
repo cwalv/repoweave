@@ -3391,29 +3391,6 @@ mod tests {
     }
 
     #[test]
-    fn ref_name_validation_mirrors_the_strictest_rules_rwv_targets() {
-        assert!(crate::naming::validate_ref_name("main").is_ok());
-        assert!(crate::naming::validate_ref_name("release/1.x").is_ok());
-        assert!(crate::naming::validate_ref_name("p--ww").is_ok());
-        assert_eq!(
-            crate::naming::validate_ref_name(""),
-            Err(RefNameError::Empty)
-        );
-        for bad in [
-            "a..b", "a@{0}", "@", "a//b", "/a", "a/", "a.", ".a", "a/.b", "a.lock", "a/b.lock",
-            "a b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "a\tb",
-        ] {
-            assert!(
-                matches!(
-                    crate::naming::validate_ref_name(bad),
-                    Err(RefNameError::Malformed { .. })
-                ),
-                "{bad:?} should be Malformed"
-            );
-        }
-    }
-
-    #[test]
     fn a_receipt_and_an_attachment_are_compared_by_a_named_predicate() {
         // `is_attached_by` is the only bridge between notion (2b) and notion
         // (3), it answers `bool`, and it yields no witness — so "the receipt
