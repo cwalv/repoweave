@@ -572,24 +572,36 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Whether the next item in `rest` (skipping blank and comment lines) is a
-/// module declaration — i.e. whether the `#[cfg(test)]` just seen opens a
-/// test module rather than gating a single test-only item.
-fn next_item_is_a_module(rest: &[&str]) -> bool {
+/// Whether the next item in `rest` (skipping blank and comment lines) opens
+/// an inline module BODY — i.e. whether the `#[cfg(test)]` just seen starts a
+/// test region in this file.
+///
+/// The brace is what separates a region from a declaration. `mod <name>;`
+/// gates a whole other file and opens nothing here, so reading it as a
+/// boundary would put every line below it outside the scan.
+fn next_item_opens_a_module_body(rest: &[&str]) -> bool {
     for line in rest {
         let t = line.trim_start();
         if t.is_empty() || t.starts_with("//") || t.starts_with("#[") {
             continue;
         }
-        return t.starts_with("mod ")
-            || t.starts_with("pub mod ")
-            || t.starts_with("pub(crate) mod ");
+        let Some((before_mod, after_mod)) = t.split_once("mod ") else {
+            return false;
+        };
+        if !before_mod.split_whitespace().all(|w| w.starts_with("pub")) {
+            return false;
+        }
+        return after_mod
+            .trim_start()
+            .trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
+            .trim_start()
+            .starts_with('{');
     }
     false
 }
 
-/// Count pattern hits per (relative file, pattern), skipping comment lines
-/// and in-file test modules.
+/// The lines of one source file this audit reads, left-trimmed: comment
+/// lines dropped, and everything from an in-file test module onwards cut.
 ///
 /// **Test modules are not call sites.** A `#[cfg(test)] mod` inside `src/`
 /// is test code that happens to live next to what it tests, and its
@@ -599,11 +611,29 @@ fn next_item_is_a_module(rest: &[&str]) -> bool {
 /// which is noise in exactly the place this file is trying to keep sharp.
 ///
 /// The exclusion relies on the convention this crate follows everywhere: a
-/// `#[cfg(test)] mod` is the last item in its file, so scanning stops at
-/// the first one. `#[cfg(test)]` on anything that is *not* a module (the
-/// test hooks in `integrations/go_work.rs`, for instance) does not stop the
-/// scan. Product code placed *after* a test module would go unscanned —
-/// don't do that.
+/// `#[cfg(test)] mod` body is the last item in its file, so scanning stops
+/// at the first one. `#[cfg(test)]` on anything that opens no body — a
+/// test-only hook like `integrations/go_work.rs`'s PATH override, or the
+/// `mod <name>;` declaration `vcs.rs` gates its stub impl with — does not
+/// stop the scan. Product code placed *after* a test module would go
+/// unscanned — don't do that.
+fn scanned_lines(text: &str) -> Vec<&str> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut kept = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("#[cfg(test)]") && next_item_opens_a_module_body(&lines[i + 1..]) {
+            break;
+        }
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        kept.push(trimmed);
+    }
+    kept
+}
+
+/// Count pattern hits per (relative file, pattern).
 fn scan() -> BTreeMap<(String, &'static str), usize> {
     let src = src_dir();
     let mut files = Vec::new();
@@ -617,15 +647,7 @@ fn scan() -> BTreeMap<(String, &'static str), usize> {
             .to_string_lossy()
             .replace('\\', "/");
         let text = std::fs::read_to_string(&file).expect("read source file");
-        let lines: Vec<&str> = text.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("#[cfg(test)]") && next_item_is_a_module(&lines[i + 1..]) {
-                break;
-            }
-            if trimmed.starts_with("//") {
-                continue;
-            }
+        for trimmed in scanned_lines(&text) {
             for &pattern in TRACKED.iter().chain(FORBIDDEN) {
                 if trimmed.contains(pattern) {
                     *counts.entry((rel.clone(), pattern)).or_insert(0) += 1;
@@ -692,5 +714,25 @@ fn destructive_call_sites_match_audited_allowlist() {
         problems.is_empty(),
         "destructive-op inventory drifted from the audited allowlist:\n  {}\n",
         problems.join("\n  ")
+    );
+}
+
+/// The scan reads `src/vcs.rs` below the `mod <name>;` it gates its stub
+/// impl with.
+///
+/// That declaration sits in the file's first twenty lines, so reading it as
+/// a test-module boundary would cut the scan there and put the whole typed
+/// VCS seam outside every count in this file — the trait the destructive
+/// wrappers are declared on, and `reset_attached_ref`, the sole caller the
+/// `--hard` justification names.
+#[test]
+fn the_scan_reads_past_a_test_module_declaration() {
+    let text = std::fs::read_to_string(src_dir().join("vcs.rs")).expect("read src/vcs.rs");
+    assert!(
+        scanned_lines(&text)
+            .iter()
+            .any(|l| l.starts_with("pub trait Vcs")),
+        "src/vcs.rs was cut short of `pub trait Vcs`: a `#[cfg(test)] mod <name>;` \
+         gates another file and opens no region here — the brace is what starts one"
     );
 }
