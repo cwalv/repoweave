@@ -1352,7 +1352,7 @@ impl WorkspaceContext {
         if let Some(project) = self.active_project() {
             eprintln!(
                 "target: workspace {} · project {} (.rwv-active)",
-                self.primary_root.display(),
+                crate::path_spelling::operator_path(&self.primary_root),
                 project.as_str(),
             );
         }
@@ -1504,7 +1504,10 @@ impl WorkspaceContext {
         let active = self.active_project().cloned();
         match &self.checkout {
             Checkout::Primary { .. } => {
-                lines.push(format!("Weave: {}", self.primary_root.display()));
+                lines.push(format!(
+                    "Weave: {}",
+                    crate::path_spelling::operator_path(&self.primary_root)
+                ));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
@@ -1515,8 +1518,14 @@ impl WorkspaceContext {
                 }
             }
             Checkout::Workweave { name, dir, .. } => {
-                lines.push(format!("Workweave: {}", dir.display()));
-                lines.push(format!("Weave: {}", self.primary_root.display()));
+                lines.push(format!(
+                    "Workweave: {}",
+                    crate::path_spelling::operator_path(dir)
+                ));
+                lines.push(format!(
+                    "Weave: {}",
+                    crate::path_spelling::operator_path(&self.primary_root)
+                ));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
@@ -1951,9 +1960,14 @@ impl WorkweaveMarker {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum MarkerDefect {
-    DanglingPrimary { primary: PathBuf },
+    DanglingPrimary {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
+        primary: PathBuf,
+    },
     Legacy,
-    Unreadable { detail: String },
+    Unreadable {
+        detail: String,
+    },
 }
 
 impl MarkerDefect {
@@ -4339,6 +4353,12 @@ mod tests {
     // with that work.
     // ========================================================================
 
+    /// Windows canonicalization returns paths in this form, and it is what a
+    /// published field must never carry: `git -C`, `cmd` and `xargs` all
+    /// choke on it. On Unix no path starts with it, so the assertions that
+    /// name it hold there without saying anything.
+    const VERBATIM_PREFIX: &str = r"\\?\";
+
     /// At primary with an active project: resolution is present, workweave
     /// absent (no workweave checkout), workspace and project match the context.
     #[test]
@@ -4352,7 +4372,17 @@ mod tests {
             .resolution()
             .expect("resolution must be present with an active project");
 
-        assert_eq!(res.workspace, root.canonicalize().unwrap());
+        assert_eq!(
+            res.workspace,
+            crate::path_spelling::wire_path(&root.canonicalize().unwrap()),
+            "the published root is the wire mint of the resolved root, not the \
+             resolved root as this host holds it"
+        );
+        assert!(
+            !res.workspace.starts_with(VERBATIM_PREFIX),
+            "an internal spelling reached a published field: {}",
+            res.workspace
+        );
         assert_eq!(res.project, "myproject");
         assert!(
             res.workweave.is_none(),
@@ -4409,17 +4439,63 @@ mod tests {
             "workweave identity must be '<project>--<name>', got {ww:?}"
         );
         assert_eq!(res.project, "myproject");
-        // workspace is the primary root.
         assert_eq!(
             res.workspace,
-            weave_dir
-                .canonicalize()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("ws")
-                .canonicalize()
-                .unwrap()
+            crate::path_spelling::wire_path(
+                &weave_dir
+                    .canonicalize()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .join("ws")
+                    .canonicalize()
+                    .unwrap()
+            ),
+            "the workspace a workweave publishes is the primary root in the \
+             wire spelling"
+        );
+        assert!(
+            !res.workspace.starts_with(VERBATIM_PREFIX),
+            "an internal spelling reached a published field: {}",
+            res.workspace
+        );
+    }
+
+    /// One root, two seats, one spelling. Built from the two published values
+    /// and nothing else: whatever the mint does, a consumer keying a workweave
+    /// off the workspace root its own resolution names has to match what the
+    /// primary named, and that agreement is the property the wire seam exists
+    /// to hold.
+    #[test]
+    fn primary_and_workweave_publish_one_spelling_of_the_workspace_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
+        let primary_canon = root.canonicalize().unwrap();
+
+        let weave_dir = tmp.path().join("ws--w1");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("myproject").unwrap(),
+            parent: CanonicalPath::of(&primary_canon),
+        }
+        .write(&weave_dir)
+        .unwrap();
+        register_workweave(&primary_canon, "myproject", "w1", &weave_dir);
+
+        let at_primary = WorkspaceContext::resolve_invocation(&root, None)
+            .unwrap()
+            .resolution()
+            .expect("resolution must be present at primary");
+        let in_workweave = WorkspaceContext::resolve_invocation(&weave_dir, None)
+            .unwrap()
+            .resolution()
+            .expect("resolution must be present in a workweave");
+
+        assert_eq!(
+            at_primary.workspace, in_workweave.workspace,
+            "the same root published from two seats must be the same bytes"
         );
     }
 

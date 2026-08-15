@@ -936,6 +936,7 @@ pub enum WeaveRootIdentityConflictKind {
     /// clearing a pointer whose redundancy the marker cannot yet vouch for.
     MarkerUnverifiable {
         /// Absolute path to the `.rwv-workweave` file.
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         marker_path: PathBuf,
         /// Why the marker cannot witness its own claim.
         defect: crate::workspace::MarkerDefect,
@@ -969,6 +970,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// parent is destroyed, so this only arises off the happy path.
     DanglingParent {
         /// The missing parent path recorded in the marker.
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         parent_path: PathBuf,
     },
     /// A parent-chain anomaly: cycle, parent==self, or the parent marker's
@@ -991,6 +993,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// absolute path. Report-only.
     ForeignPrimary {
         /// The primary path recorded in the marker (unresolved).
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         marker_primary: PathBuf,
     },
     /// The marker's `primary:` path does not match this workspace, but
@@ -1001,6 +1004,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// sibling. Still enumerated under `--json`.
     ForeignPrimaryOtherWorkspace {
         /// The other workspace's primary path (resolved).
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         marker_primary: PathBuf,
     },
     /// A registered workweave entry whose recorded path is not a valid
@@ -1021,6 +1025,7 @@ pub enum WorkweaveTreeIntegrityKind {
         /// The recorded name of the workweave.
         workweave_name: String,
         /// The recorded absolute path (which no longer round-trips).
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         recorded_path: PathBuf,
         /// Human-readable reason the entry failed validation.
         reason: String,
@@ -1049,6 +1054,7 @@ pub enum WorkweaveTreeIntegrityKind {
         /// Project whose index is committed.
         project: String,
         /// Path to the tracked index file.
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         index_path: PathBuf,
     },
     /// A `.rwv-workweave` marker that parses as neither current JSON nor a
@@ -1176,6 +1182,7 @@ pub enum CloneTopologyKind {
     StandaloneInWorkweave {
         /// Absolute path of the standalone canonical store under
         /// `.workweaves/`.
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         store_path: PathBuf,
     },
     /// The workspace at `<weave>/<repo_path>` is a full clone (its
@@ -1186,10 +1193,12 @@ pub enum CloneTopologyKind {
     DisconnectedWeaveClone {
         /// Absolute path of the canonical store at the weave slot (the
         /// "disconnected" one).
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         weave_store_path: PathBuf,
         /// Absolute path of a representative store one of the workweave
         /// checkouts actually uses (the one this weave clone is
         /// disconnected from).
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         other_store_path: PathBuf,
     },
     /// A linked worktree under `.workweaves/<workweave>/<repo_path>` whose
@@ -1200,9 +1209,11 @@ pub enum CloneTopologyKind {
     WrongParentWorktree {
         /// Absolute path of the canonical store this workweave checkout
         /// should be linked into (`<weave>/<repo_path>/.git`).
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         expected_store_path: PathBuf,
         /// Absolute path of the canonical store this workweave checkout
         /// is actually linked into.
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         actual_store_path: PathBuf,
     },
     /// The weave path `<weave>/<repo_path>` itself is a linked worktree of
@@ -1211,6 +1222,7 @@ pub enum CloneTopologyKind {
     /// whichever clone hosts the actual store.
     WeaveCloneIsWorktree {
         /// Absolute path of the canonical store this slot is linked into.
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         actual_store_path: PathBuf,
     },
 }

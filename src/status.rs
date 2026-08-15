@@ -51,8 +51,11 @@ pub struct OpStatus {
     /// Workspace holding the full op record (`.rwv-op`) — the workspace
     /// `--continue`/`abort` must run from. Equal to the reporting workspace
     /// unless this workspace only holds a lease.
+    #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
     pub owner: PathBuf,
+    #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
     pub source: PathBuf,
+    #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
     pub target: PathBuf,
     pub overrides: Vec<op_state::Override>,
 }
@@ -468,7 +471,7 @@ fn print_op_header(op: &OpStatus) {
         id = op.id,
         phase = op.phase,
         elapsed = op_state::elapsed_since(&op.started_at),
-        owner = op.owner.display(),
+        owner = crate::path_spelling::operator_path(&op.owner),
     );
     println!(
         "  resume with `{resume}`, or `rwv abort` to discard",

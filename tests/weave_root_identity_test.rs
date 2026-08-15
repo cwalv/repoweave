@@ -847,16 +847,29 @@ fn doctor_reports_a_distinct_marker_unverifiable_finding_per_defect() {
         .unwrap_or_else(|e| panic!("doctor --json must emit JSON ({e}); got: {stdout}"));
     let defect_tag = |root: &Path| -> String {
         let canonical = root.canonicalize().unwrap();
+        // The wire spelling, because that is what the field carries — a
+        // canonicalized root stringified as the host holds it matches only
+        // where the two happen to coincide.
+        let wire_root = repoweave::path_spelling::wire_path(&canonical);
         let finding = doc["violations"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|v| {
-                v["kind"] == "weave-root-identity-conflict"
-                    && v["root"] == canonical.to_string_lossy().as_ref()
-            })
+            .find(|v| v["kind"] == "weave-root-identity-conflict" && v["root"] == wire_root)
             .unwrap_or_else(|| panic!("expected a finding for {}; got: {stdout}", root.display()));
-        match &finding["sub_kind"]["marker-unverifiable"]["defect"] {
+        let sub_kind = &finding["sub_kind"]["marker-unverifiable"];
+        // Read out of the finding rather than minted here, so what this pins
+        // is that the two published fields agree: the path nested inside the
+        // variant is owed the spelling its sibling `root` already carries, and
+        // an unrouted one is spelled by serde instead.
+        let published_root = finding["root"].as_str().unwrap();
+        assert_eq!(
+            sub_kind["marker_path"],
+            serde_json::Value::String(format!("{published_root}/.rwv-workweave")),
+            "the marker path inside the variant must be spelled like the root \
+             beside it; got: {stdout}"
+        );
+        match &sub_kind["defect"] {
             serde_json::Value::String(s) => s.clone(),
             serde_json::Value::Object(o) => o.keys().next().unwrap().clone(),
             other => panic!("unexpected defect shape: {other:?}"),

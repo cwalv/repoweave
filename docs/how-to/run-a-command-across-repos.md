@@ -35,6 +35,13 @@ For large projects, run in parallel:
 rwv status --json | jq -r '.repos[] | .absolute_path' | xargs -P 4 -I {} git -C {} fetch --all
 ```
 
+`absolute_path` is emitted forward-separated on every platform, so these pipelines
+carry no byte bare `xargs` reads as an escape. One thing still varies by platform:
+if `git` answers `cannot change to '<path>?'`, the pipeline is carrying CR line
+endings — a `jq` build that writes CRLF is the usual source — and `xargs` is handing
+the CR to the command as part of the path. Insert `tr -d '\r'` between `jq` and
+`xargs` to strip it.
+
 The `$schema` field in the output (`rwv explain status` embeds the full JSON Schema)
 tells you exactly what fields are available for filtering. Tier-1 composition can
 express anything a finite verb set could cover, plus everything it couldn't.

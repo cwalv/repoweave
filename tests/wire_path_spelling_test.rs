@@ -10,6 +10,7 @@
 //! manifest-relative. Field names decide nothing here; the constructing code
 //! does.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -32,14 +33,22 @@ fn every_wire_path_field_is_minted_by_the_seam() {
         "canonical_path",
         "expected_store_path",
         "index_path",
+        "legacy_path",
+        "manifest_path",
         "marker_path",
+        "member_config",
+        "missing_dir",
         "missing_path",
         "other_store_path",
         "parent_path",
+        "primary",
         "recorded_owner",
         "recorded_path",
         "repo_path",
+        "root",
         "store_path",
+        "target",
+        "weave_config",
         "weave_store_path",
         "workspace_dir",
         "workweave_dir",
@@ -54,6 +63,7 @@ fn every_wire_path_field_is_minted_by_the_seam() {
     let lines = production_lines();
     let mut unminted = Vec::new();
     let mut minted = 0usize;
+    let mut live = BTreeSet::new();
     for (i, line) in lines.iter().enumerate() {
         let text = line.text.trim();
         let Some((field, _)) = text.split_once(':') else {
@@ -76,10 +86,25 @@ fn every_wire_path_field_is_minted_by_the_seam() {
         }
         if window.contains("wire_path") {
             minted += 1;
+            live.insert(field.trim().to_string());
         } else if window.contains("to_string_lossy") || window.contains(".display()") {
             unminted.push(format!("{}: {}", line.site(), text));
         }
     }
+
+    // A name whose sites have all moved to a `PathBuf` field is still covered
+    // — by the type-keyed scan below, at its declaration rather than at an
+    // assignment.
+    for line in lines.iter() {
+        let text = line.text.trim();
+        if let Some(field) = text.strip_suffix(": PathBuf,") {
+            live.insert(field.trim_start_matches("pub ").to_string());
+        }
+    }
+    let dead: Vec<&&str> = WIRE_PATH_FIELDS
+        .iter()
+        .filter(|f| !live.contains(**f))
+        .collect();
 
     assert!(
         unminted.is_empty(),
@@ -96,6 +121,103 @@ fn every_wire_path_field_is_minted_by_the_seam() {
         minted >= 18,
         "the scan found only {minted} minted wire path fields; it has stopped \
          seeing the assignments it is supposed to police"
+    );
+    // An entry that names nothing is the same failure one size down: the list
+    // reads as covering a field the tree no longer spells that way, and the
+    // reader counts it.
+    assert!(
+        dead.is_empty(),
+        "these entries name no wire path field in the tree — the field was \
+         renamed or removed and the list still counts it as covered:\n{dead:#?}"
+    );
+}
+
+/// Every `PathBuf` a `--json` type holds is spelled by the mint at the serde
+/// boundary — the whole population, at any nesting depth.
+///
+/// The scan above reads assignment syntax, so it sees only the fields some
+/// conversion writes by name. A path field the wire type holds as a `PathBuf`
+/// is written by serde, which is not an assignment and carries no field name
+/// to match; a `sub_kind` moved across a boundary whole publishes every path
+/// inside it without any site the other scan can read. That is not a deeper
+/// nesting of the same shape, it is a second one, which is why this scan is
+/// keyed on the type of the field rather than on its name.
+#[test]
+fn every_path_typed_wire_field_is_spelled_by_the_mint() {
+    const MINT: &str = "serialize_with = \"crate::path_spelling::serialize_wire_path\"";
+    let lines = production_lines();
+    let mut unrouted = Vec::new();
+    let mut routed = 0usize;
+    let mut wire_items = 0usize;
+
+    let mut i = 0;
+    while i < lines.len() {
+        if !lines[i].text.trim_start().starts_with("#[") {
+            i += 1;
+            continue;
+        }
+        let mut attributes = String::new();
+        while i < lines.len() && lines[i].text.trim_start().starts_with("#[") {
+            attributes.push_str(&lines[i].text);
+            i += 1;
+        }
+        let Some(header) = lines.get(i) else { break };
+        let head = header.text.trim_start();
+        let declares_item = ["struct ", "enum "]
+            .iter()
+            .any(|kw| head.starts_with(kw) || head.contains(&format!("pub {kw}")));
+        if !declares_item || !attributes.contains("JsonSchema") {
+            continue;
+        }
+        wire_items += 1;
+
+        let mut depth = 0i32;
+        let mut opened = false;
+        while i < lines.len() {
+            let text = lines[i].text.clone();
+            depth += text.matches('{').count() as i32 - text.matches('}').count() as i32;
+            opened |= text.contains('{');
+            if text.contains("PathBuf") && !text.trim_start().starts_with("#[") {
+                // The whole attribute run above the field, so a second serde
+                // attribute on the same field does not hide the mint.
+                let mut above = String::new();
+                let mut back = i;
+                while back > 0 && lines[back - 1].text.trim_start().starts_with("#[") {
+                    above.push_str(&lines[back - 1].text);
+                    back -= 1;
+                }
+                if above.contains(MINT) {
+                    routed += 1;
+                } else {
+                    unrouted.push(format!("{}: {}", lines[i].site(), text.trim()));
+                }
+            }
+            i += 1;
+            if opened && depth <= 0 {
+                break;
+            }
+            if !opened && text.trim_end().ends_with(';') {
+                break;
+            }
+        }
+    }
+    assert!(
+        unrouted.is_empty(),
+        "these `--json` types hold a path serde spells for them, so the value \
+         reaches the wire in whatever the host wrote — on Windows that is the \
+         verbatim prefix and backslashes the documented `jq | xargs` recipe \
+         cannot carry:\n{unrouted:#?}"
+    );
+    assert!(
+        wire_items >= 50,
+        "the scan found only {wire_items} `--json` types; it has stopped \
+         seeing the population it is supposed to police"
+    );
+    assert!(
+        routed >= 25,
+        "the scan found only {routed} path-typed wire fields carrying the \
+         mint; either the walk has gone blind or the fields moved to a \
+         `String` minted at construction, and which one it is has to be read"
     );
 }
 

@@ -443,40 +443,50 @@ impl VcsError {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum VcsErrorOutput {
     NotARepo {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         path: PathBuf,
     },
     RevisionNotFound {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         rev: String,
     },
     BranchAlreadyExists {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         branch: String,
     },
     WorktreeExists {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         path: PathBuf,
     },
     UncommittedChanges {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         path: PathBuf,
     },
     RebaseConflict {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         op: ConflictOp,
     },
     StaleRefWitness {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         expected: String,
         observed: String,
     },
     MidOperation {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         operation: String,
     },
     HookRejected {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         stderr: String,
     },
     UntrackedCollision {
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         paths: Vec<String>,
     },
@@ -490,6 +500,7 @@ pub enum VcsErrorOutput {
     },
     CommandFailed {
         args: Vec<String>,
+        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         stderr: String,
     },

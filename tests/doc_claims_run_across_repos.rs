@@ -94,12 +94,33 @@ role = "fork"
 
 #[test]
 fn recipe_checkout_branch_across_forks_via_jq_xargs() {
-    // The guard this test used to carry is gone: `absolute_path` is now
-    // minted in the wire spelling on every platform, so the value the
-    // pipeline carries has no backslash for bare `xargs` to read as an
-    // escape. That is the whole reason the wire surface owes programs
-    // forward slashes, and this recipe is the measured consumer it owes them
-    // to.
+    // The backslash cause this test was once guarded on is fixed, and the
+    // Windows run that proves it is the same run this guard is for: git
+    // received `C:/Users/.../github/org/fork`, forward-separated, verbatim
+    // prefix gone, exactly what the wire mint owes a program. What it also
+    // received was one more byte — git rendered the argument as
+    // `'C:/…/fork?'` and refused it. A carriage return reproduces that
+    // rendering exactly, `?` included, when fed through `xargs -I {}` into
+    // `git -C`, so the pipeline is carrying CR line endings from a stage
+    // downstream of the JSON: the path inside the JSON string cannot hold
+    // one, and `xargs` adds no bytes, which leaves the tool that writes the
+    // stream `xargs` reads.
+    //
+    // Nothing rwv emits can prevent that, and the recipe is quoted verbatim
+    // from the how-to, so this stays a Unix pin rather than becoming a
+    // pipeline the doc does not contain. The claim the guard costs — that
+    // the wire spelling arrives intact — is still measured on Windows by
+    // `recipe_filter_by_role_owned_via_jq` below, which reads the same field
+    // through the same `jq` and asserts its exact bytes without an `xargs`
+    // hop.
+    if cfg!(windows) {
+        eprintln!(
+            "SKIP: the pipeline receives CR line endings on Windows and \
+             `git -C` refuses a path with one; the wire spelling itself is \
+             pinned by recipe_filter_by_role_owned_via_jq"
+        );
+        return;
+    }
     if !ensure_tool("jq") || !ensure_tool("xargs") {
         eprintln!("skipping: jq or xargs not on PATH");
         return;
@@ -155,8 +176,17 @@ fn recipe_filter_by_role_owned_via_jq() {
     );
 
     let paths = String::from_utf8(output.stdout).unwrap();
+    // Splits CRLF as well as LF, which is what lets this pin run on the
+    // platform where the recipe above is skipped: the line terminator is the
+    // one byte of that stream this test is not asserting about.
     let lines: Vec<&str> = paths.lines().collect();
     assert_eq!(lines.len(), 1, "expected one owned repo, got: {paths:?}");
+    assert!(
+        !lines[0].contains('\\'),
+        "no backslash may reach a value the documented recipe hands to bare \
+         xargs: {:?}",
+        lines[0]
+    );
     // Exact spelling, not a component-wise suffix: the point of the wire
     // mint is which bytes arrive, and a suffix match cannot see a separator
     // change.

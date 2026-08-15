@@ -265,12 +265,19 @@ fn unregistered_workweave_is_addressed_by_directory_in_push_refusal() {
     let out = rwv().args(["push"]).current_dir(&dir).output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(!out.status.success(), "push must refuse: {stderr}");
+    // The operator spelling, because a refusal is read by a person who will
+    // paste the path back into their own shell — the canonicalized form this
+    // host holds is not that on every host.
     assert!(
         stderr.contains(&format!(
             "workweave at {}",
-            dir.canonicalize().unwrap().display()
+            repoweave::path_spelling::operator_path(&dir.canonicalize().unwrap())
         )),
         "the refusal must address the workweave by directory: {stderr}"
+    );
+    assert!(
+        !stderr.contains(r"\\?\"),
+        "an internal spelling reached a refusal: {stderr}"
     );
 }
 

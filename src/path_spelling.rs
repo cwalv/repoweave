@@ -49,6 +49,19 @@ pub fn operator_path(path: &Path) -> String {
     dunce::simplified(path).to_string_lossy().into_owned()
 }
 
+/// The mint applied at the serde boundary, for a wire field that stays a
+/// `PathBuf` because something inside the binary still reads it as a path.
+///
+/// serde's own `PathBuf` impl publishes whatever the host spelled, so a field
+/// reaching `--json` as a `PathBuf` needs this attached to it; a field whose
+/// only consumer is the wire holds a `String` minted at construction instead.
+pub fn serialize_wire_path<S: serde::Serializer>(
+    path: &Path,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&wire_path(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
