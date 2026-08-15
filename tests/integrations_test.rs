@@ -7,27 +7,6 @@
 //! 4. Deactivation cleanup
 //! 5. Check warnings (e.g., missing tools)
 //!
-//! # RED-first scenarios (TDD anchor)
-//!
-//! Scenarios not yet implemented are
-//! realized here as RED-first tests.
-//! Tests that assert behavior the current code does NOT yet implement are
-//! marked `#[ignore = "RED: turned green by <port spec>"]`. The port author
-//! (npm: C4, vscode: C5, cargo: C7, uv: C9, pnpm: C10, go: C11, static-files:
-//! C13) removes the `#[ignore]` attribute when their port lands and the test
-//! turns green naturally.
-//!
-//! **Why `#[ignore]` rather than letting tests fail?** The spec offered both;
-//! we picked `#[ignore]` because (a) the port work items land incrementally over
-//! Phase 3 and a permanently-red suite would block other port work from
-//! confirming its own greens, and (b) `cargo test -- --ignored`
-//! enumerates every RED test in one run, which is the visibility the spec
-//! wants for port authors. The `#[ignore]` annotation always names the spec
-//! that will flip it.
-//!
-//! Assertions describe the REAL desired behavior; they are not contorted to
-//! stay green against the current broken code (per no-workaround-assertions).
-//!
 //! The shared common-contract helper lives at `tests/common/contract.rs`.
 
 mod common;
@@ -6829,235 +6808,6 @@ mod vscode_workspace {
     }
 
     // -----------------------------------------------------------------------
-    // §6 vscode-workspace — RED scenarios (turned green by C5)
-    // -----------------------------------------------------------------------
-    //
-    // RED against current `:178-181` (per-key files.exclude merge), `:119-122`
-    // (multi-root folders preservation), and `:209` (strip-not-delete deactivate).
-
-    /// §6.vscode.1 — User adds a personal `files.exclude` entry; sync must
-    /// not eat it. RED vs current :178-181 (whole-map insert).
-    #[test]
-    fn s6_vscode_1_user_files_exclude_entries_survive_activate() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        // Pre-existing rwv-generated workspace with rwv-owned files.exclude
-        // entries (.* + projects/foundations-test) + user-added entries
-        // (**/target and dist).
-        write_file(
-            root,
-            "test-project.code-workspace",
-            r#"{
-  "rwv.generated": true,
-  "folders": [{ "path": ".", "name": "test-project (primary)" }],
-  "settings": {
-    "git.autoRepositoryDetection": "subFolders",
-    "git.repositoryScanMaxDepth": 3,
-    "files.exclude": {
-      ".*": true,
-      "projects/foundations-test": true,
-      "**/target": true,
-      "dist": true
-    }
-  }
-}"#,
-        );
-
-        // New repo on disk — a fresh activation cycle.
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let all_repos_on_disk: Vec<RepoPath> =
-            vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-        let cache = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config: &config,
-            all_repos_on_disk: &all_repos_on_disk,
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
-
-        VscodeWorkspace.activate(&ctx).unwrap();
-        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-        let exclude = &parsed["settings"]["files.exclude"];
-        // User-added keys MUST survive.
-        assert_eq!(
-            exclude["**/target"],
-            serde_json::Value::Bool(true),
-            "user-added **/target must survive activate; got: {exclude}"
-        );
-        assert_eq!(
-            exclude["dist"],
-            serde_json::Value::Bool(true),
-            "user-added dist must survive activate; got: {exclude}"
-        );
-        // rwv-owned keys still set correctly.
-        assert_eq!(exclude[".*"], serde_json::Value::Bool(true));
-        // Marker is now object form: {"managed": true, "files.exclude": [...]}
-        assert_eq!(
-            parsed["rwv.generated"]["managed"],
-            serde_json::Value::Bool(true)
-        );
-    }
-
-    /// §6.vscode.2 — User-added extensions/launch/tasks/compounds survive
-    /// activate AND deactivate. RED vs current :209 (whole-file delete).
-    #[test]
-    fn s6_vscode_2_user_top_level_blocks_survive_activate_and_deactivate() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(
-            root,
-            "test-project.code-workspace",
-            r#"{
-  "rwv.generated": true,
-  "folders": [{ "path": ".", "name": "test-project (primary)" }],
-  "settings": {
-    "git.autoRepositoryDetection": "subFolders",
-    "git.repositoryScanMaxDepth": 3
-  },
-  "extensions": {
-    "recommendations": ["rust-lang.rust-analyzer", "tamasfe.even-better-toml"]
-  },
-  "launch": {
-    "configurations": [
-      { "type": "lldb", "request": "launch", "name": "debug rvtty" }
-    ]
-  },
-  "tasks": {
-    "version": "2.0.0",
-    "tasks": [{ "label": "build", "type": "shell", "command": "cargo build" }]
-  },
-  "compounds": [
-    { "name": "all-services", "configurations": ["debug rvtty"] }
-  ]
-}"#,
-        );
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        // After activate: all four blocks must be intact.
-        VscodeWorkspace.activate(&ctx).unwrap();
-        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert!(
-            parsed["extensions"]["recommendations"]
-                .as_array()
-                .map(|a| a
-                    .iter()
-                    .any(|v| v.as_str() == Some("rust-lang.rust-analyzer")))
-                .unwrap_or(false),
-            "extensions.recommendations must survive activate; got: {parsed}"
-        );
-        assert!(
-            parsed["launch"]["configurations"][0]["name"].as_str() == Some("debug rvtty"),
-            "launch.configurations must survive activate; got: {parsed}"
-        );
-        assert_eq!(parsed["tasks"]["version"], "2.0.0", "tasks must survive");
-        assert_eq!(
-            parsed["compounds"][0]["name"], "all-services",
-            "compounds must survive"
-        );
-
-        // After deactivate: file MUST persist (not be deleted); owned keys
-        // stripped (the primary folder, the recorded files.exclude keys, the
-        // marker); the four user blocks remain.
-        VscodeWorkspace.deactivate(root).unwrap();
-        assert!(
-            root.join("test-project.code-workspace").exists(),
-            "deactivate must NOT delete a file with user-authored blocks"
-        );
-        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert!(
-            parsed.get("rwv.generated").is_none(),
-            "marker must be stripped; got: {parsed}"
-        );
-        assert!(
-            parsed.get("folders").is_none(),
-            "folders is owned; must be stripped; got: {parsed}"
-        );
-        // User content MUST remain.
-        assert!(
-            parsed["extensions"]["recommendations"].is_array(),
-            "extensions must survive deactivate"
-        );
-        assert!(parsed["launch"]["configurations"].is_array());
-        assert!(parsed["tasks"]["tasks"].is_array());
-        assert!(parsed["compounds"].is_array());
-    }
-
-    /// §6.vscode.3 — User converts to multi-root; rwv keeps the extra folder.
-    /// RED vs current :119-122 (whole-array overwrite).
-    #[test]
-    fn s6_vscode_3_user_added_folder_survives_multi_root() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        write_file(
-            root,
-            "test-project.code-workspace",
-            r#"{
-  "rwv.generated": true,
-  "folders": [
-    { "path": ".", "name": "test-project (primary)" },
-    { "path": "../shared-notes", "name": "notes" }
-  ]
-}"#,
-        );
-
-        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
-        let project = ProjectName::new("test-project").unwrap();
-        let config = IntegrationConfig::default();
-        let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
-
-        VscodeWorkspace.activate(&ctx).unwrap();
-        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        let folders = parsed["folders"].as_array().unwrap();
-
-        assert!(
-            folders.len() >= 2,
-            "folders must include both entries; got: {folders:?}"
-        );
-        // Primary folder is rwv-owned and refreshed.
-        assert!(
-            folders.iter().any(|f| f["path"].as_str() == Some(".")),
-            "primary `.` folder must be present; got: {folders:?}"
-        );
-        // User-added notes folder MUST survive (dedupe on path).
-        assert!(
-            folders.iter().any(|f| {
-                f["path"].as_str() == Some("../shared-notes") && f["name"].as_str() == Some("notes")
-            }),
-            "user-added folder must survive; got: {folders:?}"
-        );
-        // Marker is now object form: {"managed": true, "files.exclude": [...]}
-        assert_eq!(
-            parsed["rwv.generated"]["managed"],
-            serde_json::Value::Bool(true)
-        );
-    }
-
-    // -----------------------------------------------------------------------
     // DefaultOnly semantics for git.* settings
     //
     // git.autoRepositoryDetection and git.repositoryScanMaxDepth are
@@ -7133,65 +6883,16 @@ mod vscode_workspace {
             "user-set git.repositoryScanMaxDepth must not be overwritten on re-activate"
         );
     }
-
-    /// §6.vscode.4 — Deactivate of a purely-rwv file deletes it; hand-written
-    /// file (no marker) is untouched.
-    #[test]
-    fn s6_vscode_4_deactivate_deletes_purely_rwv_preserves_hand_written() {
-        let tmp = common::tempdir().unwrap();
-        let root = tmp.path();
-
-        // (a) Purely-rwv-owned file: marker + only owned content. The marker
-        // records the exclude keys rwv set, so all of them are its own.
-        write_file(
-            root,
-            "proj.code-workspace",
-            r#"{
-  "rwv.generated": { "managed": true, "files.exclude": [".*"] },
-  "folders": [{ "path": ".", "name": "proj (primary)" }],
-  "settings": {
-    "git.autoRepositoryDetection": "subFolders",
-    "git.repositoryScanMaxDepth": 3,
-    "files.exclude": { ".*": true }
-  }
-}"#,
-        );
-
-        // (b) Hand-written file: NO marker, real user content.
-        write_file(
-            root,
-            "mine.code-workspace",
-            r#"{
-  "folders": [{ "path": "." }],
-  "settings": { "editor.tabSize": 2 }
-}"#,
-        );
-
-        VscodeWorkspace.deactivate(root).unwrap();
-
-        assert!(
-            !root.join("proj.code-workspace").exists(),
-            "purely-rwv file must be deleted (residual empty)"
-        );
-        assert!(
-            root.join("mine.code-workspace").exists(),
-            "hand-written .code-workspace (no marker) must be preserved"
-        );
-        let mine = std::fs::read_to_string(root.join("mine.code-workspace")).unwrap();
-        assert!(
-            mine.contains("editor.tabSize"),
-            "hand-written file content must be untouched; got: {mine}"
-        );
-    }
 }
 
 // ===========================================================================
 // vscode-workspace: §6 residual-bug scenarios
 // ===========================================================================
 //
-// Scenarios 1–4 from plan §6 "vscode-workspace". Each scenario pins one of
-// the four residual bugs. They were RED against the
-// pre-fix code; they are GREEN after the fixes land.
+// Each scenario pins one promise of the activate/deactivate merge over a
+// `.code-workspace`: what the user put there survives both, and rwv's own
+// region — the `folders` entry whose path is ".", the marker, and the
+// `files.exclude` keys the marker records — is the only thing either touches.
 
 mod vscode_workspace_scenarios {
     use super::*;
@@ -8760,62 +8461,80 @@ mod static_files {
     //
     // §6.static-files.2 — deactivate strips only static-files-owned symlinks;
     // foreign symlinks and user files survive. The integration's
-    // `deactivate(root)` is a no-op (symlink removal is the framework's job),
-    // so this is the framework-level owner-scoped predicate (C3). RED until
-    // the framework predicate is owner-scoped.
+    // `deactivate(root)` is a no-op — symlink removal is the framework's job,
+    // so the subject is `repoweave::activate::unsurface_names`.
     //
     // §6.static-files.3 — missing declared file skipped with warning (already
     // covered by `check_warns_on_missing_files` and
     // `activate_succeeds_even_when_files_missing` above; we leave them in
     // place rather than duplicate).
-    //
-    // Cross-platform: this scenario uses unix symlinks. Gated `#[cfg(unix)]`.
 
-    /// §6.static-files.2 — deactivate (framework symlink reaping) must remove
-    /// only static-files-owned symlinks; workweave.link symlinks and plain
-    /// user files survive.
+    /// §6.static-files.2 — the framework's symlink reaping is owner-scoped on
+    /// BOTH legs of its conjunction: a declared name is unlinked only when the
+    /// name is one rwv surfaces AND the link's target is the shape activation
+    /// would have written (`projects/<project>/<that name>`).
     ///
-    /// The framework predicate that owns this (activate.rs:282 owner-blind
-    /// removal) is being fixed by C3 (`generated_files()` split into
-    /// `managed_files()`) + C13 (owner-scoped removal). Because the predicate
-    /// lives in the framework, not in `Integration::deactivate(root)`, this
-    /// test asserts the END-STATE behavior via the framework path — for now
-    /// we encode the spec as a SKIP'd test with a clear pointer to the
-    /// caller. When C3/C13 land they fold the assertion into an e2e test
-    /// (plan §8 "e2e (real CLI)").
-    #[cfg(unix)]
+    /// The defect this catches is the target-shape leg going blind: a
+    /// `workweave.link` entry is an absolute symlink into the source weave, so
+    /// a name declared by both it and `static-files.files` — what an operator
+    /// migrating a name between the two holds for one activation — would be
+    /// unlinked out from under the operator by a name-only predicate.
+    ///
+    /// `tests/integration_framework_test.rs::owner_scoped_removal_preserves_unowned_symlinks`
+    /// drives the other leg (an owner-shaped target at a name no integration
+    /// claims) and is blind to this one.
     #[test]
-    #[ignore = "RED: owner-scoped symlink removal is framework-level; \
-                turned green by C3 + C13 via e2e flow. \
-                The Integration::deactivate trait method cannot express this \
-                — it tests the framework's symlink-reaping predicate, which \
-                is the C3/C13 fix."]
     fn s6_static_files_2_deactivate_owner_scoped_symlink_removal() {
-        // Encoded here as a placeholder so the §6 inventory is complete and
-        // C3/C13 reviewers know where to look. The actual assertion lands
-        // when the framework symlink-reaping is callable from this layer
-        // (after the C3 split) — see plan §8 e2e plan. The intent:
-        //
-        // GIVEN root with:
-        //   .prettierrc      → symlink to projects/<project>/.prettierrc  (static-files-owned)
-        //   turbo.json       → symlink to <primary>/turbo.json            (workweave.link)
-        //   a declared file the operator wrote by hand (no symlink)
-        // WHEN the activation framework reaps symlinks via the owner-scoped
-        //      predicate (membership ∈ static-files.files ∧ read_link →
-        //      projects/<project>/<file>)
-        // THEN
-        //   .prettierrc is removed
-        //   turbo.json symlink survives (target shape differs)
-        //   the hand-written file is byte-identical
-        //
-        // The integration's `Integration::deactivate(root)` is a no-op, so
-        // exercising this end-to-end requires the framework path that
-        // C3 + C13 deliver. The spec acknowledges this
-        // scenario is "extended if needed" — extension lands when the
-        // framework-call seam exists.
-        panic!(
-            "placeholder — fold into e2e under C3 + C13; \
-             see plan §8 e2e plan"
+        use repoweave::symlink::{create as symlink_to, LinkTarget};
+
+        let tmp = common::tempdir().unwrap();
+        let root = tmp.path();
+        let source_weave = common::tempdir().unwrap();
+
+        // Surfaced out of the project the way activation writes it: a relative
+        // `projects/<project>/<name>` target.
+        write_file(root, "projects/test-project/.prettierrc", "{}\n");
+        symlink_to(
+            Path::new("projects/test-project/.prettierrc"),
+            &root.join(".prettierrc"),
+            LinkTarget::File,
+        )
+        .unwrap();
+
+        // A workweave.link: an absolute link at a name the removal set also
+        // names. Only the target shape distinguishes it.
+        let foreign_target = source_weave.path().join("turbo.json");
+        std::fs::write(&foreign_target, "{\"pipeline\": {}}\n").unwrap();
+        symlink_to(&foreign_target, &root.join("turbo.json"), LinkTarget::File).unwrap();
+
+        // A declared name the operator wrote by hand — not a link at all.
+        let hand_written = "{\"extends\": \"../base\"}\n";
+        write_file(root, ".eslintrc.json", hand_written);
+
+        let names = vec![
+            ".prettierrc".to_string(),
+            "turbo.json".to_string(),
+            ".eslintrc.json".to_string(),
+        ];
+        repoweave::activate::unsurface_names(root, &names).unwrap();
+
+        assert!(
+            root.join(".prettierrc").symlink_metadata().is_err(),
+            "the surfaced static-files symlink must be removed"
+        );
+
+        assert_eq!(
+            std::fs::read_link(root.join("turbo.json")).ok(),
+            Some(foreign_target),
+            "a declared name whose link points outside projects/<project>/ is \
+             not rwv's surfacing and must survive"
+        );
+
+        assert_eq!(
+            std::fs::read_to_string(root.join(".eslintrc.json")).ok(),
+            Some(hand_written.to_string()),
+            "a declared name the operator wrote as a real file must be \
+             byte-identical"
         );
     }
 }
@@ -9820,7 +9539,8 @@ mod s7_pnpm_doctor {
 
     /// Given: USER-HELD pnpm-workspace.yaml.
     /// When:  activate() runs (merge's guard).
-    /// Then:  packages: content is not clobbered.
+    /// Then:  The file is byte-identical and still USER-HELD — activate never
+    ///        takes the pen from a file it does not already hold.
     #[test]
     fn s7_pnpm_doctor_user_held_file_unchanged_after_activate() {
         let tmp = common::tempdir().unwrap();
@@ -9840,13 +9560,19 @@ mod s7_pnpm_doctor {
         assert_eq!(issues.len(), 1);
         assert!(!issues[0].safe_to_fix, "must be USER-HELD");
 
-        NpmWorkspaces.activate(&ctx).unwrap();
+        PnpmWorkspaces.activate(&ctx).unwrap();
 
-        // pnpm-workspace.yaml itself is unchanged (merge defers on the packages: key).
         let after = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+        assert_eq!(
+            after, original,
+            "activate must leave a USER-HELD pnpm-workspace.yaml byte-identical"
+        );
+
+        let post = PnpmWorkspaces.verify(&ctx).unwrap();
+        assert_eq!(post.len(), 1, "expected the USER-HELD finding to persist");
         assert!(
-            !after.contains("# managed by repoweave"),
-            "user-held file must NOT have marker added: {after}"
+            !post[0].safe_to_fix,
+            "post-activate finding must still be USER-HELD, got: {post:?}"
         );
     }
 
