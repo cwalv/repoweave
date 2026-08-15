@@ -7,7 +7,8 @@
 //!   - `plugins` records: name, path, shadowed flag, shadowed_by.
 //!   - Doctor exit code is UNAFFECTED by the presence or absence of plugins.
 //!
-//! All tests pin PATH to fixture directories — never the host's real PATH.
+//! All tests pin PATH to fixture directories plus a directory holding
+//! nothing but `git` — never the host's real PATH.
 //!
 //! SKIPPED ON WINDOWS. Every fixture here is a `#!/bin/sh` script made
 //! executable with a mode bit, and the subject is which of them `which` will
@@ -24,23 +25,54 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 mod common;
 
-/// Build a PATH string that includes `extra_dir` as a prefix but also
-/// retains the system directories needed to find `git` and other tools
-/// the rwv binary invokes internally. We can't use an empty PATH for
-/// doctor tests because doctor shells out to git.
-fn path_with_prefix(extra_dir: &Path) -> String {
-    let inherited = std::env::var("PATH").unwrap_or_default();
-    format!("{}:{inherited}", extra_dir.display())
+/// A directory holding a symlink to `git` and nothing else, resolved off the
+/// test harness's own PATH.
+///
+/// Doctor shells out to `git` internally, so its tests need `git` reachable
+/// — but PATH discovery of `rwv-*` binaries is exactly the property under
+/// test here, and the operator's real PATH may carry one (that is this
+/// file's own bug report). Handing doctor's subprocess the directory `git`
+/// actually lives in would still leak whatever else lives beside it there;
+/// this shim carries only `git`. Same shape as `go_free_bin` in
+/// `member_incompatibility_test.rs`, solving the same problem for a
+/// different tool.
+fn git_only_bin() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        // Not a `TempDir`: one held in a `static` never drops, so it would
+        // leave a directory behind on every run.
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("plugins-doctor-git-only-bin");
+        fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
+
+        let git = which::which("git").expect("git must be resolvable to run these tests");
+        let link = dir.join("git");
+        // The directory is a `static` reused across runs, so the link
+        // usually already exists.
+        if link.symlink_metadata().is_err() {
+            repoweave::symlink::create(&git, &link, repoweave::symlink::LinkTarget::File)
+                .unwrap_or_else(|e| panic!("linking git into {}: {e}", dir.display()));
+        }
+        dir
+    })
+    .clone()
 }
 
-/// Build a PATH string from multiple dirs (each prepended before inherited PATH).
+/// Build a PATH string with `extra_dir` ahead of the git-only directory —
+/// doctor shells out to git, so its tests need git reachable, but nothing
+/// else the host's real PATH might carry.
+fn path_with_prefix(extra_dir: &Path) -> String {
+    format!("{}:{}", extra_dir.display(), git_only_bin().display())
+}
+
+/// Build a PATH string from multiple dirs, each ahead of the git-only
+/// directory.
 fn multi_path_with_prefix(dirs: &[&Path]) -> String {
-    let inherited = std::env::var("PATH").unwrap_or_default();
     let prefix: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
-    format!("{}:{inherited}", prefix.join(":"))
+    format!("{}:{}", prefix.join(":"), git_only_bin().display())
 }
 
 fn rwv() -> assert_cmd::Command {
@@ -425,5 +457,45 @@ fn doctor_json_plugins_sorted_by_name() {
         names,
         &["alpha", "middle", "zebra"],
         "not sorted: {names:?}"
+    );
+}
+
+// ===========================================================================
+// 3. Host-PATH isolation control
+// ===========================================================================
+
+/// Seed a decoy `rwv-*` binary onto the PATH this test process actually
+/// inherited, then re-run the rest of this file as a child process that
+/// inherits the poisoned PATH, and confirm it stays green.
+///
+/// Mutating this process's own PATH via `std::env::set_var` would be unsound
+/// under a parallel test runner (see `write_exit_code_shim`'s doc comment in
+/// `integrations_test.rs`), so the decoy goes on a re-invocation of this
+/// test binary instead — the same self-invocation shape
+/// `ref_registry_test.rs` uses to control environment for a whole test
+/// process.
+#[test]
+fn suite_stays_green_with_decoy_on_inherited_path() {
+    let decoy_dir = common::tempdir().expect("tempdir");
+    write_script(decoy_dir.path(), "rwv-hostdecoy");
+
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let poisoned = format!("{}:{inherited}", decoy_dir.path().display());
+
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            "--test-threads=1",
+            "--skip",
+            "suite_stays_green_with_decoy_on_inherited_path",
+        ])
+        .env("PATH", &poisoned)
+        .output()
+        .expect("re-invoke test binary with a decoy on the inherited PATH");
+
+    assert!(
+        out.status.success(),
+        "suite must stay green with rwv-hostdecoy on the inherited PATH:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
 }
