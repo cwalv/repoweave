@@ -2945,21 +2945,21 @@ mod cargo_workspace {
     }
 
     // -----------------------------------------------------------------------
-    // §6 cargo-workspace — RED scenarios (turned green by C6+C7+C8)
+    // cargo-workspace — real-world manifest scenarios
     // -----------------------------------------------------------------------
     //
-    // These mirror plan §6 cargo scenarios 1–4. Seeds use real idioms from
-    // /home/cwa/weaveroot/rvtty/Cargo.toml (NOTE block, profile.* panic=abort,
-    // workspace.lints.clippy) and astral-sh/ruff (workspace.dependencies,
-    // workspace.package, profile.release.package.<crate>, workspace.lints.rust).
-    // Members sub-path config (scenario 4) lands behind a config key C6/C8 ship.
-    //
-    // RED until C7 (cargo merge port) lands.
+    // Seeds use real idioms from two published Cargo workspaces rather than
+    // minimal fixtures: a NOTE comment block, `profile.*` panic="abort" and
+    // `workspace.lints.clippy`; and `workspace.dependencies`,
+    // `workspace.package`, `profile.release.package.<crate>` and
+    // `workspace.lints.rust`. The merge must leave every one of them
+    // byte-stable, which a synthetic manifest would not exercise.
 
-    /// §6.cargo.1 — Activate preserves rvtty's `[profile.*]` + `[workspace.lints]`.
+    /// Activate preserves `[profile.*]` + `[workspace.lints]`.
     /// Seed file: previously-activated state (per-key `# managed by rwv` on
-    /// members/resolver) plus rvtty's idioms. After re-activate, the NOTE comment
-    /// block, panic="abort", and clippy deny policy must all survive byte-stable.
+    /// members/resolver) plus the seed idioms above. After re-activate, the NOTE
+    /// comment block, panic="abort", and clippy deny policy must all survive
+    /// byte-stable.
     #[test]
     fn s6_1_activate_preserves_rvtty_profiles_and_lints() {
         let tmp = common::tempdir().unwrap();
@@ -3023,8 +3023,7 @@ dbg_macro    = "deny"
                 contract::substr_probe("members[rvtty-b]", "github/acme/rvtty-b"),
                 contract::substr_probe("resolver", "resolver = \"2\""),
             ],
-            // Marker: per-key `# managed by rwv` decor on `members` (per plan
-            // §5a; TomlDoc impl). C7 must set this on author.
+            // Marker: per-key `# managed by rwv` decor on `members`.
             &contract::substr_probe("toml marker on members", "managed by rwv"),
             &[
                 "NOTE (olb.5.4)",
@@ -3038,7 +3037,7 @@ dbg_macro    = "deny"
         );
     }
 
-    /// §6.cargo.2 — Re-activate is idempotent w.r.t. `[workspace.dependencies]`
+    /// Re-activate is idempotent w.r.t. `[workspace.dependencies]`
     /// / `[workspace.package]` / `[profile.*]` (the ruff surface).
     #[test]
     fn s6_2_reactivate_idempotent_over_ruff_surface() {
@@ -3117,7 +3116,7 @@ codegen-units = 1
         );
     }
 
-    /// §6.cargo.3 — Deactivate strips only Author keys, keeps user policy and
+    /// Deactivate strips only Author keys, keeps user policy and
     /// DefaultOnly keys.
     ///
     /// `resolver` is now Ownership::DefaultOnly — it is NOT stripped
@@ -3176,8 +3175,8 @@ foo = { path = "vendor/foo" }
         );
     }
 
-    /// §6.cargo.4 — Members sub-path config + nested-workspace exemption
-    /// (rvtty end-state). Repo with no root Cargo.toml; config emits
+    /// Members sub-path config + nested-workspace exemption.
+    /// Repo with no root Cargo.toml; config emits
     /// `<repo>/<sub>` per include. Sibling workspace is NOT an ancestor and
     /// must NOT trip the nested-workspace error.
     ///
@@ -3213,8 +3212,7 @@ foo = { path = "vendor/foo" }
 
         let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
-        // The members-subpath config shape (C6/C8): per-repo sub-path include
-        // list. Exact YAML key path locked in by C6; this is the plan §5a shape.
+        // The members-subpath config shape: per-repo sub-path include list.
         let config = IntegrationConfig::from_toml(
             "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n",
         );
@@ -3252,7 +3250,7 @@ foo = { path = "vendor/foo" }
         );
     }
 
-    /// Plan §5a-c — opt-in `[patch.crates-io]` generation for
+    /// Opt-in `[patch.crates-io]` generation for
     /// cross-repo path deps. With `integrations.cargo-workspace.patch: true`
     /// rwv scans each member's `Cargo.toml` for `path = "..."` deps that
     /// point into another known member, and emits a
@@ -3315,7 +3313,7 @@ acme-lib = { path = "../lib" }
     /// When `patch` is the default (false), no `[patch]` table
     /// is generated even when cross-repo path deps exist. This is the
     /// internal-crate path: operators commit the relative `path=` dep and
-    /// rwv stays out of `[patch]` entirely (plan §5a-c, §12.3).
+    /// rwv stays out of `[patch]` entirely.
     #[test]
     fn patch_default_false_emits_no_patch_table() {
         let tmp = common::tempdir().unwrap();
@@ -3344,7 +3342,7 @@ acme-lib = { path = "../lib" }
             ("github/acme/app", Role::Owned),
         ]);
         let project = ProjectName::new("test-project").unwrap();
-        // Default config: patch defaults to false (plan §5a-c).
+        // Default config: patch defaults to false.
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
@@ -3359,9 +3357,9 @@ acme-lib = { path = "../lib" }
     }
 
     /// Deactivate strips rwv-authored `[patch.crates-io]`
-    /// entries; user-authored entries survive. Realizes the §5a-c spec:
-    /// "written through the same toml_edit merge so user `[patch]` entries
-    /// survive". (Co-requisite of the activate-time generation.)
+    /// entries; user-authored entries survive — deactivate goes through the
+    /// same toml_edit merge activate does. (Co-requisite of the activate-time
+    /// generation.)
     #[test]
     fn deactivate_strips_rwv_patch_entries_keeps_user_entries() {
         let tmp = common::tempdir().unwrap();
@@ -3429,7 +3427,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
 
     /// A member declaring `<in-weave-crate> = "<req>"` as a registry dep
     /// gets patched to the in-weave path when the crate name matches.
-    /// This is the core of Finding 1 — sovereign members declare bare
+    /// This is what derived mode exists for: sovereign members declare bare
     /// registry versions and the weave supplies the live sources.
     #[test]
     fn derived_patch_matches_registry_dep_by_name() {
@@ -3539,10 +3537,9 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// a registry dep whose name matches a reference-repo crate gets
     /// patched to the reference-repo path.
     ///
-    /// Probe P8 rationale: reference-role repos are symlinked to the
-    /// canonical clone in workweaves; symlinks keep logical paths in
-    /// `cargo metadata` with zero rebuild churn, so they are safe patch
-    /// sources.
+    /// Reference-role repos are symlinked to the canonical clone in
+    /// workweaves; symlinks keep logical paths in `cargo metadata` with zero
+    /// rebuild churn, so they are safe patch sources.
     #[test]
     fn derived_patch_includes_reference_repos_as_sources() {
         let tmp = common::tempdir().unwrap();
@@ -3664,8 +3661,8 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
 
     /// A member's own `.cargo/config.toml` declaring the same
     /// `[patch.crates-io].<crate>` key silently defeats the weave-level
-    /// patch (probe P5b — closest-config-wins per key, cargo's
-    /// diagnostic actively misleads).
+    /// patch — cargo merges `.cargo/config.toml` closest-config-wins per key,
+    /// and its diagnostic actively misleads about which one won.
     ///
     /// Derived mode must surface a warning to stderr at generation time
     /// AND emit the patch anyway (the operator may still resolve the
@@ -3721,7 +3718,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
         // helper is unit-covered via scan_patch_shadowing_against_keys.
     }
 
-    /// The tier boundary from probe P2: a member depending on an
+    /// The tier boundary: a member depending on an
     /// *unpublished* crate name (one that only exists in the weave)
     /// resolves only inside the weave — standalone `cargo build` would
     /// fail with "no matching package".
@@ -3779,8 +3776,8 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
 
     /// A member declaring `foo = "1.0"` when the in-weave `foo` is
     /// version `2.0.0` must NOT be patched — cargo would hard-error
-    /// with a misleading "location searched: crates.io index" message
-    /// (probe P6). Derived mode catches the mismatch upfront and
+    /// with a misleading "location searched: crates.io index" message.
+    /// Derived mode catches the mismatch upfront and
     /// simply omits the patch (an eprintln warning surfaces the reason
     /// to the operator).
     #[test]
@@ -4050,8 +4047,8 @@ acme-lib = { path = "github/acme/lib" }
     // The `.cargo/config.toml` surface is discovered by upward walk from cwd
     // instead of by workspace membership, so it reaches the opt-out.
     //
-    // Assertions here are structural (probe P4 upward discovery, P3 relative
-    // paths, P1 hybrid-managed ownership); a live-cargo assertion of "this
+    // Assertions here are structural — upward config discovery, relative
+    // paths, hybrid-managed ownership; a live-cargo assertion of "this
     // patch would apply" against a nested-workspace fixture lives in
     // e2e_cargo_test.rs — the boundary follows how existing derived-mode
     // tests split (unit-level structure here, cargo-invoked structure there).
@@ -4060,7 +4057,7 @@ acme-lib = { path = "github/acme/lib" }
     /// Activate under `patch-surface: cargo-config` writes patches into
     /// `.cargo/config.toml` (NOT the manifest) and rewrites weave-relative
     /// paths to `../<member>` so they resolve against `.cargo/`'s logical
-    /// location (probe P3/P7).
+    /// location.
     #[test]
     fn cargo_config_surface_writes_patches_to_dot_cargo() {
         let tmp = common::tempdir().unwrap();
@@ -4118,13 +4115,13 @@ acme-lib = { path = "github/acme/lib" }
         // `.cargo/` (not `.cargo/` itself — measured directly
         // 2026-07-17). Our `.cargo/` sits directly under the weave root,
         // so a weave-root-relative path resolves the same as it does
-        // on the manifest surface. NO canonicalization — probe P1 keeps
-        // symlinked `.cargo/` surfacing valid.
+        // on the manifest surface. NO canonicalization — resolving the
+        // logical path would break a symlinked `.cargo/`.
         assert!(
             config_content.contains("\"github/acme/lib\""),
             "path must be weave-root-relative `github/acme/lib` — cargo \
              resolves patch paths in .cargo/config.toml against the parent \
-             of `.cargo/` (probe P3/P7 empirical); got:\n{config_content}"
+             of `.cargo/`; got:\n{config_content}"
         );
         // Cross-check: no accidental `../` prefix.
         assert!(
@@ -4213,8 +4210,8 @@ acme-lib = { path = "github/acme/lib" }
         );
         assert!(
             config_content.contains("\"github/acme/lib\""),
-            "path is weave-root-relative (probe P3/P7 empirical: cargo \
-             resolves against parent-of-.cargo); got:\n{config_content}"
+            "path is weave-root-relative (cargo resolves against \
+             parent-of-.cargo); got:\n{config_content}"
         );
         // The opt-out repo is present at the tested path. Cargo's upward
         // walk from grok-consumer would land on this file (structural,

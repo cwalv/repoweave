@@ -5,6 +5,10 @@
 //! the active project, aligning each clone to `rwv.lock` (or branch HEAD
 //! when the lock has no entry).
 //!
+//! MOVE, consent, the birth-target rule and the version-relatedness guard are
+//! the branch model's vocabulary; `docs/internals/branch-model.md` specifies
+//! each one.
+//!
 //! Adversarial coverage:
 //! - missing member re-clone is BORN ATTACHED at the LOCKED SHA — not at
 //!   branch HEAD, and not detached
@@ -13,11 +17,11 @@
 //!   a present member whose HEAD differs from the pin IS realigned
 //! - realignment of a present member is a MOVE of the tracking branch's local
 //!   counterpart, not a detach: it fast-forwards, refuses a non-fast-forward,
-//!   and refuses outright when the checkout is on some other branch (§5.3)
+//!   and refuses outright when the checkout is on some other branch
 //! - `--detach-checkouts` is the named exit from both refusals; `--frozen` is
 //!   not a waiver
 //! - an already-detached member stays detached (a MOVE), but refuses while
-//!   the repo is mid-operation (§3.6)
+//!   the repo is mid-operation
 //! - missing repo with no lock entry → default branch + additive lock write
 //! - `--repo` filter limits materialization
 //! - end-to-end DanglingReference: doctor reports → fetch → doctor clean
@@ -219,11 +223,11 @@ fn materialize_repo_on_branch_at(
 
 /// The ref this checkout is on, or `None` when HEAD is detached.
 ///
-/// Delegates to the shared §4.7 primitive, which asks `Vcs::head_attachment`
-/// — the production classifier — rather than `git symbolic-ref --short HEAD`.
+/// Delegates to the shared primitive, which asks `Vcs::head_attachment` — the
+/// production classifier — rather than `git symbolic-ref --short HEAD`.
 /// `--short` returns the shortest *unambiguous* name, so a same-named tag
 /// makes it answer `heads/main`; and its failure exit collapses detached,
-/// unborn, and not-a-repo into one `None` (§4.5).
+/// unborn, and not-a-repo into one `None`.
 fn current_branch(repo: &Path) -> Option<String> {
     common::checkout_ref(repo)
 }
@@ -265,12 +269,12 @@ fn in_place_fetch_materializes_missing_member_at_locked_sha() {
     );
 
     // ... and ATTACHED to the tracking branch's local counterpart, with the
-    // branch itself at the pin. R1's birth-target rule (§5, `fetch` (absent
-    // clone)): the birth happens AT the lock revision, so bootstrapping a
-    // weave from a lock behind origin performs no MOVE and needs no consent.
-    // A clone that landed on origin's tip and was then aligned would answer
-    // `None` here — which is the state that made "detached" the normal
-    // resting state of a freshly-fetched weave (§6 item 2).
+    // branch itself at the pin. The birth-target rule for an absent clone:
+    // the birth happens AT the lock revision, so bootstrapping a weave from a
+    // lock behind origin performs no MOVE and needs no consent. A clone that
+    // landed on origin's tip and was then aligned would answer `None` here —
+    // which is the state that made "detached" the normal resting state of a
+    // freshly-fetched weave.
     assert_eq!(
         current_branch(&dest).as_deref(),
         Some("main"),
@@ -331,8 +335,8 @@ fn in_place_fetch_leaves_present_member_at_locked_sha_unmoved() {
 
 // ============================================================================
 // Present member whose HEAD differs from the pin IS realigned — as a MOVE of
-// the tracking branch's local counterpart (§5, `fetch` (present clone)). The
-// checkout stays on the branch; the branch advances under it.
+// the tracking branch's local counterpart. The checkout stays on the branch;
+// the branch advances under it.
 // ============================================================================
 
 #[test]
@@ -476,9 +480,9 @@ fn in_place_fetch_refuses_when_attached_to_a_branch_the_manifest_does_not_declar
 
     // On a personal branch positioned so that taking the pin WOULD be a
     // fast-forward. The refusal therefore cannot be the fast-forward check:
-    // it is §5.3's version-relatedness guard, which refuses to relate an
+    // it is the version-relatedness guard, which refuses to relate an
     // operator's bookmark to the lock at all. Advancing it would strand no
-    // commits and still silently change what the bookmark means (§8.3).
+    // commits and still silently change what the bookmark means.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     git_run(&["checkout", "-b", "feature", first_a], &dest_a);
     let lock_path = s.workspace.join("projects/my-app/rwv.lock");
@@ -531,9 +535,10 @@ fn in_place_fetch_detach_checkouts_waives_the_relatedness_refusal_too() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
 
-    // The other refusal §5.3 defines. The consent detaches; it does not
-    // relocate the personal branch, which is the whole point of naming the
-    // flag after the consequence rather than after the precondition.
+    // The other refusal the branch model defines — version-relatedness rather
+    // than non-fast-forward. The consent detaches; it does not relocate the
+    // personal branch, which is the whole point of naming the flag after the
+    // consequence rather than after the precondition.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     git_run(&["checkout", "-b", "feature"], &dest_a);
 
@@ -574,8 +579,8 @@ fn in_place_fetch_frozen_does_not_waive_the_refusal() {
 
 // ============================================================================
 // An already-detached member stays detached: HEAD moves, its symbolic-ness
-// does not, so this is a MOVE and needs no consent — but §3.6's
-// mid-operation precondition applies to it.
+// does not, so this is a MOVE and needs no consent — but the mid-operation
+// precondition applies to it.
 // ============================================================================
 
 #[test]
@@ -612,7 +617,7 @@ fn in_place_fetch_refuses_to_move_a_detached_member_that_is_mid_operation() {
     materialize_repo_at(&s.workspace, repo_a, bare_a, second_a);
     let dest_a = s.workspace.join(repo_a);
     // `Detached` collapses "rwv left this at a lock SHA" and "the operator is
-    // mid-bisect". Only the first is rwv's to move (§3.6).
+    // mid-bisect". Only the first is rwv's to move.
     git_run(&["bisect", "start"], &dest_a);
 
     rwv()
@@ -934,7 +939,7 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
     );
 
     // The workweave's slot should NOT have gotten its own separate clone
-    // (that would be a clone-topology I1 violation — two DAGs for one repo).
+    // (that would be two DAGs for one repo).
     let workweave_dest = workweave_dir.join(repo);
     assert!(
         !workweave_dest.exists(),

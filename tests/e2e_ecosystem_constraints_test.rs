@@ -11,6 +11,19 @@
 //! behaves as documented, regardless of whether the behavior is "strict" or
 //! "lenient".
 //!
+//! The rwv claim each upstream pin protects, so a tool that changes its mind
+//! reddens here rather than falsifying a shipped page in silence:
+//! `docs/explanation/lenses/monorepo.md` tells the operator that Cargo, Go and
+//! npm catch incompatible bumps during development — that is the whole reason
+//! the lens can argue a polyrepo needs no version dance per iteration, and the
+//! cargo, go and npm tests below are the measurement behind it.
+//! `docs/reference/integrations/uv-workspace.md` states the exception and
+//! derives operator advice from it: uv's `workspace = true` overrides the
+//! constraint silently, so a published artifact must be tested in a separate
+//! environment before a release is announced. The uv test below is what makes
+//! that advice true; it is also the one test whose EXPECTED outcome is the
+//! tool succeeding.
+//!
 //! Observations recorded on 2026-04-05, tool versions:
 //!   cargo  1.94.0
 //!   go     1.26.1
