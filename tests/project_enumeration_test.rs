@@ -360,9 +360,17 @@ fn a_deep_projects_workweave_is_not_reported_unregistered() {
     );
 }
 
-/// And the repair does not converge on the wrong file. The index belongs to
-/// the project the marker names, and no path prefix of it is a project at all
-/// — a `.rwv-workweave-index` beside one would be a record nothing reads.
+/// And the repair writes the index the marker names, never one beside a path
+/// prefix — a `.rwv-workweave-index` at `projects/a/` would be a record
+/// nothing reads, since `a` is not a project.
+///
+/// **This one guards; it does not pin.** Reverting the enumeration to its
+/// immediate-children form leaves it green: the finding's project comes from
+/// each workweave's own marker, so the repair addressed the right file even
+/// while the scan that raised it could not read that file. What the revert
+/// does red is the assertion above — the finding itself. Measured, because
+/// the defect was filed as a repair writing to the wrong index and that half
+/// of it does not reproduce.
 #[test]
 fn doctor_fix_records_no_index_against_a_path_prefix() {
     let tmp = common::tempdir().unwrap();
