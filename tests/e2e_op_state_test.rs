@@ -371,51 +371,42 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         "op-state file should exist after failed sync; got stderr: {stderr}"
     );
 
-    // Resolve the conflict in the server repo (Phase 2 conflict).
-    // The server repo is mid-rebase; resolve and continue.
+    // Resolve the conflict in the server repo (Phase 2 conflict). The server
+    // repo is a linked worktree; git resolves the rebase-in-progress state
+    // via the gitlink transparently when invoked with `ww.server_dir` as its
+    // working directory, so no path probing is needed.
     std::fs::write(ww.server_dir.join("shared.txt"), "resolved version\n").unwrap();
     git(&["add", "shared.txt"], &ww.server_dir);
-    // Note: the server repo is a worktree; the rebase is happening there.
-    let rebase_dir = ww.server_dir.join(".git");
-    // Check if we're mid-rebase (may not be if the conflict was in the project repo).
-    if rebase_dir.join("rebase-merge").exists() || rebase_dir.join("rebase-apply").exists() {
-        let _ = common::git()
-            .args(["rebase", "--continue"])
-            .current_dir(&ww.server_dir)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@test.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@test.com")
-            .output();
-    } else {
-        // Check the primary server dir (the actual git dir for the worktree).
-        let primary_server_git = primary.server_dir.join(".git");
-        if primary_server_git.join("rebase-merge").exists() {
-            let _ = common::git()
-                .args(["rebase", "--continue"])
-                .current_dir(&ww.server_dir)
-                .env("GIT_AUTHOR_NAME", "Test")
-                .env("GIT_AUTHOR_EMAIL", "test@test.com")
-                .env("GIT_COMMITTER_NAME", "Test")
-                .env("GIT_COMMITTER_EMAIL", "test@test.com")
-                .output();
-        }
-    }
+    let continue_rebase = common::git()
+        .args(["rebase", "--continue"])
+        .current_dir(&ww.server_dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+    assert!(
+        continue_rebase.status.success(),
+        "rebase --continue failed: {}",
+        String::from_utf8_lossy(&continue_rebase.stderr)
+    );
 
-    // Now run `rwv sync --continue` (alone — all params read from op-state).
-    let result = rwv()
+    // `rwv sync --continue` should now resume and complete.
+    rwv()
         .args(["sync", "--continue"])
         .current_dir(&ww.root)
-        .assert();
+        .assert()
+        .success();
 
-    // After --continue, the op-state file should be gone (either success cleared it,
-    // or the op is still conflicted in which case it remains — but the command itself
-    // must not refuse with "in-progress" error).
-    let out = result.get_output().clone();
-    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        !stderr.contains("in progress (started"),
-        "--continue should not produce the 'in progress' refusal; got: {stderr}"
+        !op_state_path.exists(),
+        "op-state file must be removed once the resumed sync completes"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ww.server_dir.join("shared.txt")).unwrap(),
+        "resolved version\n",
+        "the resolved content must survive the completed rebase"
     );
 }
 
