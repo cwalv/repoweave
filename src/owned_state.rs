@@ -215,6 +215,26 @@ pub fn stamp_owned_generation(
 /// makes the staleness surface fire between the edit and the next generation.
 /// Path targets INSIDE the member set stay absent — the member's own commit
 /// still supplies the join point, unchanged.
+///
+/// **Member SOURCE files are absent for a structural reason, not an
+/// oversight.** `cargo generate-lockfile` / `cargo fetch` never execute a
+/// build script during resolution, so nothing a `build.rs` or `include!`
+/// reads — inside a member or outside every member and every git repo this
+/// weave tracks — can move `Cargo.lock`'s bytes. There is no channel here
+/// for this map to fail to cover.
+///
+/// **The pairing this function's own accuracy depends on is not enforced.**
+/// Every digest it returns is trusted to describe the inputs that were live
+/// when `cargo` produced the bytes about to be stamped alongside it, which
+/// holds only because the caller runs the `cargo` subprocess and this
+/// function back to back with nothing in between. Nothing locks that window:
+/// a second producer — another `rwv` invocation racing this one, or any
+/// other actor editing a tracked input at the wrong moment — landing inside
+/// it stamps a digest of its own edit against bytes `cargo` resolved from an
+/// earlier one, and the mismatch is then permanently invisible. Widening
+/// this map cannot close that gap; the gap is a missing lock, not a missing
+/// path, and concurrent invocation against one project has no synchronization
+/// story anywhere else in rwv either.
 pub fn generation_inputs(
     project_dir: &Path,
     project: &crate::manifest::ProjectName,

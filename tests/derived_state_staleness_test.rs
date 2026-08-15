@@ -524,6 +524,108 @@ fn a_bare_cargo_run_after_the_edit_is_caught_by_drift() {
     );
 }
 
+/// The single-producer assumption `generation_inputs`'s docstring rests on:
+/// `activate_hook` runs `cargo fetch`, then immediately reads the bytes it
+/// produced and calls `generation_inputs` to attest them, with nothing
+/// between the two steps that re-reads what `cargo` actually saw. A second
+/// producer writing to a tracked input in that window stamps a digest of
+/// ITS edit against bytes `cargo` resolved from a different, earlier one.
+///
+/// Reconstructed rather than raced: landing inside a live process's window
+/// between one subprocess call and the next few lines of Rust is not a
+/// fixture any test here can hit deterministically without instrumenting the
+/// shipped binary. What follows runs `activate_hook`'s own two halves
+/// directly — the same `cargo fetch` subprocess call the bypass-route
+/// fixture above already drives, then the same
+/// `generation_inputs`/`stamp_owned_generation` pair `weave_with_a_producer`
+/// already drives — with a second edit inserted between them. Every step is
+/// the production call `activate_hook` makes; only the interleaving is
+/// authored, standing in for what a second producer's timing would put in
+/// that window for real.
+#[test]
+fn a_second_producer_between_regenerate_and_stamp_defeats_the_join_point() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let (ws, outside) = weave_with_a_path_dep(tmp.path());
+    let project_dir = ws.join("projects/app");
+    let helper_manifest = outside.join("Cargo.toml");
+
+    let (ok, first) = rwv(&["materialize"], &ws);
+    assert!(ok, "{first}");
+    assert!(
+        advisories(&ws).is_empty(),
+        "precondition: the generation is current"
+    );
+
+    // Producer A's regenerate half: the same bare `cargo fetch` the
+    // bypass-route fixture above runs, resolving against 0.2.0.
+    let declared = std::fs::read_to_string(&helper_manifest).unwrap();
+    std::fs::write(&helper_manifest, declared.replace("0.1.0", "0.2.0")).unwrap();
+    let status = std::process::Command::new("cargo")
+        .arg("fetch")
+        .current_dir(&ws)
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo fetch should resolve the bump");
+    let lock_after_regen = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
+    assert!(
+        lock_after_regen.contains("version = \"0.2.0\""),
+        "producer A's regenerate resolved against 0.2.0:\n{lock_after_regen}"
+    );
+
+    // A second producer's write, landing in the window `activate_hook`
+    // leaves open between that regenerate and its own stamp.
+    let after_regen = std::fs::read_to_string(&helper_manifest).unwrap();
+    std::fs::write(&helper_manifest, after_regen.replace("0.2.0", "0.3.0")).unwrap();
+
+    // Producer A's stamp half: exactly what `activate_hook` runs right after
+    // the subprocess call returns — read the bytes cargo just produced, and
+    // attest them against inputs read now.
+    let lock_bytes = std::fs::read(project_dir.join("Cargo.lock")).unwrap();
+    let project = repoweave::manifest::ProjectName::new("app").unwrap();
+    repoweave::owned_state::stamp_owned_generation(
+        &project_dir,
+        "Cargo.lock",
+        &lock_bytes,
+        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
+    )
+    .unwrap();
+
+    // The ledger now attests 0.2.0-produced bytes against 0.3.0 inputs.
+    // Doctor re-hashes current disk (0.3.0) against the recorded digest
+    // (also 0.3.0, since the stamp above just read it) and finds nothing
+    // moved — silent, even though the accepted bytes were never regenerated
+    // from 0.3.0 at all.
+    assert!(
+        advisories(&ws).is_empty(),
+        "MEASURED: the second producer's edit is absorbed into the stamp \
+         with no signal, reopening the pre-qiza shape for any producer that \
+         races the sanctioned one instead of merely preceding it: {:?}",
+        advisories(&ws)
+    );
+
+    // Control: the silence above is a false negative, not a coincidence — a
+    // real regenerate against the inputs the ledger just vouched for
+    // produces DIFFERENT bytes from the ones it attested.
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "{materialized}");
+    let lock_final = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
+    assert!(
+        lock_final.contains("version = \"0.3.0\""),
+        "the attested generation was already stale against 0.3.0 when \
+         doctor called it current:\n{lock_final}"
+    );
+    assert_ne!(
+        lock_after_regen, lock_final,
+        "control: the attested bytes and a real regenerate against the same \
+         claimed inputs differ, which is what makes the earlier silence \
+         wrong rather than merely permissive"
+    );
+}
+
 /// A2 and A3 compose rather than deadlock. A stale entry on a drifted file
 /// still refuses, because drift is the more specific condition and its consents
 /// are the ones that describe the loss — and taking either consent clears both,
@@ -554,6 +656,128 @@ fn a_stale_entry_on_a_drifted_file_is_not_a_deadlock() {
         advisories(&ws).is_empty(),
         "and the staleness must be gone with it — a flag that clears one \
          condition into the other is the deadlock this asserts against"
+    );
+}
+
+/// A weave whose owned member's `build.rs` reads a source file via
+/// `include!` that sits outside the member's own directory and is not
+/// itself a member: no git repo tracks it and it is not registry-shaped, so
+/// nothing in a weave scans it — the same non-member shape
+/// `weave_with_a_path_dep` builds for a manifest, but for a source file a
+/// build script reads instead.
+fn weave_with_a_build_script_producer(root: &Path) -> (PathBuf, PathBuf) {
+    let ws = root.join("ws");
+    let project_dir = ws.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let shared = ws.join("github/acme/shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(
+        shared.join("version.rs"),
+        "pub const BUILD_INPUT: &str = \"v1\";\n",
+    )
+    .unwrap();
+
+    let member = ws.join("github/acme/lib");
+    std::fs::create_dir_all(member.join("src")).unwrap();
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\nbuild = \"build.rs\"\n",
+    )
+    .unwrap();
+    std::fs::write(member.join("src/lib.rs"), "").unwrap();
+    std::fs::write(
+        member.join("build.rs"),
+        "include!(\"../shared/version.rs\");\nfn main() { let _ = BUILD_INPUT; }\n",
+    )
+    .unwrap();
+    git_init_with_commit(&member);
+
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    git_init_with_commit(&project_dir);
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        "app",
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author the workspace manifest");
+
+    (ws, shared.join("version.rs"))
+}
+
+/// MEASURED: a member's `build.rs` can `include!` a source file that sits
+/// outside the member entirely, with no git repo and no manifest anywhere to
+/// pin it — the qiza mechanism's shape, one input class over. Unlike a
+/// `path =` dependency target, `cargo generate-lockfile` / `cargo fetch`
+/// never execute a build script during resolution: nothing about the lock
+/// depends on what a build script reads, so there is no channel back into
+/// `Cargo.lock`'s bytes for this edit to travel through, silently or
+/// otherwise. Driven through the shipped binary on the sanctioned route.
+#[test]
+fn a_build_script_include_target_cannot_move_cargo_lock() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let (ws, shared_file) = weave_with_a_build_script_producer(tmp.path());
+    let project_dir = ws.join("projects/app");
+
+    let (ok, first) = rwv(&["materialize"], &ws);
+    assert!(
+        ok,
+        "first materialize should resolve the workspace for real:\n{first}"
+    );
+    let lock_before = std::fs::read(project_dir.join("Cargo.lock")).unwrap();
+    assert!(
+        advisories(&ws).is_empty(),
+        "precondition: the generation is current"
+    );
+
+    let declared = std::fs::read_to_string(&shared_file).unwrap();
+    std::fs::write(&shared_file, declared.replace("v1", "v2")).unwrap();
+
+    assert!(
+        advisories(&ws).is_empty(),
+        "the include target is not a recorded input, so editing it leaves \
+         the generation current on this axis: {:?}",
+        advisories(&ws)
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "{materialized}");
+    let lock_after = std::fs::read(project_dir.join("Cargo.lock")).unwrap();
+    assert_eq!(
+        lock_before, lock_after,
+        "the edit cannot reach Cargo.lock at all: cargo's resolve step does \
+         not execute build.rs, so there is nothing here for the inputs map \
+         to fail to track"
+    );
+
+    // Reachability control: an edit that DOES move the resolve, on the same
+    // fixture, through the same two-materialize shape, must still move
+    // `Cargo.lock` — otherwise "unchanged" above would be indistinguishable
+    // from a fixture where `materialize` is not really re-resolving at all.
+    let member_manifest = ws.join("github/acme/lib/Cargo.toml");
+    let member_declared = std::fs::read_to_string(&member_manifest).unwrap();
+    std::fs::write(&member_manifest, member_declared.replace("0.1.0", "0.2.0")).unwrap();
+    let (ok, third) = rwv(&["materialize"], &ws);
+    assert!(ok, "{third}");
+    let lock_third = std::fs::read(project_dir.join("Cargo.lock")).unwrap();
+    assert_ne!(
+        lock_after, lock_third,
+        "control: a change materialize actually resolves against must move \
+         Cargo.lock, or the two assertions above are not measuring anything"
     );
 }
 
