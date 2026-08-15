@@ -4947,6 +4947,7 @@ mod tests {
         let protocol_md = "| `RWV_VERSION` | rwv semver | never |\n\
                       | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
                       | `RWV_WORKWEAVE` | workweave identity | not in a workweave |\n\
+                      | `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |\n\
                       | `RWV_PROJECT` | resolved project name | no project resolved |\n";
         let errors = check_envelope_output_documented(protocol_md);
         assert!(
