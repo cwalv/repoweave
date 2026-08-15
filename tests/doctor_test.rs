@@ -369,8 +369,9 @@ url = "https://github.com/acme/server.git"
 version = "main"
 role = "owned"
 
-[integrations.cargo]
+[integrations.static-files]
 enabled = true
+files = ["turbo.json"]
 "#
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
@@ -386,7 +387,10 @@ enabled = true
         .stdout(predicate::str::contains(
             "[warning] vscode-workspace: my-app.code-workspace does not exist",
         ))
-        .stdout(predicate::str::contains("is not surfaced"));
+        .stdout(predicate::str::contains("is not surfaced"))
+        .stdout(predicate::str::contains(
+            "[warning] static-files: declared file 'turbo.json' not found in project directory",
+        ));
 }
 
 // ===========================================================================
