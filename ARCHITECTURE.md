@@ -38,7 +38,7 @@ on disk that a later invocation reads and resumes (§5).
 ## 2. Module map
 
 One library crate (`repoweave`, `src/lib.rs`) and two binaries. `src/lib.rs` is
-a flat list of 33 `pub mod` declarations — there is no internal layering
+a flat list of 34 `pub mod` declarations — there is no internal layering
 enforced by the module tree, so the grouping below is by role, not by
 visibility.
 
@@ -69,7 +69,8 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 
 | Module | Owns |
 |---|---|
-| `manifest` (`src/manifest.rs`, 2666) | `Manifest` (`:937`), `LockFile` (`:1112`), `Project` (`:1352`), and the newtypes `RepoPath`, `ProjectName`, `WorkweaveName`, `RepoEntry`, `Role`, `RepoUrl`. |
+| `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, and the typed rendering pair `weave_dir_name` / `parse_weave_dir_name`. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
+| `manifest` (`src/manifest.rs`, 2666) | `Manifest` (`:937`), `LockFile` (`:1112`), `Project` (`:1352`), and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 427) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 3799) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
 | `workweave_index` (`src/workweave_index.rs`, 1833) | The primary-side `.rwv-workweave-index` (`:99`) and `RefRegistry` (`:595`) — the ref-ownership receipt store. |

@@ -4047,7 +4047,7 @@ fn looks_like_a_pre_flat_ref(name: &str) -> bool {
     match name.split_once('/') {
         Some((lhs, segment)) => {
             !segment.is_empty()
-                && crate::workspace::split_at_weave_separator(lhs).is_some_and(
+                && crate::naming::split_at_weave_separator(lhs).is_some_and(
                     |(project, workweave)| !project.is_empty() && !workweave.is_empty(),
                 )
         }

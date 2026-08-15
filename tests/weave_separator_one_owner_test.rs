@@ -1,7 +1,11 @@
 //! Pins the prohibition this test enforces: `--` is not spelled as
 //! the `<project>--<name>` workweave separator anywhere outside
-//! `workspace.rs`. Everywhere else routes through `weave_dir_name`,
-//! `split_at_weave_separator`, or `parse_weave_dir_name`.
+//! `naming.rs`. Everywhere else routes through `join_flat`,
+//! `weave_dir_name`, `split_at_weave_separator`, or `parse_weave_dir_name`.
+//!
+//! The `+` half of the same grammar is pinned by
+//! `tests/segment_escape_one_owner_test.rs`. Both metacharacters have the
+//! same owner, and the flat address is a bijection only while both hold.
 //!
 //! The needles are the two shapes that spell the separator directly: a
 //! format string joining two placeholders with a bare `--` (the mint shape,
@@ -24,6 +28,7 @@ mod common;
 
 use common::src_scan::production_lines;
 
+const OWNER: &str = "naming.rs";
 const SPLIT_NEEDLE: &str = "split_once(\"--\")";
 
 /// True when `text` contains a bare `--` joining two format placeholders
@@ -50,26 +55,26 @@ fn is_format_join_ignores_escaped_braces() {
 }
 
 #[test]
-fn workspace_rs_still_mints_the_needles_this_scan_looks_for() {
+fn naming_rs_still_mints_the_needles_this_scan_looks_for() {
     let lines = production_lines();
-    let owner_lines: Vec<_> = lines.iter().filter(|l| l.file == "workspace.rs").collect();
+    let owner_lines: Vec<_> = lines.iter().filter(|l| l.file == OWNER).collect();
 
     assert!(
         owner_lines.iter().any(|l| is_format_join(&l.text)),
-        "expected the `}}--{{` mint shape in src/workspace.rs and found \
-         none — the needle no longer matches the source shape, so an empty \
-         result under the rest of src/ would prove nothing"
+        "expected the `}}--{{` mint shape in src/{OWNER} and found none — \
+         the needle no longer matches the source shape, so an empty result \
+         under the rest of src/ would prove nothing"
     );
     assert!(
         owner_lines.iter().any(|l| l.text.contains(SPLIT_NEEDLE)),
-        "expected `{SPLIT_NEEDLE}` in src/workspace.rs and found none — the \
+        "expected `{SPLIT_NEEDLE}` in src/{OWNER} and found none — the \
          needle no longer matches the source shape, so an empty result \
          under the rest of src/ would prove nothing"
     );
 }
 
 #[test]
-fn no_module_outside_workspace_spells_the_weave_separator() {
+fn no_module_outside_the_owner_spells_the_weave_separator() {
     let lines = production_lines();
     assert!(
         lines.len() >= 20_000,
@@ -78,7 +83,7 @@ fn no_module_outside_workspace_spells_the_weave_separator() {
         lines.len()
     );
 
-    let outside: Vec<_> = lines.iter().filter(|l| l.file != "workspace.rs").collect();
+    let outside: Vec<_> = lines.iter().filter(|l| l.file != OWNER).collect();
 
     let format_hits: Vec<String> = outside
         .iter()
@@ -94,7 +99,7 @@ fn no_module_outside_workspace_spells_the_weave_separator() {
     assert!(
         format_hits.is_empty() && split_hits.is_empty(),
         "the `<project>--<name>` workweave separator must be spelled only \
-         in src/workspace.rs — mint via weave_dir_name, split via \
+         in src/{OWNER} — mint via join_flat or weave_dir_name, split via \
          split_at_weave_separator or parse_weave_dir_name. \
          format-join hits: {format_hits:#?}, split hits: {split_hits:#?}"
     );

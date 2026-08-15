@@ -44,6 +44,7 @@ pub mod integration_runner;
 pub mod integrations;
 pub mod lock;
 pub mod manifest;
+pub mod naming;
 pub mod op_state;
 pub mod owned_state;
 pub mod parallel;

@@ -137,191 +137,7 @@ pub(crate) fn project_repo_key() -> &'static str {
     PROJECT_REPO_KEY
 }
 
-/// A project name, possibly multi-segment (e.g., `web-app` or `chatly/web-app`).
-///
-/// # Construction cannot be treated as infallible
-///
-/// ```compile_fail
-/// use repoweave::manifest::ProjectName;
-/// fn take(_: ProjectName) {}
-/// fn f(s: String) {
-///     take(ProjectName::new(s)); // E0308: expected ProjectName, found Result<ProjectName, ProjectNameError>
-/// }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
-pub struct ProjectName(String);
-
-/// Typed error returned by [`ProjectName::new`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProjectNameError {
-    /// Contains `--`, or starts/ends with `-`: any of these could be
-    /// confused with the `--` [`crate::vcs::EphemeralRefName::mint`] joins
-    /// project to workweave with, letting two distinct (project, workweave)
-    /// pairs mint the same name.
-    AmbiguousDelimiter(String),
-    /// Contains `+`, which [`crate::workspace::flat_project_segment`] writes
-    /// in place of `/` when it renders this name as one path segment. A `+`
-    /// in the name itself would decode back as a segment boundary the name
-    /// never had, so two distinct projects could render the same segment.
-    EncodedSeparator(String),
-    /// Not usable as a (possibly `/`-segmented) ref-name component.
-    InvalidRef(crate::vcs::RefNameError),
-}
-
-impl fmt::Display for ProjectNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AmbiguousDelimiter(s) => write!(
-                f,
-                "'{s}' is not a valid project name: contains `--` or starts/ends \
-                 with `-`, ambiguous against the `--` that joins project to workweave"
-            ),
-            Self::EncodedSeparator(s) => write!(
-                f,
-                "'{s}' is not a valid project name: contains `+`, which rwv writes in \
-                 place of `/` when it renders a project name as one path segment \
-                 (a workweave directory, a `-w` address, a branch name). Choose a \
-                 name without `+`."
-            ),
-            Self::InvalidRef(e) => write!(f, "not a valid project name: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for ProjectNameError {}
-
-fn validate_project_name(s: &str) -> Result<(), ProjectNameError> {
-    if crate::workspace::split_at_weave_separator(s).is_some()
-        || s.starts_with('-')
-        || s.ends_with('-')
-    {
-        return Err(ProjectNameError::AmbiguousDelimiter(s.to_owned()));
-    }
-    if s.contains('+') {
-        return Err(ProjectNameError::EncodedSeparator(s.to_owned()));
-    }
-    crate::vcs::validate_ref_name(s).map_err(ProjectNameError::InvalidRef)
-}
-
-impl ProjectName {
-    /// Construct a `ProjectName`, returning a [`ProjectNameError`] if `s` fails validation.
-    pub fn new(s: impl Into<String>) -> Result<Self, ProjectNameError> {
-        let s = s.into();
-        validate_project_name(&s)?;
-        Ok(Self(s))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for ProjectName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for ProjectName {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        validate_project_name(&s).map_err(serde::de::Error::custom)?;
-        Ok(ProjectName(s))
-    }
-}
-
-/// A workweave name (e.g., `agent-42`, `hotfix`).
-///
-/// # Construction cannot be treated as infallible
-///
-/// ```compile_fail
-/// use repoweave::manifest::WorkweaveName;
-/// fn take(_: WorkweaveName) {}
-/// fn f(s: String) {
-///     take(WorkweaveName::new(s)); // E0308: expected WorkweaveName, found Result<WorkweaveName, WorkweaveNameError>
-/// }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-#[serde(transparent)]
-pub struct WorkweaveName(String);
-
-/// Typed error returned by [`WorkweaveName::new`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkweaveNameError {
-    /// Contains `/`. Unlike [`ProjectName`], a workweave name is never
-    /// `/`-segmented, because [`crate::vcs::EphemeralRefName::mint`] would
-    /// then read back as [`crate::vcs::LegacyEphemeralRefName`]'s segmented
-    /// shape for a *different*, entirely valid, live workweave.
-    Slash(String),
-    /// Contains `--`, or starts/ends with `-`: any of these could be
-    /// confused with the `--` `mint` joins project to workweave with,
-    /// letting two distinct (project, workweave) pairs mint the same name.
-    AmbiguousDelimiter(String),
-    /// Not usable as a ref-name component.
-    InvalidRef(crate::vcs::RefNameError),
-}
-
-impl fmt::Display for WorkweaveNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Slash(s) => write!(
-                f,
-                "'{s}' is not a valid workweave name: contains `/`, which would \
-                 make a minted ephemeral ref name masquerade as the pre-flat \
-                 segmented shape"
-            ),
-            Self::AmbiguousDelimiter(s) => write!(
-                f,
-                "'{s}' is not a valid workweave name: contains `--` or starts/ends \
-                 with `-`, ambiguous against the `--` that joins project to workweave"
-            ),
-            Self::InvalidRef(e) => write!(f, "not a valid workweave name: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for WorkweaveNameError {}
-
-fn validate_workweave_name(s: &str) -> Result<(), WorkweaveNameError> {
-    if s.contains('/') {
-        return Err(WorkweaveNameError::Slash(s.to_owned()));
-    }
-    if crate::workspace::split_at_weave_separator(s).is_some()
-        || s.starts_with('-')
-        || s.ends_with('-')
-    {
-        return Err(WorkweaveNameError::AmbiguousDelimiter(s.to_owned()));
-    }
-    crate::vcs::validate_ref_name(s).map_err(WorkweaveNameError::InvalidRef)
-}
-
-impl WorkweaveName {
-    /// Construct a `WorkweaveName`, returning a [`WorkweaveNameError`] if `s` fails validation.
-    pub fn new(s: impl Into<String>) -> Result<Self, WorkweaveNameError> {
-        let s = s.into();
-        validate_workweave_name(&s)?;
-        Ok(Self(s))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for WorkweaveName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for WorkweaveName {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        validate_workweave_name(&s).map_err(serde::de::Error::custom)?;
-        Ok(WorkweaveName(s))
-    }
-}
+pub use crate::naming::{ProjectName, ProjectNameError, WorkweaveName, WorkweaveNameError};
 
 // ---------------------------------------------------------------------------
 // RepoUrl — a clone source parsed into structured data
@@ -2619,7 +2435,7 @@ role = "owned"
         assert!(
             matches!(
                 err,
-                ProjectNameError::InvalidRef(crate::vcs::RefNameError::Empty)
+                ProjectNameError::InvalidRef(crate::naming::RefNameError::Empty)
             ),
             "expected InvalidRef(Empty), got: {err:?}"
         );
@@ -2702,7 +2518,7 @@ role = "owned"
         assert!(
             matches!(
                 err,
-                WorkweaveNameError::InvalidRef(crate::vcs::RefNameError::Empty)
+                WorkweaveNameError::InvalidRef(crate::naming::RefNameError::Empty)
             ),
             "expected InvalidRef(Empty), got: {err:?}"
         );

@@ -72,7 +72,7 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
 /// at all, so a `/` on the right of the separator is a path and not an address
 /// missing its encoding.
 fn flat_spelling_of(raw: &str) -> Option<String> {
-    let (project, name) = crate::workspace::split_at_weave_separator(raw)?;
+    let (project, name) = crate::naming::split_at_weave_separator(raw)?;
     let project = ProjectName::new(project).ok()?;
     let name = WorkweaveName::new(name).ok()?;
     let flat = crate::workspace::weave_dir_name(&project, &name);
@@ -150,7 +150,7 @@ fn resolve_workweave_flag(
     }
 
     let (project_str, name_str) =
-        crate::workspace::split_at_weave_separator(raw).ok_or_else(|| {
+        crate::naming::split_at_weave_separator(raw).ok_or_else(|| {
             anyhow::anyhow!(
                 "'-w {raw}' is not in the required <project>--<name> form.\n\
              \n\

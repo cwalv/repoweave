@@ -789,52 +789,7 @@ impl fmt::Display for RawRefName {
     }
 }
 
-/// Why a [`RawRefName`] could not be parsed into a [`TrackingRef`].
-///
-/// Each variant is a distinct rejection rule so callers can report which
-/// one fired instead of re-deriving it from message text.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RefNameError {
-    /// The name is empty.
-    Empty,
-    /// The name is commit-id shaped. `version:` declares what to TRACK;
-    /// the lock records where you ARE — a pin needs a different
-    /// field, not an overloaded one.
-    ShaShaped(String),
-    /// The name is release-tag shaped. Same reason as [`Self::ShaShaped`]:
-    /// a tag is a pin, and a tracking declaration cannot be one.
-    TagShaped(String),
-    /// The name is not usable as a ref name at all.
-    Malformed {
-        /// The rejected name.
-        name: String,
-        /// Which rule it broke, as a short noun phrase.
-        reason: &'static str,
-    },
-}
-
-impl fmt::Display for RefNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => f.write_str("ref name is empty"),
-            Self::ShaShaped(s) => write!(
-                f,
-                "'{s}' is commit-id shaped; `version:` declares a branch to \
-                 track, not a revision to pin"
-            ),
-            Self::TagShaped(s) => write!(
-                f,
-                "'{s}' is tag shaped; `version:` declares a branch to track, \
-                 not a revision to pin"
-            ),
-            Self::Malformed { name, reason } => {
-                write!(f, "'{name}' is not a valid ref name: {reason}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for RefNameError {}
+pub use crate::naming::RefNameError;
 
 /// Width at which an all-hex name stops reading as a branch name and
 /// starts reading as an abbreviated commit id.
@@ -870,65 +825,6 @@ pub(crate) fn is_release_shape_name(s: &str) -> bool {
         && first.chars().all(|c| c.is_ascii_digit())
         && !second.is_empty()
         && second.chars().next().is_some_and(|c| c.is_ascii_digit())
-}
-
-/// Reject strings that cannot name a ref.
-///
-/// These rules are the conservative intersection of what VCSes accept as a
-/// ref name; git's `check-ref-format` is the strictest of the ones rwv
-/// targets and is what this mirrors. Validating at the seam rather than in
-/// the git impl means a manifest carrying `feat/../../etc` is refused once,
-/// at parse time, instead of once per VCS.
-///
-/// `pub(crate)`: also the ref-name-shape half of [`ProjectName::new`] and
-/// [`WorkweaveName::new`], which layer their own delimiter rule on top.
-pub(crate) fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
-    let malformed = |reason: &'static str| {
-        Err(RefNameError::Malformed {
-            name: s.to_owned(),
-            reason,
-        })
-    };
-    if s.is_empty() {
-        return Err(RefNameError::Empty);
-    }
-    if s == "@" {
-        return malformed("`@` alone is not a ref name");
-    }
-    if s.contains("..") {
-        return malformed("contains `..`");
-    }
-    if s.contains("@{") {
-        return malformed("contains `@{`");
-    }
-    if s.contains("//") {
-        return malformed("contains an empty path component");
-    }
-    if s.starts_with('/') || s.ends_with('/') {
-        return malformed("starts or ends with `/`");
-    }
-    if s.ends_with('.') {
-        return malformed("ends with `.`");
-    }
-    if let Some(bad) = s
-        .chars()
-        .find(|c| c.is_ascii_control() || " ~^:?*[\\\u{7f}".contains(*c))
-    {
-        return match bad {
-            ' ' => malformed("contains a space"),
-            c if c.is_control() => malformed("contains a control character"),
-            _ => malformed("contains one of `~^:?*[\\`"),
-        };
-    }
-    for component in s.split('/') {
-        if component.starts_with('.') {
-            return malformed("has a path component starting with `.`");
-        }
-        if component.ends_with(".lock") {
-            return malformed("has a path component ending in `.lock`");
-        }
-    }
-    Ok(())
 }
 
 /// Notion (1): the branch a manifest entry **declares** it tracks
@@ -987,7 +883,7 @@ impl TrackingRef {
     /// [`ResolvedRevisionId`]'s refusal to deserialize.
     pub fn parse(raw: RawRefName) -> Result<Self, RefNameError> {
         let s = raw.as_str();
-        validate_ref_name(s)?;
+        crate::naming::validate_ref_name(s)?;
         if is_sha_shaped(s) {
             return Err(RefNameError::ShaShaped(s.to_owned()));
         }
@@ -1097,7 +993,7 @@ impl EphemeralRefName {
     ///
     /// Total: no third input, no failure, no read of the current ref.
     pub fn mint(project: &ProjectName, workweave: &WorkweaveName) -> Self {
-        Self(crate::workspace::weave_dir_name(project, workweave))
+        Self(crate::naming::weave_dir_name(project, workweave))
     }
 
     /// The requested name at the parse boundary, for the receipt store to
@@ -1502,7 +1398,7 @@ impl RemoteDefaultBranch {
     /// absent" is stated once and testable without a repo.
     pub(crate) fn from_symref_target(target: &str, namespace: &str) -> Option<Self> {
         let branch = target.trim().strip_prefix(namespace)?;
-        if branch.is_empty() || validate_ref_name(branch).is_err() {
+        if branch.is_empty() || crate::naming::validate_ref_name(branch).is_err() {
             return None;
         }
         Some(Self(branch.to_owned()))
@@ -3496,16 +3392,22 @@ mod tests {
 
     #[test]
     fn ref_name_validation_mirrors_the_strictest_rules_rwv_targets() {
-        assert!(validate_ref_name("main").is_ok());
-        assert!(validate_ref_name("release/1.x").is_ok());
-        assert!(validate_ref_name("p--ww").is_ok());
-        assert_eq!(validate_ref_name(""), Err(RefNameError::Empty));
+        assert!(crate::naming::validate_ref_name("main").is_ok());
+        assert!(crate::naming::validate_ref_name("release/1.x").is_ok());
+        assert!(crate::naming::validate_ref_name("p--ww").is_ok());
+        assert_eq!(
+            crate::naming::validate_ref_name(""),
+            Err(RefNameError::Empty)
+        );
         for bad in [
             "a..b", "a@{0}", "@", "a//b", "/a", "a/", "a.", ".a", "a/.b", "a.lock", "a/b.lock",
             "a b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "a\tb",
         ] {
             assert!(
-                matches!(validate_ref_name(bad), Err(RefNameError::Malformed { .. })),
+                matches!(
+                    crate::naming::validate_ref_name(bad),
+                    Err(RefNameError::Malformed { .. })
+                ),
                 "{bad:?} should be Malformed"
             );
         }
