@@ -99,6 +99,10 @@ impl RepoPath {
         &self.0
     }
 
+    /// Joining the result onto a native root (`root.join(repo_path.as_path())`)
+    /// produces a path mixing native and `/` separators on Windows, because
+    /// this method leaves the forward slashes in place. Win32 accepts the
+    /// mixed form for every filesystem call this crate makes through it.
     pub fn as_path(&self) -> &Path {
         Path::new(&self.0)
     }
@@ -200,12 +204,6 @@ impl ProjectName {
 impl fmt::Display for ProjectName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl AsRef<Path> for ProjectName {
-    fn as_ref(&self) -> &Path {
-        Path::new(&self.0)
     }
 }
 
