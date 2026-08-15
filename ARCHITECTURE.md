@@ -51,14 +51,15 @@ visibility.
 `repoweave::cli::dispatch::run()`. The emptiness is load-bearing and documented
 at `src/main.rs:1-9`: a `[[bin]]` is a separate crate from the `[lib]`, so any
 logic placed there could only reach the library through `pub` items. Keeping it
-empty is what lets the consent tokens in `src/cli.rs:576` stay
+empty is what lets the consent tokens in `src/cli/consent.rs` stay
 `pub(in crate::cli)` (§6.1).
 
 ### Entry and addressing
 
 | Module | Owns |
 |---|---|
-| `cli` (`src/cli.rs`, 688) | The clap type tree: `Cli` (`:22`), `Commands` (`:62`), and `mod consent` (`:576`). |
+| `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` (`:24`) and `Commands` (`:66`). |
+| `cli::consent` (`src/cli/consent.rs`) | The seven consent tokens plus the `DriftConsent` either/or enum, each minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
 | `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` (`:321`) — argv interception, parse, the single resolution point, and the verb match. |
 | `workspace` (`src/workspace.rs`, 2521) | `WorkspaceContext` (`:75`) and its `resolve` (`:549`); `Checkout` (`:163`); `Resolution` (`:1017`); the `.rwv-active` / `.rwv-workweave` marker constants (`:247`, `:250`). |
 | `registry` (`src/registry.rs`, 707) | Host-to-local-prefix mapping. `Registry` trait (`:63`), `resolve_to_clone_info` (`:235`) — the shared resolution path for `fetch` and `init --adopt`. Unrelated to integrations despite the name. |
@@ -309,7 +310,7 @@ requires.** The proof is a value that cannot be forged:
   (`:1597`) with an operator consent token: a destructive reset is
   representable only when a savepoint provably exists.
 - **Consent tokens.** Four of the five live in `pub mod consent`
-  (`src/cli.rs:576`), not in `vcs`, with `from_flag` constructors that are
+  (`src/cli/consent.rs`), not in `vcs`, with `from_flag` constructors that are
   `pub(in crate::cli)`. That privacy is the reason `src/main.rs` must stay
   empty (§2): the tokens are mintable only from a flag, inside the module that
   parses flags.

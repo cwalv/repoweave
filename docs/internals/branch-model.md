@@ -1131,8 +1131,8 @@ sites had an answer.
 ### 4.4 The consent and warrant tokens — **shipped**
 
 Homes, as specified: the two ATTACH consents live in the CLI flag module
-(`cli::consent`, `cli.rs:536-691` — `DetachConsent` at `:588`,
-`ReattachConsent` at `:619`), and the warrants live in `vcs.rs`
+(`cli::consent`, `src/cli/consent.rs` — `DetachConsent` at `:50`,
+`ReattachConsent` at `:81`), and the warrants live in `vcs.rs`
 (`DiscardWarrant` `:1620`, `DeletionWarrant` `:1657` with the private
 `WarrantKind` at `:1661`) `[V]`.
 
@@ -1145,12 +1145,123 @@ stay open: a `[[bin]]` target is a separate crate from the `[lib]`, so the
 narrowest visibility that admits it is `pub`, and a `pub fn` returning the
 token is a second door standing open to every module of the library. Moving
 dispatch into `cli::dispatch` is what let the visibility come down.
-`from_flag` is now `pub(in crate::cli)` (`cli.rs:609`, `:632`, `:659`,
-`:687`), the mints are at `cli/dispatch.rs:310`, `:624`, `:817`, `:821` and
-`:1015`, and a `from_flag` call written into `vcs.rs` — the module this
-section names as the one that must only ever *receive* a token — is now
+`from_flag` is now `pub(in crate::cli)` (`src/cli/consent.rs:71`, `:94`,
+`:121`, `:149`), the mints are at `cli/dispatch.rs:310`, `:624`, `:817`,
+`:821` and `:1015`, and a `from_flag` call written into `vcs.rs` — the module
+this section names as the one that must only ever *receive* a token — is now
 `E0624`, not a code-review finding `[V]`. The module header states both seals
-and why dispatch had to move (`cli.rs:536-578`).
+and why dispatch had to move (`src/cli/consent.rs:1-41`).
+
+**The home is forced by Rust's privacy rules, not chosen.** This placement
+reads as a layering violation and has been re-opened as one: seven production
+domain modules (`vcs`, `fetch`, `update`, `activate`, `workweave`, `check`,
+`sync`) import from `crate::cli`, which is a cycle in the reference graph and
+a domain module depending on the presentation layer. The enumeration below is
+recorded here so the next reader meets a closed design space instead of
+re-deriving it. Three requirements are in play:
+
+- **A.** A domain module must not be able to construct a token.
+- **B.** The flag-parsing module (`cli::dispatch`) must be able to.
+- **C.** A domain module must not import from `crate::cli`.
+
+A private field is visible in the declaring module *and its descendants*, so
+for a token declared in module `M` the set of modules that can write the tuple
+literal is exactly `{M, descendants of M}`. Requirement B forces the *minting
+function* to be visible from `cli::dispatch`, and the only `pub(in P)`
+spellings that exist are those where `P` is an ancestor of `M`. So if a seal
+tighter than `pub(crate)` is to be available at all, `M` must be an ancestor
+of `cli::dispatch` — leaving `crate::cli`, `crate::cli::dispatch`, or `crate`.
+`crate` is an ancestor of every domain module, which breaks A. **A mint sealed
+tighter than `pub(crate)` therefore requires the token to live in the
+`crate::cli` subtree.** A, B and C are jointly unsatisfiable within one crate;
+any two of the three are available.
+
+Compiled rather than argued. Four standalone probes, `rustc --edition 2021
+--crate-type lib`, each reduced to the one edge it measures:
+
+```rust
+// Shape B — token at crate root, mint a sibling: `pub(crate) fn from_flag`.
+pub mod workweave {
+    pub fn forge_by_literal() -> crate::consent::DetachConsent {
+        crate::consent::DetachConsent(())               // E0603 — refused
+    }
+}
+pub mod workweave {                                     // literal removed
+    pub fn forge_by_mint() -> Option<crate::consent::DetachConsent> {
+        crate::consent::DetachConsent::from_flag(true)  // COMPILES
+    }
+}
+
+// Shape A — token under crate::cli, as shipped: `pub(in crate::cli) fn from_flag`.
+pub mod workweave {
+    pub fn forge_by_mint() -> Option<crate::cli::consent::DetachConsent> {
+        crate::cli::consent::DetachConsent::from_flag(true)  // E0624 — refused
+    }
+}
+pub mod cli { pub mod dispatch {                        // the positive control
+    pub fn mint() -> Option<super::consent::DetachConsent> {
+        super::consent::DetachConsent::from_flag(true)       // COMPILES
+    }
+} }
+```
+
+The shape-B literal and the shape-B mint are separate probes because a single
+file aborts at the first error and never reports on the second, which would
+leave the `COMPILES` claim untested. Shape A's dispatch arm is the control
+that keeps `E0624` from being read as "the mint is reachable from nowhere":
+without it, a token no module can construct satisfies A and C by failing B.
+
+The literal seal is identical in both shapes — the codes differ only by
+vantage. An in-crate sibling writing the tuple literal gets `E0603` (the
+constructor is private); the four out-of-crate probes in
+`tests/branch_model_compile_fail_test.rs` get `E0423` for the same seal, since
+from outside the crate the constructor is not in scope to be named at all.
+**The entire difference between the shipped design and a domain-level home is
+one compile error: `E0624` becomes a silent success.** That is the whole
+trade, and it is the trade `DiscardLocalCommitsConsent` took under duress —
+which is why the paragraph below records its `pub(crate)` as the tightest seal
+the language offers there rather than as a preference.
+
+**The compile-fail suite cannot see that regression.**
+`tests/branch_model_compile_fail_test.rs` probes from an *external* crate,
+where `pub(crate)` and `pub(in crate::cli)` are indistinguishable — both are
+simply "not `pub`". The four tuple-literal probes and
+`the_flag_mint_is_not_reachable_from_outside_the_cli_module` all stay green
+through a move to a crate-root `consent` while the in-crate guarantee vanishes
+silently. Any change that loosens the mint must budget for a new in-crate
+probe, because the existing suite will not report the loss.
+
+**The two exits, and what triggers each.** Neither is wrong on the merits;
+both are unpaid-for today, and each is written down with its trigger so the
+day it becomes right is recognisable.
+
+- **Hoist to a crate-root `consent`; widen the mint to `pub(crate)`.**
+  *Trigger: a second in-crate frontend is real* — an `api` or `daemon` module
+  that must mint legitimately and cannot be placed under `crate::cli`. Today
+  nothing presses: plugins are external executables discovered on `PATH` with
+  no library linkage, so a plugin needing a consented op runs `rwv` and passes
+  the flag exactly as an operator does. The visibility change is one line and
+  the rest is import rewrites, but it lands together with the in-crate probe
+  the paragraph above requires, because the mechanism can no longer tell a
+  second frontend from a domain module inventing consent — both are "some
+  module in this crate". `DiscardLocalCommitsConsent` stops being an exception
+  on that day and becomes the general case.
+- **Domain-declared marker traits, frontend-declared proofs.** The domain
+  names a capability (`pub trait DetachProof`) and each frontend's token
+  implements it, so the concrete type is never spoken downstream and A, B and
+  C are all satisfied at once. *Trigger: a third frontend* — the first point
+  at which two tokens must satisfy one domain requirement without either
+  weakening its own seal. The costs are paid up front and are not small.
+  `Vcs` is consumed as `&dyn Vcs`, so the parameters must be `&dyn Proof`
+  rather than `impl Proof` or the trait stops being dyn-compatible, which
+  turns a `Copy` zero-sized token into a reference with a lifetime and forces
+  the per-worker copy that `Copy` exists for to be re-established through the
+  borrow. Worse, a `pub` trait is implementable by anyone: `struct Yes; impl
+  DetachProof for Yes {}` inside `workweave.rs` is two lines and compiles.
+  Sealing the trait needs a private supertrait in the domain, which the CLI
+  then cannot implement — the same wall as above. So this exit refuses forgery
+  at neither the literal nor the mint, and substitutes a reviewable `impl`
+  plus a source scan in the style of `tests/destructive_ops_audit_test.rs`.
 
 `tests/consent_minting_audit_test.rs`, the static call-site allowlist that
 stood in for the compiler, **no longer exists** — deleted, on the grounds
@@ -1161,15 +1272,15 @@ will meet it. The "not `pub`" half is pinned by error code like the rest, by
 (`tests/branch_model_compile_fail_test.rs:437`) `[V]`; the in-crate half of
 `pub(in crate::cli)` is not observable from an out-of-crate probe, and the
 harness does not claim it is. `granted()` — the unconditional mint, which
-checks nothing — is `#[cfg(test)]` on all three tokens that still have one
-(`cli.rs:596-597`, `:624-625`, `:648-649`), so it is absent from the library
+checks nothing — is `#[cfg(test)]` on three of this section's four tokens
+(`src/cli/consent.rs:58-59`, `:86-87`, `:110-111`), so it is absent from the library
 the binary and the integration tests link against; `AdoptDetachedConsent`
 lost its `granted()` outright, because no fixture needed one `[V]`.
 
 Two consent types shipped beyond this list, both needed by §7: 
-`DiscardUnmergedConsent` (`cli.rs:643`, the `workweave delete` override R3's
-`OperatorDiscarded` warrant is minted from) and `AdoptDetachedConsent`
-(`cli.rs:678`, §7.1 arms 3/5). A third, `DiscardLocalCommitsConsent`
+`DiscardUnmergedConsent` (`src/cli/consent.rs:105`, the `workweave delete`
+override R3's `OperatorDiscarded` warrant is minted from) and
+`AdoptDetachedConsent` (`src/cli/consent.rs:140`, §7.1 arms 3/5). A third, `DiscardLocalCommitsConsent`
 (`vcs.rs:1568`), deliberately lives in `vcs.rs` rather than `cli::consent`,
 because `sync --continue` must re-mint it from the persisted owner record
 rather than from a flag on the resuming invocation `[V]`. That exception now
@@ -1269,9 +1380,10 @@ Pinned by `tests/branch_discipline_test.rs:657
 detached_canonical_reattaches_only_with_consent`, which is a non-vacuity pair:
 with the flag it reattaches, without it the store stays detached.
 
-`--detach-checkouts` (`cli.rs`, `DetachConsent` `cli.rs:588`) is consumed by
+`--detach-checkouts` (`cli.rs`, `DetachConsent` `src/cli/consent.rs:50`) is consumed by
 `fetch`'s and `update`'s realign paths as §5's table says. A third flag,
-`--adopt-detached-checkouts` (`cli.rs:192-199`, `AdoptDetachedConsent` `:678`),
+`--adopt-detached-checkouts` (`cli.rs:192-199`, `AdoptDetachedConsent`
+`src/cli/consent.rs:140`),
 gates §7.1's arms 3 and 5 — it is named for what it does to a legacy branch's
 tip rather than to an attachment, which is why it is not a spelling of
 `--reattach-checkouts` `[V]`.
