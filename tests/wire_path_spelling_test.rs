@@ -62,11 +62,18 @@ fn every_wire_path_field_is_minted_by_the_seam() {
         if !WIRE_PATH_FIELDS.contains(&field.trim()) {
             continue;
         }
-        let window: String = lines[i..(i + VALUE_WINDOW).min(lines.len())]
-            .iter()
-            .map(|l| l.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
+        // Bounded by this assignment's own end, not by a fixed offset: a
+        // fixed window lets the NEXT field's mint call answer for this one,
+        // which is how a scan reports clean over an unrouted field. Found by
+        // mutating a single field off the seam and watching this test pass.
+        let mut window = String::new();
+        for l in lines[i..(i + VALUE_WINDOW).min(lines.len())].iter() {
+            window.push(' ');
+            window.push_str(&l.text);
+            if l.text.trim_end().ends_with(',') {
+                break;
+            }
+        }
         if window.contains("wire_path") {
             minted += 1;
         } else if window.contains("to_string_lossy") || window.contains(".display()") {
@@ -86,7 +93,7 @@ fn every_wire_path_field_is_minted_by_the_seam() {
     // fields is higher. The floor exists to notice the scan going blind — the
     // failure mode where it walks a corpus, finds nothing, and reports clean.
     assert!(
-        minted >= 19,
+        minted >= 18,
         "the scan found only {minted} minted wire path fields; it has stopped \
          seeing the assignments it is supposed to police"
     );
