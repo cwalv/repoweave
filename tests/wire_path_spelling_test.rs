@@ -26,7 +26,14 @@ fn every_wire_path_field_is_minted_by_the_seam() {
     // Field names whose value is a filesystem absolute path, from walking the
     // twelve committed schemas. `path` is deliberately absent: its arms are
     // manifest-relative except one, and a name-based rule cannot tell them
-    // apart — that one is pinned by its own construction site below.
+    // apart.
+    //
+    // Nothing in this file reaches that one. Its mint is pinned behaviourally,
+    // by plugins_help_doctor_test.rs and the `discover_plugins` unit tests, and
+    // all of those are `cfg(unix)` — the field whose spelling exists for
+    // Windows has no coverage a Windows run executes. A mint that diverged
+    // there, marking each winner shadowed by itself and publishing the host's
+    // own spelling, would pass this suite and CI alike.
     const WIRE_PATH_FIELDS: &[&str] = &[
         "absolute_path",
         "actual_store_path",
