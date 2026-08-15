@@ -115,13 +115,13 @@ fn workspace_context_from_project_dir_resolve() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     // Canonicalize the expected path so /var vs /private/var symlinks (macOS)
     // don't cause spurious mismatches.
     let ws_canonical = std::fs::canonicalize(&ws).unwrap();
     assert_eq!(
         stdout,
-        ws_canonical.to_string_lossy().trim_end_matches('/'),
+        common::operator_path_stdout(&ws_canonical),
         "rwv resolve should print the workspace root, not the project subdir"
     );
 }

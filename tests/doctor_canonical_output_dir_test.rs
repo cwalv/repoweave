@@ -206,11 +206,10 @@ fn every_integration_names_the_canonical_path_for_an_inactive_project() {
         let canonical = f.ws.join("projects/beta").join(file);
         let expected = format!(
             "{integration} managed file missing: {}; run rwv doctor --fix to regenerate",
-            canonical.display()
+            repoweave::path_spelling::operator_path(&canonical)
         );
         assert!(
-            common::flatten_path_spelling(&report)
-                .contains(&common::flatten_path_spelling(&expected)),
+            report.contains(&expected),
             "{integration} should report `{file}` missing at the canonical path.\n\
              expected line: {expected}\n\
              got:\n{report}"
@@ -290,11 +289,9 @@ fn an_inactive_project_is_not_verified_against_the_active_project_s_file() {
         ("uv-workspace", "pyproject.toml"),
     ] {
         assert!(
-            common::flatten_path_spelling(&report).contains(&common::flatten_path_spelling(
-                &format!(
-                    "{integration} managed file missing: {}",
-                    f.ws.join("projects/beta").join(file).display()
-                )
+            report.contains(&format!(
+                "{integration} managed file missing: {}",
+                repoweave::path_spelling::operator_path(&f.ws.join("projects/beta").join(file))
             )),
             "beta's `{file}` is absent and must be reported; alpha's copy \
              satisfies beta's config, so through the root view this finding \
@@ -372,17 +369,17 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     let report = rwv_in(&["doctor"], &ww);
     let expected = format!(
         "vscode-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
-        canonical.display()
+        repoweave::path_spelling::operator_path(&canonical)
     );
     assert!(
-        common::flatten_path_spelling(&report).contains(&common::flatten_path_spelling(&expected)),
+        report.contains(&expected),
         "doctor in a workweave should name the canonical path.\n\
          expected line: {expected}\ngot:\n{report}"
     );
     assert!(
         !report.contains(&format!(
             "managed file missing: {}",
-            ww.join("web-app.code-workspace").display()
+            repoweave::path_spelling::operator_path(&ww.join("web-app.code-workspace"))
         )),
         "doctor named the weave-root view, which does not exist here even as a \
          link.\ngot:\n{report}"

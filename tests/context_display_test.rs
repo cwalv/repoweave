@@ -144,9 +144,7 @@ fn resolve_in_primary_prints_root_path() {
         .current_dir(&deep)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            canonical_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&canonical_root));
 }
 
 #[test]
@@ -163,9 +161,7 @@ fn resolve_at_workspace_root_prints_root_path() {
         .current_dir(&root)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            canonical_root.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&canonical_root));
 }
 
 // ============================================================================
@@ -190,9 +186,7 @@ fn resolve_in_weave_prints_weave_dir_path() {
         .current_dir(&weave_dir)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            canonical_weave.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&canonical_weave));
 }
 
 #[test]
@@ -214,9 +208,7 @@ fn resolve_in_weave_subdir_prints_weave_dir_path() {
         .current_dir(&repo_dir)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            canonical_weave.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&canonical_weave));
 }
 
 // ============================================================================

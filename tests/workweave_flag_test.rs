@@ -132,9 +132,7 @@ fn w_flag_resolves_workweave_from_primary_cwd() {
         .current_dir(&ws)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 /// Long form `--workweave` must work the same as `-w`.
@@ -150,9 +148,7 @@ fn workweave_long_flag_resolves_workweave_from_primary_cwd() {
         .current_dir(&ws)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 /// `rwv -w` from inside the workweave itself (cwd = workweave) still resolves
@@ -171,9 +167,7 @@ fn w_flag_resolves_from_workweave_cwd() {
         .current_dir(&ww)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 // ===========================================================================
@@ -194,9 +188,7 @@ fn w_flag_composed_with_c_flag_from_tmp() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 /// Same but flags in reverse order: -w before -C (global flags compose
@@ -213,9 +205,7 @@ fn w_flag_and_c_flag_in_reverse_order() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 // ===========================================================================
@@ -464,7 +454,7 @@ fn w_flag_selects_correct_workweave_when_multiple_registered() {
         .unwrap();
     assert!(out_a.status.success());
     assert!(
-        String::from_utf8_lossy(&out_a.stdout).contains(ww_a_canon.to_string_lossy().as_ref()),
+        String::from_utf8_lossy(&out_a.stdout) == common::operator_path_stdout(&ww_a_canon),
         "selecting feature-a must return feature-a path"
     );
 
@@ -475,7 +465,7 @@ fn w_flag_selects_correct_workweave_when_multiple_registered() {
         .unwrap();
     assert!(out_b.status.success());
     assert!(
-        String::from_utf8_lossy(&out_b.stdout).contains(ww_b_canon.to_string_lossy().as_ref()),
+        String::from_utf8_lossy(&out_b.stdout) == common::operator_path_stdout(&ww_b_canon),
         "selecting feature-b must return feature-b path"
     );
 }

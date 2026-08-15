@@ -101,10 +101,8 @@ fn delete_refuses_a_name_and_a_path_that_denote_different_workweaves() {
     .expect_err("naming `wa` while holding `wb`'s path must refuse");
 
     let msg = format!("{err:#}");
-    assert!(
-        msg.contains(&wa.display().to_string()) && msg.contains(&wb.display().to_string()),
-        "the refusal must name both directories so the operator can tell which is wrong, got: {msg}"
-    );
+    common::assert_names_operator_path(&msg, &wa);
+    common::assert_names_operator_path(&msg, &wb);
 
     assert!(
         wa.exists(),

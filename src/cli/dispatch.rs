@@ -660,7 +660,7 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Resolve) => {
             let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
-            println!("{}", ctx.active_path().display());
+            println!("{}", crate::path_spelling::operator_path(ctx.active_path()));
         }
         Some(Commands::Add {
             url,

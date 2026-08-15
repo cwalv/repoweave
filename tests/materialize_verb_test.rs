@@ -390,12 +390,7 @@ fn materialize_refuses_on_content_it_never_accepted() {
         report.contains("--adopt-drifted") && report.contains("--regenerate-drifted"),
         "the refusal must name both exits:\n{report}"
     );
-    assert!(
-        report
-            .replace('\\', "/")
-            .contains(common::url_path(&lock).trim_start_matches('/')),
-        "the refusal must list what it would act on:\n{report}"
-    );
+    common::assert_names_operator_path(&report, &lock);
     assert_eq!(
         locked_pinnable_version(&std::fs::read_to_string(&lock).unwrap()).as_deref(),
         Some("0.1.0"),

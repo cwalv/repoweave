@@ -742,16 +742,17 @@ fn activate_from_workweave_is_rejected() {
     marker.write(&workweave_dir).unwrap();
 
     // Running activate from the workweave root must fail.
-    rwv()
+    let assertion = rwv()
         .args(["activate", "my-proj", "--no-materialize"])
         .current_dir(&workweave_dir)
         .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("workweave").and(predicate::str::contains(
-                primary_canon.to_string_lossy().as_ref(),
-            )),
-        );
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("workweave"),
+        "the refusal must say the cwd is a workweave; got: {stderr}"
+    );
+    common::assert_names_operator_path(&stderr, &primary_canon);
 
     // Primary's .rwv-active must be unchanged.
     let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();

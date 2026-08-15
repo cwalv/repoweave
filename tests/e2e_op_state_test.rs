@@ -981,10 +981,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
     assert_in_flight_op_refusal(&stderr, "sync-to");
-    assert!(
-        stderr.contains(&ww.root.display().to_string()),
-        "lease-side refusal must name the owner workspace; got: {stderr}"
-    );
+    common::assert_names_operator_path(&stderr, &ww.root);
 }
 
 /// Correction 1 ORDERING: the op guard fires BEFORE lock-relation

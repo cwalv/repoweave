@@ -434,3 +434,45 @@ pub fn assert_weave_line(stdout: &str, root: impl AsRef<std::path::Path>) {
         "the `Weave:` line must name the weave root in the operator spelling"
     );
 }
+
+/// The whole stdout of a command that prints one path and nothing else, in the
+/// spelling the operator seam mints for it.
+///
+/// Equality for the reason [`assert_weave_line`] gives: containment cannot pin
+/// a spelling whose correct form is a substring of the wrong one.
+pub fn operator_path_stdout(path: impl AsRef<std::path::Path>) -> String {
+    format!(
+        "{}\n",
+        repoweave::path_spelling::operator_path(path.as_ref())
+    )
+}
+
+/// Assert `text` names `path` where the path sits inside a sentence, so
+/// whole-line equality is not available.
+///
+/// Two assertions, because containment alone is not a pin here either: the
+/// minted spelling is a substring of the internal one, so `contains(minted)`
+/// is satisfied by text that still carries the `\\?\` prefix — green exactly
+/// when the leak is present. The second assertion is what closes that, and it
+/// names only THIS path, so an unrelated unminted path elsewhere in the same
+/// message is somebody else's finding rather than a false red here.
+///
+/// Off Windows the two spellings are one string and the second assertion is
+/// provably vacuous — the `minted == internal` arm says so rather than leaving
+/// a reader to work it out. The pin it provides is a Windows pin; on Unix
+/// nothing here can distinguish the two, which is why the seam also carries a
+/// structural pin (`tests/operator_path_seam_test.rs`).
+pub fn assert_names_operator_path(text: &str, path: impl AsRef<std::path::Path>) {
+    let path = path.as_ref();
+    let minted = repoweave::path_spelling::operator_path(path);
+    assert!(
+        text.contains(&minted),
+        "the message must name {minted} in the operator spelling; got:\n{text}"
+    );
+    let internal = path.display().to_string();
+    assert!(
+        minted == internal || !text.contains(&internal),
+        "the message still carries the internal spelling {internal}; it is owed \
+         {minted}, which is what `crate::path_spelling::operator_path` mints. Got:\n{text}"
+    );
+}

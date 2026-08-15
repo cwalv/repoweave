@@ -939,11 +939,11 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
     // just ww's, or the operator fixes ww alone, retries, and meets a raw git
     // conflict instead of a second actionable refusal.
     assert!(
-        stderr.contains("the same kind of problem")
-            && stderr.contains(&primary.project_dir.display().to_string()),
+        stderr.contains("the same kind of problem"),
         "bail must ALSO name the rebase-base workspace's directory when it \
          independently has the same problem; got stderr:\n{stderr}"
     );
+    common::assert_names_operator_path(&stderr, &primary.project_dir);
 
     // The remedy claim: `rwv doctor --fix` actually resolves this state.
     // Both checkouts inherited the both-lines commit independently (each
@@ -1045,17 +1045,17 @@ fn sync_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("the workspace this rebase replays onto")
-            && stderr.contains(&primary.project_dir.display().to_string()),
+        stderr.contains("the workspace this rebase replays onto"),
         "the refusal must name the rebase-base workspace's directory, not just cwd's; \
          got:\n{stderr}"
     );
+    common::assert_names_operator_path(&stderr, &primary.project_dir);
     assert!(
         stderr.contains("rwv doctor --fix"),
         "the refusal must direct the operator at `rwv doctor --fix`; got:\n{stderr}"
     );
     assert!(
-        !stderr.contains(&ww.project_dir.display().to_string()),
+        !stderr.contains(&repoweave::path_spelling::operator_path(&ww.project_dir)),
         "the refusal must not blame ww's directory — ww's own .gitattributes is clean; \
          got:\n{stderr}"
     );

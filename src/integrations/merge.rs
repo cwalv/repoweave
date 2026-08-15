@@ -1821,7 +1821,7 @@ pub fn drift_issues(
             message: format!(
                 "{name} managed file present but unmarked: {}; \
                  rwv will NOT auto-take-over (would discard user content). {user_held_suffix}",
-                path.display()
+                crate::path_spelling::operator_path(path)
             ),
             kind: IssueKind::ManagedFileUserHeld,
             safe_to_fix: false,
@@ -1832,7 +1832,7 @@ pub fn drift_issues(
             message: format!(
                 "{name} managed file has drift: {}; {drift_detail} \
                  Run rwv doctor --fix to regenerate",
-                path.display()
+                crate::path_spelling::operator_path(path)
             ),
             kind: IssueKind::ManagedFileDrift,
             safe_to_fix: true,
@@ -1852,7 +1852,7 @@ pub fn missing_issue(name: &str, path: &Path) -> Issue {
         severity: Severity::Warning,
         message: format!(
             "{name} managed file missing: {}; run rwv doctor --fix to regenerate",
-            path.display()
+            crate::path_spelling::operator_path(path)
         ),
         kind: IssueKind::ManagedFileMissing,
         safe_to_fix: true,
@@ -1894,7 +1894,7 @@ pub fn orphaned_region_issues<D: ManagedDoc>(
         message: format!(
             "{name} managed file has drift: {}; {detail} \
              Run rwv doctor --fix to regenerate",
-            path.display()
+            crate::path_spelling::operator_path(path)
         ),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
@@ -1923,7 +1923,7 @@ pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Is
         message: format!(
             "{name} generated file has drift: {} ({detail}); \
              run rwv doctor --fix to regenerate",
-            path.display()
+            crate::path_spelling::operator_path(path)
         ),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,

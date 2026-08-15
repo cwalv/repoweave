@@ -2722,8 +2722,8 @@ fn delete_workweave_inner(
                  out which of them the registry should name.",
                 name = name.as_str(),
                 project = project.as_str(),
-                registered = workweave_dir.display(),
-                expected = expected.as_path().display(),
+                registered = crate::path_spelling::operator_path(&workweave_dir),
+                expected = crate::path_spelling::operator_path(expected.as_path()),
             );
         }
     }

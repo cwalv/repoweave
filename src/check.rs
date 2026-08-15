@@ -6954,7 +6954,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              `{project}`, so the marker is authoritative and the pointer is \
                              an unread duplicate; run `rwv doctor --fix` to delete \
                              `.rwv-active` here (the marker is left alone)",
-                            root.display()
+                            crate::path_spelling::operator_path(&root)
                         ),
                         WeaveRootIdentityConflictKind::MarkerUnverifiable {
                             marker_path,
@@ -6963,7 +6963,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             "{}: carries both `.rwv-active` (which {pointer}) and \
                              `.rwv-workweave`; the two are mutually exclusive. {} \
                              `--fix` does not touch the pointer until the marker is repaired",
-                            root.display(),
+                            crate::path_spelling::operator_path(&root),
                             defect.refusal(marker_path)
                         ),
                         WeaveRootIdentityConflictKind::Unwitnessed { detail } => format!(
@@ -6972,7 +6972,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              Nothing outside this directory says which file is the stray, so \
                              `--fix` does not touch either — delete the one you know to be \
                              wrong by hand",
-                            root.display()
+                            crate::path_spelling::operator_path(&root)
                         ),
                     };
                     (crate::integration::Severity::Error, msg)
@@ -6985,30 +6985,30 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         WorkweaveTreeIntegrityKind::DanglingParent { parent_path } => format!(
                             "{}: marker `parent` points to `{}` which does not exist; \
                              run `rwv doctor --fix` to re-point parent to primary",
-                            workweave_dir.display(),
-                            parent_path.display()
+                            crate::path_spelling::operator_path(&workweave_dir),
+                            crate::path_spelling::operator_path(parent_path)
                         ),
                         WorkweaveTreeIntegrityKind::ParentChainAnomaly { detail } => format!(
                             "{}: workweave parent-chain anomaly: {}",
-                            workweave_dir.display(),
+                            crate::path_spelling::operator_path(&workweave_dir),
                             detail
                         ),
                         WorkweaveTreeIntegrityKind::UnregisteredDir => format!(
                             "{}: directory under workweaves parent has no `.rwv-workweave` marker",
-                            workweave_dir.display()
+                            crate::path_spelling::operator_path(&workweave_dir)
                         ),
                         WorkweaveTreeIntegrityKind::ForeignPrimary { marker_primary } => format!(
                             "{}: marker `primary` (`{}`) does not match this workspace; \
                              this workweave may have been copied from another machine",
-                            workweave_dir.display(),
-                            marker_primary.display()
+                            crate::path_spelling::operator_path(&workweave_dir),
+                            crate::path_spelling::operator_path(marker_primary)
                         ),
                         WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
                             marker_primary,
                         } => format!(
                             "{}: belongs to workspace `{}`; not this workspace's to manage",
-                            workweave_dir.display(),
-                            marker_primary.display()
+                            crate::path_spelling::operator_path(&workweave_dir),
+                            crate::path_spelling::operator_path(marker_primary)
                         ),
                         WorkweaveTreeIntegrityKind::StaleRegistryEntry {
                             project,
@@ -7021,7 +7021,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              to prune",
                             workweave_name,
                             project,
-                            recorded_path.display()
+                            crate::path_spelling::operator_path(recorded_path)
                         ),
                         WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
                             project,
@@ -7030,7 +7030,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             "{}: workweave `{}` for project `{}` is present on \
                              disk but not recorded in `.rwv-workweave-index`; \
                              run `rwv doctor --fix` to adopt it",
-                            workweave_dir.display(),
+                            crate::path_spelling::operator_path(&workweave_dir),
                             workweave_name,
                             project
                         ),
@@ -7042,9 +7042,9 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              tracked by the project repo; the index is \
                              machine-local — run `git rm --cached {}` and add \
                              `.rwv-workweave-index` to `.gitignore`",
-                            index_path.display(),
+                            crate::path_spelling::operator_path(index_path),
                             project,
-                            index_path.display()
+                            crate::path_spelling::operator_path(index_path)
                         ),
                         WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
                         WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
@@ -7069,13 +7069,13 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                 "{}: workweave directory name disagrees with its records — \
                                  {detail}. Rename the directory to `{expected}` to restore \
                                  the recorded identity",
-                                workweave_dir.display(),
+                                crate::path_spelling::operator_path(&workweave_dir),
                             ),
                             None => format!(
                                 "{}: workweave directory name disagrees with its records — \
                                  {detail}. Rename it to the `<project>--<name>` you intend, \
                                  or remove the directory",
-                                workweave_dir.display(),
+                                crate::path_spelling::operator_path(&workweave_dir),
                             ),
                         },
                     };

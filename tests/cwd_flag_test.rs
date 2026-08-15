@@ -78,9 +78,7 @@ fn c_flag_addresses_workweave_from_tmp() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 /// Same check with the long form `--cwd`.
@@ -96,9 +94,7 @@ fn cwd_long_flag_addresses_workweave_from_tmp() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ww_canon));
 }
 
 /// -C pointing at the primary workspace resolves to the primary workspace.
@@ -113,9 +109,7 @@ fn c_flag_addresses_primary_workspace() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ws_canon.to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(&ws_canon));
 }
 
 /// -C pointing at a subdirectory inside a workspace still resolves the workspace.
@@ -132,9 +126,7 @@ fn c_flag_resolves_from_subdir_inside_workspace() {
         .assert()
         .success()
         // Should print the workspace root (active_path for primary = primary root).
-        .stdout(predicate::str::contains(
-            ws.canonicalize().unwrap().to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(ws.canonicalize().unwrap()));
 }
 
 // ===========================================================================
@@ -233,9 +225,7 @@ fn c_flag_resolves_from_subdir_inside_workweave() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            ww.canonicalize().unwrap().to_string_lossy().as_ref(),
-        ));
+        .stdout(common::operator_path_stdout(ww.canonicalize().unwrap()));
 }
 
 // ===========================================================================

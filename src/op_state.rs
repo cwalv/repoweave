@@ -815,7 +815,7 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
              or `rwv abort` to discard.",
             verb = record.verb,
             phase = record.phase,
-            dir = dir.display(),
+            dir = crate::path_spelling::operator_path(dir),
             resume = resume_command(record.verb),
         )));
     }
@@ -836,8 +836,8 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
                      resolving, or `rwv abort` to discard.",
                     verb = record.verb,
                     phase = record.phase,
-                    dir = dir.display(),
-                    owner = lease.owner.display(),
+                    dir = crate::path_spelling::operator_path(dir),
+                    owner = crate::path_spelling::operator_path(&lease.owner),
                     resume = resume_command(record.verb),
                 )));
             }
@@ -847,8 +847,8 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
                      Rerun the owning verb with `--continue` from the owner workspace, or \
                      `rwv abort` to discard.",
                     id = lease.id,
-                    dir = dir.display(),
-                    owner = lease.owner.display(),
+                    dir = crate::path_spelling::operator_path(dir),
+                    owner = crate::path_spelling::operator_path(&lease.owner),
                 )));
             }
         }

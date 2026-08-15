@@ -408,7 +408,12 @@ fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> any
         None => {
             let listed = drifted
                 .iter()
-                .map(|file| format!("\n  {}", output_dir.join(&file.name).display()))
+                .map(|file| {
+                    format!(
+                        "\n  {}",
+                        crate::path_spelling::operator_path(&output_dir.join(&file.name))
+                    )
+                })
                 .collect::<String>();
             anyhow::bail!(
                 "materialize stopped: content rwv never accepted is on disk for \
@@ -468,7 +473,7 @@ pub fn activate_with_options(
         None => anyhow::bail!(
             "rwv activate has no effect in a workweave (project is fixed at creation). \
              cd to primary ({}) and rerun.",
-            ctx.primary_path().display()
+            crate::path_spelling::operator_path(ctx.primary_path())
         ),
     };
 
@@ -668,7 +673,12 @@ fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
     }
     let listed = drifted
         .iter()
-        .map(|file| format!("\n  {}", output_dir.join(&file.name).display()))
+        .map(|file| {
+            format!(
+                "\n  {}",
+                crate::path_spelling::operator_path(&output_dir.join(&file.name))
+            )
+        })
         .collect::<String>();
     eprintln!(
         "[withheld] core: the install hooks were not run. They re-run each \
