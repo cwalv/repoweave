@@ -156,104 +156,118 @@ fn workspace_context_from_project_dir_no_subcommand() {
 //
 // Doc claim: `rwv doctor` reports entries without a `role` field.
 //
-// Behavior under test: serde requires `role` because it has no default.
-// We verify whether the error surfaces as a parse failure (serde rejects it)
-// or as a check-phase diagnostic.  Either behaviour is acceptable — the test
-// documents which one actually occurs.
+// Corrected: `role` has no serde default, so a role-less entry is not a
+// finding ABOUT an entry — the manifest does not parse at all, and doctor
+// reports the project. The claim named the trigger and got the shape wrong.
 // ===========================================================================
 
+/// A repo entry with no `role` makes `rwv doctor` report the whole project
+/// unparseable, naming the field serde rejected.
+///
+/// Both halves are the pin. The kind is what a consumer branches on, and
+/// every malformed manifest produces it — so the kind alone would be
+/// satisfied by a stray brace. The message is the only place the operator
+/// learns which field is missing, which is the claim being anchored.
 #[test]
 fn check_missing_role_field() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace_no_repo(tmp.path(), "my-project");
 
-    // Write an rwv.toml with a repo entry that is missing the `role` field.
     let bad_manifest = r#"[repositories."github/org/repo"]
 type = "git"
 url = "https://github.com/org/repo.git"
 version = "main"
-# role field intentionally omitted
 "#;
     std::fs::write(ws.join("projects/my-project/rwv.toml"), bad_manifest).unwrap();
 
-    let output = rwv().arg("doctor").current_dir(&ws).output().unwrap();
+    let output = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
 
-    // Either serde rejects the manifest at parse time (non-zero exit, stderr
-    // contains a parse error) OR the check phase produces a diagnostic.
-    // Both signal that the missing role is handled.  A silent success would be
-    // the only unexpected outcome.
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a manifest rwv cannot parse is a doctor failure, not a pass"
+    );
+
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json must parse ({e}):\n{stdout}"));
+    let violations = report["violations"]
+        .as_array()
+        .expect("report carries violations");
 
-    if output.status.success() {
-        // If it somehow succeeds, there should at least be a warning/diagnostic
-        // about the missing field in stdout or stderr.
-        // TODO: if this assertion fires, the tool silently accepts a role-less
-        // entry which contradicts the doc claim.
-        assert!(
-            stderr.contains("role") || stdout.contains("role"),
-            "if check passes despite missing role, output should mention 'role'; \
-             got stdout={stdout} stderr={stderr}"
-        );
-    } else {
-        // Expected path: non-zero exit means the problem was caught.
-        // The error message should mention something useful (role, missing, parse, etc.).
-        let combined = format!("{stdout}{stderr}");
-        assert!(
-            combined.contains("role")
-                || combined.contains("missing")
-                || combined.contains("parse")
-                || combined.contains("error")
-                || combined.contains("deserializ"),
-            "non-zero exit for missing role should include an informative message; \
-             got stdout={stdout} stderr={stderr}"
-        );
-    }
+    assert_eq!(
+        violations.len(),
+        1,
+        "an unparseable manifest stops the walk at the project, so nothing \
+         downstream of it is reported:\n{stdout}"
+    );
+    assert_eq!(violations[0]["kind"], "unparseable-project");
+    assert_eq!(violations[0]["project"], "my-project");
+
+    let message = violations[0]["message"]
+        .as_str()
+        .expect("the violation carries a message");
+    assert!(
+        message.contains("missing field `role`"),
+        "the operator's only route to the offending field is this message; \
+         got: {message}"
+    );
 }
 
 // ===========================================================================
 // 3. check_workweave_drift — extra worktree (project-reporoot-85h9)
 //
 // A git repo directory lives inside the workspace that is not referenced by
-// any project's rwv.toml.  `rwv doctor` should report drift (orphan).
+// any project's rwv.toml.  `rwv doctor` reports it as an orphaned clone.
 // ===========================================================================
 
+/// A git repo on disk that no manifest names is reported as
+/// `orphaned-clone`, and the repo that IS named is not.
+///
+/// Naming the orphan is half the pin; the count is the other half. A check
+/// that reported every clone in the workspace would satisfy an assertion
+/// that only looked for `extra-repo`, and would be worthless — the finding
+/// means "this one is unreferenced", which is a statement about the ones it
+/// leaves out.
 #[test]
 fn check_workweave_drift_extra_repo() {
     let tmp = common::tempdir().unwrap();
     let (ws, _) = make_workspace_with_git_repo(tmp.path(), "my-project");
 
-    // Add a second git repo on disk that is NOT in any rwv.toml.
     let extra_repo = ws.join("github/org/extra-repo");
     init_repo_with_commit(&extra_repo);
 
-    let output = rwv().arg("doctor").current_dir(&ws).output().unwrap();
+    let output = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "an unreferenced clone is a violation, so doctor exits non-zero"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json must parse ({e}):\n{stdout}"));
 
-    // TODO: If check does not yet implement drift/orphan detection for repos
-    // not referenced by any project, this assertion should be updated once
-    // the feature is implemented (project-reporoot-85h9).
-    if output.status.success() {
-        // The current behavior (success with no diagnostics) is documented here
-        // so that future implementers know the test expectation once drift
-        // detection is implemented.
-        let _ = (&stdout, &stderr); // suppress unused warning
-                                    // For now just note that an unlisted repo does not yet cause a failure:
-                                    // TODO: once drift detection is implemented, remove this branch and
-                                    // assert failure + mention of "extra-repo".
-    } else {
-        // Preferred future behavior: non-zero exit reporting the orphan.
-        assert!(
-            stdout.contains("extra-repo")
-                || stdout.contains("orphan")
-                || stderr.contains("extra-repo")
-                || stderr.contains("orphan"),
-            "check should mention the unlisted repo 'extra-repo'; \
-             got stdout={stdout} stderr={stderr}"
-        );
-    }
+    let orphans: Vec<&serde_json::Value> = report["violations"]
+        .as_array()
+        .expect("report carries violations")
+        .iter()
+        .filter(|v| v["kind"] == "orphaned-clone")
+        .collect();
+
+    assert_eq!(
+        orphans.len(),
+        1,
+        "one clone is unreferenced and one is named by the manifest:\n{stdout}"
+    );
+    assert_eq!(orphans[0]["path"], "github/org/extra-repo");
 }
 
 // ===========================================================================
@@ -540,50 +554,33 @@ link = [".beads"]
 // Doc claim: `rwv activate` runs ecosystem install commands (npm install,
 // uv sync, etc.) after generating workspace config files.
 //
-// Testing strategy: we verify whether `npm` is on PATH.
-//   - If it is: set up an npm workspace, run activate, and check whether
-//     package-lock.json or node_modules appear (evidence of npm install).
-//   - If npm is not available: we test that activation still succeeds gracefully,
-//     demonstrating that missing package managers don't abort the command.
-//
-// NOTE: The current implementation does NOT run `npm install` during activate —
-// that happens only via `rwv lock`.  This test documents the current behaviour
-// and the discrepancy with the doc claim.
+// The claim holds, and `--no-materialize` is the documented suppression.
+// Both are driven here against a recording `npm` on the child's PATH, so
+// what is measured is what rwv spawned rather than what this host installs.
 // ===========================================================================
 
-#[test]
-fn activate_npm_no_materialize_run_during_activate() {
-    // Doc claim (project-reporoot-l56a): activate runs npm install.
-    // Current observed behaviour: activate only generates package.json and
-    // creates symlinks; it does NOT invoke npm install.
-    //
-    // This test documents current behaviour.  If the implementation is updated
-    // to run npm install on activate, update the assertions below.
-
-    let tmp = common::tempdir().unwrap();
-    let ws_root = tmp.path().join("ws");
+/// Build an npm-flavoured workspace at `ws_root` and pre-author its managed
+/// files, leaving a context-mode `rwv activate` something to surface.
+fn make_npm_workspace(ws_root: &Path, repo: &str) {
     std::fs::create_dir_all(ws_root.join("github")).unwrap();
 
     let project_dir = ws_root.join("projects/npm-proj");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    // Create a repo with a package.json (triggers npm-workspaces integration).
-    let repo_dir = ws_root.join("github/org/webapp");
+    let repo_dir = ws_root.join("github/org").join(repo);
     std::fs::create_dir_all(&repo_dir).unwrap();
     std::fs::write(
         repo_dir.join("package.json"),
-        r#"{"name": "webapp", "version": "1.0.0"}"#,
+        format!(r#"{{"name": "{repo}", "version": "1.0.0"}}"#),
     )
     .unwrap();
 
-    let manifest = "[repositories.\"github/org/webapp\"]\ntype = \"git\"\nurl = \"https://github.com/org/webapp.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let manifest = format!(
+        "[repositories.\"github/org/{repo}\"]\ntype = \"git\"\nurl = \"https://github.com/org/{repo}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+    );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
-    // Trigger-model split: pre-author via intent path so the
-    // context-mode `rwv activate` below has content to surface. Use the
-    // no-materialize variant so this test (which asserts node_modules is NOT
-    // created) doesn't see the install hooks run during pre-authoring.
-    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws_root, None).unwrap();
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         "npm-proj",
         &ctx,
@@ -592,68 +589,121 @@ fn activate_npm_no_materialize_run_during_activate() {
         },
     )
     .expect("intent-mode activation should author package.json in project dir");
+}
+
+/// Write an `npm` into `bin_dir` that appends its argv to `log` and exits 0.
+///
+/// Unix only: what the shim has to be is a file the spawned child resolves on
+/// PATH and executes itself. On Windows an extensionless `#!` script is not a
+/// candidate — lookup selects on `PATHEXT` — so porting needs a Windows
+/// spelling for the shim, which is the same condition holding
+/// `write_exit_code_shim` in `tests/integrations_test.rs` to unix.
+#[cfg(unix)]
+fn write_recording_npm(bin_dir: &Path, log: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(bin_dir).unwrap();
+    let path = bin_dir.join("npm");
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\necho \"$@\" >> {}\nexit 0\n", log.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// `rwv activate` spawns the ecosystem install command; `--no-materialize`
+/// withholds it.
+///
+/// The suppressed run and the plain run differ only in the flag, and that is
+/// what makes the absence readable. On its own, "no install ran" is equally
+/// green on a host without npm, on a fixture the integration never detected,
+/// and on an activate that spawns nothing at all — the second run is the
+/// control that separates those from the flag doing its job.
+#[cfg(unix)]
+#[test]
+fn activate_runs_the_install_hook_and_no_materialize_withholds_it() {
+    let tmp = common::tempdir().unwrap();
+    let ws_root = tmp.path().join("ws");
+    make_npm_workspace(&ws_root, "webapp");
+
+    let bin_dir = tmp.path().join("bin");
+    let log = tmp.path().join("npm-argv.log");
+    write_recording_npm(&bin_dir, &log);
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    rwv()
+        .args(["activate", "npm-proj", "--no-materialize"])
+        .env("PATH", &path)
+        .current_dir(&ws_root)
+        .assert()
+        .success();
+
+    assert!(
+        !log.exists(),
+        "--no-materialize must withhold the install command; npm ran with: {}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+    assert!(
+        ws_root.join("package.json").exists(),
+        "the flag withholds the install hook, not the surfacing symlink"
+    );
+
+    rwv()
+        .args(["activate", "npm-proj"])
+        .env("PATH", &path)
+        .current_dir(&ws_root)
+        .assert()
+        .success();
+
+    let argv = std::fs::read_to_string(&log)
+        .expect("without the flag, activate must run the install command");
+    assert_eq!(argv.trim(), "install", "activate runs `npm install`");
+}
+
+/// When the install command is not on PATH, activate refuses: it names the
+/// missing tool, exits non-zero, and leaves `.rwv-active` unwritten.
+///
+/// The precondition is forced by handing the child a PATH with nothing on
+/// it, because a test that merely hopes npm is absent measures the host. The
+/// withheld `.rwv-active` is the half worth having: an exit code says the run
+/// failed, and this says the workspace was not left pointing at a project
+/// whose tooling never installed.
+#[cfg(unix)]
+#[test]
+fn activate_refuses_when_the_install_command_is_missing() {
+    let tmp = common::tempdir().unwrap();
+    let ws_root = tmp.path().join("ws");
+    make_npm_workspace(&ws_root, "frontend");
+
+    let empty_bin = tmp.path().join("empty-bin");
+    std::fs::create_dir_all(&empty_bin).unwrap();
 
     let output = rwv()
-        .args(["activate", "npm-proj", "--no-materialize"])
+        .args(["activate", "npm-proj"])
+        .env("PATH", &empty_bin)
         .current_dir(&ws_root)
         .output()
         .unwrap();
 
-    // Activation should succeed regardless of whether npm is installed.
     assert!(
-        output.status.success(),
-        "activate should succeed even without npm; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        !output.status.success(),
+        "a failed install hook is an activate failure, not a warning"
     );
-
-    // A workspace-level package.json symlink should be present (integration ran).
-    let root_pkg = ws_root.join("package.json");
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        root_pkg.exists(),
-        "package.json should be symlinked at workspace root after activate"
+        stderr.contains("npm is not on PATH"),
+        "the operator is owed the name of the tool that is missing; got:\n{stderr}"
     );
-
-    // Current behaviour: node_modules is NOT created by activate (no npm install).
-    let node_modules = ws_root.join("node_modules");
-    // TODO (project-reporoot-l56a): If the implementation is updated to run
-    // `npm install` during activate, remove this assertion and add one that
-    // verifies node_modules (or package-lock.json) was created.
     assert!(
-        !node_modules.exists(),
-        "activate should not run npm install (node_modules should not exist); \
-         if this fails, the implementation now runs npm install during activate \
-         and the test should be updated to reflect that"
+        stderr.contains("activate hook failed"),
+        "the refusal names the stage that failed; got:\n{stderr}"
     );
-}
-
-#[test]
-fn activate_graceful_when_npm_unavailable() {
-    // If npm is not on PATH, activate should still succeed (no hard crash).
-    // We cannot force npm off PATH in a portable way, but we can verify
-    // that activate always exits 0 in our test environment.
-
-    let tmp = common::tempdir().unwrap();
-    let ws_root = tmp.path().join("ws");
-    std::fs::create_dir_all(ws_root.join("github")).unwrap();
-
-    let project_dir = ws_root.join("projects/npm-proj");
-    std::fs::create_dir_all(&project_dir).unwrap();
-
-    let repo_dir = ws_root.join("github/org/frontend");
-    std::fs::create_dir_all(&repo_dir).unwrap();
-    std::fs::write(
-        repo_dir.join("package.json"),
-        r#"{"name": "frontend", "version": "1.0.0"}"#,
-    )
-    .unwrap();
-
-    let manifest = "[repositories.\"github/org/frontend\"]\ntype = \"git\"\nurl = \"https://github.com/org/frontend.git\"\nversion = \"main\"\nrole = \"owned\"\n";
-    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
-
-    // Activate must not fail regardless of available tools.
-    rwv()
-        .args(["activate", "npm-proj", "--no-materialize"])
-        .current_dir(&ws_root)
-        .assert()
-        .success();
+    assert!(
+        !ws_root.join(".rwv-active").exists(),
+        ".rwv-active must not be written when an install hook fails"
+    );
 }
