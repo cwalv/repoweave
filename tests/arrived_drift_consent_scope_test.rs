@@ -171,6 +171,18 @@ impl Fixture {
 /// does cannot reach the step under test. The unnamed third clone is what
 /// `rwv add` names by path — the arm that needs no network.
 fn fixture() -> Fixture {
+    fixture_impl(false)
+}
+
+/// The same project, with `lib` also carrying a `package.json` — a second
+/// hook-bearing integration (npm-workspaces) enabled alongside
+/// cargo-workspace, so a drift confined to `Cargo.lock` has something
+/// non-cargo to withhold from.
+fn fixture_with_npm_member() -> Fixture {
+    fixture_impl(true)
+}
+
+fn fixture_impl(npm_in_lib: bool) -> Fixture {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let ws = root.join("ws");
@@ -190,18 +202,22 @@ fn fixture() -> Fixture {
         ],
     );
     for (repo, package) in [("lib", "acmelib"), ("extra", "acmeextra")] {
-        init_bare_repo(
-            &bares.join(format!("{repo}.git")),
-            &[
-                (
-                    "Cargo.toml",
-                    &format!(
-                        "[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
-                    ),
-                ),
-                ("src/lib.rs", ""),
-            ],
-        );
+        let mut files = vec![
+            (
+                "Cargo.toml".to_string(),
+                format!("[package]\nname = \"{package}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+            ),
+            ("src/lib.rs".to_string(), String::new()),
+        ];
+        if npm_in_lib && repo == "lib" {
+            files.push((
+                "package.json".to_string(),
+                format!("{{\"name\": \"{package}\", \"version\": \"0.1.0\"}}\n"),
+            ));
+        }
+        let file_refs: Vec<(&str, &str)> =
+            files.iter().map(|(n, b)| (n.as_str(), b.as_str())).collect();
+        init_bare_repo(&bares.join(format!("{repo}.git")), &file_refs);
     }
 
     let mut manifest = String::new();
@@ -244,7 +260,12 @@ fn fixture() -> Fixture {
     git_run(&project_dir, &["config", "user.email", "test@test.com"]);
     git_run(&project_dir, &["config", "user.name", "Test"]);
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
-    std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
+    let gitignore = if npm_in_lib {
+        "/Cargo.lock\n/package-lock.json\n"
+    } else {
+        "/Cargo.lock\n"
+    };
+    std::fs::write(project_dir.join(".gitignore"), gitignore).unwrap();
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
@@ -540,6 +561,103 @@ fn materialize_with_a_consent_still_reaches_the_generator() {
         "and discarding the operator's resolve then re-resolving is what \
          `--regenerate-drifted` means — a pin still at 0.1.0 here says the \
          generator never ran:\n{}",
+        run.all
+    );
+}
+
+/// The scope claim itself: with a second, non-cargo hook-bearing integration
+/// enabled on the same project, drift confined to `Cargo.lock` alone must
+/// still withhold npm's hook. `tests/hook_withhold_scope_test.rs` pins that
+/// the call graph asks the question once and guards the run with it; this is
+/// where the answer that guard computes is checked.
+///
+/// Paired with `a_verb_with_no_drift_in_its_way_still_runs_the_non_cargo_hook`
+/// below: without that control, "npm's hook did not run" here is
+/// indistinguishable from "npm's hook never runs in this fixture at all".
+#[test]
+fn activate_withholds_the_non_cargo_hook_over_cargo_only_drift() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    if which::which("npm").is_err() {
+        eprintln!("skipping: `npm` not found on PATH");
+        return;
+    }
+    let f = fixture_with_npm_member();
+    materialized_then_pinned_back(&f);
+
+    let npm_lock = f.ws.join("projects/app/package-lock.json");
+    assert!(
+        npm_lock.exists(),
+        "fixture: the first materialize must have run npm's hook too"
+    );
+    std::fs::remove_file(&npm_lock).unwrap();
+
+    let run = f.rwv(&["activate", "app"]);
+    assert!(
+        run.ok,
+        "activate must still select the project:\n{}",
+        run.all
+    );
+    // The claim this test adds, checked first: npm's hook, specifically, must
+    // not have run. `f.drift_is_unaccepted()` below is a real but coarser
+    // symptom of the same regression shared with the cargo-only arms above —
+    // asserting the npm fact first is what keeps this test's own evidence
+    // from being masked by that shared assertion firing first.
+    assert!(
+        !npm_lock.exists(),
+        "the non-cargo hook must not have run: npm's lock, deliberately \
+         removed before this run, must still be absent. `Cargo.lock` is the \
+         only file that drifted; npm's own generated file did not:\n{}",
+        run.all
+    );
+    assert!(
+        f.drift_is_unaccepted(),
+        "the drift must still be UNACCEPTED afterwards:\n{}",
+        run.all
+    );
+    assert_the_operator_was_told(&run, "activate");
+}
+
+/// The control for the arm above.
+#[test]
+fn a_verb_with_no_drift_in_its_way_still_runs_the_non_cargo_hook() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    }
+    if which::which("npm").is_err() {
+        eprintln!("skipping: `npm` not found on PATH");
+        return;
+    }
+    let f = fixture_with_npm_member();
+    materialized(&f);
+
+    let npm_lock = f.ws.join("projects/app/package-lock.json");
+    assert!(
+        npm_lock.exists(),
+        "fixture: the first materialize must have run npm's hook too"
+    );
+    std::fs::remove_file(&npm_lock).unwrap();
+
+    let run = f.rwv(&["activate", "app"]);
+    assert!(run.ok, "`rwv activate` should succeed:\n{}", run.all);
+    assert!(
+        !f.drift_is_unaccepted(),
+        "fixture: nothing here should read as drift:\n{}",
+        run.all
+    );
+    assert!(
+        !run.all.contains("[withheld]"),
+        "nothing is being withheld here:\n{}",
+        run.all
+    );
+    assert!(
+        npm_lock.exists(),
+        "control: with nothing in the way, the same verb must re-run npm's \
+         hook and recreate the lock this test deliberately removed — \
+         otherwise the arm above would prove nothing about scope:\n{}",
         run.all
     );
 }

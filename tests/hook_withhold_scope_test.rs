@@ -26,6 +26,14 @@
 //! Residue: this reads the call graph's shape, not its behaviour. A gate that
 //! kept both arities and computed the wrong answer is not a shape this sees —
 //! `tests/arrived_drift_consent_scope_test.rs` is where the answer is checked.
+//!
+//! A second, by-construction reason per-integration scoping cannot arrive
+//! silently: the gate's own input carries no integration to scope by.
+//! `drifted_attested_owned_files` returns `DriftedOwnedFile { name, content }`
+//! — a filename and bytes, nothing recording which integration produced
+//! either. Narrowing the withhold to the drifted file's own integration is not
+//! a rewrite of the `if` this file pins; it needs a new column on the
+//! owned-digest ledger first, because nothing on this path has one to read.
 
 mod common;
 
