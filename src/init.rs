@@ -29,7 +29,7 @@ use crate::manifest::{LockFile, Manifest, RepoUrl};
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::project_vcs;
 use crate::workspace::{
-    create_identity_dir, project_dir, projects_dir, require_workspace_or_empty,
+    create_identity_dir, enclosing_project, project_dir, projects_dir, require_workspace_or_empty,
     warn_confusable_project_siblings, MintedDir, WorkspaceContext,
 };
 use anyhow::Context;
@@ -95,6 +95,15 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     bootstrap_workspace_if_empty(origin_dir)?;
     let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
     let project_dir = project_dir(ctx.primary_path(), name);
+
+    if let Some(enclosing) = enclosing_project(ctx.primary_path(), name) {
+        anyhow::bail!(
+            "cannot create project '{name}': `projects/{enclosing}/` is already a project, \
+             and rwv reads everything below a project's directory as that project's own \
+             files — a project there would exist on disk and never be listed. Choose a name \
+             outside `{enclosing}/`, or work in `{enclosing}` itself."
+        );
+    }
 
     // The collision check IS the creation: asking the filesystem to make the
     // directory is what consults it about its own equivalence. A prior

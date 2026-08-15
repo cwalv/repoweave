@@ -165,7 +165,7 @@ gates publishing is the one repo whose branch identity nothing verifies** — is
 (`workspace.rs:335-383`) `[V]`, but doctor's branch-discipline pass no longer
 uses it as its walker: `workweave_checkouts` explicitly appends
 `<workweave>/projects/<project>/` (`check.rs:3280`) and the canonical pass
-iterates `workweave_index::projects_on_disk` alongside the manifest members,
+iterates `workspace::discover_projects` alongside the manifest members,
 with a dedicated scope arm so project-repo findings survive a project-scoped
 run (`check.rs:4573-4575`) `[V]`. `git checkout --detach` in the project repo
 now produces a finding, pinned by
@@ -1816,7 +1816,7 @@ Two things follow immediately, and both shipped:
   directory, so `scan_repos_on_disk` (`workspace.rs:335-383`) was not the
   right walker — `workweave_checkouts` enumerates the project directory
   separately (`check.rs:3280`), the canonical pass iterates
-  `workweave_index::projects_on_disk`, and a dedicated arm in
+  `workspace::discover_projects`, and a dedicated arm in
   `branch_discipline_in_scope` (`check.rs:4573-4575`) keeps project-repo
   findings inside a project-scoped run `[V]`. Tests:
   `tests/branch_discipline_test.rs:729` and `:761`.

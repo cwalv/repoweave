@@ -1,6 +1,6 @@
 //! `rwv status` — per-repo state of the CWD workspace.
 
-use crate::manifest::Project;
+use crate::manifest::{Project, ProjectName};
 use crate::op_state;
 use crate::vcs::{vcs_for, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
@@ -229,12 +229,12 @@ fn checkout_branch(vcs: &dyn Vcs, repo_abs: &Path) -> Option<String> {
     }
 }
 
-fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<String> {
+fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<ProjectName> {
     match &ctx.checkout {
-        Checkout::Primary { project: Some(p) } => vec![p.as_str().to_owned()],
-        Checkout::Workweave { project, .. } => vec![project.as_str().to_owned()],
+        Checkout::Primary { project: Some(p) } => vec![p.clone()],
+        Checkout::Workweave { project, .. } => vec![project.clone()],
         Checkout::Primary { project: None } => {
-            crate::workspace::discover_project_paths(ctx.active_path())
+            crate::workspace::discover_projects(ctx.active_path())
         }
     }
 }
@@ -266,7 +266,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
     let mut entries: Vec<RepoStatus> = Vec::new();
 
     for pname in project_names_for_ctx(ctx) {
-        let project_dir = project_dir(&workspace_dir, &pname);
+        let project_dir = project_dir(&workspace_dir, pname.as_str());
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
             Err(e) => {

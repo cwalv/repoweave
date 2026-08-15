@@ -191,7 +191,7 @@ fn create_branch(repo: &Path, name: &str, start_point: &str) {
 /// already exist: recording against an absent ref would produce the dangling
 /// state, which is a different fixture.
 fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) {
-    std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
+    make_project(primary, project);
     let project = ProjectName::new(project).unwrap();
     let mut registry = RefRegistry::for_project(primary, &project);
 
@@ -230,7 +230,7 @@ fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) 
 /// Record an ownership receipt for a ref that does **not** exist — the
 /// dangling-receipt state §4.2 calls the benign crash residue.
 fn record_dangling_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) {
-    std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
+    make_project(primary, project);
     let project = ProjectName::new(project).unwrap();
     let mut registry = RefRegistry::for_project(primary, &project);
     let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
@@ -1048,13 +1048,12 @@ fn handmade_lookalike_branch_survives_doctor_fix() {
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
 
-    // The project directory has to exist, or the registry cannot be written
-    // to at all and the fixture would prove nothing: a `--fix` that tried to
-    // forge a receipt for this branch would fail on the missing directory
-    // rather than on the rule under test. (Measured — without this line a
-    // mutation that forges receipts and deletes the unowned class leaves this
-    // test green.)
-    std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
+    // The project has to exist, or the registry cannot be written to at all
+    // and the fixture would prove nothing: a `--fix` that tried to forge a
+    // receipt for this branch would fail on the missing directory rather than
+    // on the rule under test. (Measured — without this line a mutation that
+    // forges receipts and deletes the unowned class leaves this test green.)
+    make_project(&ws, "myproj");
 
     // The operator's own branch. It happens to be spelled the way rwv spells
     // its ephemeral refs; nothing recorded it.
@@ -1100,11 +1099,11 @@ fn flat_lookalike_branch_survives_doctor_fix() {
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
 
-    // `record_receipt` creates this as a side effect; the safe-class fixture
+    // `record_receipt` mints this as a side effect; the safe-class fixture
     // therefore has it and this one must too, or the two stop being
     // byte-for-byte and a receipt-forging `--fix` would fail here for the
     // wrong reason. See the note in `handmade_lookalike_branch_survives_doctor_fix`.
-    std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
+    make_project(&ws, "myproj");
 
     // Identical to the safe-class fixture, with `record_receipt` removed.
     create_branch(&canonical, "myproj--dead", "main");
@@ -1234,6 +1233,19 @@ fn ephemeral_branch_with_existing_workweave_is_clean() {
 // Project-scope isolation: --fix without --all must NOT delete
 // stale ephemeral branches belonging to OTHER projects.
 // ===========================================================================
+
+/// Mint `projects/<project>/` as a project: the directory plus the manifest
+/// that makes it one.
+///
+/// The manifest is not decoration. A project is a directory under `projects/`
+/// holding an `rwv.toml`, and the enumeration every doctor scan runs on stops
+/// at that file — so a bare directory holds a registry nothing reads, which is
+/// a state no rwv verb produces.
+fn make_project(primary: &Path, project: &str) {
+    let dir = primary.join("projects").join(project);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rwv.toml"), "[repositories]\n").unwrap();
+}
 
 /// Write a minimal `rwv.toml` for `project_name` that declares a single repo
 /// at `repo_path` (manifest-relative forward-slash string).
@@ -1609,7 +1621,7 @@ fn make_index_legacy(primary: &Path, project: &str) {
 /// recognised as placed (what `rwv workweave create` writes alongside the
 /// marker).
 fn record_placement(primary: &Path, project: &str, workweave: &str, dir: &Path) {
-    std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
+    make_project(primary, project);
     repoweave::workweave_index::record_workweave(
         primary,
         &ProjectName::new(project).unwrap(),

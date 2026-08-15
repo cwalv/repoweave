@@ -86,7 +86,7 @@ use crate::manifest::ProjectName;
 use crate::vcs::{
     EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
 };
-use crate::workspace::{discover_project_paths, project_dir};
+use crate::workspace::project_dir;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -963,20 +963,6 @@ fn append_ignore_line(target: &Path, filename: &str) -> anyhow::Result<()> {
     std::fs::write(target, new_content)
         .with_context(|| format!("failed to update {}", target.display()))?;
     Ok(())
-}
-
-/// Enumerate every project directly under `<primary_root>/projects/`.
-///
-/// A helper for callers that need to iterate every project's registry
-/// (e.g. adopting children across the workspace when a workweave is
-/// retired). Returns projects sorted by name; directories missing an
-/// `rwv.toml` are still included (a project can register workweaves before
-/// its manifest is populated).
-pub fn projects_on_disk(primary_root: &Path) -> Vec<ProjectName> {
-    discover_project_paths(primary_root)
-        .into_iter()
-        .filter_map(|name| ProjectName::new(name).ok())
-        .collect()
 }
 
 // ---------------------------------------------------------------------------

@@ -481,6 +481,11 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(ws.join("github")).unwrap();
     std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
+    std::fs::write(
+        ws.join("projects").join("myproj").join("rwv.toml"),
+        "[repositories]\n",
+    )
+    .unwrap();
 
     let canonical = ws.join("github").join("acme").join("repo");
     std::fs::create_dir_all(&canonical).unwrap();

@@ -87,6 +87,8 @@ pub fn case_token(v: &CheckViolation) -> String {
         }
         CheckViolation::HeadUnreadable { .. } => "head-unreadable".into(),
         CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable".into(),
+        CheckViolation::ProjectlessDir { .. } => "projectless-dir".into(),
+        CheckViolation::UnnameableProject { .. } => "unnameable-project".into(),
         CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry".into(),
         CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
@@ -287,6 +289,16 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::ProjectsDirUnreadable {
             path: path("/ws/projects"),
             error: "permission denied".into(),
+        },
+        CheckViolation::ProjectlessDir {
+            dir: path("/ws/projects/scaffold"),
+        },
+        CheckViolation::UnnameableProject {
+            dir: path("/ws/projects/bad--name"),
+            derived: "bad--name".into(),
+            error: "'bad--name' is not a valid project name: contains `--` or starts/ends \
+                    with `-`, ambiguous against the `--` that joins project to workweave"
+                .into(),
         },
         CheckViolation::UnresolvableLockEntry {
             project: project(),

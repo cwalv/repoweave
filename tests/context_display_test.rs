@@ -40,7 +40,9 @@ fn context_display_in_primary_shows_root_and_projects() {
     let root = make_workspace(tmp.path(), "myws");
 
     // Create a project so the display has something to list
-    fs::create_dir_all(root.join("projects").join("web-app")).unwrap();
+    let project = root.join("projects").join("web-app");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("rwv.toml"), "[repositories]\n").unwrap();
 
     let out = Command::cargo_bin("rwv")
         .unwrap()

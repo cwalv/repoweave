@@ -8,8 +8,7 @@ use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::{ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
-    discover_project_paths, project_dir, project_rel_path, projects_dir, strip_projects_prefix,
-    Resolution,
+    project_dir, project_rel_path, projects_dir, strip_projects_prefix, Resolution,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -130,6 +129,26 @@ pub enum CheckViolation {
     /// invisible to this scan, which without this finding reads the same as
     /// a workspace that genuinely has none.
     ProjectsDirUnreadable { path: PathBuf, error: String },
+
+    /// A directory under `projects/` holding no `rwv.toml` at any depth below
+    /// it. It is not a project and contains none, so every enumeration walks
+    /// past it in silence — which is what an operator who created it by hand
+    /// reads as rwv having accepted it.
+    ProjectlessDir { dir: PathBuf },
+
+    /// A directory under `projects/` that holds an `rwv.toml` but whose path
+    /// relative to `projects/` is not a name [`ProjectName::new`] accepts.
+    /// The manifest is there and no verb can address it, because every verb
+    /// takes the name through the validator first.
+    ///
+    /// Raised whatever `--project` narrows to: the derived name is one the
+    /// validator refuses, so it can never equal a scope, and a scope filter
+    /// would silence it everywhere instead of narrowing it.
+    UnnameableProject {
+        dir: PathBuf,
+        derived: String,
+        error: String,
+    },
 
     /// An `rwv.lock` entry naming a revision the local clone cannot resolve —
     /// a lock written against history this clone has never fetched.
@@ -642,6 +661,8 @@ impl CheckViolation {
             | CheckViolation::MergeDriverConfigUnreadable { .. }
             | CheckViolation::HeadUnreadable { .. }
             | CheckViolation::ProjectsDirUnreadable { .. }
+            | CheckViolation::ProjectlessDir { .. }
+            | CheckViolation::UnnameableProject { .. }
             | CheckViolation::UnresolvableLockEntry { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
@@ -745,6 +766,8 @@ impl CheckViolation {
             CheckViolation::MergeDriverConfigUnreadable { .. } => "merge-driver-config-unreadable",
             CheckViolation::HeadUnreadable { .. } => "head-unreadable",
             CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable",
+            CheckViolation::ProjectlessDir { .. } => "projectless-dir",
+            CheckViolation::UnnameableProject { .. } => "unnameable-project",
             CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry",
             CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format",
             CheckViolation::DanglingActiveProject { .. } => "dangling-active-project",
@@ -1669,6 +1692,14 @@ pub enum ViolationOutput {
         path: String,
         error: String,
     },
+    ProjectlessDir {
+        absolute_path: String,
+    },
+    UnnameableProject {
+        absolute_path: String,
+        derived: String,
+        error: String,
+    },
     UnresolvableLockEntry {
         path: String,
         absolute_path: String,
@@ -2028,6 +2059,18 @@ impl ViolationOutput {
             },
             CheckViolation::ProjectsDirUnreadable { path, error } => Self::ProjectsDirUnreadable {
                 path: crate::path_spelling::wire_path(&path),
+                error,
+            },
+            CheckViolation::ProjectlessDir { dir } => Self::ProjectlessDir {
+                absolute_path: crate::path_spelling::wire_path(&dir),
+            },
+            CheckViolation::UnnameableProject {
+                dir,
+                derived,
+                error,
+            } => Self::UnnameableProject {
+                absolute_path: crate::path_spelling::wire_path(&dir),
+                derived,
                 error,
             },
             CheckViolation::UnresolvableLockEntry { project, repo } => {
@@ -2391,13 +2434,13 @@ pub struct LegacyManifestFile {
 /// Runs instead of, not alongside, a parse: a project whose only manifest is
 /// the legacy one has nothing `Project::from_dir` can open, so without this
 /// scan it reads as a directory with no manifest and is passed over in
-/// silence.
+/// silence. Which is also why it walks the tree itself rather than taking
+/// [`crate::workspace::discover_projects`]'s answer: what it looks for is
+/// precisely a directory that enumeration cannot see.
 pub fn scan_workspace_for_legacy_manifests(workspace_dir: &Path) -> Vec<LegacyManifestFile> {
     let projects_root = projects_dir(workspace_dir);
     let mut found = Vec::new();
-    for name in discover_project_paths(workspace_dir) {
-        scan_project_dir_for_legacy(&projects_root, &projects_root.join(name), &mut found);
-    }
+    scan_project_dir_for_legacy(&projects_root, &projects_root, &mut found);
     found
 }
 
@@ -2565,7 +2608,7 @@ fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
         crate::workweave_index::default_container(ws_root),
         &mut containers,
     );
-    for project in crate::workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         if let Ok(Some(idx)) = crate::workweave_index::read(ws_root, &project) {
             push_unique(idx.container, &mut containers);
         }
@@ -2756,7 +2799,7 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
         std::collections::HashSet::new();
     let mut unreadable_index_projects: std::collections::HashSet<String> =
         std::collections::HashSet::new();
-    for project in crate::workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         let index = match crate::workweave_index::read(ws_root, &project) {
             Ok(Some(idx)) => Some(idx),
             Ok(None) => None,
@@ -4167,7 +4210,7 @@ impl RecordedRefs {
         // does not vary by project. It is also skipped entirely on a weave
         // with no receipts, which is every weave until the migration runs.
         let mut workweave_dirs: Option<Vec<(String, PathBuf)>> = None;
-        for name in crate::workweave_index::projects_on_disk(ws_root) {
+        for name in crate::workspace::discover_projects(ws_root) {
             let registry = RefRegistry::for_project(ws_root, &name);
             // A legacy index reads as "no receipts", which is the
             // fail-closed direction: nothing in it is destroyable until
@@ -4601,7 +4644,7 @@ fn canonical_stores(
         });
     }
 
-    for project in crate::workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         let path = project_dir(ws_root, project.as_str());
         // "Not a repo" is a typed error, not a state, so the enumeration
         // can ask the question directly instead of guessing from a
@@ -4856,7 +4899,7 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
 
     let mut out = Vec::new();
     // The container scan, keyed on each directory's own marker. Reading the
-    // project from the marker rather than from `projects_on_disk` matters:
+    // project from the marker rather than from `discover_projects` matters:
     // a workweave whose `projects/<project>/` slot is missing is still a
     // workweave, and treating its live ref as an orphan is the direction
     // that turns a real branch into a "leftover".
@@ -4870,7 +4913,7 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
     // The indexes, which are the only record of a `--dir` placement outside
     // every container. Consulted only for entries whose directory
     // actually exists, so a stale entry cannot resurrect a deleted workweave.
-    for project in crate::workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         if let Ok(Some(index)) = crate::workweave_index::read(ws_root, &project) {
             for (name, path) in &index.workweaves {
                 if path.is_dir() {
@@ -4906,7 +4949,7 @@ fn scan_dangling_receipts(
 ) {
     use crate::workweave_index::RefRegistry;
 
-    for project in crate::workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         if let Some(active) = active_project {
             if project.as_str() != active {
                 continue;
@@ -4985,7 +5028,7 @@ fn scan_pre_flat_receipts(
     use crate::workweave_index::RefRegistry;
 
     let mut candidates = Vec::new();
-    for project in crate::workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         if let Some(active) = active_project {
             if project.as_str() != active {
                 continue;
@@ -6735,6 +6778,31 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         path.display()
                     ),
                 ),
+                CheckViolation::ProjectlessDir { dir } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{}: directory under projects/ holds no {} at any depth, so it is \
+                         not a project and rwv lists nothing for it; write a {} there \
+                         (`[repositories]` alone is enough) or remove the directory",
+                        dir.display(),
+                        Manifest::FILE_NAME,
+                        Manifest::FILE_NAME,
+                    ),
+                ),
+                CheckViolation::UnnameableProject {
+                    dir,
+                    derived,
+                    error,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{}: holds a {} but `{derived}` is not a usable project name \
+                         ({error}), so no verb can address it; rename the directory to a \
+                         name rwv accepts",
+                        dir.display(),
+                        Manifest::FILE_NAME,
+                    ),
+                ),
                 CheckViolation::UnresolvableLockEntry { project, repo } => (
                     crate::integration::Severity::Error,
                     format!(
@@ -7798,18 +7866,16 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
 
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    let project_names: Vec<String> = match &ctx.checkout {
-        Checkout::Primary { project: Some(p) } => vec![p.as_str().to_owned()],
-        Checkout::Workweave { project, .. } => vec![project.as_str().to_owned()],
-        Checkout::Primary { project: None } => {
-            crate::workspace::discover_project_paths(&workspace_dir)
-        }
+    let project_names: Vec<ProjectName> = match &ctx.checkout {
+        Checkout::Primary { project: Some(p) } => vec![p.clone()],
+        Checkout::Workweave { project, .. } => vec![project.clone()],
+        Checkout::Primary { project: None } => crate::workspace::discover_projects(&workspace_dir),
     };
 
     let mut any_drift = false;
 
     for pname in &project_names {
-        let project_dir = project_dir(&workspace_dir, pname);
+        let project_dir = project_dir(&workspace_dir, pname.as_str());
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
             Err(e) => {
@@ -8015,7 +8081,7 @@ fn apply_workspace_repairs(
     // its arms: `RefRegistry::record_created` refuses against an index without
     // it. The registry it produces is empty, so every pre-existing ref stays
     // unowned until an arm records it.
-    for project in crate::workweave_index::projects_on_disk(ctx.primary_path()) {
+    for project in crate::workspace::discover_projects(ctx.primary_path()) {
         if let Some(active) = project_scope {
             if project.as_str() != active {
                 continue;
@@ -8993,11 +9059,15 @@ struct DoctorWorld {
     head_read_failures: Vec<(RepoPath, String)>,
     lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)>,
     /// `Some((path, error))` when `projects/` exists but could not be listed.
-    /// `discover_project_paths` swallows exactly this error and returns an
-    /// empty list, which is indistinguishable downstream from a workspace
-    /// that genuinely has no projects — this is the probe that tells the two
-    /// apart before that swallowing happens.
+    /// `scan_projects` swallows exactly this error and returns an empty
+    /// list, which is indistinguishable downstream from a workspace that
+    /// genuinely has no projects — this is the probe that tells the two apart
+    /// before that swallowing happens.
     projects_dir_read_error: Option<(PathBuf, String)>,
+    /// The walk of `projects/` the loaded projects came from. Its other two
+    /// lists are the directories sitting there that rwv does not read as a
+    /// project, and each is raised as a finding rather than passed over.
+    project_scan: crate::workspace::ProjectScan,
 }
 
 impl DoctorWorld {
@@ -9057,16 +9127,15 @@ fn load_doctor_world(
         crate::manifest::ResolvedLockFile,
     > = std::collections::HashMap::new();
 
-    for name in discover_project_paths(&workspace_dir) {
-        let dir = project_dir(&workspace_dir, &name);
+    let project_scan = crate::workspace::scan_projects(&workspace_dir);
+
+    for name in &project_scan.projects {
+        let dir = project_dir(&workspace_dir, name.as_str());
         let manifest_path = dir.join(Manifest::FILE_NAME);
-        if !manifest_path.exists() {
-            continue;
-        }
 
         if !scope_all {
             if let Some(ref active) = active_project {
-                if name != active.as_str() {
+                if name != active {
                     continue;
                 }
             }
@@ -9094,15 +9163,13 @@ fn load_doctor_world(
                 projects.push(project);
             }
             Err(e) => {
-                if let Ok(project_name) = crate::manifest::ProjectName::new(name) {
-                    // The whole chain, not either end of it. Loading a project
-                    // reads two files with two different remedies, and the
-                    // layer naming which one failed is minted by the loader
-                    // that failed — so an outermost-only or innermost-only
-                    // render drops either the remedy or the file it applies to.
-                    let cause = format!("{e:#}");
-                    unparseable_projects.push((project_name, manifest_path, cause));
-                }
+                // The whole chain, not either end of it. Loading a project
+                // reads two files with two different remedies, and the
+                // layer naming which one failed is minted by the loader
+                // that failed — so an outermost-only or innermost-only
+                // render drops either the remedy or the file it applies to.
+                let cause = format!("{e:#}");
+                unparseable_projects.push((name.clone(), manifest_path, cause));
             }
         }
     }
@@ -9131,6 +9198,7 @@ fn load_doctor_world(
         head_read_failures,
         lock_resolve_failures,
         projects_dir_read_error,
+        project_scan,
     })
 }
 
@@ -9235,7 +9303,7 @@ fn collect_doctor_violations(
         });
     }
 
-    for project in crate::workweave_index::projects_on_disk(ctx.primary_path()) {
+    for project in crate::workspace::discover_projects(ctx.primary_path()) {
         if let Some(active) = project_scope {
             if project.as_str() != active {
                 continue;
@@ -9526,6 +9594,16 @@ fn collect_doctor_violations(
         violations.push(CheckViolation::ProjectsDirUnreadable {
             path: path.clone(),
             error: error.clone(),
+        });
+    }
+    for dir in &world.project_scan.projectless {
+        violations.push(CheckViolation::ProjectlessDir { dir: dir.clone() });
+    }
+    for unnameable in &world.project_scan.unnameable {
+        violations.push(CheckViolation::UnnameableProject {
+            dir: unnameable.dir.clone(),
+            derived: unnameable.derived.clone(),
+            error: unnameable.error.to_string(),
         });
     }
 

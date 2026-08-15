@@ -7,9 +7,7 @@
 //! Silent (exit 0, no output) when not inside a repoweave workspace.
 
 use crate::manifest::{Manifest, ProjectName, RepoPath};
-use crate::workspace::{
-    discover_project_paths, project_dir, projects_dir, Checkout, WorkspaceContext,
-};
+use crate::workspace::{discover_projects, project_dir, projects_dir, Checkout, WorkspaceContext};
 
 /// Run `rwv prime` against an already-resolved workspace context.
 ///
@@ -190,7 +188,7 @@ fn render_directory_layout(
 
     if projects_dir(ctx.primary_path()).is_dir() {
         out.push_str("  projects/\n");
-        for name in discover_project_paths(ctx.primary_path()) {
+        for name in discover_projects(ctx.primary_path()) {
             let marker = if project.map(|p| p.as_str()) == Some(name.as_str()) {
                 " (active)"
             } else {
@@ -495,8 +493,8 @@ role = "owned"
     fn directory_layout_active_marker() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
-        std::fs::create_dir_all(root.join("projects").join("web-app")).unwrap();
-        std::fs::create_dir_all(root.join("projects").join("mobile")).unwrap();
+        write_manifest(&root, "web-app", Manifest::SKELETON);
+        write_manifest(&root, "mobile", Manifest::SKELETON);
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();

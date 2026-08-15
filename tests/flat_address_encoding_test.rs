@@ -316,9 +316,14 @@ fn the_minted_identity_is_addressable_by_w() {
     );
 }
 
-/// Consumer 4: the `.code-workspace` filename is one segment, so it lands
-/// beside its project rather than at a nested path under it. Both spellings
-/// were previously rwv's own warning output; neither may say `chatly/`.
+/// Consumer 4: the `.code-workspace` filename is one segment, so the name
+/// contributes no directory of its own — the file lands in the project's own
+/// directory, and the surfacing link beside it at the weave root.
+///
+/// The generated file is asserted present rather than left to whatever the
+/// walk happens to turn up: until a multi-segment project was enumerable at
+/// all, `doctor --fix` regenerated nothing here and the only `.code-workspace`
+/// this found was the dangling surfacing symlink `activate` had planted.
 #[test]
 fn the_code_workspace_filename_is_one_segment() {
     let tmp = common::tempdir().unwrap();
@@ -326,11 +331,13 @@ fn the_code_workspace_filename_is_one_segment() {
 
     let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).output();
 
+    let project_dir = ws.join("projects").join("chatly").join("web-app");
     let mut found = Vec::new();
     collect_by_extension(&ws, "code-workspace", &mut found);
     assert!(
-        !found.is_empty(),
-        "the integration must produce a .code-workspace file to assert on"
+        found.contains(&project_dir.join("chatly+web-app.code-workspace")),
+        "`doctor --fix` must regenerate the managed file in the project's own \
+         directory; found {found:?}"
     );
     for path in &found {
         let name = path.file_name().unwrap().to_string_lossy();
@@ -340,9 +347,12 @@ fn the_code_workspace_filename_is_one_segment() {
             "the filename must be one segment; found {}",
             path.display()
         );
+        let parent = path.parent().unwrap();
         assert!(
-            !path.to_string_lossy().contains("/chatly/"),
-            "no `.code-workspace` may sit under a directory the project name created: {}",
+            parent == ws || parent == project_dir,
+            "the name must create no directory of its own — a `.code-workspace` \
+             may sit in the project directory or at the weave root as the \
+             surfacing link, nowhere else; found {}",
             path.display()
         );
     }

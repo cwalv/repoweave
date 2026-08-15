@@ -212,6 +212,42 @@ not raise this.
 **What to do:** the `error` field carries what the filesystem said. Fix the
 permissions (or whatever is blocking the listing) and re-run `rwv doctor`.
 
+### `projectless-dir`
+
+**Warning. Report-only.** A directory under `projects/` with no `rwv.toml`
+anywhere below it. A project is a directory under `projects/` that holds an
+`rwv.toml`, named by its path relative to `projects/`, so this directory is
+not one and contains none — nothing enumerates it, and no verb can act on it.
+
+The finding exists because the silence is the problem. A directory made by
+hand ahead of its manifest, or left behind by a clone that failed before one
+was written, sits in the tree looking like a project and is absent from every
+listing rwv prints. A directory that only *holds* projects — `projects/acme/`
+above `projects/acme/web-app/` — is not reported: it has a manifest below it,
+which is what makes it a namespace rather than a stray.
+
+**What to do:** write an `rwv.toml` in it — a bare `[repositories]` table is
+enough — or remove the directory. `rwv init` is not the repair: it mints the
+directory, and refuses one that is already there.
+
+### `unnameable-project`
+
+**Warning. Report-only.** A directory under `projects/` that holds an
+`rwv.toml`, whose path relative to `projects/` is not a name rwv accepts. The
+`derived` field carries that path and `error` says which rule refused it —
+`--` or a leading/trailing `-` (ambiguous against the `--` that joins project
+to workweave in a branch or workweave directory name), a `+` (what rwv writes
+in place of `/` when a project name has to be one path segment), or a git
+ref-name rule.
+
+The project is on disk and no verb can address it: every one of them takes the
+name through the validator first, so `rwv activate`, `rwv workweave` and
+`--project` all refuse it. Reported whatever `--project` narrows the run to,
+since a name the validator refuses can never equal the scope.
+
+**What to do:** rename the directory to a name that validates. Nothing inside
+it needs to change — the name is the weave's, not the project repo's.
+
 ### `missing-replay-exclusion`
 
 **Warning. Auto-fixable.** A project repo's `.gitattributes` lacks the

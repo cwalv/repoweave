@@ -571,7 +571,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
         }
     }
 
-    for project in crate::workweave_index::projects_on_disk(primary_root) {
+    for project in crate::workspace::discover_projects(primary_root) {
         let registry = RefRegistry::for_project(primary_root, &project);
         match registry.list_for_store(repo_dir) {
             Ok(receipts) => claims.extend(receipts.into_iter().map(|r| {
@@ -755,7 +755,7 @@ fn find_other_projects_with_roles(
 ) -> Vec<(ProjectName, Role)> {
     let mut referencing: Vec<(ProjectName, Role)> = Vec::new();
 
-    for project in crate::workweave_index::projects_on_disk(workspace_root) {
+    for project in crate::workspace::discover_projects(workspace_root) {
         if &project == active_project {
             continue;
         }

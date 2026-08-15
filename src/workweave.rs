@@ -3118,7 +3118,7 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
         }
     };
     push_unique(workweave_index::default_container(ws_root), &mut containers);
-    for project in workweave_index::projects_on_disk(ws_root) {
+    for project in crate::workspace::discover_projects(ws_root) {
         if let Ok(Some(idx)) = workweave_index::read(ws_root, &project) {
             push_unique(idx.container, &mut containers);
         }

@@ -766,21 +766,139 @@ pub fn scan_repos_on_disk(
     repos
 }
 
-/// Discover all project names under `projects/` relative to `root`.
+/// A project directory whose path below `projects/` is not a name
+/// [`ProjectName::new`] accepts.
+#[derive(Debug)]
+pub struct UnnameableProjectDir {
+    pub dir: PathBuf,
+    pub derived: String,
+    pub error: crate::manifest::ProjectNameError,
+}
+
+/// What a walk of `projects/` found: the projects, and the two states a
+/// directory sitting among them can be in without being one.
+#[derive(Debug, Default)]
+pub struct ProjectScan {
+    /// Every project, sorted by name.
+    pub projects: Vec<ProjectName>,
+    /// Manifest-carrying directories nothing can address, sorted by path.
+    pub unnameable: Vec<UnnameableProjectDir>,
+    /// Directories holding no manifest at any depth below them, sorted by
+    /// path. Outermost only: a directory listed here has no listed
+    /// descendant.
+    pub projectless: Vec<PathBuf>,
+}
+
+/// Directory entries of `dir`, dot-directories excluded.
 ///
-/// Returns a sorted list of directory names found under `{root}/projects/`.
-pub fn discover_project_paths(root: &Path) -> Vec<String> {
-    let projects_dir = projects_dir(root);
-    let mut names = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                names.push(entry.file_name().to_string_lossy().into_owned());
+/// A leading `.` marks host or VCS state — `.git`, an editor's cache — and
+/// [`crate::vcs::validate_ref_name`] refuses it as a name component anyway,
+/// so descending into one can only mint a name no project could carry.
+fn undotted_child_dirs(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect()
+}
+
+/// Record every project at or below `dir`, and report whether there was one.
+///
+/// `false` propagates the barren subtree up to the caller, which is what
+/// keeps [`ProjectScan::projectless`] to outermost directories: a level
+/// records its barren children only once something below it is a project,
+/// and otherwise hands its own emptiness to its parent to record.
+fn collect_projects_below(dir: &Path, scan: &mut ProjectScan) -> bool {
+    if dir.join(Manifest::FILE_NAME).is_file() {
+        if let Some(derived) = project_name_from_dir(dir) {
+            match ProjectName::new(derived.clone()) {
+                Ok(name) => scan.projects.push(name),
+                Err(error) => scan.unnameable.push(UnnameableProjectDir {
+                    dir: dir.to_path_buf(),
+                    derived,
+                    error,
+                }),
             }
         }
+        return true;
     }
-    names.sort();
-    names
+
+    let mut barren = Vec::new();
+    let mut holds_project = false;
+    for child in undotted_child_dirs(dir) {
+        if collect_projects_below(&child, scan) {
+            holds_project = true;
+        } else {
+            barren.push(child);
+        }
+    }
+    if holds_project {
+        scan.projectless.append(&mut barren);
+    }
+    holds_project
+}
+
+/// Walk `projects/` under `root` for every project it holds.
+///
+/// A project is a directory under `projects/` containing a
+/// [`Manifest::FILE_NAME`], named by its path relative to `projects/` — the
+/// rule [`crate::manifest::Project::from_dir`] already loads by, at arbitrary
+/// depth. Descent stops at the first manifest, so a manifest below a project
+/// is a file in that project's working tree rather than a second project, and
+/// `projects/a/rwv.toml` beside `projects/a/b/rwv.toml` has one answer.
+///
+/// An unlistable `projects/` reads as empty here; `rwv doctor` probes that
+/// directory separately so the two cannot be confused downstream.
+pub fn scan_projects(root: &Path) -> ProjectScan {
+    let mut scan = ProjectScan::default();
+    let mut barren = Vec::new();
+    for child in undotted_child_dirs(&projects_dir(root)) {
+        if !collect_projects_below(&child, &mut scan) {
+            barren.push(child);
+        }
+    }
+    scan.projectless.append(&mut barren);
+    scan.projects.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    scan.unnameable.sort_by(|a, b| a.dir.cmp(&b.dir));
+    scan.projectless.sort();
+    scan
+}
+
+/// Every project under `projects/` relative to `root`, sorted by name.
+pub fn discover_projects(root: &Path) -> Vec<ProjectName> {
+    scan_projects(root).projects
+}
+
+/// The project a `projects/<name>/` mint would land inside, if any.
+///
+/// The mint's half of the rule [`scan_projects`] enumerates by: descent stops
+/// at the first manifest, so a directory below a project is that project's
+/// content and can never be a project of its own. Minting one there would
+/// write a manifest the enumeration is guaranteed never to reach.
+pub fn enclosing_project(root: &Path, name: &str) -> Option<String> {
+    let mut dir = projects_dir(root);
+    let mut ancestors = Vec::new();
+    for segment in name.split('/') {
+        ancestors.push(dir.clone());
+        dir.push(segment);
+    }
+    ancestors
+        .into_iter()
+        .skip(1)
+        .find(|d| d.join(Manifest::FILE_NAME).is_file())
+        .and_then(|d| project_name_from_dir(&d))
+}
+
+/// The project names an error offers the reader as a menu.
+fn spelled_project_names(root: &Path) -> Vec<String> {
+    discover_projects(root)
+        .into_iter()
+        .map(|p| p.as_str().to_owned())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -801,12 +919,15 @@ pub struct WorkspaceSession {
 
 impl WorkspaceSession {
     /// Build a `WorkspaceSession` by running the standard scan triad:
-    /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_project_paths()`.
+    /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_projects()`.
     pub fn new(root: &Path) -> Self {
         let registries = builtin_registries();
         let vcs = crate::vcs::probe_vcs();
         let repos_on_disk = scan_repos_on_disk(root, &registries, vcs.as_ref());
-        let project_paths = discover_project_paths(root);
+        let project_paths = discover_projects(root)
+            .into_iter()
+            .map(|p| p.as_str().to_owned())
+            .collect();
         let container_kind =
             observe_root(root).map_or(ContainerKind::Primary, |observed| observed.container_kind());
         Self {
@@ -1238,7 +1359,7 @@ impl WorkspaceContext {
         if project_dir(self.primary_path(), project.as_str()).is_dir() {
             return Ok(());
         }
-        let existing = discover_project_paths(self.primary_path());
+        let existing = spelled_project_names(self.primary_path());
         let hint = if existing.is_empty() {
             String::new()
         } else {
@@ -1402,7 +1523,7 @@ impl WorkspaceContext {
                 hint.as_str(),
             );
         }
-        let existing = discover_project_paths(self.primary_path());
+        let existing = spelled_project_names(self.primary_path());
         if existing.is_empty() {
             anyhow::bail!(
                 "no active project; run `rwv activate <name>` or pass `--project <name>` \
@@ -1440,7 +1561,7 @@ impl WorkspaceContext {
         }
 
         // Dangling pointer: named but missing. Build the actionable error.
-        let existing = discover_project_paths(self.primary_path());
+        let existing = spelled_project_names(self.primary_path());
         let hint = if existing.is_empty() {
             String::new()
         } else {
@@ -1553,7 +1674,7 @@ impl WorkspaceContext {
             }
         }
 
-        let project_names = discover_project_paths(&self.primary_root);
+        let project_names = spelled_project_names(&self.primary_root);
         if !project_names.is_empty() {
             lines.push(format!("Projects: {}", project_names.join(", ")));
         }
@@ -3925,7 +4046,9 @@ mod tests {
     /// Helper: create N project directories under `<root>/projects/`.
     fn make_projects(root: &Path, names: &[&str]) {
         for name in names {
-            std::fs::create_dir_all(root.join("projects").join(name)).unwrap();
+            let dir = root.join("projects").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(Manifest::FILE_NAME), Manifest::SKELETON).unwrap();
         }
     }
 

@@ -1443,6 +1443,50 @@
           "type": "object",
           "required": [
             "absolute_path",
+            "kind"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "projectless-dir"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "derived",
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "derived": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unnameable-project"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
             "kind",
             "path",
             "project"
