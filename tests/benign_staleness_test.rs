@@ -1519,3 +1519,88 @@ fn dirty_source_non_lock_project_change_refuses() {
         "a tracked non-lock project change must refuse and name the file; got:\n{stderr}"
     );
 }
+
+// ===========================================================================
+// The already-ahead line names BOTH relations against the baseline
+// ===========================================================================
+
+/// The `already-ahead` outcome line for `repo`, whole, from `stdout`.
+fn already_ahead_line(stdout: &str) -> String {
+    stdout
+        .lines()
+        .find(|l| l.contains("already-ahead"))
+        .unwrap_or_else(|| panic!("no already-ahead line in stdout:\n{stdout}"))
+        .trim()
+        .to_owned()
+}
+
+/// A CWD that contains the source lock entry is not thereby at the source's
+/// tip, and the line has to say which.
+///
+/// Reading "strictly ahead of the source lock entry … (contains it); nothing to
+/// replay" as "nothing outstanding" is the failure: the source here sits three
+/// commits past that same entry, and a pull that stops at the entry delivers
+/// none of them. The two counts are deliberately different (CWD 2, source 3)
+/// so a line that echoes one relation into the other reads as a failure rather
+/// than as agreement.
+#[test]
+fn the_already_ahead_line_states_how_far_the_source_moved_past_its_lock() {
+    let f = fixture();
+    // The source advances three commits past its own committed lock entry.
+    commit_file(&f.main.manifest_repo, "s1.txt", "s1\n", "main: s1");
+    commit_file(&f.main.manifest_repo, "s2.txt", "s2\n", "main: s2");
+    commit_file(&f.main.manifest_repo, "s3.txt", "s3\n", "main: s3");
+    // CWD carries two commits of its own on top of that same entry.
+    commit_file(&f.ww.manifest_repo, "c1.txt", "c1\n", "ww: c1");
+    commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
+
+    // `--allow-stale-lock` is what reaches this shape: the freshness gate
+    // otherwise answers a source whose tip has left its lock behind, either by
+    // refusing or by pulling the tips, and neither leaves a lock entry the
+    // source has moved past.
+    let assert = rwv()
+        .args(["sync", &f.main.root.to_string_lossy(), "--allow-stale-lock"])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    assert_eq!(
+        already_ahead_line(&stdout),
+        format!(
+            "{MANIFEST_REPO_PATH}: already-ahead — HEAD is strictly ahead of the source lock \
+             entry by 2 commits (contains it); the source's own HEAD is strictly ahead of the \
+             source lock entry by 3 commits (contains it); nothing to replay"
+        ),
+    );
+}
+
+/// The source clause is a measurement, not a fixed sentence: a source sitting
+/// AT its lock entry is reported as equal to it.
+///
+/// Without this the previous test passes against a line that says "the source
+/// has moved past it" unconditionally — the reassuring case is the one an
+/// operator acts on, so it is the one a hardcoded clause would get wrong.
+#[test]
+fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
+    let f = fixture();
+    // The source's lock is fresh; only CWD has moved.
+    commit_file(&f.ww.manifest_repo, "c1.txt", "c1\n", "ww: c1");
+    commit_file(&f.ww.manifest_repo, "c2.txt", "c2\n", "ww: c2");
+
+    let assert = rwv()
+        .args(["sync", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    assert_eq!(
+        already_ahead_line(&stdout),
+        format!(
+            "{MANIFEST_REPO_PATH}: already-ahead — HEAD is strictly ahead of the source lock \
+             entry by 2 commits (contains it); the source's own HEAD is equal to the source lock \
+             entry; nothing to replay"
+        ),
+    );
+}

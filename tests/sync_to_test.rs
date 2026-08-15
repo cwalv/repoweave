@@ -1422,3 +1422,107 @@ fn a_completed_retire_makes_its_completion_claim_once_after_the_last_phase() {
          precede it; got stderr:\n{stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A rebase-landing publishes a lock that pins what the target now holds
+// ---------------------------------------------------------------------------
+
+/// Whether `rev` is reachable from `branch` in `repo`.
+fn reachable_from(repo: &Path, rev: &str, branch: &str) -> bool {
+    common::git()
+        .args(["merge-base", "--is-ancestor", rev, branch])
+        .current_dir(repo)
+        .status()
+        .expect("git merge-base failed to start")
+        .success()
+}
+
+/// A rebase-strategy landing must leave the target's lock pinning the member
+/// tips the target now holds.
+///
+/// The seat's project repo carries `lock: ww pre-rebase`, recording its member
+/// tip as it stood BEFORE the landing; the landing rebases that member commit
+/// onto the target's, minting a new SHA, and then fast-forwards the target's
+/// project repo. The published lock has to name the rebased tip.
+///
+/// Equality rather than reachability, deliberately: the committed
+/// `rwv.lock merge=rwv-ours` exclusion that `--strategy=rebase` refuses to run
+/// without already resolves every lock hunk to the target's own side, so a
+/// carried entry is reachable whatever else is wrong with it — a landing that
+/// published nothing at all would satisfy a reachability check while leaving
+/// the target's lock naming a tip two rewrites behind its own checkout.
+///
+/// The rewrite assertion is the reachability control: without it every check
+/// below also passes on a run where the member was never rebased.
+#[test]
+fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww_root, ww_project, ww_server, _initial_sha) = make_marker_ww(tmp.path());
+
+    // The target advances its member and relocks, so the seat's member has
+    // somewhere to be rebased ONTO.
+    let primary_c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary work\n",
+        "primary: advance server",
+    );
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &primary_c2)],
+    );
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
+
+    // The seat commits a divergent member commit and records THAT sha in a lock
+    // commit of its own — the pre-rebase pointer this landing must not publish.
+    let ww_pre_rebase = make_commit(
+        &ww_server,
+        "ww-server.txt",
+        "ww work\n",
+        "ww: advance server",
+    );
+    write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &ww_pre_rebase)]);
+    git(&["add", "rwv.lock"], &ww_project);
+    git(&["commit", "-m", "lock: ww pre-rebase"], &ww_project);
+
+    rwv()
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--strategy=rebase",
+        ])
+        .current_dir(&ww_root)
+        .assert()
+        .success();
+
+    assert!(
+        !reachable_from(&primary.server_dir, &ww_pre_rebase, "refs/heads/main"),
+        "fixture control: the landing must have rewritten {ww_pre_rebase}, or the \
+         stale-pointer state this pins never arises"
+    );
+
+    let raw = repoweave::manifest::LockFile::from_json_str(&common::read_normalized(
+        primary.project_dir.join("rwv.lock"),
+    ))
+    .expect("the landed lock parses");
+    let (landed, unresolvable) = raw.resolve_versions(&primary.root);
+    assert!(
+        unresolvable.is_empty(),
+        "the landed lock names revisions the target cannot resolve: {unresolvable:?}"
+    );
+    assert!(!landed.is_empty(), "the landed lock pins no member at all");
+
+    for (repo_path, entry) in landed.iter_entries() {
+        let member = primary.root.join(repo_path.as_path());
+        let branch = common::checkout_ref(&member)
+            .unwrap_or_else(|| panic!("{} is detached after the landing", member.display()));
+        assert_eq!(
+            entry.version.as_str(),
+            git_out(&["rev-parse", &branch], &member),
+            "the landed lock pins {rev} for {repo_path}, which is not what {branch} in the \
+             target now holds — the landing published a lock it had already outgrown",
+            rev = entry.version.as_str(),
+        );
+    }
+}

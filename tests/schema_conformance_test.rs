@@ -672,6 +672,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             commits_ahead: 3,
             step3_advance: step3.clone(),
             containment: Some(c[2]),
+            source_position: Some(ContainmentVerdictOutput::Ahead { commits: 5 }),
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
@@ -679,6 +680,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             commits_ahead: 0,
             step3_advance: step3.clone(),
             containment: None,
+            source_position: None,
         },
         SyncOutcomeOutput::NoOp {
             path: REPO.to_owned(),

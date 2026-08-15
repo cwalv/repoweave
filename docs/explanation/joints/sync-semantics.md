@@ -238,7 +238,10 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
   target SHA are no-ops. Repos behind
   the target are advanced via the strategy (ff / rebase). Repos
   ahead of the target surface as `already-ahead` — the engine does not
-  silently rewind CWD's working state.
+  silently rewind CWD's working state. That outcome names two relations
+  against the same baseline: CWD's, and the source checkout's own. A repo
+  containing the baseline has not thereby caught up with the source, and
+  a line stating only the first reads as though it had.
 
 - **Phase 1' — project repo, lock-excluded**: replay CWD's unique
   project commits onto the named workspace's project tip using

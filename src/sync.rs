@@ -57,7 +57,7 @@ impl Side {
 /// are separate facts about separate pairs, and a message about one must not
 /// borrow the other's words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Containment {
+pub enum Containment {
     Equal,
     Ahead(usize),
     Behind(usize),
@@ -425,9 +425,16 @@ pub enum RepoSyncOutcome {
     /// Replay's target is already an ancestor of HEAD; no change made.
     /// `baseline` names which read produced that target, so the line can say
     /// what HEAD is ahead OF.
+    ///
+    /// `source_position` is where the SOURCE's own checkout stood against that
+    /// same target. Containing the target says nothing about how far the source
+    /// has moved past it, so a line stating only `commits_ahead` reads as "at
+    /// the tip" to an operator deciding whether anything is outstanding.
+    /// `None` where the source's checkout could not be measured.
     AlreadyAhead {
         commits_ahead: usize,
         baseline: ReplayBaseline,
+        source_position: Option<Containment>,
     },
     /// HEAD was already equal to replay's target before sync.
     NoOp,
@@ -546,6 +553,12 @@ pub enum SyncOutcomeOutput {
         /// source `commits_ahead` counts against.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
+        /// Where the SOURCE's own checkout stood against that same read of the
+        /// source. `containment` proves this repo holds the target; only this
+        /// says whether the source has since moved past it. Absent where the
+        /// source's checkout could not be measured.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_position: Option<ContainmentVerdictOutput>,
     },
     NoOp {
         path: String,
@@ -596,12 +609,17 @@ impl SyncOutcomeOutput {
                 derived_content_dropped: derived_content_dropped.clone(),
                 containment,
             },
-            RepoSyncOutcome::AlreadyAhead { commits_ahead, .. } => Self::AlreadyAhead {
+            RepoSyncOutcome::AlreadyAhead {
+                commits_ahead,
+                source_position,
+                ..
+            } => Self::AlreadyAhead {
                 path,
                 absolute_path,
                 commits_ahead: *commits_ahead,
                 step3_advance: None,
                 containment,
+                source_position: source_position.map(ContainmentVerdictOutput::from),
             },
             RepoSyncOutcome::NoOp => Self::NoOp {
                 path,
@@ -752,6 +770,23 @@ pub const SYNC_TO_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-t
 /// flat per-repo wire shape — distinct from the serial envelope (`sync-to.json`).
 pub const SYNC_TO_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-to-record");
 
+/// The clause naming where the source's own checkout stood against the tip
+/// replay measured this repo against.
+///
+/// Stated on every already-ahead line, including the one where the source is
+/// AT that tip: an operator who learns nothing about the source from a silent
+/// line has to assume the reassuring reading, and that assumption is what
+/// turns a contained lock entry into "nothing outstanding".
+fn source_position_phrase(position: Option<Containment>, baseline: ReplayBaseline) -> String {
+    match position {
+        Some(c) => format!("the source's own HEAD is {}", c.describe(baseline.label())),
+        None => format!(
+            "the source's own HEAD could not be measured against {}",
+            baseline.label()
+        ),
+    }
+}
+
 impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -759,10 +794,12 @@ impl fmt::Display for RepoSyncOutcome {
             Self::AlreadyAhead {
                 commits_ahead,
                 baseline,
+                source_position,
             } => write!(
                 f,
-                "already-ahead — HEAD is {shape}; nothing to replay",
+                "already-ahead — HEAD is {shape}; {source}; nothing to replay",
                 shape = Containment::Ahead(*commits_ahead).describe(baseline.label()),
+                source = source_position_phrase(*source_position, *baseline),
             ),
             Self::NoOp => f.write_str("up-to-date"),
             Self::Failed(failure) => fmt::Display::fmt(failure, f),
@@ -794,19 +831,38 @@ fn dropped_derived_content(
         .unwrap_or_default()
 }
 
-/// `containment` is HEAD's verdict against `target`, read by the caller at
-/// replay entry — the same value the op record's intent write consumed, so a
-/// commit landing here between the two makes the strategy fail rather than
-/// re-classifying the repo behind the record's back.
+/// What one repo's replay was decided from, and what its outcome reports: the
+/// read that produced its target, this checkout's verdict against that target,
+/// and the source checkout's own verdict against it.
+///
+/// Carried as one value because they are one observation. A signature taking
+/// them apart lets a caller pass a verdict measured against one tip beside a
+/// baseline naming another, and the rendered line would name the second while
+/// counting the first.
+#[derive(Debug, Clone, Copy)]
+struct ReplayVerdicts {
+    baseline: ReplayBaseline,
+    containment: Option<Containment>,
+    source_position: Option<Containment>,
+}
+
+/// `verdicts.containment` is HEAD's verdict against `target`, read by the
+/// caller at replay entry — the same value the op record's intent write
+/// consumed, so a commit landing here between the two makes the strategy fail
+/// rather than re-classifying the repo behind the record's back.
 fn sync_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
-    baseline: ReplayBaseline,
-    containment: Option<Containment>,
+    verdicts: ReplayVerdicts,
     strategy: SyncStrategy,
     pre_replay_tip: Option<&ResolvedRevisionId>,
 ) -> RepoSyncOutcome {
+    let ReplayVerdicts {
+        baseline,
+        containment,
+        source_position,
+    } = verdicts;
     // Replay re-entry (`rwv sync --continue`) can find a manifest repo
     // mid-rebase from a previous phase that stopped on a conflict. HEAD in
     // that state points at the last-applied pick (descended from `target`),
@@ -832,6 +888,7 @@ fn sync_one_repo(
             return RepoSyncOutcome::AlreadyAhead {
                 commits_ahead,
                 baseline,
+                source_position,
             }
         }
         _ => {}
@@ -2345,6 +2402,14 @@ struct SourceSnapshot {
     /// Replay targets these over the lock entries. Empty when tips-as-truth
     /// does not apply (primary source, sync-to, or `--allow-stale-lock`).
     pull_tips: std::collections::BTreeMap<RepoPath, ResolvedRevisionId>,
+    /// Committed member tips of EVERY source checkout, read at T0 — where
+    /// `pull_tips` is the decision, this is the disclosure the already-ahead
+    /// line measures against replay's target. Taken from `source_class` when
+    /// the op classified the source, so one read of each checkout answers both.
+    source_tips: std::collections::BTreeMap<RepoPath, ResolvedRevisionId>,
+    /// Root of the workspace the tips above were read in, and the object store
+    /// their ancestry against a target must be measured in.
+    source_workspace_root: PathBuf,
 }
 
 impl OpContext<'_> {
@@ -4679,14 +4744,13 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         /// Workers borrow it; none of them resolves one.
         vcs: Box<dyn Vcs>,
         target: ResolvedRevisionId,
-        baseline: ReplayBaseline,
-        /// HEAD's containment of `target`, read once here at replay entry.
-        /// The intent write below and the move in the fan-out both consume
-        /// this value, so the record cannot describe a different landing than
-        /// the one the strategy attempts; a commit that lands between the two
-        /// makes the strategy fail rather than silently re-classifying the
-        /// repo. `None` when the pair did not resolve.
-        containment: Option<Containment>,
+        /// The verdicts this repo's replay was decided from, read once here at
+        /// replay entry. The intent write below and the move in the fan-out
+        /// both consume this value, so the record cannot describe a different
+        /// landing than the one the strategy attempts; a commit that lands
+        /// between the two makes the strategy fail rather than silently
+        /// re-classifying the repo.
+        verdicts: ReplayVerdicts,
         /// The repo's tip before this op replayed anything, taken from the
         /// op's savepoint so a `--continue` re-entry reads the same tip the
         /// interrupted run did rather than the pick it stopped on.
@@ -4760,14 +4824,25 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 continue;
             }
         };
+        let source_position = snapshot.source_tips.get(repo_path).and_then(|source_tip| {
+            Containment::observe(
+                vcs.as_ref(),
+                &snapshot.source_workspace_root.join(repo_path.as_path()),
+                source_tip,
+                &target,
+            )
+        });
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
             pre_replay_tip: vcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
             abs,
             vcs,
             target,
-            baseline,
-            containment,
+            verdicts: ReplayVerdicts {
+                baseline,
+                containment,
+                source_position,
+            },
         });
     }
 
@@ -4784,7 +4859,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     {
         let entry_tips: std::collections::BTreeMap<String, String> = sync_tasks
             .iter()
-            .filter(|task| matches!(task.containment, Some(Containment::Behind(_))))
+            .filter(|task| matches!(task.verdicts.containment, Some(Containment::Behind(_))))
             .map(|task| {
                 (
                     task.repo_path.as_str().to_owned(),
@@ -4821,8 +4896,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 task.vcs.as_ref(),
                 &task.abs,
                 &task.target,
-                task.baseline,
-                task.containment,
+                task.verdicts,
                 strategy,
                 task.pre_replay_tip.as_ref(),
             );
@@ -4846,7 +4920,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 task.repo_path.as_str(),
                 &task.abs.to_string_lossy(),
                 &outcome,
-                ContainmentOutput::observed(task.containment, task.baseline),
+                ContainmentOutput::observed(task.verdicts.containment, task.verdicts.baseline),
             );
             (is_failure, converged_head)
         });
@@ -5067,6 +5141,15 @@ fn pin_source_snapshot(
         _ => std::collections::BTreeMap::new(),
     };
 
+    let source_tips = match &source_class {
+        Some(class) => class
+            .relations
+            .iter()
+            .filter_map(|r| r.tip.clone().map(|tip| (r.repo_path.clone(), tip)))
+            .collect(),
+        None => read_member_tips(&source_manifest, source_workspace_root),
+    };
+
     Ok(SourceSnapshot {
         source_project_tip,
         source_manifest,
@@ -5074,7 +5157,33 @@ fn pin_source_snapshot(
         source_lock,
         source_class,
         pull_tips,
+        source_tips,
+        source_workspace_root: source_workspace_root.to_path_buf(),
     })
+}
+
+/// Read every manifest repo's HEAD in `workspace_dir`, skipping the checkouts
+/// [`classify_lock_relations`] skips — reference aliases, which are read-only,
+/// and repos absent from disk.
+///
+/// The unclassified counterpart to reading the relations' pinned tips:
+/// `--allow-stale-lock` takes no classification, so this is where the tips a
+/// disclosure needs come from on that path, and it is still one read per repo.
+fn read_member_tips(
+    manifest: &Manifest,
+    workspace_dir: &Path,
+) -> std::collections::BTreeMap<RepoPath, ResolvedRevisionId> {
+    let mut out = std::collections::BTreeMap::new();
+    for (repo_path, entry) in manifest.iter_entries() {
+        let abs = workspace_dir.join(repo_path.as_path());
+        if !checkout_is_syncable(&abs) || !abs.exists() {
+            continue;
+        }
+        if let Ok(tip) = vcs_for(entry.vcs_type).head_revision(&abs) {
+            out.insert(repo_path.clone(), tip);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -7213,6 +7322,7 @@ mod tests {
         let line = RepoSyncOutcome::AlreadyAhead {
             commits_ahead: 2,
             baseline: ReplayBaseline::SourceCommittedTip,
+            source_position: Some(Containment::Equal),
         }
         .to_string();
 
@@ -7251,8 +7361,11 @@ mod tests {
             git_vcs().as_ref(),
             &repo,
             &target,
-            ReplayBaseline::SourceLockEntry,
-            Some(Containment::Ahead(7)),
+            ReplayVerdicts {
+                baseline: ReplayBaseline::SourceLockEntry,
+                containment: Some(Containment::Ahead(7)),
+                source_position: None,
+            },
             SyncStrategy::Ff,
             None,
         );
@@ -7284,8 +7397,11 @@ mod tests {
             git_vcs().as_ref(),
             &repo,
             &target,
-            ReplayBaseline::SourceLockEntry,
-            Some(Containment::Equal),
+            ReplayVerdicts {
+                baseline: ReplayBaseline::SourceLockEntry,
+                containment: Some(Containment::Equal),
+                source_position: None,
+            },
             SyncStrategy::Ff,
             None,
         );
@@ -7318,8 +7434,11 @@ mod tests {
             git_vcs().as_ref(),
             &repo,
             &target,
-            ReplayBaseline::SourceLockEntry,
-            Some(Containment::Behind(1)),
+            ReplayVerdicts {
+                baseline: ReplayBaseline::SourceLockEntry,
+                containment: Some(Containment::Behind(1)),
+                source_position: None,
+            },
             SyncStrategy::Ff,
             None,
         );

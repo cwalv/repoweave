@@ -9,8 +9,8 @@
 
 use assert_cmd::Command as AssertCommand;
 use repoweave::sync::{
-    ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome, SyncFailure,
-    SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL,
+    Containment, ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome,
+    SyncFailure, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, VcsError, VcsErrorOutput};
 use serde_json::Value;
@@ -375,10 +375,57 @@ fn outcome_already_ahead_serializes_with_commits_ahead() {
         &RepoSyncOutcome::AlreadyAhead {
             commits_ahead: 3,
             baseline: ReplayBaseline::SourceLockEntry,
+            source_position: Some(Containment::Ahead(5)),
         },
     );
     assert_eq!(v["kind"], "already-ahead");
     assert_eq!(v["commits_ahead"], 3);
+}
+
+/// A `--json` consumer branching on `commits_ahead` alone learns that this
+/// checkout holds the baseline and nothing about how far the source has moved
+/// past it. `source_position` is the field that separates "contains the
+/// baseline" from "at the source's tip", and it carries its own count — a
+/// consumer reading only the relation would call a 5-commit gap the same as a
+/// 1-commit one.
+#[test]
+fn the_already_ahead_record_carries_the_source_own_position() {
+    let v = serialize_outcome(
+        "github/cwalv/foo",
+        "/abs/foo",
+        &RepoSyncOutcome::AlreadyAhead {
+            commits_ahead: 3,
+            baseline: ReplayBaseline::SourceLockEntry,
+            source_position: Some(Containment::Ahead(5)),
+        },
+    );
+    assert_eq!(v["source_position"]["relation"], "ahead");
+    assert_eq!(v["source_position"]["commits"], 5);
+    assert_ne!(
+        v["source_position"]["commits"], v["commits_ahead"],
+        "the two relations are separate counts; a record echoing one into the \
+         other reports the gap it exists to disclose as zero"
+    );
+}
+
+/// An unmeasurable source position is absent, not zero: a consumer that reads
+/// a missing field as `Equal` is told the source is at the baseline by a run
+/// that could not look.
+#[test]
+fn an_unmeasured_source_position_is_absent_from_the_record() {
+    let v = serialize_outcome(
+        "github/cwalv/foo",
+        "/abs/foo",
+        &RepoSyncOutcome::AlreadyAhead {
+            commits_ahead: 3,
+            baseline: ReplayBaseline::SourceLockEntry,
+            source_position: None,
+        },
+    );
+    assert!(
+        v.get("source_position").is_none(),
+        "an unmeasured position must be omitted; got: {v}"
+    );
 }
 
 #[test]
@@ -860,6 +907,7 @@ fn sync_json_envelope_round_trips() {
                 &RepoSyncOutcome::AlreadyAhead {
                     commits_ahead: 2,
                     baseline: ReplayBaseline::SourceLockEntry,
+                    source_position: Some(Containment::Equal),
                 },
                 Some(ContainmentOutput {
                     verdict: ContainmentVerdictOutput::Ahead { commits: 2 },

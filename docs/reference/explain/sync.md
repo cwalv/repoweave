@@ -589,6 +589,17 @@ Schema:
             "path": {
               "type": "string"
             },
+            "source_position": {
+              "description": "Where the SOURCE's own checkout stood against that same read of the source. `containment` proves this repo holds the target; only this says whether the source has since moved past it. Absent where the source's checkout could not be measured.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ContainmentVerdictOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "step3_advance": {
               "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
               "anyOf": [
