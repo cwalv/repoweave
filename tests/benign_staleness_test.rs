@@ -23,54 +23,19 @@ mod common;
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
@@ -79,9 +44,9 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 // ---------------------------------------------------------------------------
@@ -135,11 +100,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     MainWorkspace {
@@ -186,7 +151,7 @@ fn fixture() -> Fixture {
 }
 
 fn head(repo: &Path) -> String {
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 // ===========================================================================
@@ -269,7 +234,7 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
     );
 
     // The op landed ww's manifest tip on main, and main's lock pins it.
-    let main_lib = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    let main_lib = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
     let ww_lib = head(&f.ww.manifest_repo);
     assert_eq!(main_lib, ww_lib, "main's manifest tip should match ww's");
     let main_lock = std::fs::read_to_string(f.main.project_dir.join("rwv.lock")).unwrap();
@@ -300,9 +265,9 @@ fn block_commits(repo: &Path, hooks_dir: &Path) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    git(
-        &["config", "core.hooksPath", &hooks_dir.to_string_lossy()],
+    common::git_in(
         repo,
+        &["config", "core.hooksPath", &hooks_dir.to_string_lossy()],
     );
 }
 
@@ -344,9 +309,9 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
         "the blocked hook must leave the project repo without a relock commit; \
          stderr:\n{stderr}"
     );
-    let ww_lock_committed = git_out(
-        &["show", &format!("{ww_project_before}:rwv.lock")],
+    let ww_lock_committed = common::git_in(
         &f.ww.project_dir,
+        &["show", &format!("{ww_project_before}:rwv.lock")],
     );
     assert_eq!(
         ww_lock_committed.trim(),
@@ -510,7 +475,7 @@ fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
         "after the remedy the child's project commit must land in the parent workweave"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &f.ww.manifest_repo),
+        common::git_in(&f.ww.manifest_repo, &["rev-parse", "HEAD"]),
         head(&child.manifest_repo),
         "after the remedy both workweaves must agree on the manifest tip"
     );
@@ -549,7 +514,7 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
 
     // DELIVERED: the target's manifest repo still holds the commit that was
     // stranding the op, CWD's replay picked it up, and both sides converged.
-    let target_lib = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    let target_lib = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
     assert_eq!(
         target_lib,
         head(&f.ww.manifest_repo),
@@ -557,9 +522,9 @@ fn relation_ahead_sync_to_target_named_remedy_converges_and_delivers() {
     );
     // The target's own unlocked commit survived the landing (git exits non-zero
     // when it is not an ancestor, which `git` turns into a failure here).
-    git(
-        &["merge-base", "--is-ancestor", &target_docs, &target_lib],
+    common::git_in(
         &f.main.manifest_repo,
+        &["merge-base", "--is-ancestor", &target_docs, &target_lib],
     );
     assert_eq!(
         head(&f.main.project_dir),
@@ -669,16 +634,16 @@ fn allow_stale_lock_step_3_failure_leaves_the_target_lock_true_about_its_members
         1,
         "the sweep below is vacuous unless the lock has the fixture's one entry"
     );
-    let target_lib_tip = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    let target_lib_tip = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
     for (_repo_path, entry) in lock.iter_entries() {
-        git(
+        common::git_in(
+            &f.main.manifest_repo,
             &[
                 "merge-base",
                 "--is-ancestor",
                 entry.version.as_str(),
                 &target_lib_tip,
             ],
-            &f.main.manifest_repo,
         );
     }
 }
@@ -693,7 +658,7 @@ fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the
     let f = fixture();
 
     commit_file(&f.main.manifest_repo, "d1.txt", "d1\n", "main: docs 1");
-    let target_live = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    let target_live = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
     commit_file(&f.ww.project_dir, "note.txt", "n\n", "ww: note");
     commit_file(&f.ww.manifest_repo, "feature.txt", "f\n", "ww: feature");
 
@@ -709,7 +674,7 @@ fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the
 
     // The operator's fix: put CWD's manifest repo on top of the target's live
     // tip so step 3's fast-forward can proceed. Nothing relocks this.
-    git(&["rebase", &target_live], &f.ww.manifest_repo);
+    common::git_in(&f.ww.manifest_repo, &["rebase", &target_live]);
     let cwd_lib_after_fix = head(&f.ww.manifest_repo);
 
     rwv()
@@ -718,7 +683,7 @@ fn stranded_advance_target_resumed_after_a_manual_fix_lands_a_lock_that_pins_the
         .assert()
         .success();
 
-    let target_lib = git_out(&["rev-parse", "main"], &f.main.manifest_repo);
+    let target_lib = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
     assert_eq!(
         target_lib, cwd_lib_after_fix,
         "the resume must land the manifest tip CWD held after the operator's fix"
@@ -869,8 +834,8 @@ fn strand_a_pull_from_an_ahead_workweave(extra: &[&str]) -> StrandedPull {
         "operator-resolved\n",
     )
     .unwrap();
-    git(&["add", "notes/shared.md"], &f.main.project_dir);
-    git(&["rebase", "--continue"], &f.main.project_dir);
+    common::git_in(&f.main.project_dir, &["add", "notes/shared.md"]);
+    common::git_in(&f.main.project_dir, &["rebase", "--continue"]);
 
     commit_file(&src.manifest_repo, "z.txt", "z\n", "src: z");
     let tip_at_resume = head(&src.manifest_repo);
@@ -1140,13 +1105,13 @@ fn second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges(
     // NEXT bare pull wants the flag again, until the relock lands in the
     // source. The refusal's evidence block is what carries the operator
     // through each round.
-    let ahead = git_out(
+    let ahead = common::git_in(
+        &f.ww.project_dir,
         &[
             "log",
             "--oneline",
             &format!("{}..HEAD", head(&f.main.project_dir)),
         ],
-        &f.ww.project_dir,
     );
     assert!(
         ahead.lines().count() == 1 && ahead.contains("lock: auto-relock after sync from"),
@@ -1170,7 +1135,7 @@ fn pull_destination_anomalous_lock_refuses_and_names_the_follow_on_strategy() {
         .current_dir(&f.ww.root)
         .assert()
         .success();
-    git(&["reset", "--hard", &c1], &f.ww.manifest_repo);
+    common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
 
     let assert = rwv()
         .args(["sync", "primary"])
@@ -1224,7 +1189,7 @@ fn relation_behind_sync_to_refuses_and_names_relation() {
         .current_dir(&f.ww.root)
         .assert()
         .success();
-    git(&["reset", "--hard", &c1], &f.ww.manifest_repo);
+    common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
     let target_project_before = head(&f.main.project_dir);
 
     let assert = rwv()
@@ -1276,7 +1241,7 @@ fn relation_behind_source_sync_refuses() {
         .current_dir(&src.root)
         .assert()
         .success();
-    git(&["reset", "--hard", &c1], &src.manifest_repo);
+    common::git_in(&src.manifest_repo, &["reset", "--hard", &c1]);
     let dest_lib_before = head(&f.main.manifest_repo);
 
     let assert = rwv()
@@ -1317,7 +1282,7 @@ fn relation_diverged_sync_to_refuses_and_hints_lock_commit() {
         .success();
     // Reset back to c1 and make a sibling commit c2b so HEAD (c2b) and lock (c2a)
     // diverge.
-    git(&["reset", "--hard", &c1], &f.ww.manifest_repo);
+    common::git_in(&f.ww.manifest_repo, &["reset", "--hard", &c1]);
     commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: c2b");
     assert_ne!(head(&f.ww.manifest_repo), c2a);
     let target_project_before = head(&f.main.project_dir);
@@ -1366,10 +1331,10 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
     );
     let bad_lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&bad_lock, &f.main.project_dir.join("rwv.lock")).unwrap();
-    git(&["add", "rwv.lock"], &f.main.project_dir);
-    git(
-        &["commit", "-m", "lock: nonexistent tag"],
+    common::git_in(&f.main.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &f.main.project_dir,
+        &["commit", "-m", "lock: nonexistent tag"],
     );
 
     let dest_lib_before = head(&f.ww.manifest_repo);
@@ -1396,8 +1361,8 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
 fn no_lock_sync_to_refuses() {
     let f = fixture();
     // Remove the committed rwv.lock from ww's project repo entirely.
-    git(&["rm", "rwv.lock"], &f.ww.project_dir);
-    git(&["commit", "-m", "drop lock"], &f.ww.project_dir);
+    common::git_in(&f.ww.project_dir, &["rm", "rwv.lock"]);
+    common::git_in(&f.ww.project_dir, &["commit", "-m", "drop lock"]);
     let target_project_before = head(&f.main.project_dir);
 
     let assert = rwv()
@@ -1482,7 +1447,7 @@ fn dirty_source_rwv_lock_only_is_carved_out() {
     contents.push('\n');
     std::fs::write(&lock_path, contents).unwrap();
     // Confirm the carve-out target really is dirty-tracked before we assert.
-    let porcelain = git_out(&["status", "--porcelain"], &f.ww.project_dir);
+    let porcelain = common::git_in(&f.ww.project_dir, &["status", "--porcelain"]);
     assert!(
         porcelain.contains("rwv.lock"),
         "test precondition: rwv.lock must be tracked-dirty; got porcelain:\n{porcelain}"

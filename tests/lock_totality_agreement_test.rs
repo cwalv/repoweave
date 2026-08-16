@@ -40,39 +40,20 @@ fn rwv_cmd() -> Command {
     cmd
 }
 
-fn git_in(dir: &Path, args: &[&str]) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git failed to start");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git_in(path, &["add", "."]);
-    git_in(path, &["commit", "-m", "initial"]);
-    git_in(path, &["rev-parse", "HEAD"])
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn commit_more(path: &Path) -> String {
     std::fs::write(path.join("extra.txt"), "more\n").unwrap();
-    git_in(path, &["add", "."]);
-    git_in(path, &["commit", "-m", "second"]);
-    git_in(path, &["rev-parse", "HEAD"])
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "second"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// A workspace whose project directory is the git repo `rwv doctor` expects, so
@@ -91,10 +72,10 @@ fn seal_project_repo(project_dir: &Path) {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    git_in(project_dir, &["init", "-b", "main"]);
-    git_in(project_dir, &["add", "."]);
-    git_in(project_dir, &["commit", "-m", "initial"]);
-    git_in(project_dir, &["config", "merge.rwv-ours.driver", "true"]);
+    common::git_in(project_dir, &["init", "-b", "main"]);
+    common::git_in(project_dir, &["add", "."]);
+    common::git_in(project_dir, &["commit", "-m", "initial"]);
+    common::git_in(project_dir, &["config", "merge.rwv-ours.driver", "true"]);
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -208,7 +189,7 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
 
     let drifted = root.join(DRIFTED);
     init_repo(&drifted);
-    git_in(&drifted, &["tag", TAG]);
+    common::git_in(&drifted, &["tag", TAG]);
     let drifted_tip = commit_more(&drifted);
 
     let clean_tip = init_repo(&root.join(CLEAN));

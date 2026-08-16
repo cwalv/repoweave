@@ -37,7 +37,6 @@
 //! nowhere else).
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -45,39 +44,14 @@ fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed",
-        dir.display()
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
-
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// A workspace with one project and one owned repo, at `{tmp}/ws`.
@@ -132,16 +106,16 @@ fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (Pa
     let ws = tmp.join("ws");
     let repo_path = ws.join("github/org/repo");
     std::fs::create_dir_all(repo_path.parent().unwrap()).unwrap();
-    git(
+    common::git_in(
+        tmp,
         &[
             "clone",
             &upstream.display().to_string(),
             &repo_path.display().to_string(),
         ],
-        tmp,
     );
-    git(&["config", "user.email", "test@test.com"], &repo_path);
-    git(&["config", "user.name", "Test"], &repo_path);
+    common::git_in(&repo_path, &["config", "user.email", "test@test.com"]);
+    common::git_in(&repo_path, &["config", "user.name", "Test"]);
 
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -153,11 +127,11 @@ fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (Pa
         ),
     )
     .unwrap();
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "test@test.com"], &project_dir);
-    git(&["config", "user.name", "Test"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "add manifest"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
 
     (ws, upstream)
 }
@@ -403,9 +377,9 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
     let ww = create_workweave(&ws, "demo", "w1");
 
     std::fs::write(upstream.join("NEW"), "new content\n").unwrap();
-    git(&["add", "NEW"], &upstream);
-    git(&["commit", "-m", "new upstream commit"], &upstream);
-    let upstream_head = git_out(&["rev-parse", "HEAD"], &upstream);
+    common::git_in(&upstream, &["add", "NEW"]);
+    common::git_in(&upstream, &["commit", "-m", "new upstream commit"]);
+    let upstream_head = common::git_in(&upstream, &["rev-parse", "HEAD"]);
 
     let surfaced = ww.join("demo.code-workspace");
     let _ = std::fs::remove_file(&surfaced);
@@ -414,7 +388,7 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
 
     let clone = ww.join("github/org/repo");
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &clone),
+        common::git_in(&clone, &["rev-parse", "HEAD"]),
         upstream_head,
         "`rwv update` must fast-forward the workweave's checkout to the \
          upstream tip"

@@ -25,37 +25,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
-fn git_stdout(args: &[&str], dir: &Path) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        output.status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
-}
-
 /// Create a bare repo at `path`, seeded with `files`, and return the SHA of
 /// the seeding commit.
 fn init_bare_repo_with_commit(path: &Path, files: &[(&str, &str)]) -> String {
@@ -70,20 +39,20 @@ fn init_bare_repo_with_commit(path: &Path, files: &[(&str, &str)]) -> String {
 
     let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
-    git(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
-    git(&["config", "user.email", "test@test.com"], &work);
-    git(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     for (name, contents) in files {
         std::fs::write(work.join(name), contents).unwrap();
     }
-    git(&["add", "."], &work);
-    git(&["commit", "-m", "initial"], &work);
-    git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 
-    git_stdout(&["rev-parse", "HEAD"], &work)
+    common::git_in(&work, &["rev-parse", "HEAD"])
 }
 
 /// Build the fixtures shared by both recipe tests: a bare "dependency" repo
@@ -124,13 +93,13 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
 
     let workspace = tmp.join("ws");
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
-    git(
+    common::git_in(
+        tmp,
         &[
             "clone",
             &project_bare.to_string_lossy(),
             &workspace.join("projects/web-app").to_string_lossy(),
         ],
-        tmp,
     );
 
     (workspace, dep_sha)
@@ -173,7 +142,7 @@ fn ci_recipe_activate_then_frozen_fetch_succeeds() {
         "in-place fetch should materialize the manifest's repo"
     );
     assert_eq!(
-        git_stdout(&["rev-parse", "HEAD"], &dep_dir),
+        common::git_in(&dep_dir, &["rev-parse", "HEAD"]),
         dep_sha,
         "in-place fetch should check out the locked revision"
     );
@@ -207,7 +176,7 @@ fn devcontainer_recipe_chained_shell_command_succeeds() {
     );
 
     let dep_dir = workspace.join("local/org/dep");
-    assert_eq!(git_stdout(&["rev-parse", "HEAD"], &dep_dir), dep_sha);
+    assert_eq!(common::git_in(&dep_dir, &["rev-parse", "HEAD"]), dep_sha);
 }
 
 // ============================================================================
@@ -233,13 +202,13 @@ fn shipped_recipe_without_nesting_fails() {
     // actions/checkout@v4 with no `path:` — the checkout IS the runner
     // directory, not a workspace, and not empty (it has a `.git`).
     let workspace = tmp.path().join("ws");
-    git(
+    common::git_in(
+        tmp.path(),
         &[
             "clone",
             &project_bare.to_string_lossy(),
             &workspace.to_string_lossy(),
         ],
-        tmp.path(),
     );
 
     let output = rwv()

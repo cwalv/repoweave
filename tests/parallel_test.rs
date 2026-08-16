@@ -27,17 +27,6 @@ fn rwv() -> Command {
 
 // ----- Setup helpers (mirroring tests/fetch_test.rs) -------------------------
 
-fn run_git(args: &[&str], cwd: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {:?} failed in {:?}", args, cwd);
-}
-
 fn init_bare_repo(path: &Path) {
     let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
@@ -53,16 +42,16 @@ fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
     let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("w");
-    run_git(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
-    run_git(&["config", "user.email", "t@t.com"], &work);
-    run_git(&["config", "user.name", "T"], &work);
+    common::git_in(&work, &["config", "user.email", "t@t.com"]);
+    common::git_in(&work, &["config", "user.name", "T"]);
     std::fs::write(work.join("README"), "init").unwrap();
-    run_git(&["add", "."], &work);
-    run_git(&["commit", "-m", "initial"], &work);
-    run_git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 }
 
 /// Set up a project bare repo whose `rwv.toml` references the given
@@ -71,16 +60,16 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
     let project_bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&project_bare);
     let work = tmp.join(format!("{name}_work"));
-    run_git(
+    common::git_in(
+        tmp,
         &[
             "clone",
             &project_bare.to_string_lossy(),
             &work.to_string_lossy(),
         ],
-        tmp,
     );
-    run_git(&["config", "user.email", "t@t.com"], &work);
-    run_git(&["config", "user.name", "T"], &work);
+    common::git_in(&work, &["config", "user.email", "t@t.com"]);
+    common::git_in(&work, &["config", "user.name", "T"]);
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
@@ -88,9 +77,9 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
-    run_git(&["add", "rwv.toml"], &work);
-    run_git(&["commit", "-m", "manifest"], &work);
-    run_git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "rwv.toml"]);
+    common::git_in(&work, &["commit", "-m", "manifest"]);
+    common::git_in(&work, &["push", "origin", "main"]);
     common::file_url(&project_bare)
 }
 
@@ -301,16 +290,16 @@ fn update_accepts_dash_j_flag() {
 /// Advance a bare repo by one commit and return the new tip SHA.
 fn advance_bare_repo(tmp: &Path, bare: &Path, label: &str) -> String {
     let work = tmp.join(format!("{label}-work"));
-    run_git(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp,
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
-    run_git(&["config", "user.email", "t@t.com"], &work);
-    run_git(&["config", "user.name", "T"], &work);
+    common::git_in(&work, &["config", "user.email", "t@t.com"]);
+    common::git_in(&work, &["config", "user.name", "T"]);
     std::fs::write(work.join("advance.txt"), label).unwrap();
-    run_git(&["add", "advance.txt"], &work);
-    run_git(&["commit", "-m", label], &work);
-    run_git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "advance.txt"]);
+    common::git_in(&work, &["commit", "-m", label]);
+    common::git_in(&work, &["push", "origin", "main"]);
     let out = common::git()
         .args(["rev-parse", "main"])
         .current_dir(bare)
@@ -468,7 +457,7 @@ fn update_dash_j_aggregates_failures() {
     // Sabotage `bad` by pointing its origin at a nonexistent path; the
     // next `git fetch` against it will fail.
     let bad_clone = ws.join("local/team/bad");
-    run_git(&["remote", "set-url", "origin", &url_bad], &bad_clone);
+    common::git_in(&bad_clone, &["remote", "set-url", "origin", &url_bad]);
     // Also delete the original backing store to make sure fetch fails.
     std::fs::remove_dir_all(&bare_bad).unwrap();
 

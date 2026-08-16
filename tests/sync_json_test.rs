@@ -23,59 +23,20 @@ mod common;
 // this file doesn't pull on that test file's private fixtures)
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -133,11 +94,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -159,7 +120,8 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -167,11 +129,11 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/main",
         ],
-        &primary.server_dir,
     );
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -179,7 +141,6 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/project",
         ],
-        &primary.project_dir,
     );
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -208,8 +169,8 @@ fn sync_json_emits_envelope_and_outcomes() {
         "ww: add change",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww change"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
         .args(["sync", &ww.root.to_string_lossy(), "--json"])
@@ -242,7 +203,7 @@ fn sync_json_emits_envelope_and_outcomes() {
     }
 
     // Server should have actually advanced to C2.
-    let primary_head = git_out(&["rev-parse", "main"], &primary.server_dir);
+    let primary_head = common::git_in(&primary.server_dir, &["rev-parse", "main"]);
     assert_eq!(primary_head, c2);
 }
 
@@ -261,14 +222,14 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
         "primary: C2",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Workweave: diverge.
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     // ff --discard-local-commits: bypasses the Phase 1 ancestor check;
     // Phase 2 ff still fails.
@@ -330,7 +291,7 @@ fn sync_json_no_op_when_already_at_lock() {
     assert!(any_no_op, "expected no-op for server: {stdout}");
 
     // Sanity: c1 actually was the initial SHA.
-    let head = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let head = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
     assert_eq!(head, c1);
 }
 
@@ -659,11 +620,11 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
         .map(|(p, u, s)| (*p, u.as_str(), *s))
         .collect();
     write_lock(&primary_project_dir, &lock_refs);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &primary_project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &primary_project_dir);
+    common::git_in(&primary_project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
 
     // Workweave: worktree-add each repo + the project repo.
@@ -674,7 +635,8 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
     for repo_path in REPO_PATHS.iter() {
         let dest = ww_root.join(repo_path);
         let canonical = primary_root.join(repo_path);
-        git(
+        common::git_in(
+            &canonical,
             &[
                 "worktree",
                 "add",
@@ -682,11 +644,11 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
                 "-b",
                 "web-app--ww",
             ],
-            &canonical,
         );
     }
     let ww_project_dir = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary_project_dir,
         &[
             "worktree",
             "add",
@@ -694,7 +656,6 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
             "-b",
             "ww/project",
         ],
-        &primary_project_dir,
     );
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -722,8 +683,8 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
         .map(|(p, u, s)| (*p, u.as_str(), *s))
         .collect();
     write_lock(&ww_project_dir, &ww_lock_refs);
-    git(&["add", "rwv.lock"], &ww_project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww_project_dir);
+    common::git_in(&ww_project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww_project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let primary = Workspace {
         root: primary_root,
@@ -1101,8 +1062,8 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
         "ww: add change",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww change"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     let assert = rwv()
         .args(["sync", &ww.root.to_string_lossy(), "--json"])
@@ -1140,16 +1101,16 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
         "primary: C2",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Two commits here against the source's one, so the pair of counts cannot
     // be read correctly by a disclosure that transposes them.
     make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
     let c_ww = make_commit(&ww.server_dir, "ww2.txt", "ww2\n", "ww: second");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let assert = rwv()
         .args([

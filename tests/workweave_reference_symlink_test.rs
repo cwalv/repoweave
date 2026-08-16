@@ -29,41 +29,15 @@ mod common;
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
-fn git_stdout(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).expect("git output is UTF-8")
-}
-
 /// Init a repo at `path` with one commit on `main` containing `file`.
 fn init_repo_with_commit(path: &Path, file: &str, contents: &str) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join(file), contents).unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 const OWNED_REPO: &str = "github/org/owned";
@@ -128,11 +102,11 @@ struct CanonicalFingerprint {
 
 fn fingerprint(canonical: &Path) -> CanonicalFingerprint {
     CanonicalFingerprint {
-        head: git_stdout(&["rev-parse", "HEAD"], canonical),
-        refs: git_stdout(&["show-ref"], canonical),
+        head: common::git_in(canonical, &["rev-parse", "HEAD"]),
+        refs: common::git_in(canonical, &["show-ref"]),
         worktree_file: std::fs::read_to_string(canonical.join("REF")).unwrap_or_default(),
-        status: git_stdout(&["status", "--porcelain"], canonical),
-        current_branch: git_stdout(&["symbolic-ref", "--short", "HEAD"], canonical),
+        status: common::git_in(canonical, &["status", "--porcelain"]),
+        current_branch: common::git_in(canonical, &["symbolic-ref", "--short", "HEAD"]),
     }
 }
 
@@ -181,7 +155,7 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
     // Its `.git` resolves to the canonical store (it IS the canonical store,
     // viewed through the symlink) — the repo's git-common-dir is the
     // canonical's own .git, NOT a linked-worktree gitdir.
-    let common_dir = git_stdout(&["rev-parse", "--git-common-dir"], &ref_checkout);
+    let common_dir = common::git_in(&ref_checkout, &["rev-parse", "--git-common-dir"]);
     let canonical_git = ws.join(REF_REPO).join(".git");
     let resolved = Path::new(common_dir.trim());
     let resolved_abs = if resolved.is_absolute() {
@@ -211,7 +185,7 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
         dot_git.is_file(),
         "owned repo .git should be a FILE (worktree gitlink)"
     );
-    let branch = git_stdout(&["symbolic-ref", "--short", "HEAD"], &owned_checkout);
+    let branch = common::git_in(&owned_checkout, &["symbolic-ref", "--short", "HEAD"]);
     assert_eq!(
         branch.trim(),
         "proj--feat",
@@ -219,7 +193,7 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
     );
 
     // The canonical reference clone gained NO ephemeral branch.
-    let refs = git_stdout(&["branch", "--list"], &ws.join(REF_REPO));
+    let refs = common::git_in(ws.join(REF_REPO), &["branch", "--list"]);
     assert!(
         !refs.contains("proj--feat"),
         "canonical reference must not get an ephemeral branch, got: {refs}"
@@ -263,7 +237,7 @@ fn worktree_references_flag_cuts_a_worktree_for_reference_repos() {
         "worktree'd reference .git should be a FILE (worktree gitlink)"
     );
     // On its own ephemeral branch (old behavior intact).
-    let branch = git_stdout(&["symbolic-ref", "--short", "HEAD"], &ref_checkout);
+    let branch = common::git_in(&ref_checkout, &["symbolic-ref", "--short", "HEAD"]);
     assert_eq!(
         branch.trim(),
         "proj--feat",
@@ -318,7 +292,7 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
     );
 
     // No ephemeral branch was created or deleted in the canonical.
-    let branches = git_stdout(&["branch", "--list"], &canonical);
+    let branches = common::git_in(&canonical, &["branch", "--list"]);
     assert!(
         !branches.contains("proj--feat"),
         "delete must not have touched any ephemeral branch in the canonical"

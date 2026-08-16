@@ -41,23 +41,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Run a git command in `dir`, panicking on failure.
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 /// Create a bare git repo at `path`.
 fn init_bare_repo(path: &Path) {
     let status = common::git()
@@ -155,9 +138,9 @@ fn setup_workspace_with_project(
     let project_dir = workspace.join("projects").join(project_name);
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "test@test.com"], &project_dir);
-    git(&["config", "user.name", "Test"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
@@ -166,8 +149,8 @@ fn setup_workspace_with_project(
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
-    git(&["add", "rwv.toml"], &project_dir);
-    git(&["commit", "-m", "init"], &project_dir);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "init"]);
 
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 
@@ -544,20 +527,20 @@ fn fetch_json_envelope_shape() {
     // Clone + commit + push to make repo_bare fetchable.
     let tmp_work = common::tempdir().unwrap();
     let work = tmp_work.path().join("work");
-    git(
+    common::git_in(
+        tmp_work.path(),
         &[
             "clone",
             &repo_bare.to_string_lossy(),
             &work.to_string_lossy(),
         ],
-        tmp_work.path(),
     );
-    git(&["config", "user.email", "test@test.com"], &work);
-    git(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("README"), "init").unwrap();
-    git(&["add", "."], &work);
-    git(&["commit", "-m", "initial"], &work);
-    git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 
     // Create project bare with manifest pointing at the repo.
     let project_bare = tmp.path().join("proj.git");
@@ -635,16 +618,16 @@ fn fetch_json_ndjson_under_parallel_jobs() {
 
         let tw = common::tempdir().unwrap();
         let w = tw.path().join("w");
-        git(
-            &["clone", &bare.to_string_lossy(), &w.to_string_lossy()],
+        common::git_in(
             tw.path(),
+            &["clone", &bare.to_string_lossy(), &w.to_string_lossy()],
         );
-        git(&["config", "user.email", "test@test.com"], &w);
-        git(&["config", "user.name", "Test"], &w);
+        common::git_in(&w, &["config", "user.email", "test@test.com"]);
+        common::git_in(&w, &["config", "user.name", "Test"]);
         std::fs::write(w.join("README"), "init").unwrap();
-        git(&["add", "."], &w);
-        git(&["commit", "-m", "initial"], &w);
-        git(&["push", "origin", "main"], &w);
+        common::git_in(&w, &["add", "."]);
+        common::git_in(&w, &["commit", "-m", "initial"]);
+        common::git_in(&w, &["push", "origin", "main"]);
     }
 
     let project_bare = tmp.path().join("proj.git");

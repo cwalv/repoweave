@@ -12,19 +12,10 @@ use std::process::Command;
 
 mod common;
 
-/// Run a git command in `dir`, asserting success.
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} failed in {}", dir.display());
-}
-
 /// Commit all files in `repo` with a minimal author identity and message.
 fn git_commit_all(repo: &Path, message: &str) {
-    git(
+    common::git_in(
+        repo,
         &[
             "-c",
             "user.email=test@test.com",
@@ -33,9 +24,9 @@ fn git_commit_all(repo: &Path, message: &str) {
             "add",
             "-A",
         ],
-        repo,
     );
-    git(
+    common::git_in(
+        repo,
         &[
             "-c",
             "user.email=test@test.com",
@@ -45,7 +36,6 @@ fn git_commit_all(repo: &Path, message: &str) {
             "-m",
             message,
         ],
-        repo,
     );
 }
 
@@ -228,7 +218,7 @@ fn cargo_release_version_pin_workflow() {
 
     // ---- Step 3: tag protocol with v0.1.0 ----
     let protocol_dir = root.join("github/chatly/protocol");
-    git(&["tag", "v0.1.0"], &protocol_dir);
+    common::git_in(&protocol_dir, &["tag", "v0.1.0"]);
 
     // ---- Step 4: remove the workspace Cargo.toml symlink at weave root ----
     let root_cargo = root.join("Cargo.toml");

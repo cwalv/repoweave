@@ -39,26 +39,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {:?} failed in {}",
-        args,
-        dir.display()
-    );
-}
-
 fn init_bare_repo(path: &Path) {
     let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
@@ -75,14 +55,14 @@ fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
     let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
-    git_run(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
     std::fs::write(work.join("README"), "init\n").unwrap();
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "initial"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 }
 
 /// A bare repo whose single commit carries a `go.mod`, so a clone of it is
@@ -91,23 +71,23 @@ fn init_bare_go_module(path: &Path, module: &str) {
     init_bare_repo(path);
     let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
-    git_run(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
     std::fs::write(work.join("go.mod"), format!("module {module}\n\ngo 1.21\n")).unwrap();
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "initial"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 }
 
 /// Clone `bare` to `repo_path` under the workspace, the way `rwv fetch` would.
 fn clone_member(bare: &Path, ws: &Path, repo_path: &str) {
     let dest = ws.join(repo_path);
     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
-    git_run(
-        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+    common::git_in(
         ws,
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
     );
 }
 
@@ -117,14 +97,14 @@ fn make_project_bare(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> PathBuf 
     let bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&bare);
     let work = tmp.join(format!("{name}-work"));
-    git_run(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp,
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
     write_manifest(&work, repos);
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "manifest"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "manifest"]);
+    common::git_in(&work, &["push", "origin", "main"]);
     bare
 }
 
@@ -144,10 +124,10 @@ fn setup_git_project(tmp: &Path, project: &str, repos: &[(&str, &str)]) -> (Path
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    git_run(&["init", "--initial-branch=main"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     write_manifest(&project_dir, repos);
-    git_run(&["add", "."], &project_dir);
-    git_run(&["commit", "-m", "init"], &project_dir);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "init"]);
 
     std::fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();
     (ws, project_dir)
@@ -217,13 +197,13 @@ fn remove_authors_managed_content() {
 
     let repo_dir = ws.join("local/org/dep");
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
-    git_run(
+    common::git_in(
+        tmp.path(),
         &[
             "clone",
             &bare.to_string_lossy(),
             &repo_dir.to_string_lossy(),
         ],
-        tmp.path(),
     );
 
     assert!(
@@ -504,20 +484,20 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
     let bare = tmp.path().join("myapp.git");
     init_bare_repo(&bare);
     let work = tmp.path().join("myapp-work");
-    git_run(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
 
     write_manifest(&work, &[]);
     let committed_code_workspace = "{\"folders\":[{\"path\":\".\"}]}";
     std::fs::write(work.join("myapp.code-workspace"), committed_code_workspace).unwrap();
-    git_run(&["add", "."], &work);
-    git_run(
-        &["commit", "-m", "rwv.toml + committed code-workspace"],
+    common::git_in(&work, &["add", "."]);
+    common::git_in(
         &work,
+        &["commit", "-m", "rwv.toml + committed code-workspace"],
     );
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["push", "origin", "main"]);
 
     let adopt_ws = make_workspace(tmp.path());
     let source = common::file_url(&bare);
@@ -620,18 +600,18 @@ fn make_cargo_adoptee_bare(
     let bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&bare);
     let work = tmp.join(format!("{name}-work"));
-    git_run(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp,
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
     std::fs::write(work.join("rwv.toml"), CARGO_MEMBERS_MANIFEST).unwrap();
     std::fs::write(work.join("Cargo.toml"), cargo_toml).unwrap();
     if let Some(lock) = cargo_lock {
         std::fs::write(work.join("Cargo.lock"), lock).unwrap();
     }
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "manifest + managed Cargo.toml"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "manifest + managed Cargo.toml"]);
+    common::git_in(&work, &["push", "origin", "main"]);
     bare
 }
 

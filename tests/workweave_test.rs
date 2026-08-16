@@ -7,7 +7,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::Path;
-use std::process;
 
 mod common;
 
@@ -16,32 +15,15 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Run a git command in `dir`, panicking on failure.
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 /// Initialise a normal (non-bare) git repo at `path` with one commit on `main`.
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// Create a minimal workspace structure with one project and one repo.
@@ -100,8 +82,8 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
-    git(&["add", "rwv.toml"], &project_dir);
-    git(&["commit", "-m", "add manifest"], &project_dir);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
 
     ws
 }
@@ -957,8 +939,8 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
         "[package]\nname = \"cargo-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .unwrap();
-    git(&["add", "Cargo.toml"], &repo_path);
-    git(&["commit", "-m", "add Cargo.toml"], &repo_path);
+    common::git_in(&repo_path, &["add", "Cargo.toml"]);
+    common::git_in(&repo_path, &["commit", "-m", "add Cargo.toml"]);
 
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -1263,13 +1245,13 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
     // A branch in the workweave's namespace that rwv never created, carrying a
     // commit that exists nowhere else.
     let primary_repo = ws.join("github/org/repo");
-    git(&["branch", "web-app--stale-test/main"], &primary_repo);
-    git(&["checkout", "web-app--stale-test/main"], &primary_repo);
+    common::git_in(&primary_repo, &["branch", "web-app--stale-test/main"]);
+    common::git_in(&primary_repo, &["checkout", "web-app--stale-test/main"]);
     std::fs::write(primary_repo.join("hand-made.txt"), "operator work").unwrap();
-    git(&["add", "-A"], &primary_repo);
-    git(
-        &["commit", "-m", "work only this branch can reach"],
+    common::git_in(&primary_repo, &["add", "-A"]);
+    common::git_in(
         &primary_repo,
+        &["commit", "-m", "work only this branch can reach"],
     );
     let unique_sha = {
         let out = common::git()
@@ -1279,7 +1261,7 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
             .expect("git rev-parse");
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     };
-    git(&["checkout", "main"], &primary_repo);
+    common::git_in(&primary_repo, &["checkout", "main"]);
 
     // The create must refuse rather than clear the name.
     let assert = rwv()
@@ -1338,14 +1320,14 @@ fn create_reuses_its_own_unmoved_leftover() {
     // the placement entry by hand, leaving the ref AND its receipt standing.
     let ww_dir = weaveroot.join("web-app--leftover");
     let primary_repo = ws.join("github/org/repo");
-    git(
+    common::git_in(
+        &primary_repo,
         &[
             "worktree",
             "remove",
             "--force",
             ww_dir.join("github/org/repo").to_str().unwrap(),
         ],
-        &primary_repo,
     );
     std::fs::remove_dir_all(&ww_dir).unwrap();
     let index = ws.join("projects/web-app/.rwv-workweave-index");
@@ -1422,8 +1404,8 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // Advance the rig's repo so its HEAD diverges from primary's. The
     // commit lands on the rig's ephemeral branch only.
     std::fs::write(rig_repo.join("rig-marker.txt"), "advanced in rig\n").unwrap();
-    git(&["add", "rig-marker.txt"], &rig_repo);
-    git(&["commit", "-m", "advance rig"], &rig_repo);
+    common::git_in(&rig_repo, &["add", "rig-marker.txt"]);
+    common::git_in(&rig_repo, &["commit", "-m", "advance rig"]);
 
     let primary_head = head_sha(&primary_repo);
     let rig_head = head_sha(&rig_repo);
@@ -1495,8 +1477,8 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
     let primary_repo = ws.join("github/org/repo");
 
     std::fs::write(rig_repo.join("rig-marker.txt"), "advanced\n").unwrap();
-    git(&["add", "rig-marker.txt"], &rig_repo);
-    git(&["commit", "-m", "advance rig"], &rig_repo);
+    common::git_in(&rig_repo, &["add", "rig-marker.txt"]);
+    common::git_in(&rig_repo, &["commit", "-m", "advance rig"]);
 
     let primary_head = head_sha(&primary_repo);
     let rig_head = head_sha(&rig_repo);
@@ -1877,7 +1859,7 @@ fn create_over_a_detached_source_still_mints_the_flat_name() {
     // Detach HEAD in the manifest repo by checking out the commit SHA.
     let repo = ws.join("github/org/repo");
     let head_sha = head_sha(&repo);
-    git(&["checkout", "--detach", &head_sha], &repo);
+    common::git_in(&repo, &["checkout", "--detach", &head_sha]);
 
     rwv()
         .args(["workweave", "web-app", "create", "det"])
@@ -2296,7 +2278,8 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
     // a name inside it would make the create refuse on the namespace
     // collision, which is a different test's subject.
     let primary_repo = ws.join("github/org/repo");
-    git(
+    common::git_in(
+        &primary_repo,
         &[
             "worktree",
             "add",
@@ -2305,7 +2288,6 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
             "-b",
             "fixture/orphan-registration",
         ],
-        &primary_repo,
     );
 
     // Remove the worktree directory to create an orphan registration —

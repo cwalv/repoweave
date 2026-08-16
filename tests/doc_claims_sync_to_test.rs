@@ -38,59 +38,20 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -144,11 +105,11 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &primary_project,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &primary_project);
+    common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = parent.join("ww");
@@ -156,7 +117,8 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     std::fs::create_dir_all(ww.join("projects")).unwrap();
 
     let ww_server = ww.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary_server,
         &[
             "worktree",
             "add",
@@ -164,11 +126,11 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/server",
         ],
-        &primary_server,
     );
 
     let ww_project = ww.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary_project,
         &[
             "worktree",
             "add",
@@ -176,7 +138,6 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/project",
         ],
-        &primary_project,
     );
     std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -212,8 +173,8 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
     // Workweave advances so sync-to has actual work to do.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     let assert = rwv()
         .args([
@@ -263,8 +224,8 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
     // Workweave advances.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     let assert = rwv()
         .args([
@@ -390,33 +351,33 @@ fn make_shared_with_stale_target_for_sync_to(parent: &Path) -> (Workspace, Works
 
     // ww's server (worktree from primary) can reach C2 via the shared object db.
     // Fast-forward ww's worktree branch to C2 so ww is also at C2.
-    git(&["merge", "--ff-only", &c2], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["merge", "--ff-only", &c2]);
 
     // Update ww's lock to C2 and commit.
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww at C2"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww at C2"]);
 
     // Update primary's lock to C2 and commit.
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: primary at C2"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: primary at C2"],
     );
 
     // Now reset primary's server back to C1 (simulate rollback or out-of-sync).
     // primary's committed lock still says C2, but server HEAD is now C1 → stale.
-    git(&["reset", "--hard", &initial_sha], &primary.server_dir);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &initial_sha]);
 
     // Verify invariant: primary lock=C2, server=C1 (stale); ww lock=C2, server=C2 (fresh).
     assert_ne!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         c2,
         "primary server must be at C1, not C2, after reset"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         initial_sha,
         "primary server must be at initial_sha after reset"
     );
@@ -566,8 +527,8 @@ fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // Untracked scratch file in the target, at a path the fast-forward
     // never touches.
@@ -580,7 +541,7 @@ fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         c2,
         "a non-colliding untracked file must not block the fast-forward"
     );
@@ -610,14 +571,14 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         "ww: add newfile",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // Target holds an untracked file at that exact path — the collision.
     std::fs::write(primary.server_dir.join("newfile.txt"), "primary scratch\n").unwrap();
 
-    let primary_project_tip_before = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-    let primary_server_tip_before = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let primary_project_tip_before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+    let primary_server_tip_before = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let err_output = rwv()
         .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
@@ -647,12 +608,12 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
 
     // Nothing was clobbered.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
         primary_project_tip_before,
         "target project repo must not advance when a manifest repo collided"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         primary_server_tip_before,
         "target server repo must not advance past the collision"
     );
@@ -701,7 +662,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         c2,
         "--continue should complete the fast-forward once the collision is cleared"
     );
@@ -727,8 +688,8 @@ fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
         .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
@@ -764,14 +725,14 @@ fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
     let other_project = primary.root.join("projects/other-app");
     init_repo(&other_project);
     write_manifest(&other_project, &[]);
-    git(&["add", "rwv.toml"], &other_project);
-    git(&["commit", "-m", "other-app: manifest"], &other_project);
+    common::git_in(&other_project, &["add", "rwv.toml"]);
+    common::git_in(&other_project, &["commit", "-m", "other-app: manifest"]);
     std::fs::write(primary.root.join(".rwv-active"), "other-app\n").unwrap();
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     rwv()
         .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
@@ -780,7 +741,7 @@ fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         c2,
         "the landing must reach the synced project regardless of the target's pointer"
     );

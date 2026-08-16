@@ -31,45 +31,6 @@ mod common;
 // Git helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn git_tag(repo: &Path, tag: &str) {
     let out = common::git()
         .args(["tag", tag])
@@ -89,19 +50,19 @@ fn git_tag(repo: &Path, tag: &str) {
 /// Initialise a git repo with one commit. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Commit a file change. Returns new HEAD SHA.
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 /// Write rwv.toml.
@@ -171,8 +132,8 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
-    git(&["commit", "-m", "lock: initial"], &project_primary);
+    common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
     // --- Workweave ---
     // Place under .workweaves/ws--ww/ (the naming convention rwv uses)
@@ -182,7 +143,8 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
 
     // Worktree on a NEW branch `ww/main` (not the same as primary's `main`).
     let server_ww = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &server_primary,
         &[
             "worktree",
             "add",
@@ -190,12 +152,12 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
             "ww/main",
             &server_ww.to_string_lossy(),
         ],
-        &server_primary,
     );
 
     // Project repo worktree on a new branch `ww/project`.
     let project_ww = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &project_primary,
         &[
             "worktree",
             "add",
@@ -203,7 +165,6 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
             "ww/project",
             &project_ww.to_string_lossy(),
         ],
-        &project_primary,
     );
 
     // .rwv-workweave marker so `rwv` resolves the workweave correctly.
@@ -231,9 +192,9 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
 /// This simulates the shared-ref-advance mechanism: the branch ref moves but
 /// the worktree's index is not updated, producing the stale-index condition.
 fn advance_ww_branch(server_primary: &Path, branch: &str, new_sha: &str) {
-    git(
-        &["update-ref", &format!("refs/heads/{branch}"), new_sha],
+    common::git_in(
         server_primary,
+        &["update-ref", &format!("refs/heads/{branch}"), new_sha],
     );
 }
 
@@ -344,7 +305,7 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
 
     // Stage new content in the workweave — this file has NEVER been committed.
     std::fs::write(ws.server_ww.join("new_feature.rs"), "fn foo() {}\n").unwrap();
-    git(&["add", "new_feature.rs"], &ws.server_ww);
+    common::git_in(&ws.server_ww, &["add", "new_feature.rs"]);
 
     // Commit C2 and advance the ww branch ref (but the index now also has
     // new_feature.rs staged, so the index tree != any ancestor tree).
@@ -361,7 +322,7 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
         );
 
     // The staged file must still be staged.
-    let staged = git_out(&["diff", "--cached", "--name-only"], &ws.server_ww);
+    let staged = common::git_in(&ws.server_ww, &["diff", "--cached", "--name-only"]);
     assert!(
         staged.contains("new_feature.rs"),
         "new_feature.rs should still be staged after doctor --fix; got: {staged}"
@@ -390,8 +351,8 @@ fn sync_post_refresh_clears_stale_index() {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
-    git(&["commit", "-m", "lock: initial"], &project_primary);
+    common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
     // --- Workweave ---
     let ww_root = tmp.path().join(".workweaves").join("primary--ww");
@@ -399,7 +360,8 @@ fn sync_post_refresh_clears_stale_index() {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let server_ww = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &server_primary,
         &[
             "worktree",
             "add",
@@ -407,11 +369,11 @@ fn sync_post_refresh_clears_stale_index() {
             "ww/main",
             &server_ww.to_string_lossy(),
         ],
-        &server_primary,
     );
 
     let project_ww = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &project_primary,
         &[
             "worktree",
             "add",
@@ -419,7 +381,6 @@ fn sync_post_refresh_clears_stale_index() {
             "ww/project",
             &project_ww.to_string_lossy(),
         ],
-        &project_primary,
     );
     // The ww project worktree inherits the already-committed rwv.lock@c1 from
     // project_primary. No additional commit needed — the lock already matches HEAD.
@@ -436,8 +397,8 @@ fn sync_post_refresh_clears_stale_index() {
     // --- Primary commits C2, updates lock ---
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &project_primary);
-    git(&["commit", "-m", "lock: advance"], &project_primary);
+    common::git_in(&project_primary, &["add", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
 
     // Mirror the lock advance into the workweave's own project worktree so
     // that the workweave's lock matches the workweave's tip after we advance
@@ -446,8 +407,8 @@ fn sync_post_refresh_clears_stale_index() {
     // would fail before reaching the
     // post-refresh path this test is exercising.
     write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &project_ww);
-    git(&["commit", "-m", "lock: ww advance"], &project_ww);
+    common::git_in(&project_ww, &["add", "rwv.lock"]);
+    common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
 
     // Advance the workweave's server branch ref to C2 (stale-index setup).
     advance_ww_branch(&server_primary, "ww/main", &c2);
@@ -507,7 +468,7 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
     // Stage content that has never been committed (tree will not be found
     // in any ancestor commit).
     std::fs::write(ws.server_ww.join("brand_new.rs"), "// never committed\n").unwrap();
-    git(&["add", "brand_new.rs"], &ws.server_ww);
+    common::git_in(&ws.server_ww, &["add", "brand_new.rs"]);
 
     // Also advance the branch to make HEAD != index (so doctor sees drift).
     let c2 = make_commit(&ws.server_primary, "other.txt", "x\n", "primary: C2");
@@ -523,7 +484,7 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
         );
 
     // The staged file must still be there.
-    let staged = git_out(&["diff", "--cached", "--name-only"], &ws.server_ww);
+    let staged = common::git_in(&ws.server_ww, &["diff", "--cached", "--name-only"]);
     assert!(
         staged.contains("brand_new.rs"),
         "staged file should survive --fix on non-reachable index tree; got: {staged}"
@@ -555,8 +516,8 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
     write_manifest(&project_source, &[(SERVER_PATH, SERVER_URL)]);
     // Lock pins the TAG name, not the SHA.
     write_lock(&project_source, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
-    git(&["add", "rwv.toml", "rwv.lock"], &project_source);
-    git(&["commit", "-m", "lock: v1.0.0"], &project_source);
+    common::git_in(&project_source, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_source, &["commit", "-m", "lock: v1.0.0"]);
 
     // CWD workspace: also at the same commit (SHA lock entry).
     let cwd_root = tmp.path().join("cwd");
@@ -565,7 +526,8 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
 
     let server_cwd = cwd_root.join(SERVER_PATH);
     // Share objects via a worktree (different branch).
-    git(
+    common::git_in(
+        &server_source,
         &[
             "worktree",
             "add",
@@ -573,11 +535,11 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
             "cwd/main",
             &server_cwd.to_string_lossy(),
         ],
-        &server_source,
     );
 
     let project_cwd = cwd_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &project_source,
         &[
             "worktree",
             "add",
@@ -585,12 +547,11 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
             "cwd/project",
             &project_cwd.to_string_lossy(),
         ],
-        &project_source,
     );
     // CWD lock uses the SHA form.
     write_lock(&project_cwd, &[(SERVER_PATH, SERVER_URL, &sha)]);
-    git(&["add", "rwv.lock"], &project_cwd);
-    git(&["commit", "-m", "lock: sha form"], &project_cwd);
+    common::git_in(&project_cwd, &["add", "rwv.lock"]);
+    common::git_in(&project_cwd, &["commit", "-m", "lock: sha form"]);
 
     // rwv sync from source (tag-pinned lock) must not emit "source lock is stale".
     let out = rwv()

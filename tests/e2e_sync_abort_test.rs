@@ -16,61 +16,22 @@ mod common;
 // Git helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// Init a git repo with one commit. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Write a file, stage, commit. Returns new HEAD SHA.
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 /// Write an rwv.toml manifest into `project_dir`.
@@ -151,11 +112,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     // Action verbs require `.rwv-active` (or --project). Set it here so
     // sync tests don't all need to pass --project.
@@ -190,7 +151,8 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -198,11 +160,11 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/main",
         ],
-        &primary.server_dir,
     );
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -210,7 +172,6 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/project",
         ],
-        &primary.project_dir,
     );
     // The worktree inherits primary's already-committed rwv.lock (same C1 SHA).
     // No additional commit needed.
@@ -243,9 +204,9 @@ fn make_shared_workspaces_two_repos(parent: &Path) -> (Workspace, Workspace, Str
     let primary_api = primary.root.join(API_PATH);
     let api_c1 = init_repo(&primary_api);
     let ww_api = ww.root.join(API_PATH);
-    git(
-        &["worktree", "add", &ww_api.to_string_lossy(), "-b", "ww/api"],
+    common::git_in(
         &primary_api,
+        &["worktree", "add", &ww_api.to_string_lossy(), "-b", "ww/api"],
     );
 
     write_manifest(
@@ -257,8 +218,8 @@ fn make_shared_workspaces_two_repos(parent: &Path) -> (Workspace, Workspace, Str
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, &c1), (API_PATH, API_URL, &api_c1)],
     );
-    git(&["add", "rwv.toml", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: add api"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: add api"]);
 
     (primary, ww, c1, ww_api)
 }
@@ -410,8 +371,8 @@ fn sync_ff_primary_advances_to_workweave_lock() {
         "ww: add change",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww change"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
     // From primary: sync from the workweave.
     rwv()
@@ -421,7 +382,7 @@ fn sync_ff_primary_advances_to_workweave_lock() {
         .success();
 
     // Primary's server `main` branch should now be at C2.
-    let primary_head = git_out(&["rev-parse", "main"], &primary.server_dir);
+    let primary_head = common::git_in(&primary.server_dir, &["rev-parse", "main"]);
     assert_eq!(
         primary_head, c2,
         "primary server/main should be at C2 after sync from workweave"
@@ -442,10 +403,10 @@ fn sync_ff_is_symmetric_workweave_catches_up_to_primary() {
         "primary: upstream advance",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: upstream advance"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: upstream advance"],
     );
 
     // From workweave: sync to primary.
@@ -456,7 +417,7 @@ fn sync_ff_is_symmetric_workweave_catches_up_to_primary() {
         .success();
 
     // Workweave's ww/main branch (inside the shared clone) should be at C2.
-    let ww_head = git_out(&["rev-parse", "ww/main"], &primary.server_dir);
+    let ww_head = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
     assert_eq!(
         ww_head, c2,
         "ww/main should be at C2 after syncing workweave from primary"
@@ -513,7 +474,7 @@ fn sync_refuses_when_cwd_lock_is_stale() {
         .current_dir(&primary.root)
         .assert()
         .success();
-    git(&["reset", "--hard", &c1], &primary.server_dir);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &c1]);
 
     rwv()
         .args(["sync", &source.root.to_string_lossy()])
@@ -575,15 +536,15 @@ fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, server_sha)],
     );
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
+        &primary.project_dir,
         &[
             "commit",
             "--allow-empty",
             "-m",
             "lock: primary project advance",
         ],
-        &primary.project_dir,
     );
 }
 
@@ -642,15 +603,15 @@ fn sync_refuses_when_destination_project_repo_has_diverged_from_source() {
 
     // ww independently advances its project by a different commit (still C1 server).
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(
-        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &ww.project_dir,
+        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
     );
 
     // Sanity: tips diverged from common ancestor C1.
-    let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+    let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_ne!(primary_tip, ww_tip);
 
     rwv()
@@ -677,10 +638,10 @@ fn sync_allows_when_destination_project_repo_is_strict_ancestor_of_source() {
 
     // ww advances its project (server still at C1). primary's project stays at C1.
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(
-        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &ww.project_dir,
+        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
     );
 
     // Sync ww → primary: primary (CWD) at C1, ww (source) ahead. primary IS
@@ -699,8 +660,8 @@ fn sync_allows_when_destination_project_repo_equals_source() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // No advances anywhere — both project tips share C1.
-    let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+    let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(primary_tip, ww_tip);
 
     rwv()
@@ -721,7 +682,7 @@ fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_sav
 
     // Primary advances its project past C1; ww's project stays at C1.
     primary_advance_project_one_commit(&primary, &c1);
-    let primary_pre_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let primary_pre_sync = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     // Backward sync with --discard-local-commits: must succeed.
     rwv()
@@ -735,8 +696,8 @@ fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_sav
         .success();
 
     // Primary's project repo should now be at ww's project tip (hard-reset).
-    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    let primary_post_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let ww_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
+    let primary_post_sync = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_post_sync, ww_tip,
         "with --discard-local-commits, primary's project tip should now equal ww's"
@@ -746,13 +707,13 @@ fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_sav
     // reachable from some `refs/rwv/pre-op/*` savepoint — that's the
     // contract --discard-local-commits makes with the operator (recoverable
     // via rwv abort).
-    let savepoint_refs = git_out(
+    let savepoint_refs = common::git_in(
+        &primary.project_dir,
         &[
             "for-each-ref",
             "--format=%(objectname) %(refname)",
             "refs/rwv/pre-op",
         ],
-        &primary.project_dir,
     );
     assert!(
         savepoint_refs.contains(&primary_pre_sync),
@@ -797,7 +758,7 @@ fn sync_rebase_lands_lock_only_divergence_without_force() {
 
     // primary advances its project by a lock-only commit; ww stays at C1.
     primary_advance_project_one_commit(&primary, &c1);
-    let ww_tip_before = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_tip_before = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
         .args(["sync", &ww.root.to_string_lossy(), "--strategy", "rebase"])
@@ -807,7 +768,7 @@ fn sync_rebase_lands_lock_only_divergence_without_force() {
 
     // Primary's project tip should match ww's (the lock-only commit was
     // dropped during replay; Phase 3 found no lock change to commit).
-    let primary_tip_after = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let primary_tip_after = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_tip_after, ww_tip_before,
         "after rebase landed lock-only divergence, primary tip should equal ww tip; \
@@ -925,7 +886,7 @@ fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
         .current_dir(&primary.root)
         .assert()
         .success();
-    git(&["reset", "--hard", &c1], &primary.server_dir);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &c1]);
 
     let assertion = rwv()
         .args(["sync", &source.root.to_string_lossy()])
@@ -989,10 +950,10 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         "primary: advance",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: primary advance"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: primary advance"],
     );
 
     // Workweave: add a commit C_ww on top of C1 (before primary's C2).
@@ -1003,8 +964,8 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         "ww: local commit",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww feature"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww feature"]);
 
     // ww/main (C_ww) and primary main (C2) have both diverged from C1.
     // --strategy rebase should replay C_ww onto C2.
@@ -1027,7 +988,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         .success();
 
     // After rebase, ww/main should be a descendant of C2.
-    let ww_head = git_out(&["rev-parse", "ww/main"], &primary.server_dir);
+    let ww_head = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
     let is_descendant = common::git()
         .args(["merge-base", "--is-ancestor", &c2, &ww_head])
         .current_dir(&primary.server_dir)
@@ -1086,8 +1047,8 @@ fn abort_restores_repos_to_pre_op_state() {
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, &c_primary)],
     );
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: primary"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary"]);
 
     let c_ww = make_commit(
         &ww.server_dir,
@@ -1096,11 +1057,11 @@ fn abort_restores_repos_to_pre_op_state() {
         "ww: conflict candidate",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     // Record ww's server tip before the attempted sync.
-    let pre_op_sha = git_out(&["rev-parse", "ww/main"], &primary.server_dir);
+    let pre_op_sha = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
     assert_eq!(pre_op_sha, c_ww);
 
     // Attempt rebase sync — should hit a conflict and leave repos mid-op.
@@ -1121,7 +1082,7 @@ fn abort_restores_repos_to_pre_op_state() {
     // Abort should restore ww/main back to pre-op state.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
 
-    let post_abort_sha = git_out(&["rev-parse", "ww/main"], &primary.server_dir);
+    let post_abort_sha = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
     assert_eq!(
         post_abort_sha, pre_op_sha,
         "abort should restore ww/main to pre-op SHA {pre_op_sha}; got {post_abort_sha}"
@@ -1149,7 +1110,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     // Capture the project repo's HEAD (the "lock: initial" commit). The SHA
     // returned by make_locked_workspace is the *server* repo's commit, which
     // doesn't exist in the project repo's history.
-    let sha = git_out(&["rev-parse", "HEAD"], project_dir);
+    let sha = common::git_in(project_dir, &["rev-parse", "HEAD"]);
 
     // Make a second commit so we have something to rebase onto.
     let sha2 = make_commit(project_dir, "extra.txt", "extra\n", "extra commit");
@@ -1169,9 +1130,9 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     repoweave::op_state::write_owner(&ws.root, &owner).unwrap();
 
     // Create the savepoint ref pointing at sha2 (the pre-op HEAD).
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &sha2],
+    common::git_in(
         project_dir,
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &sha2],
     );
 
     // Manufacture a mid-rebase state: create a diverging commit on a temp
@@ -1193,7 +1154,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     );
 
     // Step 2: create branch `diverge` starting from sha (before sha2), add conflicting file.
-    git(&["checkout", "-b", "diverge", &sha], project_dir);
+    common::git_in(project_dir, &["checkout", "-b", "diverge", &sha]);
     make_commit(
         project_dir,
         "conflict.txt",
@@ -1202,7 +1163,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     );
 
     // Step 3: return to main, start rebase of diverge onto main — this will conflict.
-    git(&["checkout", "main"], project_dir);
+    common::git_in(project_dir, &["checkout", "main"]);
     // git rebase may fail; we just need it to leave the rebase-merge dir.
     let _ = std::process::Command::new("git")
         .args(["rebase", "diverge"])
@@ -1238,7 +1199,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     );
 
     // Assert the working tree is clean (no uncommitted changes).
-    let status = git_out(&["status", "--porcelain"], project_dir);
+    let status = common::git_in(project_dir, &["status", "--porcelain"]);
     assert!(
         status.is_empty(),
         "after abort, working tree should be clean; got: {status}"
@@ -1253,7 +1214,8 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
 
 /// Add a lightweight tag at HEAD in `repo`.
 fn git_tag(repo: &Path, tag: &str) {
-    git(
+    common::git_in(
+        repo,
         &[
             "-c",
             "user.email=test@test.com",
@@ -1262,7 +1224,6 @@ fn git_tag(repo: &Path, tag: &str) {
             "tag",
             tag,
         ],
-        repo,
     );
 }
 
@@ -1276,10 +1237,10 @@ fn sync_proceeds_when_source_lock_tag_matches_head() {
     // Tag primary's server at its current HEAD and update the source lock to the tag name.
     git_tag(&primary.server_dir, "v1.0.0");
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: pin v1.0.0 (tag form)"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: pin v1.0.0 (tag form)"],
     );
 
     rwv()
@@ -1327,10 +1288,10 @@ fn sync_refuses_when_source_lock_tag_is_genuinely_stale() {
 
     // Update source lock to the tag name — it's now genuinely stale (HEAD > tag commit).
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: v1.0.0 (stale)"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: v1.0.0 (stale)"],
     );
 
     rwv()
@@ -1354,10 +1315,10 @@ fn sync_refuses_with_unknown_revision_when_source_lock_tag_missing() {
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, "v9.9.9-nonexistent")],
     );
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: nonexistent tag"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: nonexistent tag"],
     );
 
     rwv()
@@ -1387,12 +1348,13 @@ fn sync_roundtrip_converges_without_project_repo_growth() {
         "primary: advance",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: advance"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: advance"]);
 
-    let count_before: usize = git_out(&["rev-list", "--count", "HEAD"], &primary.project_dir)
-        .parse()
-        .unwrap();
+    let count_before: usize =
+        common::git_in(&primary.project_dir, &["rev-list", "--count", "HEAD"])
+            .parse()
+            .unwrap();
 
     // Sync primary → workweave (workweave catches up to C2).
     rwv()
@@ -1409,7 +1371,7 @@ fn sync_roundtrip_converges_without_project_repo_growth() {
         .success();
 
     // Primary's project repo commit count must not have grown.
-    let count_after: usize = git_out(&["rev-list", "--count", "HEAD"], &primary.project_dir)
+    let count_after: usize = common::git_in(&primary.project_dir, &["rev-list", "--count", "HEAD"])
         .parse()
         .unwrap();
     assert_eq!(
@@ -1454,7 +1416,8 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -1462,11 +1425,11 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
             &format!("primary--{ww_name}/main"),
             &ww_server.to_string_lossy(),
         ],
-        &primary.server_dir,
     );
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -1474,7 +1437,6 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
             &format!("primary--{ww_name}/project"),
             &ww_project.to_string_lossy(),
         ],
-        &primary.project_dir,
     );
 
     let primary_canon = primary.root.canonicalize().unwrap().display().to_string();
@@ -1551,10 +1513,10 @@ fn sync_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
         "primary: C2",
     );
     write_lock(&ws.primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ws.primary.project_dir);
-    git(
-        &["commit", "-m", "lock: primary advance"],
+    common::git_in(&ws.primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &ws.primary.project_dir,
+        &["commit", "-m", "lock: primary advance"],
     );
 
     // Workweave's own server tip is still at C1, and its committed lock is
@@ -1569,7 +1531,7 @@ fn sync_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
         .success();
 
     // After sync the workweave's server tip should have caught up to C2.
-    let ww_server_head = git_out(&["rev-parse", "HEAD"], &ws.ww_server_dir);
+    let ww_server_head = common::git_in(&ws.ww_server_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         ww_server_head, c2,
         "workweave server should be at C2 after sync from primary"
@@ -1592,8 +1554,8 @@ fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
         "ww: C2",
     );
     write_lock(&ws.ww_project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &ws.ww_project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ws.ww_project_dir);
+    common::git_in(&ws.ww_project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ws.ww_project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // Primary syncs from the workweave. Source freshness must be checked
     // against the workweave's own lock (C2 vs ww-tip C2), not primary's lock.
@@ -1604,7 +1566,7 @@ fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
         .success();
 
     // Primary's server should have advanced to C2 (the workweave's lock target).
-    let primary_server_head = git_out(&["rev-parse", "HEAD"], &ws.primary.server_dir);
+    let primary_server_head = common::git_in(&ws.primary.server_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_server_head, c2,
         "primary server should be at C2 after sync from workweave"
@@ -1626,7 +1588,7 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
     // still refuses only if the freshness check reads the WORKWEAVE's lock —
     // reading primary's would see `ok` and pass. A lock merely behind HEAD is
     // now benign on a pull, so it can no longer serve as that discriminator.
-    let ww_c1 = git_out(&["rev-parse", "HEAD"], &ws.ww_server_dir);
+    let ww_c1 = common::git_in(&ws.ww_server_dir, &["rev-parse", "HEAD"]);
     make_commit(
         &ws.ww_server_dir,
         "ww-advance.txt",
@@ -1638,7 +1600,7 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
         .current_dir(&ws.ww_root)
         .assert()
         .success();
-    git(&["reset", "--hard", &ww_c1], &ws.ww_server_dir);
+    common::git_in(&ws.ww_server_dir, &["reset", "--hard", &ww_c1]);
 
     rwv()
         .args(["sync", &ws.primary.root.to_string_lossy()])
@@ -1676,11 +1638,11 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
         "primary: C2",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Workweave: fast-forward to C2, then add C3 (ww is now ahead of primary's lock).
-    git(&["merge", "--ff-only", "main"], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["merge", "--ff-only", "main"]);
     let c3 = make_commit(
         &ww.server_dir,
         "ww-extra.txt",
@@ -1688,8 +1650,8 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
         "ww: C3 (ahead of C2)",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c3)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: C3"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: C3"]);
 
     // Sync ww from primary: target is C2, but ww is at C3 (C2 is ancestor of C3).
     // --discard-local-commits bypasses the Phase 1 ancestor precondition because
@@ -1750,7 +1712,7 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
     make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
 
     // api: only ww advances → ww strictly contains the source's lock entry.
-    let api_c1 = git_out(&["rev-parse", "HEAD"], &primary.root.join(API_PATH));
+    let api_c1 = common::git_in(primary.root.join(API_PATH), &["rev-parse", "HEAD"]);
     make_commit(&ww_api, "ww-api.txt", "ww api\n", "ww: api ahead");
 
     // Keep the source's lock pinning the source's own HEADs, so the op reaches
@@ -1759,8 +1721,8 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, &c2), (API_PATH, API_URL, &api_c1)],
     );
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
     assert_ne!(
         c1, c2,
         "fixture precondition: the source's server tip moved"
@@ -1813,14 +1775,14 @@ fn sync_ff_reports_failed_for_diverged_repo() {
         "primary: C2",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Workweave: diverge from C1 (different file, cannot fast-forward to C2).
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     // ff sync: C2 and C_ww both diverge from C1 → cannot fast-forward.
     // --discard-local-commits bypasses the Phase 1 ancestor precondition because
@@ -1862,13 +1824,13 @@ fn sync_ff_diverged_refusal_keeps_cause_drops_advice() {
         "primary: C2",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
     let out = rwv()
         .args([
@@ -2043,9 +2005,9 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
         "primary: shared.txt",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
-    let primary_pre_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary C2"]);
+    let primary_pre_sync = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     let c_ww = make_commit(
         &ww.server_dir,
@@ -2054,8 +2016,8 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
         "ww: shared.txt (conflicts)",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     // First attempt parks mid-replay on the real conflict.
     rwv()
@@ -2086,7 +2048,7 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
 
     // Resolve the conflict and let the sync run to completion.
     std::fs::write(primary.server_dir.join("shared.txt"), "resolved\n").unwrap();
-    git(&["add", "shared.txt"], &primary.server_dir);
+    common::git_in(&primary.server_dir, &["add", "shared.txt"]);
     let continue_out = common::git()
         .args(["rebase", "--continue"])
         .current_dir(&primary.server_dir)
@@ -2110,13 +2072,13 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
 
     // The pre-sync project commit must be in a refs/rwv/pre-op/* savepoint
     // (tombstone — cleanup preserved it because override was recorded).
-    let savepoint_refs = git_out(
+    let savepoint_refs = common::git_in(
+        &primary.project_dir,
         &[
             "for-each-ref",
             "--format=%(objectname) %(refname)",
             "refs/rwv/pre-op",
         ],
-        &primary.project_dir,
     );
     assert!(
         savepoint_refs.contains(&primary_pre_sync),
@@ -2257,10 +2219,10 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
         "primary: advance",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: primary advance"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: primary advance"],
     );
 
     // Install a `post-merge` hook in the shared git hooks directory.

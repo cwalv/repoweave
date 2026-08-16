@@ -22,55 +22,20 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -114,8 +79,8 @@ fn make_project(root: &Path, name: &str, repos: &[(&str, &str)], locked: &[(&str
     std::fs::write(dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
     write_manifest(&dir, repos);
     write_lock(&dir, locked);
-    git(&["add", ".gitattributes", "rwv.toml", "rwv.lock"], &dir);
-    git(&["commit", "-m", format!("{name}: initial").as_str()], &dir);
+    common::git_in(&dir, &["add", ".gitattributes", "rwv.toml", "rwv.lock"]);
+    common::git_in(&dir, &["commit", "-m", format!("{name}: initial").as_str()]);
 }
 
 /// A primary weave carrying TWO projects, and a second workspace whose repos
@@ -144,7 +109,8 @@ fn make_two_project_weave(parent: &Path) -> (Workspace, Workspace) {
     std::fs::create_dir_all(ww.join("projects")).unwrap();
 
     let ww_server = ww.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary_server,
         &[
             "worktree",
             "add",
@@ -152,7 +118,6 @@ fn make_two_project_weave(parent: &Path) -> (Workspace, Workspace) {
             "-b",
             "ww/server",
         ],
-        &primary_server,
     );
 
     for (name, branch) in [
@@ -160,9 +125,9 @@ fn make_two_project_weave(parent: &Path) -> (Workspace, Workspace) {
         (OTHER_PROJECT, "ww/other-project"),
     ] {
         let dest = ww.join(format!("projects/{name}"));
-        git(
+        common::git_in(
+            primary.join(format!("projects/{name}")),
             &["worktree", "add", &dest.to_string_lossy(), "-b", branch],
-            &primary.join(format!("projects/{name}")),
         );
     }
     std::fs::write(ww.join(".rwv-active"), format!("{SYNCED_PROJECT}\n")).unwrap();
@@ -204,15 +169,15 @@ fn park_with_target_project_blocked(parent: &Path) -> Parked {
         &[(SERVER_PATH, SERVER_URL, &landed_server_tip)],
     );
     std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
-    git(&["add", "rwv.lock", "notes.txt"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock", "notes.txt"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // The target holds an untracked file where the incoming project commit
     // writes one. Manifest repos advance first, so the op parks on the project
     // repo with the manifest repo already landed.
     std::fs::write(primary.project_dir.join("notes.txt"), "primary scratch\n").unwrap();
 
-    let target_project_parked = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let target_project_parked = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     rwv()
         .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
@@ -220,7 +185,7 @@ fn park_with_target_project_blocked(parent: &Path) -> Parked {
         .assert()
         .failure();
 
-    let owner_project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let owner_project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_ne!(
         owner_project_tip, target_project_parked,
         "the fixture must leave the target's project repo BEHIND the owner's — \
@@ -228,7 +193,7 @@ fn park_with_target_project_blocked(parent: &Path) -> Parked {
          without exercising anything"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         landed_server_tip,
         "the parked op must have landed the target's manifest repo already"
     );
@@ -265,7 +230,7 @@ fn activate_other_project_in_owner(parked: &Parked) {
 
 fn assert_resume_landed(parked: &Parked) {
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &parked.primary.project_dir),
+        common::git_in(&parked.primary.project_dir, &["rev-parse", "HEAD"]),
         parked.owner_project_tip,
         "the resumed op must advance the target's project repo in the project the \
          op was STARTED for; re-deriving the binding from the owner's `.rwv-active` \
@@ -273,13 +238,13 @@ fn assert_resume_landed(parked: &Parked) {
          at its parked tip"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &parked.primary.server_dir),
+        common::git_in(&parked.primary.server_dir, &["rev-parse", "HEAD"]),
         parked.landed_server_tip,
         "the resume must not disturb the manifest repo the op already landed"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &parked.primary.other_project_dir),
-        git_out(&["rev-parse", "HEAD"], &parked.ww.other_project_dir),
+        common::git_in(&parked.primary.other_project_dir, &["rev-parse", "HEAD"]),
+        common::git_in(&parked.ww.other_project_dir, &["rev-parse", "HEAD"]),
         "the project the pointer names must be left exactly as it was"
     );
     assert!(
@@ -356,7 +321,7 @@ fn resume_refuses_a_project_flag_that_contradicts_the_record() {
          contradicted invocation leaves op-state byte-identical"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &parked.primary.project_dir),
+        common::git_in(&parked.primary.project_dir, &["rev-parse", "HEAD"]),
         parked.target_project_parked,
         "a refused resume must not advance anything"
     );

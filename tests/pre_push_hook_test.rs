@@ -144,37 +144,8 @@ case \"$1\" in\n\
 esac\n\
 exit 0\n";
 
-fn git(args: &[&str], cwd: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should run");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        cwd.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_stdout(args: &[&str], cwd: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should run");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        cwd.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
 fn head_sha(root: &Path) -> String {
-    git_stdout(&["rev-parse", "HEAD"], root)
+    common::git_in(root, &["rev-parse", "HEAD"])
 }
 
 fn write_executable(path: &Path, body: &str) {
@@ -217,11 +188,11 @@ fn fixture_repo() -> tempfile::TempDir {
         std::fs::write(root.join(sub).join("placeholder.txt"), "generated\n").unwrap();
     }
 
-    git(&["init", "-q", "--initial-branch=main"], root);
-    git(&["config", "user.email", "test@test.com"], root);
-    git(&["config", "user.name", "Test"], root);
-    git(&["add", "-A"], root);
-    git(&["commit", "-q", "-m", "init"], root);
+    common::git_in(root, &["init", "-q", "--initial-branch=main"]);
+    common::git_in(root, &["config", "user.email", "test@test.com"]);
+    common::git_in(root, &["config", "user.name", "Test"]);
+    common::git_in(root, &["add", "-A"]);
+    common::git_in(root, &["commit", "-q", "-m", "init"]);
     dir
 }
 
@@ -353,7 +324,7 @@ fn a_green_working_tree_cannot_green_a_red_commit() {
     let good = std::fs::read_to_string(fixture.path().join("scripts/ci-local.sh")).unwrap();
 
     write_executable(&fixture.path().join("scripts/ci-local.sh"), BROKEN_GATE);
-    git(&["commit", "-q", "-am", "break the gate"], fixture.path());
+    common::git_in(fixture.path(), &["commit", "-q", "-am", "break the gate"]);
     let red = head_sha(fixture.path());
 
     // Working tree restored to green, red commit pushed: the hook must

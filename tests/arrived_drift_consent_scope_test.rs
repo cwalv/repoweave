@@ -22,21 +22,6 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    assert!(
-        output.status.success(),
-        "git {args:?} in {} failed: {}",
-        cwd.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 /// A bare remote holding `files` on `main`.
 ///
 /// `rwv add` reads `origin/HEAD` off the clone it is given and refuses without
@@ -46,7 +31,7 @@ fn init_bare_repo(bare: &Path, files: &[(&str, &str)]) {
     let parent = bare.parent().unwrap();
     std::fs::create_dir_all(parent).unwrap();
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -56,20 +41,20 @@ fn init_bare_repo(bare: &Path, files: &[(&str, &str)]) {
         ],
     );
     let seed = parent.join(format!("__seed_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     for (name, body) in files {
         let path = seed.join(name);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, body).unwrap();
     }
-    git_run(&seed, &["add", "-A"]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "-A"]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 /// A two-version directory source, plus the `.cargo/config.toml` that puts it
@@ -230,16 +215,16 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
         let bare = bares.join(format!("{name}.git"));
         let canonical = ws.join(format!("github/acme/{name}"));
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        git_run(
+        common::git_in(
             &root,
             &["clone", bare.to_str().unwrap(), canonical.to_str().unwrap()],
         );
-        git_run(&canonical, &["config", "user.email", "test@test.com"]);
-        git_run(&canonical, &["config", "user.name", "Test"]);
+        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+        common::git_in(&canonical, &["config", "user.name", "Test"]);
         if name == "extra" {
             continue;
         }
-        let sha = git_run(&canonical, &["rev-parse", "HEAD"]);
+        let sha = common::git_in(&canonical, &["rev-parse", "HEAD"]);
         manifest.push_str(&format!(
             "[repositories.\"github/acme/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
             common::file_url(&bare)
@@ -253,7 +238,7 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
     let project_bare = bares.join("project.git");
     init_bare_repo(&project_bare, &[("README", "app")]);
     let project_dir = ws.join("projects/app");
-    git_run(
+    common::git_in(
         &root,
         &[
             "clone",
@@ -261,8 +246,8 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
             project_dir.to_str().unwrap(),
         ],
     );
-    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
-    git_run(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     let gitignore = if npm_in_lib {
         "/Cargo.lock\n/package-lock.json\n"
@@ -288,9 +273,9 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
         !project_dir.join("Cargo.lock").exists(),
         "fixture: the setup must not leave a lock behind"
     );
-    git_run(&project_dir, &["add", "-A"]);
-    git_run(&project_dir, &["commit", "-m", "manifest + managed files"]);
-    git_run(&project_dir, &["push", "origin", "main"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + managed files"]);
+    common::git_in(&project_dir, &["push", "origin", "main"]);
 
     Fixture { _tmp: tmp, ws }
 }

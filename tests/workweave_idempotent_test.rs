@@ -15,7 +15,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::Path;
-use std::process;
 
 mod common;
 
@@ -23,30 +22,14 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
@@ -267,8 +250,8 @@ fn workweave_recreate_refuses_on_local_modifications() {
     let weave2_repo = ww2_dir.join("github/org/repo");
 
     std::fs::write(weave2_repo.join("new-file.txt"), "content\n").unwrap();
-    git(&["add", "."], &weave2_repo);
-    git(&["commit", "-m", "work in progress"], &weave2_repo);
+    common::git_in(&weave2_repo, &["add", "."]);
+    common::git_in(&weave2_repo, &["commit", "-m", "work in progress"]);
     let advanced_head = head_sha(&weave2_repo);
 
     rwv()
@@ -676,8 +659,8 @@ fn workweave_delete_refuses_on_unmerged_commits() {
     // Commit work on the ephemeral branch: the worktree is clean, but the
     // commit is reachable only from the ephemeral branch.
     std::fs::write(weave_repo.join("feature.txt"), "committed work\n").unwrap();
-    git(&["add", "feature.txt"], &weave_repo);
-    git(&["commit", "-m", "ww: feature"], &weave_repo);
+    common::git_in(&weave_repo, &["add", "feature.txt"]);
+    common::git_in(&weave_repo, &["commit", "-m", "ww: feature"]);
     let feature_sha = head_sha(&weave_repo);
 
     let err_output = rwv()

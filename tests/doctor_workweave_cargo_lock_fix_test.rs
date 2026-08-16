@@ -23,7 +23,6 @@
 //! unit test on either side alone cannot see.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -38,28 +37,12 @@ macro_rules! require_cargo {
     };
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 /// The paths a fixture hands back to a test.
@@ -177,8 +160,8 @@ fn fixture() -> Fixture {
         !project_dir.join("Cargo.lock").exists(),
         "fixture: primary must have no lock, or the workweave's missing lock proves nothing"
     );
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "activate"], &project_dir);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
     // ---- workweave ----
     let weaveroot = root.join(".workweaves");

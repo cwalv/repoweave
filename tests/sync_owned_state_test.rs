@@ -29,7 +29,6 @@
 //! re-resolved it.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -69,28 +68,12 @@ name = \"pinned-only-at-parent-after-advance\"
 version = \"0.0.2\"
 ";
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 fn git_head(dir: &Path) -> String {
@@ -172,8 +155,8 @@ impl Fixture {
             .output()
             .expect("git should be available");
         if !dirty.stdout.is_empty() {
-            git(&["add", "-A"], &self.source_project_dir);
-            git(&["commit", "-m", "lock"], &self.source_project_dir);
+            common::git_in(&self.source_project_dir, &["add", "-A"]);
+            common::git_in(&self.source_project_dir, &["commit", "-m", "lock"]);
         }
     }
 
@@ -292,8 +275,8 @@ fn fixture() -> Fixture {
         },
     )
     .expect("primary intent activation should succeed");
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "activate"], &project_dir);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
     let f = Fixture {
         ww_dir: root.join(".workweaves/web-app--agent-1"),
@@ -342,8 +325,8 @@ fn advance_member_source(f: &Fixture) {
     let mut text = std::fs::read_to_string(&main_rs).unwrap();
     text.push_str("pub fn advanced() -> bool { true }\n");
     std::fs::write(&main_rs, text).unwrap();
-    git(&["add", "-A"], &f.server_dir());
-    git(&["commit", "-m", "server source change"], &f.server_dir());
+    common::git_in(f.server_dir(), &["add", "-A"]);
+    common::git_in(f.server_dir(), &["commit", "-m", "server source change"]);
     f.relock_and_commit();
 }
 
@@ -358,8 +341,8 @@ fn advance_member_source(f: &Fixture) {
 fn advance_project_note(f: &Fixture) {
     let note = f.source_project_dir.join("NOTES.md");
     std::fs::write(&note, "a note that nothing generates from\n").unwrap();
-    git(&["add", "-A"], &f.source_project_dir);
-    git(&["commit", "-m", "note"], &f.source_project_dir);
+    common::git_in(&f.source_project_dir, &["add", "-A"]);
+    common::git_in(&f.source_project_dir, &["commit", "-m", "note"]);
 }
 
 /// The parent commits a change to a member's `Cargo.toml` — a detection
@@ -369,8 +352,8 @@ fn advance_member_manifest(f: &Fixture) {
     let mut text = std::fs::read_to_string(&cargo_toml).unwrap();
     text.push_str("\n[features]\nadvanced = []\n");
     std::fs::write(&cargo_toml, text).unwrap();
-    git(&["add", "-A"], &f.server_dir());
-    git(&["commit", "-m", "server manifest change"], &f.server_dir());
+    common::git_in(f.server_dir(), &["add", "-A"]);
+    common::git_in(f.server_dir(), &["commit", "-m", "server manifest change"]);
     f.relock_and_commit();
 }
 
@@ -381,10 +364,10 @@ fn advance_ww_member_manifest(f: &Fixture) {
     let mut text = std::fs::read_to_string(&cargo_toml).unwrap();
     text.push_str("\n[features]\nadvanced = []\n");
     std::fs::write(&cargo_toml, text).unwrap();
-    git(&["add", "-A"], &f.ww_server_dir());
-    git(
+    common::git_in(f.ww_server_dir(), &["add", "-A"]);
+    common::git_in(
+        f.ww_server_dir(),
         &["commit", "-m", "server manifest change"],
-        &f.ww_server_dir(),
     );
 
     f.rwv(&["lock"], &f.ww_dir);
@@ -395,8 +378,8 @@ fn advance_ww_member_manifest(f: &Fixture) {
         .output()
         .expect("git should be available");
     if !dirty.stdout.is_empty() {
-        git(&["add", "-A"], &ww_project_dir);
-        git(&["commit", "-m", "lock"], &ww_project_dir);
+        common::git_in(&ww_project_dir, &["add", "-A"]);
+        common::git_in(&ww_project_dir, &["commit", "-m", "lock"]);
     }
 }
 
@@ -416,8 +399,8 @@ fn advance_project_manifest(f: &Fixture) {
     let mut text = std::fs::read_to_string(&rwv_toml).unwrap();
     text.push_str("\n# advanced at the parent\n");
     std::fs::write(&rwv_toml, text).unwrap();
-    git(&["add", "-A"], &f.source_project_dir);
-    git(&["commit", "-m", "manifest change"], &f.source_project_dir);
+    common::git_in(&f.source_project_dir, &["add", "-A"]);
+    common::git_in(&f.source_project_dir, &["commit", "-m", "manifest change"]);
     f.relock_and_commit();
 }
 

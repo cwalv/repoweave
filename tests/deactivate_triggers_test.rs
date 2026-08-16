@@ -28,23 +28,12 @@ mod common;
 
 use repoweave::manifest::Manifest;
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 /// A primary weave with one Rust member and an authored, committed project.
@@ -79,8 +68,8 @@ fn weave(root: &Path) -> PathBuf {
         },
     )
     .expect("intent activation should author the managed files");
-    git(&["add", "-A"], &ws.join("projects/app"));
-    git(&["commit", "-m", "authored"], &ws.join("projects/app"));
+    common::git_in(ws.join("projects/app"), &["add", "-A"]);
+    common::git_in(ws.join("projects/app"), &["commit", "-m", "authored"]);
     ws
 }
 

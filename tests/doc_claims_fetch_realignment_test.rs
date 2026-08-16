@@ -31,39 +31,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(args: &[&str], cwd: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        cwd.display()
-    );
-}
-
-fn git_capture(args: &[&str], cwd: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .output()
-        .expect("git command failed to spawn");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed",
-        args,
-        cwd.display()
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn git_ok(args: &[&str], cwd: &Path) -> bool {
     common::git()
         .args(args)
@@ -117,21 +84,21 @@ fn init_bare_repo_with_two_commits(path: &Path) -> (String, String) {
 
     let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
-    git_run(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
-    git_run(&["config", "user.email", "test@test.com"], &work);
-    git_run(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("README"), "initial\n").unwrap();
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "initial"], &work);
-    let first = git_capture(&["rev-parse", "HEAD"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    let first = common::git_in(&work, &["rev-parse", "HEAD"]);
     std::fs::write(work.join("README"), "second\n").unwrap();
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "second"], &work);
-    let second = git_capture(&["rev-parse", "HEAD"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "second"]);
+    let second = common::git_in(&work, &["rev-parse", "HEAD"]);
+    common::git_in(&work, &["push", "origin", "main"]);
     (first, second)
 }
 
@@ -218,16 +185,16 @@ impl Fixture {
         let repo = self.repo(path);
         let dest = self.workspace.join(&repo.path);
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
-        git_run(
+        common::git_in(
+            self.tmp.path(),
             &[
                 "clone",
                 &repo.bare.to_string_lossy(),
                 &dest.to_string_lossy(),
             ],
-            self.tmp.path(),
         );
-        git_run(&["config", "user.email", "test@test.com"], &dest);
-        git_run(&["config", "user.name", "Test"], &dest);
+        common::git_in(&dest, &["config", "user.email", "test@test.com"]);
+        common::git_in(&dest, &["config", "user.name", "Test"]);
         dest
     }
 
@@ -237,20 +204,20 @@ impl Fixture {
         let repo = self.repo(path);
         let tmp = common::tempdir().unwrap();
         let work = tmp.path().join("work");
-        git_run(
+        common::git_in(
+            tmp.path(),
             &[
                 "clone",
                 &repo.bare.to_string_lossy(),
                 &work.to_string_lossy(),
             ],
-            tmp.path(),
         );
-        git_run(&["config", "user.email", "test@test.com"], &work);
-        git_run(&["config", "user.name", "Test"], &work);
+        common::git_in(&work, &["config", "user.email", "test@test.com"]);
+        common::git_in(&work, &["config", "user.name", "Test"]);
         std::fs::write(work.join("README"), "third\n").unwrap();
-        git_run(&["commit", "-am", "third"], &work);
-        let sha = git_capture(&["rev-parse", "HEAD"], &work);
-        git_run(&["push", "origin", "main"], &work);
+        common::git_in(&work, &["commit", "-am", "third"]);
+        let sha = common::git_in(&work, &["rev-parse", "HEAD"]);
+        common::git_in(&work, &["push", "origin", "main"]);
         sha
     }
 }
@@ -272,10 +239,10 @@ fn present_clone_absent_from_the_lock_is_untouched_and_added_at_its_own_head() {
     // `a` is the covered repo and is left exactly at its pin, so its arm is a
     // no-op and the only thing this test observes is what happens to `b`.
     let dest_a = fx.clone_on_branch("github/acme/a");
-    git_run(&["reset", "--hard", &a_first], &dest_a);
+    common::git_in(&dest_a, &["reset", "--hard", &a_first]);
     let dest_b = fx.clone_on_branch("github/acme/b");
     // Behind origin, so the on-disk HEAD and the branch tip disagree.
-    git_run(&["reset", "--hard", &b_first], &dest_b);
+    common::git_in(&dest_b, &["reset", "--hard", &b_first]);
 
     rwv()
         .arg("fetch")
@@ -284,7 +251,7 @@ fn present_clone_absent_from_the_lock_is_untouched_and_added_at_its_own_head() {
         .success();
 
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest_b),
+        common::git_in(&dest_b, &["rev-parse", "HEAD"]),
         b_first,
         "a present clone the lock does not cover must not be moved"
     );
@@ -328,7 +295,7 @@ fn present_clone_with_no_lock_at_all_is_untouched_and_the_lock_records_its_head(
         .success();
 
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest),
+        common::git_in(&dest, &["rev-parse", "HEAD"]),
         a.second,
         "bootstrap must not move a present clone"
     );
@@ -372,7 +339,7 @@ fn realignment_resolves_the_pin_locally_and_does_not_fetch_a_missing_one() {
         !git_ok(&["cat-file", "-e", &format!("{third}^{{commit}}")], &dest),
         "fetch must not have pulled the pin from origin"
     );
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest), a_second);
+    assert_eq!(common::git_in(&dest, &["rev-parse", "HEAD"]), a_second);
     assert_eq!(current_branch(&dest).as_deref(), Some("main"));
 }
 
@@ -401,7 +368,7 @@ fn frozen_errors_on_an_incomplete_lock_without_touching_any_clone() {
         .stderr(predicate::str::contains("github/acme/b"));
 
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
         a_second,
         "the coverage check bails before any repo is realigned"
     );
@@ -426,14 +393,14 @@ fn frozen_checks_coverage_not_freshness_and_realigns_identically_to_default() {
     // branch model refuses (§5, `fetch` (present clone)).
     fx.write_lock(&[("github/acme/a", &a_second)]);
     let dest = fx.clone_on_branch("github/acme/a");
-    git_run(&["reset", "--hard", &a_first], &dest);
+    common::git_in(&dest, &["reset", "--hard", &a_first]);
     let lock_before = fx.lock_text().unwrap();
 
     let observe = || {
         (
-            git_capture(&["rev-parse", "HEAD"], &dest),
+            common::git_in(&dest, &["rev-parse", "HEAD"]),
             current_branch(&dest),
-            git_capture(&["rev-parse", "main"], &dest),
+            common::git_in(&dest, &["rev-parse", "main"]),
             fx.lock_text().unwrap(),
         )
     };
@@ -448,7 +415,7 @@ fn frozen_checks_coverage_not_freshness_and_realigns_identically_to_default() {
     // Back to the start state. The realignment moved the branch — it is a
     // MOVE of the counterpart, not a detach — so rewinding the branch is what
     // undoes it.
-    git_run(&["reset", "--hard", &a_first], &dest);
+    common::git_in(&dest, &["reset", "--hard", &a_first]);
 
     rwv()
         .args(["fetch", "--frozen"])
@@ -513,7 +480,7 @@ fn filtered_fetch_skips_the_additive_coverage_write_but_still_realigns() {
     let dest_a = fx.clone_on_branch("github/acme/a");
     // Behind its pin, so the covered repo really is realigned rather than
     // being a no-op — and realigning it is a fast-forward of `main`.
-    git_run(&["reset", "--hard", &a_first], &dest_a);
+    common::git_in(&dest_a, &["reset", "--hard", &a_first]);
     let dest_b = fx.clone_on_branch("github/acme/b");
     let lock_before = fx.lock_text().unwrap();
 
@@ -532,11 +499,11 @@ fn filtered_fetch_skips_the_additive_coverage_write_but_still_realigns() {
         .success();
 
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
         a_second,
         "the filter narrows which repos are visited, not what happens to them"
     );
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_b), b_second);
+    assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), b_second);
     assert_eq!(
         fx.lock_text().unwrap(),
         lock_before,

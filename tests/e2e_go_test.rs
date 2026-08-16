@@ -6,7 +6,6 @@
 //!
 //! Requires `go` on PATH — the test skips gracefully if it is not available.
 
-use std::path::Path;
 use std::process::Command;
 
 mod common;
@@ -234,28 +233,6 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Helper: run a git command and assert success, returning stdout.
-// ---------------------------------------------------------------------------
-fn git_run(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap_or_else(|e| panic!("git {:?} failed to spawn: {e}", args));
-    assert!(
-        out.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// Validate the "release version pin" workflow:
 ///
 /// After developing with go.work (workspace wiring), you can switch to
@@ -281,7 +258,7 @@ fn go_release_version_pin_workflow() {
     let protocol_dir = root.join("github/chatly/protocol");
     std::fs::create_dir_all(&protocol_dir).unwrap();
 
-    git_run(&["init", "-q", "-b", "main"], &protocol_dir);
+    common::git_in(&protocol_dir, &["init", "-q", "-b", "main"]);
 
     std::fs::write(
         protocol_dir.join("go.mod"),
@@ -302,8 +279,8 @@ func Greeting() string {
     .unwrap();
 
     // Commit so HEAD exists and the repo is clean
-    git_run(&["add", "."], &protocol_dir);
-    git_run(&["commit", "-m", "initial protocol"], &protocol_dir);
+    common::git_in(&protocol_dir, &["add", "."]);
+    common::git_in(&protocol_dir, &["commit", "-m", "initial protocol"]);
 
     // ------------------------------------------------------------------
     // 3. Set up github/chatly/server — imports github.com/chatly/protocol
@@ -311,7 +288,7 @@ func Greeting() string {
     let server_dir = root.join("github/chatly/server");
     std::fs::create_dir_all(&server_dir).unwrap();
 
-    git_run(&["init", "-q", "-b", "main"], &server_dir);
+    common::git_in(&server_dir, &["init", "-q", "-b", "main"]);
 
     std::fs::write(
         server_dir.join("go.mod"),
@@ -334,8 +311,8 @@ func Message() string {
     .unwrap();
 
     // Commit so HEAD exists and the repo is clean
-    git_run(&["add", "."], &server_dir);
-    git_run(&["commit", "-m", "initial server"], &server_dir);
+    common::git_in(&server_dir, &["add", "."]);
+    common::git_in(&server_dir, &["commit", "-m", "initial server"]);
 
     // ------------------------------------------------------------------
     // 4. Create projects/web-app/rwv.toml listing both repos as primary
@@ -365,7 +342,7 @@ func Message() string {
     // ------------------------------------------------------------------
     // 6. Tag protocol at v1.0.0 (the "release" tag)
     // ------------------------------------------------------------------
-    git_run(&["tag", "v1.0.0"], &protocol_dir);
+    common::git_in(&protocol_dir, &["tag", "v1.0.0"]);
 
     // ------------------------------------------------------------------
     // 7. Verify go build works WITH go.work (workspace/dev mode — baseline)

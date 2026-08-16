@@ -22,34 +22,16 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
     root
 }
 
-fn git_in(dir: &Path, args: &[&str]) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} failed: {}",
-        args,
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// Workspace whose one project has an unreadable `.gitattributes`, so
 /// `replay_exclusion_state` returns `VcsError::Io`.
 fn workspace_with_unreadable_gitattributes(root: &Path) {
     let repo_path = "github/acme/server";
     let repo = root.join(repo_path);
     std::fs::create_dir_all(&repo).unwrap();
-    git_in(&repo, &["init", "-b", "main"]);
+    common::git_in(&repo, &["init", "-b", "main"]);
     std::fs::write(repo.join("README.md"), "init\n").unwrap();
-    git_in(&repo, &["add", "."]);
-    git_in(&repo, &["commit", "-m", "initial"]);
+    common::git_in(&repo, &["add", "."]);
+    common::git_in(&repo, &["commit", "-m", "initial"]);
 
     let project_dir = root.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -61,9 +43,9 @@ fn workspace_with_unreadable_gitattributes(root: &Path) {
         ),
     )
     .unwrap();
-    git_in(&project_dir, &["init", "-b", "main"]);
-    git_in(&project_dir, &["add", "."]);
-    git_in(&project_dir, &["commit", "-m", "initial"]);
+    common::git_in(&project_dir, &["init", "-b", "main"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
     std::fs::create_dir(project_dir.join(".gitattributes")).unwrap();
 }
 

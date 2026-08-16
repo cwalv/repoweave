@@ -19,24 +19,6 @@ mod common;
 /// this test without a second copy to keep in sync.
 const BUILD_RS: &str = include_str!("../build.rs");
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// A from-scratch crate carrying the real `build.rs` and nothing else, so a
 /// build exercises that script without pulling in `repoweave`'s own
 /// dependency graph.
@@ -75,12 +57,13 @@ fn build_script_rerun_survives_a_worktree_checkout() {
     let root = common::tempdir().expect("tempdir");
     let main = root.path().join("main");
     write_probe_crate(&main);
-    git(&["init", "-q"], &main);
-    git(&["add", "-A"], &main);
-    git(&["commit", "-q", "-m", "init"], &main);
+    common::git_in(&main, &["init", "-q"]);
+    common::git_in(&main, &["add", "-A"]);
+    common::git_in(&main, &["commit", "-q", "-m", "init"]);
 
     let worktree = root.path().join("worktree");
-    git(
+    common::git_in(
+        &main,
         &[
             "worktree",
             "add",
@@ -89,7 +72,6 @@ fn build_script_rerun_survives_a_worktree_checkout() {
             "-b",
             "probe",
         ],
-        &main,
     );
     assert!(
         !worktree.join(".git").is_dir(),
@@ -125,8 +107,8 @@ fn build_script_rerun_survives_a_worktree_checkout() {
     );
 
     std::fs::write(worktree.join("marker"), "").unwrap();
-    git(&["add", "-A"], &worktree);
-    git(&["commit", "-q", "-m", "move head"], &worktree);
+    common::git_in(&worktree, &["add", "-A"]);
+    common::git_in(&worktree, &["commit", "-q", "-m", "move head"]);
 
     let after_commit = cargo_build_verbose(&worktree, &target_dir);
     assert!(

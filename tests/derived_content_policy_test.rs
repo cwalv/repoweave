@@ -29,23 +29,6 @@ const DERIVED: &str = "docs/generated/reference.md";
 /// policy may resolve them.
 const AUTHORED: &str = "src/handwritten.md";
 
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git");
-    if !output.status.success() {
-        panic!(
-            "git {:?} failed in {}: {}",
-            args,
-            dir.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 fn write(dir: &Path, rel: &str, contents: &str) {
     let path = dir.join(rel);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -67,17 +50,17 @@ fn repo_declaring_derived_content() -> TempDir {
     let dir = common::tempdir().unwrap();
     let p = dir.path();
 
-    git(p, &["init"]);
-    git(p, &["config", "user.email", "test@test.com"]);
-    git(p, &["config", "user.name", "Test"]);
+    common::git_in(p, &["init"]);
+    common::git_in(p, &["config", "user.email", "test@test.com"]);
+    common::git_in(p, &["config", "user.name", "Test"]);
 
     write(p, DERIVED, "generated: v0\n");
     write(p, AUTHORED, "authored: v0\n");
     git_vcs()
         .set_replay_exclusion(p, Path::new(DERIVED))
         .expect("declaring a path derived writes the repo's tracked metadata");
-    git(p, &["add", "."]);
-    git(
+    common::git_in(p, &["add", "."]);
+    common::git_in(
         p,
         &["commit", "-m", "initial: sources + derived declaration"],
     );
@@ -97,18 +80,18 @@ fn repo_declaring_derived_content() -> TempDir {
 /// Returns main's tip, which is both the rebase target and the version a
 /// target-side resolution must leave standing.
 fn diverge_on(p: &Path, path: &str) -> ResolvedRevisionId {
-    let base = git(p, &["rev-parse", "HEAD"]);
+    let base = common::git_in(p, &["rev-parse", "HEAD"]);
 
     write(p, path, "main's version\n");
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "main: regenerate"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "main: regenerate"]);
 
-    git(p, &["checkout", "-b", "feat", &base]);
+    common::git_in(p, &["checkout", "-b", "feat", &base]);
     write(p, path, "feat's version\n");
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "feat: regenerate"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "feat: regenerate"]);
 
-    ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None)
+    ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None)
 }
 
 // ============================================================================
@@ -141,7 +124,7 @@ fn keeping_the_target_side_resolves_a_declared_path_without_stopping() {
     );
     // The replayed commit had nothing left to record once its only change
     // was resolved away, so it is gone rather than sitting empty on top.
-    let log = git(p, &["log", "--oneline", "--no-decorate"]);
+    let log = common::git_in(p, &["log", "--oneline", "--no-decorate"]);
     assert!(
         !log.contains("feat: regenerate"),
         "a commit that only touched derived content must drop; got log:\n{log}"
@@ -204,22 +187,22 @@ fn no_policy_resolves_a_path_the_repo_never_declared() {
 /// Diverge with an authored conflict *first* and a declared-path conflict
 /// *behind it*, so the second one is only ever reached by a resumed replay.
 fn diverge_with_a_conflict_ahead_of_the_declared_one(p: &Path) -> ResolvedRevisionId {
-    let base = git(p, &["rev-parse", "HEAD"]);
+    let base = common::git_in(p, &["rev-parse", "HEAD"]);
 
     write(p, AUTHORED, "main's prose\n");
     write(p, DERIVED, "main's version\n");
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "main: edit prose, regenerate"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "main: edit prose, regenerate"]);
 
-    git(p, &["checkout", "-b", "feat", &base]);
+    common::git_in(p, &["checkout", "-b", "feat", &base]);
     write(p, AUTHORED, "feat's prose\n");
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "feat: edit prose"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "feat: edit prose"]);
     write(p, DERIVED, "feat's version\n");
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "feat: regenerate"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "feat: regenerate"]);
 
-    ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None)
+    ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None)
 }
 
 /// Stop the replay on the authored conflict and resolve it the way an
@@ -239,7 +222,7 @@ fn replay_until_the_authored_conflict(p: &Path, main_tip: &ResolvedRevisionId) {
     );
 
     write(p, AUTHORED, "resolved prose\n");
-    git(p, &["add", AUTHORED]);
+    common::git_in(p, &["add", AUTHORED]);
 }
 
 #[test]
@@ -287,7 +270,7 @@ fn a_resumed_replay_without_the_policy_stops_on_the_declared_path() {
         matches!(err, VcsError::RebaseConflict { ref op, .. } if *op == ConflictOp::Rebase),
         "expected RebaseConflict on the declared path, got {err:?}"
     );
-    let conflicted = git(p, &["diff", "--name-only", "--diff-filter=U"]);
+    let conflicted = common::git_in(p, &["diff", "--name-only", "--diff-filter=U"]);
     assert!(
         conflicted.contains(DERIVED),
         "the declared path must be the one left conflicted; got {conflicted:?}"

@@ -17,7 +17,6 @@
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -29,49 +28,15 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Run git in `dir`, panicking on failure.
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
-/// Run git in `dir`, returning trimmed stdout.
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        output.status.success(),
-        "git {:?} in {} failed: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
-
 /// Every local branch name in `repo`.
 fn branch_names(repo: &Path) -> Vec<String> {
-    git_out(
+    common::git_in(
+        repo,
         &[
             "for-each-ref",
             "--format=%(refname:lstrip=2)",
             "refs/heads/",
         ],
-        repo,
     )
     .lines()
     .map(|l| l.trim().to_string())
@@ -81,12 +46,12 @@ fn branch_names(repo: &Path) -> Vec<String> {
 
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// A workspace with one project (`web-app`) and one manifest repo.
@@ -112,13 +77,13 @@ fn make_workspace(tmp: &Path) -> PathBuf {
 /// and return that commit's SHA. This is what makes a destroy *observable*:
 /// deleting the branch strands the commit.
 fn hand_made_branch_with_unique_commit(repo: &Path, name: &str, file: &str) -> String {
-    let on_entry = git_out(&["symbolic-ref", "--short", "HEAD"], repo);
-    git(&["checkout", "-b", name], repo);
+    let on_entry = common::git_in(repo, &["symbolic-ref", "--short", "HEAD"]);
+    common::git_in(repo, &["checkout", "-b", name]);
     std::fs::write(repo.join(file), "operator work").unwrap();
-    git(&["add", "-A"], repo);
-    git(&["commit", "-m", "work only this branch can reach"], repo);
-    let sha = git_out(&["rev-parse", name], repo);
-    git(&["checkout", &on_entry], repo);
+    common::git_in(repo, &["add", "-A"]);
+    common::git_in(repo, &["commit", "-m", "work only this branch can reach"]);
+    let sha = common::git_in(repo, &["rev-parse", name]);
+    common::git_in(repo, &["checkout", &on_entry]);
     sha
 }
 
@@ -205,7 +170,7 @@ fn delete_destroys_only_the_ref_it_recorded() {
             "branch {name} is not rwv's and must survive; branches: {after:?}"
         );
         assert_eq!(
-            &git_out(&["rev-parse", name], &repo),
+            &common::git_in(&repo, &["rev-parse", name]),
             sha,
             "{name} must still point at the operator's commit"
         );
@@ -267,7 +232,7 @@ fn delete_reports_the_branches_it_will_not_touch() {
         "the reported leftover must still exist"
     );
     assert_eq!(
-        git_out(&["rev-parse", "web-app--reported/mine"], &repo2),
+        common::git_in(&repo2, &["rev-parse", "web-app--reported/mine"]),
         leftover_sha,
         "the reported leftover must still point at the operator's commit"
     );
@@ -335,7 +300,7 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
         "the flat leftover must still exist"
     );
     assert_eq!(
-        git_out(&["rev-parse", "web-app--unowned"], &repo2),
+        common::git_in(&repo2, &["rev-parse", "web-app--unowned"]),
         leftover_sha,
         "and it must still point at the operator's commit"
     );

@@ -15,27 +15,10 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    if !output.status.success() {
-        panic!(
-            "git {:?} in {} failed: {}",
-            args,
-            cwd.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 fn init_bare_repo_with_commit(bare: &Path) {
     let parent = bare.parent().expect("bare repo path needs a parent");
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -45,16 +28,16 @@ fn init_bare_repo_with_commit(bare: &Path) {
         ],
     );
     let seed = parent.join(format!("__seed_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 /// Workspace + active project ready to be driven by `rwv update`.
@@ -86,7 +69,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         init_bare_repo_with_commit(&bare);
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        git_run(
+        common::git_in(
             workspace.parent().unwrap(),
             &[
                 "clone",
@@ -96,9 +79,9 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
                 canonical.to_str().unwrap(),
             ],
         );
-        git_run(&canonical, &["config", "user.email", "test@test.com"]);
-        git_run(&canonical, &["config", "user.name", "Test"]);
-        let head = git_run(&canonical, &["rev-parse", "HEAD"]);
+        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+        common::git_in(&canonical, &["config", "user.name", "Test"]);
+        let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
         manifest_shas.push(((*repo_path).to_string(), head));
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = common::file_url(&bare);
@@ -111,7 +94,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     let project_bare = tmp.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_dir = workspace.join("projects").join(project_name);
-    git_run(
+    common::git_in(
         workspace.parent().unwrap(),
         &[
             "clone",
@@ -119,8 +102,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
             project_dir.to_str().unwrap(),
         ],
     );
-    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
-    git_run(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
@@ -137,8 +120,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 
@@ -158,17 +141,17 @@ fn advance_bare_main(bare: &Path) -> String {
     let parent = bare.parent().unwrap();
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
     let work = parent.join(format!("__adv_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
     );
-    git_run(&work, &["config", "user.email", "test@test.com"]);
-    git_run(&work, &["config", "user.name", "Test"]);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("advance.txt"), format!("advance-{stem}")).unwrap();
-    git_run(&work, &["add", "."]);
-    git_run(&work, &["commit", "-m", &format!("advance {stem}")]);
-    git_run(&work, &["push", "origin", "main"]);
-    git_run(&work, &["rev-parse", "HEAD"])
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", &format!("advance {stem}")]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    common::git_in(&work, &["rev-parse", "HEAD"])
 }
 
 // ============================================================================
@@ -232,12 +215,12 @@ fn update_role_filter_only_advances_matching_role() {
     let p_local = ws.workspace.join("local/org/p");
     let d_local = ws.workspace.join("local/org/d");
     assert_eq!(
-        git_run(&p_local, &["rev-parse", "HEAD"]),
+        common::git_in(&p_local, &["rev-parse", "HEAD"]),
         new_p_sha,
         "primary repo should advance"
     );
     assert_ne!(
-        git_run(&d_local, &["rev-parse", "HEAD"]),
+        common::git_in(&d_local, &["rev-parse", "HEAD"]),
         new_d_sha,
         "dependency repo should NOT advance"
     );
@@ -274,8 +257,8 @@ fn update_repo_exact_filter_advances_only_that_path() {
 
     let a_local = ws.workspace.join("local/org/a");
     let b_local = ws.workspace.join("local/org/b");
-    assert_eq!(git_run(&a_local, &["rev-parse", "HEAD"]), new_a_sha);
-    assert_ne!(git_run(&b_local, &["rev-parse", "HEAD"]), new_b_sha);
+    assert_eq!(common::git_in(&a_local, &["rev-parse", "HEAD"]), new_a_sha);
+    assert_ne!(common::git_in(&b_local, &["rev-parse", "HEAD"]), new_b_sha);
 }
 
 // ============================================================================
@@ -306,7 +289,7 @@ fn update_repo_glob_filter_advances_matching() {
 
     for (rp, new_sha) in &new_shas {
         let local = ws.workspace.join(rp);
-        let head = git_run(&local, &["rev-parse", "HEAD"]);
+        let head = common::git_in(&local, &["rev-parse", "HEAD"]);
         if rp.starts_with("local/org/") {
             assert_eq!(&head, new_sha, "{rp} should have advanced");
         } else {
@@ -342,7 +325,7 @@ fn update_repo_regex_filter_advances_matching() {
         .success();
 
     for (rp, new_sha) in &new_shas {
-        let head = git_run(&ws.workspace.join(rp), &["rev-parse", "HEAD"]);
+        let head = common::git_in(ws.workspace.join(rp), &["rev-parse", "HEAD"]);
         if rp.starts_with("local/cwalv/") {
             assert_eq!(&head, new_sha);
         } else {
@@ -385,7 +368,7 @@ fn update_union_role_and_repo_selectors() {
         .success();
 
     for (rp, new_sha) in &new_shas {
-        let head = git_run(&ws.workspace.join(rp), &["rev-parse", "HEAD"]);
+        let head = common::git_in(ws.workspace.join(rp), &["rev-parse", "HEAD"]);
         let expected_advance = rp == "local/me/p" || rp == "local/external/dep";
         if expected_advance {
             assert_eq!(&head, new_sha, "{rp} should advance");
@@ -473,26 +456,26 @@ fn rename_branch_on_bare(bare: &Path, old_name: &str, new_name: &str) {
     let parent = bare.parent().unwrap();
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
     let work = parent.join(format!("__rename_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
     );
-    git_run(&work, &["config", "user.email", "test@test.com"]);
-    git_run(&work, &["config", "user.name", "Test"]);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     // Create the new branch and push it to the bare.
-    git_run(&work, &["checkout", "-b", new_name]);
-    git_run(
+    common::git_in(&work, &["checkout", "-b", new_name]);
+    common::git_in(
         &work,
         &["push", "origin", &format!("{new_name}:{new_name}")],
     );
     // Update the bare's HEAD to point at the new branch so the old one is
     // no longer the "current branch" and can be deleted.
-    git_run(
+    common::git_in(
         bare,
         &["symbolic-ref", "HEAD", &format!("refs/heads/{new_name}")],
     );
     // Now delete the old branch from the bare.
-    git_run(bare, &["branch", "-D", old_name]);
+    common::git_in(bare, &["branch", "-D", old_name]);
 }
 
 /// R18 regression test: upstream renames a branch (delete + create under new
@@ -586,7 +569,7 @@ fn update_prune_does_not_break_normal_update() {
 
     let local = ws.workspace.join("local/org/repo");
     assert_eq!(
-        git_run(&local, &["rev-parse", "HEAD"]),
+        common::git_in(&local, &["rev-parse", "HEAD"]),
         new_sha,
         "repo should advance to the new upstream SHA after prune-enabled update"
     );
@@ -616,7 +599,7 @@ fn update_prune_does_not_lose_lock_pinned_sha() {
 
     // Capture the SHA that the local clone currently has checked out.
     let local = ws.workspace.join("local/org/obj");
-    let pinned_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    let pinned_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
 
     // Advance the bare (so main moves forward) but DO NOT advance the local
     // clone — the local is now "behind" but holds the old SHA in its object
@@ -646,7 +629,7 @@ fn update_prune_does_not_lose_lock_pinned_sha() {
         .success();
 
     // After update, the repo is at the new HEAD, not the old pinned SHA.
-    let post_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    let post_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
     assert_ne!(
         post_sha, pinned_sha,
         "repo should have advanced past the originally-pinned SHA"

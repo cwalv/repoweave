@@ -17,15 +17,6 @@ mod common;
 const CARGO_MEMBER: &str = "github/acme/rustlib";
 const GO_MEMBER: &str = "github/acme/golib";
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} failed in {}", dir.display());
-}
-
 /// A weave with one Rust member, one Go member, and `demo` active.
 fn setup_weave(root: &Path) {
     std::fs::create_dir_all(root.join(CARGO_MEMBER).join("src")).unwrap();
@@ -54,9 +45,10 @@ fn setup_weave(root: &Path) {
 
     for repo in [CARGO_MEMBER, GO_MEMBER, "projects/demo"] {
         let dir = root.join(repo);
-        git(&["init", "-q", "-b", "main"], &dir);
-        git(&["add", "-A"], &dir);
-        git(
+        common::git_in(&dir, &["init", "-q", "-b", "main"]);
+        common::git_in(&dir, &["add", "-A"]);
+        common::git_in(
+            &dir,
             &[
                 "-c",
                 "user.email=test@test.com",
@@ -66,7 +58,6 @@ fn setup_weave(root: &Path) {
                 "-qm",
                 "initial",
             ],
-            &dir,
         );
     }
 }

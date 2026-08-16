@@ -22,32 +22,13 @@ mod common;
 // Minimal git helpers (no rwv involved — purely git plumbing)
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// Init a bare git repo with one commit on `main`. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
     let out = common::git()
         .args(["rev-parse", "HEAD"])
         .current_dir(path)
@@ -62,8 +43,8 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) {
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
 }
 
 // ---------------------------------------------------------------------------

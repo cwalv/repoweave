@@ -24,60 +24,20 @@ mod common;
 // Helpers (mirrored from e2e_sync_abort_test.rs to keep tests self-contained)
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\nstdout: {}\nstderr: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -153,18 +113,18 @@ fn sync_reads_committed_lock_not_working_tree() {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    git(&["add", "rwv.toml", ".gitattributes"], &source_proj);
-    git(&["commit", "-m", "chore: manifest + attrs"], &source_proj);
+    common::git_in(&source_proj, &["add", "rwv.toml", ".gitattributes"]);
+    common::git_in(&source_proj, &["commit", "-m", "chore: manifest + attrs"]);
 
     // Materialise lib under source (clone) at sha_v1.
     let source_lib = source_ws.join("lib");
-    git(&["clone", lib_url.as_str(), "lib"], &source_ws);
-    git(&["checkout", &sha_v1], &source_lib);
+    common::git_in(&source_ws, &["clone", lib_url.as_str(), "lib"]);
+    common::git_in(&source_lib, &["checkout", &sha_v1]);
 
     // Write and commit the lock at V1 (the COMMITTED lock of record).
     write_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_v1)]);
-    git(&["add", "rwv.lock"], &source_proj);
-    git(&["commit", "-m", "lock: pin lib at v1"], &source_proj);
+    common::git_in(&source_proj, &["add", "rwv.lock"]);
+    common::git_in(&source_proj, &["commit", "-m", "lock: pin lib at v1"]);
 
     // Write .rwv-active for source workspace so WorkspaceContext::resolve works.
     std::fs::write(source_ws.join(".rwv-active"), "myproject\n").unwrap();
@@ -182,16 +142,16 @@ fn sync_reads_committed_lock_not_working_tree() {
     let dest_projects = dest_ws.join("projects");
     std::fs::create_dir_all(&dest_projects).unwrap();
     // Clone source project into dest.
-    git(
-        &["clone", source_proj.to_str().unwrap(), "myproject"],
+    common::git_in(
         &dest_projects,
+        &["clone", source_proj.to_str().unwrap(), "myproject"],
     );
     let dest_proj = dest_projects.join("myproject");
 
     // Clone lib under destination at sha_v1.
     let dest_lib = dest_ws.join("lib");
-    git(&["clone", lib_url.as_str(), "lib"], &dest_ws);
-    git(&["checkout", &sha_v1], &dest_lib);
+    common::git_in(&dest_ws, &["clone", lib_url.as_str(), "lib"]);
+    common::git_in(&dest_lib, &["checkout", &sha_v1]);
 
     // Write .rwv-active so sync can find the active project without --project.
     std::fs::write(dest_ws.join(".rwv-active"), "myproject\n").unwrap();
@@ -207,7 +167,7 @@ fn sync_reads_committed_lock_not_working_tree() {
         .success();
 
     // ---- Assert: lib converged to V1 (committed SHA), not V2 ----
-    let actual_lib_head = git_out(&["rev-parse", "HEAD"], &dest_lib);
+    let actual_lib_head = common::git_in(&dest_lib, &["rev-parse", "HEAD"]);
     assert_eq!(
         actual_lib_head, sha_v1,
         "Expected dest lib HEAD to be sha_v1 ({sha_v1}), got {actual_lib_head}.\n\
@@ -257,18 +217,18 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
         "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    git(&["add", "rwv.toml", ".gitattributes"], &source_proj);
-    git(&["commit", "-m", "chore: manifest + attrs"], &source_proj);
+    common::git_in(&source_proj, &["add", "rwv.toml", ".gitattributes"]);
+    common::git_in(&source_proj, &["commit", "-m", "chore: manifest + attrs"]);
 
     // Materialise lib in source at sha_t0.
     let source_lib = source_ws.join("lib");
-    git(&["clone", lib_url.as_str(), "lib"], &source_ws);
-    git(&["checkout", &sha_t0], &source_lib);
+    common::git_in(&source_ws, &["clone", lib_url.as_str(), "lib"]);
+    common::git_in(&source_lib, &["checkout", &sha_t0]);
 
     // Commit the lock at T0.
     write_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_t0)]);
-    git(&["add", "rwv.lock"], &source_proj);
-    git(&["commit", "-m", "lock: T0 snapshot"], &source_proj);
+    common::git_in(&source_proj, &["add", "rwv.lock"]);
+    common::git_in(&source_proj, &["commit", "-m", "lock: T0 snapshot"]);
 
     // Write .rwv-active for source workspace.
     std::fs::write(source_ws.join(".rwv-active"), "myproject\n").unwrap();
@@ -283,16 +243,16 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     let dest_ws = tmp.join("dest2");
     let dest_projects = dest_ws.join("projects");
     std::fs::create_dir_all(&dest_projects).unwrap();
-    git(
-        &["clone", source_proj.to_str().unwrap(), "myproject"],
+    common::git_in(
         &dest_projects,
+        &["clone", source_proj.to_str().unwrap(), "myproject"],
     );
     let dest_proj = dest_projects.join("myproject");
 
     // Materialise lib in dest at sha_t0.
     let dest_lib = dest_ws.join("lib");
-    git(&["clone", lib_url.as_str(), "lib"], &dest_ws);
-    git(&["checkout", &sha_t0], &dest_lib);
+    common::git_in(&dest_ws, &["clone", lib_url.as_str(), "lib"]);
+    common::git_in(&dest_lib, &["checkout", &sha_t0]);
 
     // Write .rwv-active for dest workspace.
     std::fs::write(dest_ws.join(".rwv-active"), "myproject\n").unwrap();
@@ -305,7 +265,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
         .success();
 
     // ---- Assertion 1: lib is at T0 (not T1) ----
-    let dest_lib_head = git_out(&["rev-parse", "HEAD"], &dest_lib);
+    let dest_lib_head = common::git_in(&dest_lib, &["rev-parse", "HEAD"]);
     assert_eq!(
         dest_lib_head, sha_t0,
         "dest lib should be at T0 sha ({sha_t0}), got {dest_lib_head}.\n\
@@ -340,20 +300,20 @@ fn read_file_at_revision_returns_committed_content() {
 
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    git(&["init", "-b", "main"], &repo);
+    common::git_in(&repo, &["init", "-b", "main"]);
 
     // Commit v1.
     std::fs::write(repo.join("file.txt"), "version one\n").unwrap();
-    git(&["add", "file.txt"], &repo);
-    git(&["commit", "-m", "v1"], &repo);
-    let sha_v1 = git_out(&["rev-parse", "HEAD"], &repo);
+    common::git_in(&repo, &["add", "file.txt"]);
+    common::git_in(&repo, &["commit", "-m", "v1"]);
+    let sha_v1 = common::git_in(&repo, &["rev-parse", "HEAD"]);
     let rev_v1 = repoweave::vcs::ResolvedRevisionId::from_canonical(sha_v1.clone(), None);
 
     // Commit v2.
     std::fs::write(repo.join("file.txt"), "version two\n").unwrap();
-    git(&["add", "file.txt"], &repo);
-    git(&["commit", "-m", "v2"], &repo);
-    let sha_v2 = git_out(&["rev-parse", "HEAD"], &repo);
+    common::git_in(&repo, &["add", "file.txt"]);
+    common::git_in(&repo, &["commit", "-m", "v2"]);
+    let sha_v2 = common::git_in(&repo, &["rev-parse", "HEAD"]);
     let rev_v2 = repoweave::vcs::ResolvedRevisionId::from_canonical(sha_v2, None);
 
     // Overwrite the working tree with "version three" (uncommitted).
@@ -408,7 +368,7 @@ fn branch_form_lock_workspaces(
     let origin = tmp.join("origin-lib");
     let sha_a = init_repo(&origin);
     let sha_b = make_commit(&origin, "b.txt", "b\n", "lib: B");
-    git(&["branch", "release", &sha_b], &origin);
+    common::git_in(&origin, &["branch", "release", &sha_b]);
     let lib_url = common::file_url(&origin);
 
     let source_ws = tmp.join("source");
@@ -423,32 +383,32 @@ fn branch_form_lock_workspaces(
     .unwrap();
     // The lock pins the BRANCH NAME. Whoever resolves it decides what it means.
     write_lock(&source_proj, &[("lib", lib_url.as_str(), "release")]);
-    git(
-        &["add", "rwv.toml", ".gitattributes", "rwv.lock"],
+    common::git_in(
         &source_proj,
+        &["add", "rwv.toml", ".gitattributes", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: pin lib at release"], &source_proj);
+    common::git_in(&source_proj, &["commit", "-m", "lock: pin lib at release"]);
     std::fs::write(source_ws.join(".rwv-active"), "myproject\n").unwrap();
 
     let source_lib = source_ws.join("lib");
-    git(&["clone", lib_url.as_str(), "lib"], &source_ws);
-    git(&["checkout", "release"], &source_lib);
+    common::git_in(&source_ws, &["clone", lib_url.as_str(), "lib"]);
+    common::git_in(&source_lib, &["checkout", "release"]);
 
     let cwd_ws = tmp.join("cwd");
     let cwd_projects = cwd_ws.join("projects");
     std::fs::create_dir_all(&cwd_projects).unwrap();
-    git(
-        &["clone", source_proj.to_str().unwrap(), "myproject"],
+    common::git_in(
         &cwd_projects,
+        &["clone", source_proj.to_str().unwrap(), "myproject"],
     );
     std::fs::write(cwd_ws.join(".rwv-active"), "myproject\n").unwrap();
 
     let cwd_lib = cwd_ws.join("lib");
-    git(&["clone", lib_url.as_str(), "lib"], &cwd_ws);
+    common::git_in(&cwd_ws, &["clone", lib_url.as_str(), "lib"]);
     // CWD's own `release` names the OTHER commit. Both objects are here, so
     // the fast-forward below is possible — only the resolution decides.
-    git(&["branch", "-f", "release", &sha_a], &cwd_lib);
-    git(&["checkout", "release"], &cwd_lib);
+    common::git_in(&cwd_lib, &["branch", "-f", "release", &sha_a]);
+    common::git_in(&cwd_lib, &["checkout", "release"]);
 
     (source_ws, cwd_ws, sha_a, sha_b)
 }
@@ -464,7 +424,7 @@ fn a_branch_form_lock_entry_resolves_against_the_source_not_cwd() {
     let cwd_lib = cwd_ws.join("lib");
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &cwd_lib),
+        common::git_in(&cwd_lib, &["rev-parse", "HEAD"]),
         sha_a,
         "fixture precondition: CWD's release must start at the other commit"
     );
@@ -476,7 +436,7 @@ fn a_branch_form_lock_entry_resolves_against_the_source_not_cwd() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &cwd_lib),
+        common::git_in(&cwd_lib, &["rev-parse", "HEAD"]),
         sha_b,
         "the lock entry must resolve to what the SOURCE's `release` names"
     );
@@ -500,7 +460,7 @@ fn naming_the_source_by_an_inner_path_still_resolves_its_members() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &cwd_lib),
+        common::git_in(&cwd_lib, &["rev-parse", "HEAD"]),
         sha_b,
         "a source named by its project dir must still resolve its member checkouts"
     );

@@ -139,7 +139,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::{self};
 
 mod common;
 
@@ -158,28 +157,12 @@ macro_rules! require_go {
     };
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 /// A single filesystem entry captured for byte-level comparison.
@@ -344,8 +327,8 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
 
     // Commit the activate-generated files so create_workweave (which refuses
     // to fork a dirty project worktree) is happy.
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "activate"], &project_dir);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
     // ------------------------------------------------------------------
     // 3. Create workweave.
@@ -398,8 +381,8 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
             .join("\n");
         std::fs::write(&primary_go_work, format!("{drifted}\n")).unwrap();
     }
-    git(&["add", "go.work"], &project_dir);
-    git(&["commit", "-m", "inject primary drift"], &project_dir);
+    common::git_in(&project_dir, &["add", "go.work"]);
+    common::git_in(&project_dir, &["commit", "-m", "inject primary drift"]);
 
     // Sanity: primary's go.work is now missing the protocol line.
     let primary_go_work_pre = std::fs::read_to_string(&primary_go_work).unwrap();
@@ -442,11 +425,12 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
     // Commit the drift so the workweave repo isn't left dirty (some doctor
     // pre-checks bail on dirty state).
     std::fs::write(&ww_go_work, &drifted).unwrap();
-    git(
-        &["-C", ww_project_dir.to_str().unwrap(), "add", "go.work"],
+    common::git_in(
         &ww_project_dir,
+        &["-C", ww_project_dir.to_str().unwrap(), "add", "go.work"],
     );
-    git(
+    common::git_in(
+        &ww_project_dir,
         &[
             "-C",
             ww_project_dir.to_str().unwrap(),
@@ -454,7 +438,6 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
             "-m",
             "inject drift",
         ],
-        &ww_project_dir,
     );
 
     // Sanity: the server line is gone in the workweave's go.work.

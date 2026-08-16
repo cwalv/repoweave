@@ -33,23 +33,6 @@ mod common;
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/// Run git in `dir`, panicking on failure.
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git");
-    assert!(
-        output.status.success(),
-        "git {:?} failed in {}: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 /// A weave: a primary holding `projects/web-app/`, and one canonical
 /// member store with a commit on `main`.
 ///
@@ -62,12 +45,12 @@ fn weave() -> (TempDir, PathBuf, ProjectName, PathBuf) {
 
     let store = tmp.path().join("weave/github/acme/server");
     std::fs::create_dir_all(&store).unwrap();
-    git(&store, &["init", "--initial-branch=main"]);
-    git(&store, &["config", "user.email", "test@test.com"]);
-    git(&store, &["config", "user.name", "Test"]);
+    common::git_in(&store, &["init", "--initial-branch=main"]);
+    common::git_in(&store, &["config", "user.email", "test@test.com"]);
+    common::git_in(&store, &["config", "user.name", "Test"]);
     std::fs::write(store.join("one"), "1").unwrap();
-    git(&store, &["add", "."]);
-    git(&store, &["commit", "-m", "one"]);
+    common::git_in(&store, &["add", "."]);
+    common::git_in(&store, &["commit", "-m", "one"]);
 
     let store = store.canonicalize().unwrap();
     (tmp, primary, ProjectName::new("web-app").unwrap(), store)
@@ -75,8 +58,8 @@ fn weave() -> (TempDir, PathBuf, ProjectName, PathBuf) {
 
 fn commit(repo: &Path, file: &str) -> ResolvedRevisionId {
     std::fs::write(repo.join(file), file).unwrap();
-    git(repo, &["add", "."]);
-    git(repo, &["commit", "-m", file]);
+    common::git_in(repo, &["add", "."]);
+    common::git_in(repo, &["commit", "-m", file]);
     git_vcs().head_revision(repo).unwrap()
 }
 
@@ -99,7 +82,7 @@ fn a_ref_that_exists_without_a_receipt_is_not_rwvs() {
 
     // The ref-first ordering, played out: the branch is created and
     // nothing records it.
-    git(&store, &["branch", "web-app--hotfix"]);
+    common::git_in(&store, &["branch", "web-app--hotfix"]);
     assert!(
         git_vcs()
             .resolve_local_branch_tip(&store, &name)
@@ -156,7 +139,7 @@ fn a_dangling_receipt_authorizes_nothing_but_a_live_one_does() {
     let born = registry
         .record_created(&store, ephemeral(&project, "hotfix"), tip.clone())
         .unwrap();
-    git(&store, &["branch", "web-app--hotfix"]);
+    common::git_in(&store, &["branch", "web-app--hotfix"]);
     let warrant = DeletionWarrant::unmoved(git_vcs().as_ref(), &born)
         .expect("a ref at its recorded tip is unmoved");
     assert!(
@@ -178,7 +161,7 @@ fn a_receipt_stops_yielding_unmoved_once_the_ref_moves() {
     let owned = registry
         .record_created(&store, ephemeral(&project, "hotfix"), tip.clone())
         .unwrap();
-    git(&store, &["checkout", "-q", "-b", "web-app--hotfix"]);
+    common::git_in(&store, &["checkout", "-q", "-b", "web-app--hotfix"]);
     let moved = commit(&store, "operator-work");
     assert_ne!(moved, tip, "fixture check: the ref really moved");
 
@@ -188,8 +171,8 @@ fn a_receipt_stops_yielding_unmoved_once_the_ref_moves() {
     );
     // Merged against a baseline that contains the work does hold — the
     // warrant that accounts for it rather than ignoring it.
-    git(&store, &["checkout", "-q", "main"]);
-    git(
+    common::git_in(&store, &["checkout", "-q", "main"]);
+    common::git_in(
         &store,
         &["merge", "-q", "--no-ff", "-m", "merge", "web-app--hotfix"],
     );

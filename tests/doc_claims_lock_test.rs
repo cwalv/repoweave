@@ -30,26 +30,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// Create a minimal workspace: one manifest repo with a single commit.
 /// Returns (workspace_root, project_dir, initial_head_sha).
 fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathBuf, String) {
@@ -59,11 +39,11 @@ fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathB
 
     let repo_path = root.join("github/acme/server");
     std::fs::create_dir_all(&repo_path).unwrap();
-    git_run(&["init", "-b", "main"], &repo_path);
+    common::git_in(&repo_path, &["init", "-b", "main"]);
     std::fs::write(repo_path.join("README"), "init\n").unwrap();
-    git_run(&["add", "."], &repo_path);
-    git_run(&["commit", "-m", "initial"], &repo_path);
-    let sha = git_run(&["rev-parse", "HEAD"], &repo_path);
+    common::git_in(&repo_path, &["add", "."]);
+    common::git_in(&repo_path, &["commit", "-m", "initial"]);
+    let sha = common::git_in(&repo_path, &["rev-parse", "HEAD"]);
 
     let project_dir = root.join("projects/my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -104,8 +84,8 @@ fn lock_does_not_run_integration_hooks() {
         "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .unwrap();
-    git_run(&["add", "."], &repo_dir);
-    git_run(&["commit", "-m", "add Cargo.toml"], &repo_dir);
+    common::git_in(&repo_dir, &["add", "."]);
+    common::git_in(&repo_dir, &["commit", "-m", "add Cargo.toml"]);
 
     rwv()
         .arg("lock")
@@ -195,25 +175,26 @@ fn lock_records_local_head_not_remote_tip() {
     // Set up a bare remote and clone it locally.
     let bare = tmp.path().join("server.git");
     std::fs::create_dir_all(&bare).unwrap();
-    git_run(
-        &["init", "--bare", "-b", "main", bare.to_str().unwrap()],
+    common::git_in(
         tmp.path(),
+        &["init", "--bare", "-b", "main", bare.to_str().unwrap()],
     );
 
     // Seed the bare via a temp clone.
     let seed = tmp.path().join("seed");
-    git_run(
-        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
+    common::git_in(
         tmp.path(),
+        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
     std::fs::write(seed.join("README"), "seed\n").unwrap();
-    git_run(&["add", "."], &seed);
-    git_run(&["commit", "-m", "initial"], &seed);
-    git_run(&["push", "origin", "main"], &seed);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 
     // Clone into the workspace (this is the local copy rwv lock will read).
     let local_clone = root.join("github/acme/server");
-    git_run(
+    common::git_in(
+        tmp.path(),
         &[
             "clone",
             "--origin",
@@ -221,17 +202,16 @@ fn lock_records_local_head_not_remote_tip() {
             bare.to_str().unwrap(),
             local_clone.to_str().unwrap(),
         ],
-        tmp.path(),
     );
-    let local_sha = git_run(&["rev-parse", "HEAD"], &local_clone);
+    let local_sha = common::git_in(&local_clone, &["rev-parse", "HEAD"]);
 
     // Advance the bare past the local clone (simulate a collaborator pushing).
     std::fs::write(seed.join("advance.txt"), "remote-advance\n").unwrap();
-    git_run(&["add", "."], &seed);
-    git_run(&["commit", "-m", "remote advance"], &seed);
-    git_run(&["push", "origin", "main"], &seed);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "remote advance"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
     // Verify the bare is ahead of the local clone.
-    let remote_sha = git_run(&["rev-parse", "HEAD"], &seed);
+    let remote_sha = common::git_in(&seed, &["rev-parse", "HEAD"]);
     assert_ne!(
         local_sha, remote_sha,
         "remote must have advanced past local"

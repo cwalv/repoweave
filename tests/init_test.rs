@@ -17,26 +17,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Run a git command in `dir`, returning its stdout as a String.
-fn git_output(args: &[&str], dir: &Path) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        output.status.success(),
-        "git {:?} in {} failed: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("valid UTF-8")
-        .trim()
-        .to_string()
-}
-
 /// Create a minimal workspace structure (no projects yet).
 ///
 /// Layout:
@@ -180,7 +160,7 @@ fn init_runs_git_init_in_project_dir() {
 
     let project_dir = ws.join("projects/my-app");
     // Verify it is a git repo by running git rev-parse.
-    let toplevel = git_output(&["rev-parse", "--git-dir"], &project_dir);
+    let toplevel = common::git_in(&project_dir, &["rev-parse", "--git-dir"]);
     assert!(
         toplevel.contains(".git"),
         "project dir should be a git repo, got: {toplevel}"
@@ -285,7 +265,7 @@ fn init_with_provider_sets_git_remote() {
     assert!(project_dir.exists(), "project dir should be created");
 
     // Check that a git remote was configured.
-    let remotes = git_output(&["remote", "-v"], &project_dir);
+    let remotes = common::git_in(&project_dir, &["remote", "-v"]);
     assert!(
         !remotes.is_empty(),
         "git remote should be configured when --provider is given"
@@ -321,7 +301,7 @@ fn init_with_provider_remote_contains_project_name() {
         .success();
 
     let project_dir = ws.join("projects/cool-tool");
-    let remotes = git_output(&["remote", "-v"], &project_dir);
+    let remotes = common::git_in(&project_dir, &["remote", "-v"]);
     // The remote URL should include the project name as the repo name.
     assert!(
         remotes.contains("cool-tool"),
@@ -341,7 +321,7 @@ fn init_without_provider_has_no_remote() {
         .success();
 
     let project_dir = ws.join("projects/local-only");
-    let remotes = git_output(&["remote"], &project_dir);
+    let remotes = common::git_in(&project_dir, &["remote"]);
     assert!(
         remotes.is_empty(),
         "no remote should be configured without --provider, got: {remotes}"
@@ -501,7 +481,7 @@ fn adopt_clones_repo_into_projects() {
         "projects/my-app/ should exist after adopt"
     );
     // Should be a git repo (cloned, not git-init'd)
-    let toplevel = git_output(&["rev-parse", "--git-dir"], &project_dir);
+    let toplevel = common::git_in(&project_dir, &["rev-parse", "--git-dir"]);
     assert!(
         toplevel.contains(".git"),
         "adopted project should be a git repo"
@@ -796,9 +776,9 @@ fn adopt_bootstraps_empty_directory() {
         "projects/adopted-proj/ must exist after adopt in empty dir"
     );
     // Must be a real git repo (cloned, not init'd).
-    let toplevel = git_output(
+    let toplevel = common::git_in(
+        ws.join("projects/adopted-proj"),
         &["rev-parse", "--git-dir"],
-        &ws.join("projects/adopted-proj"),
     );
     assert!(
         toplevel.contains(".git"),

@@ -20,23 +20,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    if !output.status.success() {
-        panic!(
-            "git {:?} in {} failed: {}",
-            args,
-            cwd.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 /// The ref this checkout is on, or `None` when HEAD is detached.
 ///
 /// Delegates to the shared §4.7 primitive, which asks `Vcs::head_attachment`
@@ -51,7 +34,7 @@ fn current_branch(repo: &Path) -> Option<String> {
 fn init_bare_repo_with_commit(bare: &Path) {
     let parent = bare.parent().expect("bare repo path needs a parent");
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -61,16 +44,16 @@ fn init_bare_repo_with_commit(bare: &Path) {
         ],
     );
     let seed = parent.join(format!("__seed_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 struct Fixture {
@@ -86,21 +69,21 @@ impl Fixture {
     fn advance_remote(&self) -> String {
         let parent = self.bare.parent().unwrap();
         let work = parent.join("__adv");
-        git_run(
+        common::git_in(
             parent,
             &["clone", self.bare.to_str().unwrap(), work.to_str().unwrap()],
         );
-        git_run(&work, &["config", "user.email", "test@test.com"]);
-        git_run(&work, &["config", "user.name", "Test"]);
+        common::git_in(&work, &["config", "user.email", "test@test.com"]);
+        common::git_in(&work, &["config", "user.name", "Test"]);
         std::fs::write(work.join("advance.txt"), "advance").unwrap();
-        git_run(&work, &["add", "."]);
-        git_run(&work, &["commit", "-m", "advance"]);
-        git_run(&work, &["push", "origin", "main"]);
-        git_run(&work, &["rev-parse", "HEAD"])
+        common::git_in(&work, &["add", "."]);
+        common::git_in(&work, &["commit", "-m", "advance"]);
+        common::git_in(&work, &["push", "origin", "main"]);
+        common::git_in(&work, &["rev-parse", "HEAD"])
     }
 
     fn head(&self) -> String {
-        git_run(&self.canonical, &["rev-parse", "HEAD"])
+        common::git_in(&self.canonical, &["rev-parse", "HEAD"])
     }
 }
 
@@ -117,7 +100,7 @@ fn build_workspace() -> Fixture {
 
     let canonical = workspace.join(&repo_path);
     std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-    git_run(
+    common::git_in(
         tmp.path(),
         &[
             "clone",
@@ -127,9 +110,9 @@ fn build_workspace() -> Fixture {
             canonical.to_str().unwrap(),
         ],
     );
-    git_run(&canonical, &["config", "user.email", "test@test.com"]);
-    git_run(&canonical, &["config", "user.name", "Test"]);
-    let head = git_run(&canonical, &["rev-parse", "HEAD"]);
+    common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+    common::git_in(&canonical, &["config", "user.name", "Test"]);
+    let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
 
     let project_dir = workspace.join("projects").join("my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -184,7 +167,7 @@ fn update_fast_forwards_the_counterpart_and_stays_attached() {
          abandon the branch the operator's commits hang off"
     );
     assert_eq!(
-        git_run(&fx.canonical, &["rev-parse", "main"]),
+        common::git_in(&fx.canonical, &["rev-parse", "main"]),
         tip,
         "the branch ref itself is what moved"
     );
@@ -213,7 +196,7 @@ fn update_is_a_no_op_when_the_counterpart_is_already_at_the_tip() {
 fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
     let fx = build_workspace();
     let before = fx.head();
-    git_run(&fx.canonical, &["checkout", "-b", "feature"]);
+    common::git_in(&fx.canonical, &["checkout", "-b", "feature"]);
     let tip = fx.advance_remote();
 
     // `feature` is at the merge-base of the remote tip, so advancing it WOULD
@@ -240,7 +223,7 @@ fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
 fn update_detach_checkouts_detaches_rather_than_relocating_the_branch() {
     let fx = build_workspace();
     let before = fx.head();
-    git_run(&fx.canonical, &["checkout", "-b", "feature"]);
+    common::git_in(&fx.canonical, &["checkout", "-b", "feature"]);
     let tip = fx.advance_remote();
 
     rwv()
@@ -252,7 +235,7 @@ fn update_detach_checkouts_detaches_rather_than_relocating_the_branch() {
     assert_eq!(fx.head(), tip, "the consent materializes the tip");
     assert_eq!(current_branch(&fx.canonical), None);
     assert_eq!(
-        git_run(&fx.canonical, &["rev-parse", "feature"]),
+        common::git_in(&fx.canonical, &["rev-parse", "feature"]),
         before,
         "the flag names a detach, so the personal branch is left where it was"
     );
@@ -266,8 +249,8 @@ fn update_detach_checkouts_detaches_rather_than_relocating_the_branch() {
 fn update_refuses_a_non_fast_forward_naming_both_exits() {
     let fx = build_workspace();
     std::fs::write(fx.canonical.join("local.txt"), "local work").unwrap();
-    git_run(&fx.canonical, &["add", "."]);
-    git_run(&fx.canonical, &["commit", "-m", "local"]);
+    common::git_in(&fx.canonical, &["add", "."]);
+    common::git_in(&fx.canonical, &["commit", "-m", "local"]);
     let local = fx.head();
     let tip = fx.advance_remote();
     assert_ne!(local, tip);
@@ -289,7 +272,7 @@ fn update_refuses_a_non_fast_forward_naming_both_exits() {
         local,
         "the diverged commit is still checked out and still on the branch"
     );
-    assert_eq!(git_run(&fx.canonical, &["rev-parse", "main"]), local);
+    assert_eq!(common::git_in(&fx.canonical, &["rev-parse", "main"]), local);
 }
 
 // ============================================================================
@@ -299,7 +282,7 @@ fn update_refuses_a_non_fast_forward_naming_both_exits() {
 #[test]
 fn update_moves_an_already_detached_member_and_leaves_it_detached() {
     let fx = build_workspace();
-    git_run(&fx.canonical, &["checkout", "--detach", "HEAD"]);
+    common::git_in(&fx.canonical, &["checkout", "--detach", "HEAD"]);
     let tip = fx.advance_remote();
 
     // Nothing is attached, so nothing can be abandoned: no consent required.
@@ -320,11 +303,11 @@ fn update_moves_an_already_detached_member_and_leaves_it_detached() {
 #[test]
 fn update_refuses_to_move_a_detached_member_that_is_mid_operation() {
     let fx = build_workspace();
-    git_run(&fx.canonical, &["checkout", "--detach", "HEAD"]);
+    common::git_in(&fx.canonical, &["checkout", "--detach", "HEAD"]);
     let before = fx.head();
     // `Detached` collapses "rwv left this at a lock SHA" and "the operator is
     // stopped mid-bisect". Only the first is rwv's to move (§3.6).
-    git_run(&fx.canonical, &["bisect", "start"]);
+    common::git_in(&fx.canonical, &["bisect", "start"]);
     let tip = fx.advance_remote();
 
     rwv()
@@ -396,7 +379,7 @@ fn add_workweave(fx: &Fixture, ephemeral: &str) -> PathBuf {
     let dir = add_workweave_without_slot(fx, "my-app--dev");
     let slot = dir.join(&fx.repo_path);
     std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
-    git_run(
+    common::git_in(
         &fx.canonical,
         &[
             "worktree",
@@ -423,14 +406,14 @@ fn update_inside_a_workweave_advances_the_ephemeral_ref_without_detaching() {
         .assert()
         .success();
 
-    assert_eq!(git_run(&slot, &["rev-parse", "HEAD"]), tip);
+    assert_eq!(common::git_in(&slot, &["rev-parse", "HEAD"]), tip);
     assert_eq!(
         current_branch(&slot).as_deref(),
         Some("my-app--dev"),
         "the ephemeral ref is advanced, not abandoned — the shipped path \
          detached it (at the identical SHA) while claiming to have advanced it"
     );
-    assert_eq!(git_run(&slot, &["rev-parse", "my-app--dev"]), tip);
+    assert_eq!(common::git_in(&slot, &["rev-parse", "my-app--dev"]), tip);
 }
 
 #[test]
@@ -438,12 +421,12 @@ fn update_inside_a_workweave_points_at_rwv_sync_when_it_is_not_a_fast_forward() 
     let fx = build_workspace();
     let ww = add_workweave(&fx, "my-app--dev");
     let slot = ww.join(&fx.repo_path);
-    git_run(&slot, &["config", "user.email", "test@test.com"]);
-    git_run(&slot, &["config", "user.name", "Test"]);
+    common::git_in(&slot, &["config", "user.email", "test@test.com"]);
+    common::git_in(&slot, &["config", "user.name", "Test"]);
     std::fs::write(slot.join("ww.txt"), "workweave work").unwrap();
-    git_run(&slot, &["add", "."]);
-    git_run(&slot, &["commit", "-m", "workweave work"]);
-    let diverged = git_run(&slot, &["rev-parse", "HEAD"]);
+    common::git_in(&slot, &["add", "."]);
+    common::git_in(&slot, &["commit", "-m", "workweave work"]);
+    let diverged = common::git_in(&slot, &["rev-parse", "HEAD"]);
     fx.advance_remote();
 
     rwv()
@@ -457,7 +440,7 @@ fn update_inside_a_workweave_points_at_rwv_sync_when_it_is_not_a_fast_forward() 
         // reconciles a workweave with its parent.
         .stderr(predicate::str::contains("--detach-checkouts").not());
 
-    assert_eq!(git_run(&slot, &["rev-parse", "HEAD"]), diverged);
+    assert_eq!(common::git_in(&slot, &["rev-parse", "HEAD"]), diverged);
     assert_eq!(current_branch(&slot).as_deref(), Some("my-app--dev"));
 }
 

@@ -34,59 +34,20 @@ fn rwv() -> AssertCommand {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -162,11 +123,11 @@ fn make_workweave_ahead_fixture(
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &primary_project,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &primary_project);
+    common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     // Workweave: materialise as git worktrees from the primary repos.
@@ -183,7 +144,8 @@ fn make_workweave_ahead_fixture(
     write_workweave_marker(&ww, &primary, "web-app", workweave_name);
 
     let ww_server = ww.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary_server,
         &[
             "worktree",
             "add",
@@ -191,11 +153,11 @@ fn make_workweave_ahead_fixture(
             "-b",
             &format!("web-app--{workweave_name}"),
         ],
-        &primary_server,
     );
 
     let ww_project = ww.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary_project,
         &[
             "worktree",
             "add",
@@ -203,14 +165,13 @@ fn make_workweave_ahead_fixture(
             "-b",
             &format!("web-app--{workweave_name}"),
         ],
-        &primary_project,
     );
 
     // Advance the workweave's server repo and relock so sync-to has work.
     let advance_sha = make_commit(&ww_server, "ww.txt", "workweave\n", "ww: advance server");
     write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &advance_sha)]);
-    git(&["add", "rwv.lock"], &ww_project);
-    git(&["commit", "-m", "lock: ww advance"], &ww_project);
+    common::git_in(&ww_project, &["add", "rwv.lock"]);
+    common::git_in(&ww_project, &["commit", "-m", "lock: ww advance"]);
 
     (
         primary,
@@ -244,7 +205,7 @@ fn sync_to_retire_json_round_trip() {
     let workweave_name = "sample-weave";
     let (primary, ww, primary_server, _ww_server, _primary_project, _ww_project, advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), workweave_name);
-    let target_server_before = git_out(&["rev-parse", "HEAD"], &primary_server);
+    let target_server_before = common::git_in(&primary_server, &["rev-parse", "HEAD"]);
 
     let assert = rwv()
         .args([
@@ -296,7 +257,7 @@ fn sync_to_retire_json_round_trip() {
 
     // --- step3_advance.to_sha matches target's HEAD after sync ---
     // The primary's server repo should now be at `advance_sha` (CWD's tip).
-    let primary_server_head = git_out(&["rev-parse", "HEAD"], &primary_server);
+    let primary_server_head = common::git_in(&primary_server, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_server_head, advance_sha,
         "primary server must have been fast-forwarded to the workweave's tip"
@@ -386,11 +347,11 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     .unwrap();
     write_manifest(&source_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &source_project,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &source_project);
+    common::git_in(&source_project, &["commit", "-m", "lock: initial"]);
     std::fs::write(source.join(".rwv-active"), "web-app\n").unwrap();
 
     // Target workspace: worktrees from source repos.
@@ -399,7 +360,8 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     std::fs::create_dir_all(target.join("projects")).unwrap();
 
     let target_server = target.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &source_server,
         &[
             "worktree",
             "add",
@@ -407,11 +369,11 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
             "-b",
             "web-app--target",
         ],
-        &source_server,
     );
 
     let target_project = target.join("projects/web-app");
-    git(
+    common::git_in(
+        &source_project,
         &[
             "worktree",
             "add",
@@ -419,7 +381,6 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
             "-b",
             "web-app--target",
         ],
-        &source_project,
     );
     std::fs::write(target.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -431,8 +392,8 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
         "source: advance",
     );
     write_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &source_project);
-    git(&["commit", "-m", "lock: source at c2"], &source_project);
+    common::git_in(&source_project, &["add", "rwv.lock"]);
+    common::git_in(&source_project, &["commit", "-m", "lock: source at c2"]);
 
     // Invoke sync-to FROM source (a Weave, not a Workweave) TO target.
     let assert = rwv()
@@ -536,7 +497,7 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
     // The landing itself happened, so the envelope below describes an op that
     // did everything except the retire it is being asked about.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary_server),
+        common::git_in(&primary_server, &["rev-parse", "HEAD"]),
         advance_sha,
         "advance-target must have landed the workweave's tip in the target"
     );
@@ -584,11 +545,11 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &primary_project,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &primary_project);
+    common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = parent.join("noop-ww");
@@ -599,7 +560,8 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     write_workweave_marker(&ww, &primary, "web-app", "noop-ww");
 
     let ww_server = ww.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary_server,
         &[
             "worktree",
             "add",
@@ -607,11 +569,11 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
             "-b",
             "web-app--noop-ww",
         ],
-        &primary_server,
     );
 
     let ww_project = ww.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary_project,
         &[
             "worktree",
             "add",
@@ -619,7 +581,6 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
             "-b",
             "web-app--noop-ww",
         ],
-        &primary_project,
     );
 
     // No additional commits in ww; primary and ww are at the same tip.
@@ -740,14 +701,14 @@ fn write_lease(workspace: &Path, owner: &Path) {
 }
 
 fn create_savepoint(repo: &Path) {
-    let head = git_out(&["rev-parse", "HEAD"], repo);
-    git(
+    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
+    common::git_in(
+        repo,
         &[
             "update-ref",
             &format!("refs/rwv/pre-op/{RESUMED_OP_ID}"),
             &head,
         ],
-        repo,
     );
 }
 
@@ -880,8 +841,8 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
         "primary: add shared.txt",
     );
     write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary_project);
-    git(&["commit", "-m", "lock: primary advance"], &primary_project);
+    common::git_in(&primary_project, &["add", "rwv.lock"]);
+    common::git_in(&primary_project, &["commit", "-m", "lock: primary advance"]);
 
     // ...and the workweave advances on the same file, so the replay conflicts.
     let c_ww = make_commit(
@@ -891,10 +852,10 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
         "ww: add shared.txt",
     );
     write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww_project);
-    git(
-        &["commit", "-m", "lock: ww conflicting advance"],
+    common::git_in(&ww_project, &["add", "rwv.lock"]);
+    common::git_in(
         &ww_project,
+        &["commit", "-m", "lock: ww conflicting advance"],
     );
 
     // The op parks at replay on the conflict.
@@ -910,7 +871,7 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
 
     // Resolve and stage; the resume performs the VCS-native continue itself.
     std::fs::write(ww_server.join("shared.txt"), "resolved\n").unwrap();
-    git(&["add", "shared.txt"], &ww_server);
+    common::git_in(&ww_server, &["add", "shared.txt"]);
 
     let assert = rwv()
         .args(["sync-to", "--continue", "--json"])

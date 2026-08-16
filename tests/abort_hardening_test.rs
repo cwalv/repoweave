@@ -54,45 +54,6 @@ fn rwv() -> AssertCommand {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn try_git(args: &[&str], dir: &Path) -> bool {
     common::git()
         .args(args)
@@ -108,18 +69,18 @@ fn try_git(args: &[&str], dir: &Path) -> bool {
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -182,11 +143,11 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &server_sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -218,9 +179,9 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str, converged_tips
 
 /// Create a `refs/rwv/pre-op/<op-id>` savepoint pointing at `sha` in `repo`.
 fn plant_savepoint(repo: &Path, op_id: &str, sha: &str) {
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
+    common::git_in(
         repo,
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
     );
 }
 
@@ -300,11 +261,11 @@ fn make_multi_repo_fixture(parent: &Path, name: &str, repo_paths: &[&str]) -> Mu
         .map(|((p, u), s)| (*p, u.as_str(), s.as_str()))
         .collect();
     write_lock(&project_dir, &lock_rows);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     MultiRepoFixture {
@@ -327,8 +288,8 @@ fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000001Z";
-    let server_pre = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
-    let project_pre = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let server_pre = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    let project_pre = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
 
     plant_savepoint(&ws.server_dir, op_id, &server_pre);
     plant_savepoint(&ws.project_dir, op_id, &project_pre);
@@ -342,9 +303,12 @@ fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
         .stdout(predicate::str::contains("untouched"));
 
     // Tips unchanged.
-    assert_eq!(git_out(&["rev-parse", "HEAD"], &ws.server_dir), server_pre);
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.project_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_pre
+    );
+    assert_eq!(
+        common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
         project_pre
     );
     // Pre-abort refs written for both repos at the (unchanged) tip.
@@ -377,7 +341,7 @@ fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
     let op_id = "20991231T000002Z";
 
     // Savepoint = original tip; advance the repo to a "converged" tip.
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let server_converged = make_commit(
         &ws.server_dir,
         "converged.txt",
@@ -385,7 +349,7 @@ fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
         "server: converged",
     );
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
 
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
@@ -405,12 +369,12 @@ fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
 
     // Server is back at the savepoint.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_savepoint
     );
     // Project never moved; abort is a no-op there.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.project_dir),
+        common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
         project_savepoint
     );
     // Pre-abort ref preserved the converged tip on the server repo.
@@ -442,7 +406,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
     let op_id = "20991231T000003Z";
 
     // Savepoint at original HEAD; manufacture a mid-rebase wreckage.
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
     // Two diverging commits that touch the same line so the rebase stalls.
@@ -452,9 +416,9 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
         "main version\n",
         "main: conflict base",
     );
-    git(
-        &["checkout", "-b", "diverge", &server_savepoint],
+    common::git_in(
         &ws.server_dir,
+        &["checkout", "-b", "diverge", &server_savepoint],
     );
     make_commit(
         &ws.server_dir,
@@ -462,7 +426,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
         "diverge version\n",
         "diverge: conflict",
     );
-    git(&["checkout", "main"], &ws.server_dir);
+    common::git_in(&ws.server_dir, &["checkout", "main"]);
     let _ = std::process::Command::new("git")
         .args(["rebase", "diverge"])
         .current_dir(&ws.server_dir)
@@ -478,7 +442,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
     );
 
     // Project repo: untouched.
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
 
     plant_owner_record(&ws.root, op_id, "replay", &[]);
@@ -490,7 +454,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
     assert!(!ws.server_dir.join(".git/rebase-apply").exists());
     // Server back at the savepoint.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_savepoint
     );
     // Pre-abort ref written for the server (the mid-op HEAD is "main" =
@@ -528,7 +492,7 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
 
     // Server: savepoint at original HEAD; advance to a "foreign" tip
     // distinct from any recorded converged tip.
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let foreign_tip = make_commit(
         &ws.server_dir,
         "foreign.txt",
@@ -538,7 +502,7 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
     // Project: untouched (so abort succeeds there in isolation).
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
 
     // Record an unrelated converged tip so `recorded_converged_tip` is
@@ -563,7 +527,7 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
 
     // Foreign repo's tip is UNCHANGED.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         foreign_tip,
         "foreign-tip refusal must not reset the repo"
     );
@@ -598,7 +562,7 @@ fn pre_abort_ref_first_write_wins_across_abort_reruns() {
 
     let op_id = "20991231T000006Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let foreign_tip = make_commit(
         &ws.server_dir,
         "foreign.txt",
@@ -607,7 +571,7 @@ fn pre_abort_ref_first_write_wins_across_abort_reruns() {
     );
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
 
     plant_owner_record(&ws.root, op_id, "relock", &[]);
@@ -626,7 +590,7 @@ fn pre_abort_ref_first_write_wins_across_abort_reruns() {
     );
 
     // Operator reconciles: move the branch back to the savepoint.
-    git(&["reset", "--hard", &server_savepoint], &ws.server_dir);
+    common::git_in(&ws.server_dir, &["reset", "--hard", &server_savepoint]);
 
     // Second abort: succeeds; pre-abort ref must STILL hold the foreign tip.
     rwv().arg("abort").current_dir(&ws.root).assert().success();
@@ -651,14 +615,14 @@ fn pre_abort_refs_persist_after_clean_abort() {
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000005Z";
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let server_converged = make_commit(
         &ws.server_dir,
         "converged.txt",
         "converged\n",
         "server: converged",
     );
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
 
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
@@ -713,7 +677,7 @@ fn abort_noise_collapses_to_summary_line() {
     let op_id = "20991231T000010Z";
     // Plant ONLY a project savepoint; server has no savepoint → NoSavepoint.
     // Project tip == savepoint → Untouched.
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "replay", &[]);
 
@@ -780,11 +744,11 @@ fn abort_foreign_tip_options_block_printed_once() {
             ),
         ],
     );
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     let op_id = "20991231T000011Z";
@@ -798,7 +762,7 @@ fn abort_foreign_tip_options_block_printed_once() {
     make_commit(&server2_dir, "foreign.txt", "foreign\n", "foreign: s2");
     plant_savepoint(&server2_dir, op_id, &s2_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &project_dir);
+    let project_savepoint = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&project_dir, op_id, &project_savepoint);
 
     plant_owner_record(&root, op_id, "replay", &[]);
@@ -840,7 +804,7 @@ fn abort_foreign_tip_shows_blocking_commits() {
 
     let op_id = "20991231T000012Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     // Make two identifiable commits on the server.
     make_commit(
         &ws.server_dir,
@@ -856,7 +820,7 @@ fn abort_foreign_tip_shows_blocking_commits() {
     );
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "replay", &[]);
 
@@ -902,7 +866,7 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
 
     let op_id = "20991231T000020Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let foreign_tip = make_commit(
         &ws.server_dir,
         "foreign.txt",
@@ -911,7 +875,7 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
     );
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[]);
 
@@ -924,7 +888,7 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
         .stdout(predicate::str::contains("abandoned foreign tip"));
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_savepoint,
         "consent must let the restore proceed to the savepoint"
     );
@@ -974,11 +938,11 @@ fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
 
     let op_id = "20991231T000021Z";
 
-    let named_savepoint = git_out(&["rev-parse", "HEAD"], named_dir);
+    let named_savepoint = common::git_in(named_dir, &["rev-parse", "HEAD"]);
     make_commit(named_dir, "foreign.txt", "foreign\n", "foreign: named repo");
     plant_savepoint(named_dir, op_id, &named_savepoint);
 
-    let unnamed_savepoint = git_out(&["rev-parse", "HEAD"], unnamed_dir);
+    let unnamed_savepoint = common::git_in(unnamed_dir, &["rev-parse", "HEAD"]);
     let unnamed_foreign = make_commit(
         unnamed_dir,
         "foreign.txt",
@@ -987,7 +951,7 @@ fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
     );
     plant_savepoint(unnamed_dir, op_id, &unnamed_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &fx.project_dir);
+    let project_savepoint = common::git_in(&fx.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&fx.project_dir, op_id, &project_savepoint);
     plant_owner_record(&fx.root, op_id, "relock", &[]);
 
@@ -1002,12 +966,12 @@ fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], named_dir),
+        common::git_in(named_dir, &["rev-parse", "HEAD"]),
         named_savepoint,
         "the named repo must be restored"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], unnamed_dir),
+        common::git_in(unnamed_dir, &["rev-parse", "HEAD"]),
         unnamed_foreign,
         "consent for one repo must not move another repo's branch"
     );
@@ -1063,11 +1027,11 @@ fn abandon_advances_capture_along_ancestry_and_proceeds() {
 
     let op_id = "20991231T000022Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let first_foreign = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[]);
 
@@ -1113,7 +1077,7 @@ fn abandon_advances_capture_along_ancestry_and_proceeds() {
 
     // The branch is back at the savepoint.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_savepoint,
         "the branch must be restored to the savepoint"
     );
@@ -1164,11 +1128,11 @@ fn abandon_refuses_when_capture_has_diverged_from_observed_tip() {
 
     let op_id = "20991231T000025Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let first_foreign = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[]);
 
@@ -1187,7 +1151,7 @@ fn abandon_refuses_when_capture_has_diverged_from_observed_tip() {
     // Foreign agent RESETS the branch off first_foreign back to the
     // savepoint and commits a different line of work. first_foreign is no
     // longer reachable from HEAD — the capture and HEAD have diverged.
-    git(&["reset", "--hard", &server_savepoint], &ws.server_dir);
+    common::git_in(&ws.server_dir, &["reset", "--hard", &server_savepoint]);
     let diverged_foreign = make_commit(&ws.server_dir, "d1.txt", "d1\n", "foreign: diverged line");
     assert!(
         !try_git(
@@ -1216,7 +1180,7 @@ fn abandon_refuses_when_capture_has_diverged_from_observed_tip() {
 
     // The branch is untouched — refusal, not destruction.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.server_dir),
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         diverged_foreign,
         "a diverged capture must not be treated as consent to destroy the tip"
     );
@@ -1267,10 +1231,10 @@ fn abandon_foreign_tip_accepts_the_project_repo_key() {
 
     let op_id = "20991231T000023Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     let project_foreign = make_commit(&ws.project_dir, "foreign.txt", "foreign\n", "foreign: proj");
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[]);
@@ -1283,7 +1247,7 @@ fn abandon_foreign_tip_accepts_the_project_repo_key() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ws.project_dir),
+        common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
         project_savepoint,
         "`(project)` must name the project repo"
     );
@@ -1304,11 +1268,11 @@ fn foreign_tip_recovery_options_name_the_flag_not_raw_git() {
 
     let op_id = "20991231T000024Z";
 
-    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     make_commit(&ws.server_dir, "foreign.txt", "foreign\n", "foreign: agent");
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[]);
 

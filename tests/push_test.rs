@@ -19,30 +19,12 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Run `git` with the given args in `cwd`; panic on failure.
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    if !output.status.success() {
-        panic!(
-            "git {:?} in {} failed: {}",
-            args,
-            cwd.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 /// Initialize a bare repo and seed it with one commit on `main` so it can
 /// be cloned by `--origin` consumers and act as a push target.
 fn init_bare_repo_with_commit(bare: &Path) {
     let parent = bare.parent().expect("bare repo path needs a parent");
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -52,16 +34,16 @@ fn init_bare_repo_with_commit(bare: &Path) {
         ],
     );
     let seed = parent.join(format!("__seed_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 /// A test workspace ready to be driven by `rwv push`.
@@ -102,7 +84,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        git_run(
+        common::git_in(
             workspace.parent().unwrap(),
             &[
                 "clone",
@@ -112,9 +94,9 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
                 canonical.to_str().unwrap(),
             ],
         );
-        git_run(&canonical, &["config", "user.email", "test@test.com"]);
-        git_run(&canonical, &["config", "user.name", "Test"]);
-        let head = git_run(&canonical, &["rev-parse", "HEAD"]);
+        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+        common::git_in(&canonical, &["config", "user.name", "Test"]);
+        let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
         manifest_shas.push(((*repo_path).to_string(), head));
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = common::file_url(&bare);
@@ -128,7 +110,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     let project_bare = tmp.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_dir = workspace.join("projects").join(project_name);
-    git_run(
+    common::git_in(
         workspace.parent().unwrap(),
         &[
             "clone",
@@ -136,8 +118,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
             project_dir.to_str().unwrap(),
         ],
     );
-    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
-    git_run(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
 
@@ -157,8 +139,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
     // Mark this project active.
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
@@ -218,9 +200,9 @@ fn push_happy_path_pushes_manifest_then_project() {
         let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
         let local = ws.workspace.join(rp);
         std::fs::write(local.join("changed.txt"), "new").unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", "advance"]);
-        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        common::git_in(&local, &["add", "."]);
+        common::git_in(&local, &["commit", "-m", "advance"]);
+        let sha = common::git_in(&local, &["rev-parse", "HEAD"]);
         let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
@@ -237,9 +219,9 @@ fn push_happy_path_pushes_manifest_then_project() {
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "advance lock"]);
-    let project_head = git_run(&project_dir, &["rev-parse", "HEAD"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "advance lock"]);
+    let project_head = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
 
     // Record the dependency's baseline SHA before push (it must NOT advance).
     let (_, dep_bare) = ws
@@ -309,9 +291,9 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
     // Make a local advance so a real push would change things.
     let local = ws.workspace.join("local/org/a");
     std::fs::write(local.join("x.txt"), "x").unwrap();
-    git_run(&local, &["add", "."]);
-    git_run(&local, &["commit", "-m", "advance"]);
-    let new_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "advance"]);
+    let new_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
 
     // Rewrite lock to match the new HEAD so the precondition passes.
     let bare_url = common::file_url(manifest_bare);
@@ -321,8 +303,8 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "relock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
     let output = rwv()
         .args(["push", "--dry-run"])
@@ -412,8 +394,8 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
     // Advance the local repo WITHOUT updating the lock.
     let local = ws.workspace.join("local/org/a");
     std::fs::write(local.join("drift.txt"), "drift").unwrap();
-    git_run(&local, &["add", "."]);
-    git_run(&local, &["commit", "-m", "drift past lock"]);
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "drift past lock"]);
 
     let output = rwv()
         .args(["push"])
@@ -446,8 +428,8 @@ fn push_refuses_detached_head() {
     let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
     // Detach HEAD in the manifest repo.
     let local = ws.workspace.join("local/org/a");
-    let head_sha = git_run(&local, &["rev-parse", "HEAD"]);
-    git_run(&local, &["checkout", &head_sha]);
+    let head_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
+    common::git_in(&local, &["checkout", &head_sha]);
 
     let output = rwv()
         .args(["push"])
@@ -471,7 +453,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
     let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     // Move project repo to a non-canonical branch.
-    git_run(&project_dir, &["checkout", "-b", "feat/x"]);
+    common::git_in(&project_dir, &["checkout", "-b", "feat/x"]);
 
     let output = rwv()
         .args(["push"])
@@ -504,7 +486,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 fn push_refuses_when_project_repo_origin_head_unset() {
     let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    git_run(
+    common::git_in(
         &project_dir,
         &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
     );
@@ -569,11 +551,11 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
     // Create a new branch in the manifest repo and commit there — the
     // manifest declares `main`, so this should warn.
     let local = ws.workspace.join("local/org/a");
-    git_run(&local, &["checkout", "-b", "feat-x"]);
+    common::git_in(&local, &["checkout", "-b", "feat-x"]);
     std::fs::write(local.join("f.txt"), "f").unwrap();
-    git_run(&local, &["add", "."]);
-    git_run(&local, &["commit", "-m", "feat advance"]);
-    let feat_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "feat advance"]);
+    let feat_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
 
     // Update lock to point at the new SHA (HEAD on feat-x).
     let (_, bare) = &ws.manifest_bares[0];
@@ -584,8 +566,8 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "relock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
     let output = rwv()
         .args(["push"])
@@ -629,11 +611,11 @@ fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
     let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
 
     let local = ws.workspace.join("local/org/a");
-    git_run(&local, &["checkout", "-b", "feat-x"]);
+    common::git_in(&local, &["checkout", "-b", "feat-x"]);
     std::fs::write(local.join("f.txt"), "f").unwrap();
-    git_run(&local, &["add", "."]);
-    git_run(&local, &["commit", "-m", "feat advance"]);
-    let feat_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "feat advance"]);
+    let feat_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
 
     let (_, bare) = &ws.manifest_bares[0];
     let bare_url = common::file_url(bare);
@@ -643,8 +625,8 @@ fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "relock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
     let output = rwv()
         .args(["push"])
@@ -682,9 +664,9 @@ fn push_aborts_before_project_when_manifest_push_fails() {
     for (rp, bare) in &ws.manifest_bares {
         let local = ws.workspace.join(rp);
         std::fs::write(local.join("x.txt"), "x").unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", "advance"]);
-        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        common::git_in(&local, &["add", "."]);
+        common::git_in(&local, &["commit", "-m", "advance"]);
+        let sha = common::git_in(&local, &["rev-parse", "HEAD"]);
         expected_shas.push(sha.clone());
         let bare_url = common::file_url(bare);
         lock_entries.push(format!(
@@ -695,14 +677,14 @@ fn push_aborts_before_project_when_manifest_push_fails() {
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "relock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
     // Sabotage repo B's remote URL so push fails (point at a nonexistent
     // location). Repo A pushes succeed; B fails; project must not be pushed.
     let local_b = ws.workspace.join("local/org/b");
     let bad_url = ws.workspace.join("nonexistent-remote.git");
-    git_run(
+    common::git_in(
         &local_b,
         &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
     );
@@ -741,9 +723,9 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     let (_, manifest_bare) = &ws.manifest_bares[0];
     let local = ws.workspace.join("local/org/a");
     std::fs::write(local.join("x.txt"), "x").unwrap();
-    git_run(&local, &["add", "."]);
-    git_run(&local, &["commit", "-m", "advance"]);
-    let manifest_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "advance"]);
+    let manifest_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
 
     let bare_url = common::file_url(manifest_bare);
     let raw_lock = format!(
@@ -752,12 +734,12 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "relock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
     // Sabotage the project repo's origin so its push fails.
     let bad_url = ws.workspace.join("nonexistent-project.git");
-    git_run(
+    common::git_in(
         &project_dir,
         &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
     );
@@ -843,9 +825,9 @@ fn build_workspace_with_advances(
     for ((rp, bare), (_, role)) in ws.manifest_bares.iter().zip(repos.iter()) {
         let local = ws.workspace.join(rp);
         std::fs::write(local.join(format!("{}.txt", rp.replace('/', "_"))), rp).unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", &format!("advance {rp}")]);
-        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        common::git_in(&local, &["add", "."]);
+        common::git_in(&local, &["commit", "-m", &format!("advance {rp}")]);
+        let sha = common::git_in(&local, &["rev-parse", "HEAD"]);
         let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
@@ -860,8 +842,8 @@ fn build_workspace_with_advances(
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "advance lock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "advance lock"]);
 
     (ws, expected_shas)
 }
@@ -1041,18 +1023,17 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
     for (rp, _) in &ws.manifest_bares {
         let local = ws.workspace.join(rp);
         std::fs::write(local.join(format!("{}.txt", rp.replace('/', "_"))), rp).unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", &format!("advance {rp}")]);
-        new_shas.push(git_run(&local, &["rev-parse", "HEAD"]));
+        common::git_in(&local, &["add", "."]);
+        common::git_in(&local, &["commit", "-m", &format!("advance {rp}")]);
+        new_shas.push(common::git_in(&local, &["rev-parse", "HEAD"]));
     }
 
     // Update lock for A only — leaving B's lock entry stale.
     let (_, a_bare) = &ws.manifest_bares[0];
     let (_, b_bare) = &ws.manifest_bares[1];
-    let stale_b_lock_sha = git_run(
-        &ws.workspace.join("local/org/b"),
-        &["rev-parse", "HEAD~1"], // the original lock SHA from build_workspace
-    );
+    // HEAD~1 is the original lock SHA from build_workspace
+    let stale_b_lock_sha =
+        common::git_in(ws.workspace.join("local/org/b"), &["rev-parse", "HEAD~1"]);
     let raw_lock = format!(
         "{{\"repositories\": {{\"local/org/a\": {{\"type\": \"git\", \"url\": {a:?}, \"version\": {a_sha:?}}}, \"local/org/b\": {{\"type\": \"git\", \"url\": {b:?}, \"version\": {b_stale:?}}}}}}}",
         a = a_bare.to_str().unwrap(),
@@ -1063,8 +1044,8 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "partial relock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "partial relock"]);
 
     let output = rwv()
         .args(["push", "--repo", "local/org/a"])

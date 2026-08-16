@@ -34,41 +34,6 @@ mod common;
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -76,13 +41,13 @@ fn rwv() -> AssertCommand {
 /// Init a git repo at `path` with one commit on `main`. Returns HEAD SHA.
 fn init_repo(path: &Path, file: &str, contents: &str) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join(file), contents).unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Stage and commit `filename` (relative to `repo`). Returns new HEAD SHA.
@@ -92,9 +57,9 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 const OWNED_PATH: &str = "github/org/owned";
@@ -116,25 +81,25 @@ struct CanonicalFingerprint {
 
 fn fingerprint(canonical: &Path) -> CanonicalFingerprint {
     CanonicalFingerprint {
-        head: git_out(&["rev-parse", "HEAD"], canonical),
+        head: common::git_in(canonical, &["rev-parse", "HEAD"]),
         // `for-each-ref` over the full namespace catches a stray
         // `refs/rwv/pre-op/*` that a savepoint would write into the canonical.
-        refs: git_out(
-            &["for-each-ref", "--format=%(refname) %(objectname)"],
+        refs: common::git_in(
             canonical,
+            &["for-each-ref", "--format=%(refname) %(objectname)"],
         ),
         worktree_file: std::fs::read_to_string(canonical.join("REF")).unwrap_or_default(),
-        status: git_out(&["status", "--porcelain"], canonical),
-        current_branch: git_out(&["symbolic-ref", "--short", "HEAD"], canonical),
+        status: common::git_in(canonical, &["status", "--porcelain"]),
+        current_branch: common::git_in(canonical, &["symbolic-ref", "--short", "HEAD"]),
     }
 }
 
 /// Assert NO `refs/rwv/pre-op/*` savepoint refs exist in `repo` — the
 /// load-bearing "no op-ref was written into the shared canonical" check.
 fn assert_no_pre_op_refs(repo: &Path, ctx: &str) {
-    let refs = git_out(
-        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
+    let refs = common::git_in(
         repo,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
     );
     assert!(
         refs.is_empty(),
@@ -196,11 +161,11 @@ fn make_primary(parent: &Path) -> Primary {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let _ = project_dir;
@@ -276,9 +241,9 @@ fn plant_owner_record(workspace: &Path, op_id: &str, phase: &str) {
 
 /// Create a `refs/rwv/pre-op/<op-id>` savepoint pointing at `sha` in `repo`.
 fn plant_savepoint(repo: &Path, op_id: &str, sha: &str) {
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
+    common::git_in(
         repo,
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
     );
 }
 
@@ -328,7 +293,7 @@ fn sync_is_a_no_op_for_a_symlinked_reference_and_leaves_canonical_untouched() {
         .success();
 
     // Owned repo advanced on primary (proves sync ran for non-reference repos).
-    let primary_owned_head = git_out(&["rev-parse", "main"], &primary.owned_canonical);
+    let primary_owned_head = common::git_in(&primary.owned_canonical, &["rev-parse", "main"]);
     assert_eq!(
         primary_owned_head, owned_sha,
         "owned repo must advance on primary after sync"
@@ -383,7 +348,7 @@ fn sync_to_is_a_no_op_for_a_symlinked_reference_and_leaves_canonical_untouched()
         .success();
 
     // Owned advanced on primary.
-    let primary_owned_head = git_out(&["rev-parse", "main"], &primary.owned_canonical);
+    let primary_owned_head = common::git_in(&primary.owned_canonical, &["rev-parse", "main"]);
     assert_eq!(
         primary_owned_head, owned_sha,
         "owned repo must advance on primary after sync-to"
@@ -491,14 +456,14 @@ fn abort_does_not_reset_the_canonical_reference_even_with_a_planted_savepoint() 
     // the shared canonical store (a cross-workweave ref write), and could then
     // `reset --hard` it. The exclusion makes `abort_one_repo` unreachable for
     // the reference, so neither happens.
-    let ref_tip = git_out(&["rev-parse", "main"], &primary.ref_canonical);
+    let ref_tip = common::git_in(&primary.ref_canonical, &["rev-parse", "main"]);
     plant_savepoint(&primary.ref_canonical, op_id, &ref_tip);
 
     // Sanity: the canonical has the planted pre-op savepoint but NO pre-abort
     // ref yet.
-    let pre_abort = git_out(
-        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-abort/"],
+    let pre_abort = common::git_in(
         &primary.ref_canonical,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-abort/"],
     );
     assert!(pre_abort.is_empty(), "precondition: no pre-abort ref yet");
 
@@ -516,9 +481,9 @@ fn abort_does_not_reset_the_canonical_reference_even_with_a_planted_savepoint() 
     // canonical store. (Without the exclusion, `abort_one_repo`'s Rail-1
     // pre-abort ref would be written here, BEFORE the HEAD-verification rail
     // even runs — so this assertion isolates the chokepoint, not the verifier.)
-    let pre_abort_after = git_out(
-        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-abort/"],
+    let pre_abort_after = common::git_in(
         &primary.ref_canonical,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-abort/"],
     );
     assert!(
         pre_abort_after.is_empty(),
@@ -527,7 +492,7 @@ fn abort_does_not_reset_the_canonical_reference_even_with_a_planted_savepoint() 
     );
 
     // And the canonical reference's `main` is unchanged.
-    let ref_after = git_out(&["rev-parse", "main"], &primary.ref_canonical);
+    let ref_after = common::git_in(&primary.ref_canonical, &["rev-parse", "main"]);
     assert_eq!(
         ref_after, ref_tip,
         "abort must not move the shared canonical reference's branch"
@@ -579,7 +544,7 @@ fn sync_to_retire_with_a_symlinked_reference_unlinks_it_and_leaves_canonical_int
     assert!(!ww.root.exists(), "workweave must be deleted by --retire");
 
     // Owned landed upward.
-    let primary_owned_head = git_out(&["rev-parse", "main"], &primary.owned_canonical);
+    let primary_owned_head = common::git_in(&primary.owned_canonical, &["rev-parse", "main"]);
     assert_eq!(
         primary_owned_head, owned_sha,
         "owned repo must land on primary after sync-to --retire"
@@ -630,7 +595,7 @@ fn worktree_references_reference_syncs_normally() {
     );
     // It is on its OWN ephemeral branch in the workweave (legacy behavior),
     // flat with no segmented third component.
-    let ww_ref_branch = git_out(&["symbolic-ref", "--short", "HEAD"], &ww.ref_checkout);
+    let ww_ref_branch = common::git_in(&ww.ref_checkout, &["symbolic-ref", "--short", "HEAD"]);
     assert_eq!(
         ww_ref_branch,
         format!("{PROJECT}--feat"),
@@ -656,7 +621,7 @@ fn worktree_references_reference_syncs_normally() {
 
     // The canonical reference's `main` BEFORE sync-to (on the primary side, the
     // reference checkout IS the canonical, checked out on `main`).
-    let canonical_ref_before = git_out(&["rev-parse", "main"], &primary.ref_canonical);
+    let canonical_ref_before = common::git_in(&primary.ref_canonical, &["rev-parse", "main"]);
     assert_ne!(
         canonical_ref_before, ref_sha,
         "precondition: the canonical reference must not yet have the workweave's commit"
@@ -679,7 +644,7 @@ fn worktree_references_reference_syncs_normally() {
 
     // The owned repo advanced (sanity).
     assert_eq!(
-        git_out(&["rev-parse", "main"], &primary.owned_canonical),
+        common::git_in(&primary.owned_canonical, &["rev-parse", "main"]),
         owned_sha,
         "owned repo must advance on primary"
     );
@@ -687,7 +652,7 @@ fn worktree_references_reference_syncs_normally() {
     // The reference advanced on the primary (target) side to the workweave's
     // new reference commit — proving the worktree'd reference SYNCED. Had the
     // exclusion been role-keyed, this branch would NOT have moved.
-    let canonical_ref_after = git_out(&["rev-parse", "main"], &primary.ref_canonical);
+    let canonical_ref_after = common::git_in(&primary.ref_canonical, &["rev-parse", "main"]);
     assert_eq!(
         canonical_ref_after, ref_sha,
         "worktree'd reference must advance on sync-to (alias-keyed exclusion, not role-keyed): \

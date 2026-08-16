@@ -18,40 +18,14 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
-fn git_capture(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// Build a primary workspace plus a manifest-repo clone. Returns
@@ -78,8 +52,8 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
-    git(&["add", "rwv.toml"], &project_dir);
-    git(&["commit", "-m", "add manifest"], &project_dir);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
 
     (ws, repo_path)
 }
@@ -93,9 +67,9 @@ fn add_workweave_checkout(canonical_repo: &Path, ww_dir: &Path, rel_repo_path: &
     let dest = ww_dir.join(rel_repo_path);
     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
     let dest_str = dest.to_str().unwrap();
-    git(
-        &["worktree", "add", "-b", branch, dest_str, "main"],
+    common::git_in(
         canonical_repo,
+        &["worktree", "add", "-b", branch, dest_str, "main"],
     );
 }
 
@@ -177,8 +151,8 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
         .expect("git clone");
     assert!(status.success(), "clone failed");
     // Re-configure user so commits don't fail if needed downstream.
-    git(&["config", "user.email", "test@test.com"], &real_canonical);
-    git(&["config", "user.name", "Test"], &real_canonical);
+    common::git_in(&real_canonical, &["config", "user.email", "test@test.com"]);
+    common::git_in(&real_canonical, &["config", "user.name", "Test"]);
 
     let weaveroot = tmp.path().join(".workweaves");
     let ww_dir = weaveroot.join("web-app--ww");
@@ -192,12 +166,12 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
 
     // Confirm the inverted topology: the worktree in the workweave is
     // registered in `real_canonical`, not in `primary_slot`.
-    let real_worktrees = git_capture(&["worktree", "list", "--porcelain"], &real_canonical);
+    let real_worktrees = common::git_in(&real_canonical, &["worktree", "list", "--porcelain"]);
     assert!(
         real_worktrees.contains("web-app--ww"),
         "real canonical should know about the workweave worktree:\n{real_worktrees}"
     );
-    let primary_worktrees = git_capture(&["worktree", "list", "--porcelain"], &primary_slot);
+    let primary_worktrees = common::git_in(&primary_slot, &["worktree", "list", "--porcelain"]);
     assert!(
         !primary_worktrees.contains("web-app--ww"),
         "primary slot should NOT know about the workweave worktree:\n{primary_worktrees}"
@@ -226,7 +200,7 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
 
     // The real canonical store's worktree list must no longer include
     // the workweave checkout — `worktree remove` ran in the right repo.
-    let real_after = git_capture(&["worktree", "list", "--porcelain"], &real_canonical);
+    let real_after = common::git_in(&real_canonical, &["worktree", "list", "--porcelain"]);
     assert!(
         !real_after.contains("web-app--ww/github/org/repo"),
         "real canonical should have no stale workweave registration after delete:\n{real_after}"
@@ -260,13 +234,14 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
         .status()
         .expect("git clone");
     assert!(status.success(), "clone failed");
-    git(&["config", "user.email", "test@test.com"], &ww_repo_slot);
-    git(&["config", "user.name", "Test"], &ww_repo_slot);
+    common::git_in(&ww_repo_slot, &["config", "user.email", "test@test.com"]);
+    common::git_in(&ww_repo_slot, &["config", "user.name", "Test"]);
 
     // Add a foreign worktree linked into ww_repo_slot (outside the
     // workweave dir). Deleting the workweave would orphan this.
     let foreign = tmp.path().join("foreign-checkout");
-    git(
+    common::git_in(
+        &ww_repo_slot,
         &[
             "worktree",
             "add",
@@ -275,7 +250,6 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
             foreign.to_str().unwrap(),
             "main",
         ],
-        &ww_repo_slot,
     );
 
     // Project worktree: a normal linked workspace under primary.
@@ -310,7 +284,7 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
         foreign.exists(),
         "foreign worktree must not be orphaned by the refusing delete"
     );
-    let registrations = git_capture(&["worktree", "list", "--porcelain"], &ww_repo_slot);
+    let registrations = common::git_in(&ww_repo_slot, &["worktree", "list", "--porcelain"]);
     assert!(
         registrations.contains("foreign-checkout"),
         "foreign worktree registration must remain intact:\n{registrations}"
@@ -338,8 +312,8 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
         .status()
         .expect("git clone");
     assert!(status.success(), "clone failed");
-    git(&["config", "user.email", "test@test.com"], &ww_repo_slot);
-    git(&["config", "user.name", "Test"], &ww_repo_slot);
+    common::git_in(&ww_repo_slot, &["config", "user.email", "test@test.com"]);
+    common::git_in(&ww_repo_slot, &["config", "user.name", "Test"]);
     // No foreign worktree.
 
     let project_dir = ws.join("projects/web-app");
@@ -415,15 +389,15 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
         .status()
         .expect("git clone");
     assert!(status.success(), "clone failed");
-    git(&["config", "user.email", "test@test.com"], &real_canonical);
-    git(&["config", "user.name", "Test"], &real_canonical);
+    common::git_in(&real_canonical, &["config", "user.email", "test@test.com"]);
+    common::git_in(&real_canonical, &["config", "user.name", "Test"]);
 
     // Now diverge: add a new commit to real_canonical's main so the
     // workweave's tip carries a SHA that ONLY exists in the real-canonical
     // DAG — never reachable from the primary slot's DAG.
     std::fs::write(real_canonical.join("only-on-real"), "x\n").unwrap();
-    git(&["add", "only-on-real"], &real_canonical);
-    git(&["commit", "-m", "real-canonical unique"], &real_canonical);
+    common::git_in(&real_canonical, &["add", "only-on-real"]);
+    common::git_in(&real_canonical, &["commit", "-m", "real-canonical unique"]);
 
     let weaveroot = tmp.path().join(".workweaves");
     let ww_dir = weaveroot.join("web-app--diverged");

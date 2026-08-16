@@ -18,7 +18,6 @@ use repoweave::manifest::ProjectName;
 use repoweave::workspace::WorkweaveMarker;
 use repoweave::workweave_index;
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -26,25 +25,14 @@ fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// Build a minimal workspace with a single project + one repo.

@@ -87,45 +87,6 @@ fn repoweave_declares_its_generated_reference_artifacts_derived() {
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -196,13 +157,13 @@ struct Workspace {
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     write(path, "README.md", "init\n");
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// The primary workspace, whose one managed repo generates reference pages
@@ -227,12 +188,12 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
         "land\n",
     );
     regenerate(&managed_repo);
-    git(&["add", "."], &managed_repo);
-    git(
-        &["commit", "-m", "docs: generate the reference index"],
+    common::git_in(&managed_repo, &["add", "."]);
+    common::git_in(
         &managed_repo,
+        &["commit", "-m", "docs: generate the reference index"],
     );
-    let managed_sha = git_out(&["rev-parse", "HEAD"], &managed_repo);
+    let managed_sha = common::git_in(&managed_repo, &["rev-parse", "HEAD"]);
 
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
@@ -254,11 +215,11 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
             repo = common::url_path(&managed_repo)
         ),
     );
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     write(&ws, ".rwv-active", &format!("{PROJECT}\n"));
 
@@ -311,10 +272,10 @@ fn add_a_verb_and_lock(ws: &Workspace, verb: &str) {
         &format!("{verb}\n"),
     );
     regenerate(&ws.managed_repo);
-    git(&["add", "."], &ws.managed_repo);
-    git(
-        &["commit", "-m", &format!("docs: document `{verb}`")],
+    common::git_in(&ws.managed_repo, &["add", "."]);
+    common::git_in(
         &ws.managed_repo,
+        &["commit", "-m", &format!("docs: document `{verb}`")],
     );
     rwv()
         .args(["lock", "--commit"])
@@ -406,10 +367,10 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
          merged sources describe. Got:\n{regenerated}"
     );
 
-    git(&["add", "docs/"], &ww.managed_repo);
-    git(
-        &["commit", "-m", "docs: regenerate after the land"],
+    common::git_in(&ww.managed_repo, &["add", "docs/"]);
+    common::git_in(
         &ww.managed_repo,
+        &["commit", "-m", "docs: regenerate after the land"],
     );
     drift_gate(&ww.managed_repo).expect("the committed regen is what clears the gate");
 }
@@ -445,9 +406,9 @@ fn the_same_land_conflict_without_the_declaration_stops_the_sync() {
         "an undeclared conflict must leave the land where an operator can act \
          on it.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let conflicted = git_out(
-        &["diff", "--name-only", "--diff-filter=U"],
+    let conflicted = common::git_in(
         &ww.managed_repo,
+        &["diff", "--name-only", "--diff-filter=U"],
     );
     assert!(
         conflicted.contains(ARTIFACT),
@@ -477,10 +438,10 @@ fn the_templates_the_generator_reads_stay_authored() {
             &format!("{TEMPLATES}/land.md.tmpl"),
             prose,
         );
-        git(&["add", "."], &side.managed_repo);
-        git(
-            &["commit", "-m", "docs: rewrite the `land` page"],
+        common::git_in(&side.managed_repo, &["add", "."]);
+        common::git_in(
             &side.managed_repo,
+            &["commit", "-m", "docs: rewrite the `land` page"],
         );
         rwv()
             .args(["lock", "--commit"])
@@ -495,9 +456,9 @@ fn the_templates_the_generator_reads_stay_authored() {
         .assert()
         .failure();
 
-    let conflicted = git_out(
-        &["diff", "--name-only", "--diff-filter=U"],
+    let conflicted = common::git_in(
         &ww.managed_repo,
+        &["diff", "--name-only", "--diff-filter=U"],
     );
     assert!(
         conflicted.contains(&format!("{TEMPLATES}/land.md.tmpl")),
@@ -569,7 +530,8 @@ fn land_after_both_sides_regenerate(tmp: &Path, json: bool) -> (String, String) 
          away. Without that this asserts a report about nothing."
     );
     assert!(
-        !git_out(&["log", "-1", "--name-only", "--format="], &ww.managed_repo).contains(ARTIFACT),
+        !common::git_in(&ww.managed_repo, &["log", "-1", "--name-only", "--format="])
+            .contains(ARTIFACT),
         "fixture precondition: the discard must be invisible in the landed \
          commit — that invisibility is the whole reason the report has to exist"
     );
@@ -638,8 +600,8 @@ fn a_land_that_did_not_touch_the_artifact_reports_nothing() {
     add_a_verb_and_lock(&primary, "sync");
 
     write(&ww.managed_repo, "NOTES.md", "unrelated\n");
-    git(&["add", "."], &ww.managed_repo);
-    git(&["commit", "-m", "docs: notes"], &ww.managed_repo);
+    common::git_in(&ww.managed_repo, &["add", "."]);
+    common::git_in(&ww.managed_repo, &["commit", "-m", "docs: notes"]);
     rwv()
         .args(["lock", "--commit"])
         .current_dir(&ww.root)

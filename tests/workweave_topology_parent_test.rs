@@ -21,41 +21,6 @@ mod common;
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -66,13 +31,13 @@ const PROJECT: &str = "app";
 /// Init a git repo at `path` with one commit on `main`. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Stage and commit `filename` (relative to `repo`). Returns new HEAD SHA.
@@ -82,9 +47,9 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 struct MainWorkspace {
@@ -127,11 +92,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -618,7 +583,7 @@ fn status_json_parent_correct_for_stacked_parent() {
     );
 
     // The parent tip resolves to wwa's lib HEAD.
-    let expected_tip = git_out(&["rev-parse", "HEAD"], &wwa.manifest_repo);
+    let expected_tip = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         parent["tip"].as_str().unwrap(),
         expected_tip,
@@ -732,7 +697,7 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
     // diff_base must be the merge-base, i.e. wwa's lib tip AT FORK TIME (before
     // the advance), which equals the primary lib HEAD wwa forked from.
     let diff_base = dlib["diff_base"].as_str().unwrap();
-    let fork_point = git_out(&["rev-parse", "HEAD"], &main.manifest_repo);
+    let fork_point = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         diff_base, fork_point,
         "diff base should be the merge-base (fork point), not the advanced parent tip"
@@ -1005,12 +970,12 @@ fn bare_sync_to_follows_recorded_stacked_parent() {
         .assert()
         .success();
 
-    let wwa_lib_head = git_out(&["rev-parse", "HEAD"], &wwa.manifest_repo);
+    let wwa_lib_head = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         wwa_lib_head, wwb_sha,
         "bare sync-to must land on the recorded parent wwa, not primary"
     );
-    let primary_lib_head = git_out(&["rev-parse", "HEAD"], &main.manifest_repo);
+    let primary_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
     assert_ne!(
         primary_lib_head, wwb_sha,
         "primary must not advance — bare sync-to targets only the immediate recorded parent"

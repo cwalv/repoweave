@@ -303,16 +303,6 @@ fn the_orientation_listing_names_what_the_walk_enumerates() {
 // The P1 mechanism, driven end to end
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git().args(args).current_dir(dir).output().unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// A weave whose only project is three segments deep, with one workweave
 /// created in it the ordinary way.
 fn make_deep_project_weave(tmp: &Path) -> PathBuf {
@@ -325,11 +315,11 @@ fn make_deep_project_weave(tmp: &Path) -> PathBuf {
         .unwrap();
 
     let project_dir = ws.join("projects").join("a").join("b").join("c");
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "t@t"], &project_dir);
-    git(&["config", "user.name", "T"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "initial"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "t@t"]);
+    common::git_in(&project_dir, &["config", "user.name", "T"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     let created = common::rwv()
         .args(["workweave", "a/b/c", "create", "wtest"])

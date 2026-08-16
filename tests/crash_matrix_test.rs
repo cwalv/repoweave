@@ -111,41 +111,6 @@ fn rwv() -> AssertCommand {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {:?} failed in {}:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
-}
-
 fn ref_exists(repo: &Path, refname: &str) -> bool {
     common::git()
         .args(["rev-parse", "--verify", refname])
@@ -190,14 +155,14 @@ struct Workspace {
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-q", "-b", "main"], path);
-    git(&["config", "user.email", "t@example.com"], path);
-    git(&["config", "user.name", "Test"], path);
-    git(&["config", "commit.gpgsign", "false"], path);
+    common::git_in(path, &["init", "-q", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "t@example.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    common::git_in(path, &["config", "commit.gpgsign", "false"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "README.md"], path);
-    git(&["commit", "-m", "init"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "README.md"]);
+    common::git_in(path, &["commit", "-m", "init"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path) {
@@ -235,11 +200,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     .unwrap();
     write_manifest(&project_dir);
     write_lock_at(&project_dir, &sha);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -261,7 +226,8 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -269,11 +235,11 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/main",
         ],
-        &primary.server_dir,
     );
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -281,7 +247,6 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/project",
         ],
-        &primary.project_dir,
     );
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -369,17 +334,17 @@ fn plant_lease(workspace: &Path, owner: &Path, id: &str) {
 }
 
 fn plant_savepoint(repo: &Path, op_id: &str) {
-    let head = git_out(&["rev-parse", "HEAD"], repo);
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &head],
+    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
+    common::git_in(
         repo,
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &head],
     );
 }
 
 fn plant_savepoint_at(repo: &Path, op_id: &str, sha: &str) {
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
+    common::git_in(
         repo,
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), sha],
     );
 }
 
@@ -398,9 +363,9 @@ fn target_op_id(op_id: &str) -> String {
 /// Advance a repo by one commit; return the new tip.
 fn advance_one(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 /// Sync-to setup with ww (owner) ahead of primary (target) by one commit in
@@ -416,12 +381,12 @@ fn make_ww_ahead_sync_to(parent: &Path) -> (Workspace, Workspace, String, String
 
     // Update ww's lock to pin ww's server tip, commit.
     write_lock_at(&ww.project_dir, &ww_server_tip);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(
-        &["commit", "-m", "lock: pin ww server tip"],
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &ww.project_dir,
+        &["commit", "-m", "lock: pin ww server tip"],
     );
-    let ww_project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     (primary, ww, ww_server_tip, ww_project_tip)
 }
@@ -516,12 +481,12 @@ fn assert_plain_sync_continued_clean(
         "[cell {cell_name}] no lease should exist after plain sync"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         expected_server_tip,
         "[cell {cell_name}] ww's server tip must equal the real pre-op tip"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         expected_project_tip,
         "[cell {cell_name}] ww's project tip must equal the real pre-op tip"
     );
@@ -556,7 +521,7 @@ fn assert_sync_to_continued_clean(
         "[cell {cell_name}] lease must be cleared after sync-to --continue"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         expected_server_tip,
         "[cell {cell_name}] target's server tip must equal owner's converged server tip"
     );
@@ -580,12 +545,12 @@ fn assert_sync_to_aborted_clean(
         "[cell {cell_name}] target lease must be cleared by abort"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "[cell {cell_name}] abort must restore ww's server tip"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         primary_server_pre,
         "[cell {cell_name}] abort must restore primary's server tip"
     );
@@ -597,7 +562,7 @@ fn assert_plain_sync_aborted_clean(ww: &Workspace, ww_server_pre: &str, cell_nam
         "[cell {cell_name}] owner record must be cleared by abort"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "[cell {cell_name}] abort must restore ww's server tip"
     );
@@ -635,8 +600,8 @@ fn cell_e_replay_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
-    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     run_continue(Verb::Sync, &ww.root, "E(replay)/sync/owner");
     assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "E(replay)/sync/owner");
@@ -690,11 +655,11 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
     // The ww workspace's server worktree is on branch `ww/main` (see
     // `make_shared_workspaces`); we cannot `checkout main` because the
     // primary's worktree holds that branch.
-    let pre_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let pre_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     advance_one(&ww.server_dir, "conflict.txt", "main\n", "main: c-base");
-    git(&["checkout", "-b", "diverge", &pre_tip], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["checkout", "-b", "diverge", &pre_tip]);
     advance_one(&ww.server_dir, "conflict.txt", "diverge\n", "div: c");
-    git(&["checkout", "ww/main"], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["checkout", "ww/main"]);
     let _ = std::process::Command::new("git")
         .args(["rebase", "diverge"])
         .current_dir(&ww.server_dir)
@@ -727,7 +692,7 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
         "abort must cancel the mid-rebase"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         sha,
         "abort must restore ww's server to the pre-op savepoint"
     );
@@ -764,8 +729,8 @@ fn cell_j_replay_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
-    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     run_continue(Verb::Sync, &ww.root, "J(replay)/sync/owner");
     assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "J(replay)/sync/owner");
@@ -795,8 +760,8 @@ fn cell_e_relock_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
-    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     run_continue(Verb::Sync, &ww.root, "E(relock)/sync/owner");
     assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "E(relock)/sync/owner");
@@ -835,8 +800,8 @@ fn cell_m_relock_sync_continue_drives_to_clean_end_state() {
     plant_savepoint(&ww.project_dir, op_id);
     plant_savepoint(&ww.server_dir, op_id);
 
-    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     run_continue(Verb::Sync, &ww.root, "M(relock)/sync/owner");
     assert_plain_sync_continued_clean(&ww, &server_tip, &project_tip, "M(relock)/sync/owner");
@@ -853,8 +818,8 @@ fn cell_j_relock_sync_continue_drives_to_clean_end_state() {
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-j-relock-sync";
-    let project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    let server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let project_tip = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
+    let server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
 
     plant_owner_record(
         &ww.root,
@@ -957,8 +922,8 @@ fn cell_e_replay_sync_to_owner_abort() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let op_id = "crash-matrix-e-replay-syncto-owner-abort";
     plant_owner_record(
@@ -996,8 +961,8 @@ fn cell_e_replay_sync_to_lease_abort() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let op_id = "crash-matrix-e-replay-syncto-lease-abort";
     plant_owner_record(
@@ -1049,8 +1014,8 @@ fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
     let ww_alias = link.join("ww");
     let primary_alias = link.join("primary");
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     let op_id = "crash-matrix-e-replay-syncto-lease-abort-symlink";
     plant_owner_record(
@@ -1316,14 +1281,14 @@ fn cell_m_advance_target_sync_to_owner_continue() {
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     // Manually ff primary's server (modelling partial advance-target).
-    git(
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fetch_head = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
-    git(&["reset", "--hard", &fetch_head], &primary.server_dir);
+    let fetch_head = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &fetch_head]);
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         ww_server_tip,
         "fixture must ff primary's server to ww's tip"
     );
@@ -1358,7 +1323,8 @@ fn cell_m_advance_target_sync_to_owner_continue() {
     // manual ff. We can derive it from one of ww's commit parents but it's
     // easier to record at fixture-build time. Re-construct via reflog of
     // primary's server.
-    let pre_advance_primary_server = git_out(&["rev-parse", "HEAD@{1}"], &primary.server_dir);
+    let pre_advance_primary_server =
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD@{1}"]);
     plant_savepoint_at(&primary.server_dir, &target_id, &pre_advance_primary_server);
 
     run_continue(Verb::SyncTo, &ww.root, "M(advance-target)/sync-to/owner");
@@ -1383,19 +1349,19 @@ fn cell_j_advance_target_sync_to_owner_continue() {
 
     // Pre-advance primary's server AND project to ww's tips (modelling
     // advance-target complete but set_phase not yet committed).
-    git(
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fh = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
-    git(&["reset", "--hard", &fh], &primary.server_dir);
-    let pre_advance_primary_project = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-    git(
-        &["fetch", &ww.project_dir.to_string_lossy(), "HEAD"],
+    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &fh]);
+    let pre_advance_primary_project = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+    common::git_in(
         &primary.project_dir,
+        &["fetch", &ww.project_dir.to_string_lossy(), "HEAD"],
     );
-    let pfh = git_out(&["rev-parse", "FETCH_HEAD"], &primary.project_dir);
-    git(&["reset", "--hard", &pfh], &primary.project_dir);
+    let pfh = common::git_in(&primary.project_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.project_dir, &["reset", "--hard", &pfh]);
 
     let op_id = "crash-matrix-j-advance-syncto-owner";
     plant_owner_record(
@@ -1419,7 +1385,8 @@ fn cell_j_advance_target_sync_to_owner_continue() {
     let target_id = target_op_id(op_id);
     // Target savepoints record PRE-OP tips (before any advance). Use reflog
     // to recover the pre-advance tips.
-    let pre_advance_primary_server = git_out(&["rev-parse", "HEAD@{1}"], &primary.server_dir);
+    let pre_advance_primary_server =
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD@{1}"]);
     plant_savepoint_at(&primary.server_dir, &target_id, &pre_advance_primary_server);
     plant_savepoint_at(
         &primary.project_dir,
@@ -1447,17 +1414,17 @@ fn cell_m_advance_target_sync_to_owner_abort() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
-    let primary_project_pre = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
+    let primary_project_pre = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     // Partial advance: server only.
-    git(
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fh = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
-    git(&["reset", "--hard", &fh], &primary.server_dir);
+    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &fh]);
 
     let op_id = "crash-matrix-m-advance-syncto-owner-abort";
     plant_owner_record(
@@ -1479,7 +1446,7 @@ fn cell_m_advance_target_sync_to_owner_abort() {
     plant_savepoint_at(
         &ww.project_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        &common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
     let target_id = target_op_id(op_id);
@@ -1496,7 +1463,7 @@ fn cell_m_advance_target_sync_to_owner_abort() {
         "M(advance-target)/sync-to/owner/abort",
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
         primary_project_pre,
         "M(advance-target) abort must restore target project tip too"
     );
@@ -1509,16 +1476,16 @@ fn cell_m_advance_target_sync_to_lease_abort() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
-    let primary_project_pre = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
+    let primary_project_pre = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
-    git(
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fh = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
-    git(&["reset", "--hard", &fh], &primary.server_dir);
+    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &fh]);
 
     let op_id = "crash-matrix-m-advance-syncto-lease-abort";
     plant_owner_record(
@@ -1540,7 +1507,7 @@ fn cell_m_advance_target_sync_to_lease_abort() {
     plant_savepoint_at(
         &ww.project_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        &common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
     let target_id = target_op_id(op_id);
@@ -1570,15 +1537,15 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
 
     // Advance primary server to ww's tip (advance-target's effect).
-    git(
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fh = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
-    git(&["reset", "--hard", &fh], &primary.server_dir);
+    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &fh]);
     // Add a FOREIGN commit on top.
     let foreign_tip = advance_one(
         &primary.server_dir,
@@ -1607,18 +1574,18 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
     plant_savepoint_at(
         &ww.project_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        &common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(
         &ww.server_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        &common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
     );
     let target_id = target_op_id(op_id);
     plant_savepoint_at(
         &primary.project_dir,
         &target_id,
-        &git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        &common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
 
@@ -1630,7 +1597,7 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
 
     // Foreign tip unchanged.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         foreign_tip,
         "foreign-tip refusal must not reset"
     );
@@ -1678,7 +1645,8 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -1686,10 +1654,10 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
             "-b",
             "web-app--ww",
         ],
-        &primary.server_dir,
     );
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -1697,7 +1665,6 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
             "-b",
             "web-app--ww",
         ],
-        &primary.project_dir,
     );
     // Marker so the workweave resolves as such. No `.rwv-active` beside it:
     // the two files are mutually exclusive and resolution now refuses a root
@@ -1901,18 +1868,18 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
     let tmp = common::tempdir().unwrap();
     let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
-    let primary_project_pre = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_pre = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
+    let primary_project_pre = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     // Simulate a completed advance: bump ww's server and ff primary to match.
     let ww_server_post = advance_one(&ww.server_dir, "advance.txt", "advanced\n", "advance");
-    git(
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &primary.server_dir,
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fh = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
-    git(&["reset", "--hard", &fh], &primary.server_dir);
+    let fh = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&primary.server_dir, &["reset", "--hard", &fh]);
 
     let op_id = "crash-matrix-j-retire-syncto-owner-abort";
     plant_owner_record(
@@ -1932,7 +1899,7 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
     plant_savepoint_at(
         &ww.project_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        &common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
     let target_id = target_op_id(op_id);
@@ -1943,17 +1910,17 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
 
     // Both sides restored to pre-op.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "abort from retire must restore ww's server"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         primary_server_pre,
         "abort from retire must restore primary's server"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
         primary_project_pre,
         "abort from retire must restore primary's project"
     );
@@ -2061,9 +2028,9 @@ fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
     let op_id = "crash-matrix-discard-savepoint-fidelity";
     plant_savepoint(&ww.project_dir, op_id);
     assert_eq!(
-        git_out(
-            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
-            &ww.project_dir
+        common::git_in(
+            &ww.project_dir,
+            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")]
         ),
         pre_op_tip,
         "fixture: the savepoint must start out holding the pre-op tip"
@@ -2071,9 +2038,9 @@ fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
 
     // The crash: a previous replay run already performed the rewind, then
     // died before cleanup. The project repo is off the savepoint.
-    git(&["reset", "--hard", "HEAD~1"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["reset", "--hard", "HEAD~1"]);
     assert_ne!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         pre_op_tip,
         "fixture: the project repo must have moved off the savepoint, or this test \
          cannot tell a resolved savepoint from a re-created one"
@@ -2096,9 +2063,9 @@ fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
     run_continue(Verb::Sync, &ww.root, "discard-rewind/savepoint-fidelity");
 
     assert_eq!(
-        git_out(
-            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
-            &ww.project_dir
+        common::git_in(
+            &ww.project_dir,
+            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")]
         ),
         pre_op_tip,
         "the resumed rewind must leave the savepoint on the PRE-OP tip. A savepoint \
@@ -2154,10 +2121,10 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
         "primary: new source commit",
     );
     write_lock_at(&primary.project_dir, &new_primary_server_tip);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: pin new server tip"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: pin new server tip"],
     );
 
     // --continue should re-pin and converge to the NEW source tip.
@@ -2170,7 +2137,7 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
     // The re-pin tell: ww's server is at the NEW primary server tip, not
     // the original shared sha.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         new_primary_server_tip,
         "re-pinned --continue must converge ww's server to the NEW source tip"
     );
@@ -2218,10 +2185,10 @@ fn make_primary_ahead_sync(parent: &Path) -> (Workspace, Workspace, String, Stri
     );
     // Update primary's lock to pin the new server tip.
     write_lock_at(&primary.project_dir, &primary_server_tip);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: pin primary server advance"],
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "lock: pin primary server advance"],
     );
 
     (primary, ww, initial_sha, primary_server_tip)
@@ -2245,8 +2212,8 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha, primary_server_tip) = make_primary_ahead_sync(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     // ww's server starts at initial_sha; must equal ww_server_pre.
     assert_eq!(ww_server_pre, initial_sha);
 
@@ -2273,12 +2240,12 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
 
     // Both repos back at pre-op tips.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "[cell1] abort must leave ww's server at savepoint (Untouched)"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
         "[cell1] abort must leave ww's project at savepoint (Untouched)"
     );
@@ -2313,19 +2280,19 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
     let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha, primary_server_tip) = make_primary_ahead_sync(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(ww_server_pre, initial_sha);
 
     // Model the mid-fan-out state: server repo has been ff'd to primary_server_tip.
-    git(
-        &["fetch", &primary.server_dir.to_string_lossy(), "HEAD"],
+    common::git_in(
         &ww.server_dir,
+        &["fetch", &primary.server_dir.to_string_lossy(), "HEAD"],
     );
-    let fh = git_out(&["rev-parse", "FETCH_HEAD"], &ww.server_dir);
-    git(&["reset", "--hard", &fh], &ww.server_dir);
+    let fh = common::git_in(&ww.server_dir, &["rev-parse", "FETCH_HEAD"]);
+    common::git_in(&ww.server_dir, &["reset", "--hard", &fh]);
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         primary_server_tip,
         "fixture must advance ww's server to the ff-target"
     );
@@ -2355,13 +2322,13 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
 
     // Server restored to pre-op (RestoredFromIntent: head==advanced_tips entry).
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "[cell2] abort must restore ww's server to pre-op tip (intent attribution)"
     );
     // Project unchanged at pre-op (Untouched: head==savepoint).
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
         "[cell2] abort must leave ww's project at savepoint (Untouched)"
     );
@@ -2397,7 +2364,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 
     // The source project tip (what ww's project would rebase onto in sync):
     // primary's project is at its initial tip (unmodified in make_ww_ahead_sync_to).
-    let source_project_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let source_project_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     // ww's project currently has: init commit -> "lock: pin ww server tip".
     // Simulate Phase 1': rebase ww's project commits onto primary's project tip.
@@ -2412,7 +2379,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
     // create T1: cherry-pick ww's unique commit onto source_project_tip.
     // But ww's project worktree shares the object store with primary's project.
     // Simplest: just make a new commit on ww's project that represents T1.
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     // T1 is a "new" tip — it's what the rebase produced. We simulate it by
     // advancing ww's project by another commit (in reality the rebase would
     // replay the lock-pin commit; here we just need a new SHA the savepoint
@@ -2442,7 +2409,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
     plant_savepoint_at(
         &ww.server_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        &common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
@@ -2450,7 +2417,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 
     // Project restored to pre-op (head was T1, matched advanced_tips entry).
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
         "[cell3] abort must restore ww's project to pre-op (intent attribution of T1)"
     );
@@ -2483,7 +2450,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     // Simulate Phase 1' completing: advance project to T1.
     let t1 = advance_one(
@@ -2511,7 +2478,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
     plant_savepoint_at(
         &ww.server_dir,
         op_id,
-        &git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        &common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
     );
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
@@ -2535,7 +2502,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
 
     // Tip unchanged.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         t1,
         "[cell4] foreign-tip refusal must not reset — T1 must be preserved"
     );
@@ -2570,8 +2537,8 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     // Model the post-relock state: ww's project has been advanced to T2
     // (the lock-commit tip written at the end of relock).
@@ -2598,7 +2565,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
                 ("(project)".to_owned(), t2.clone()),
                 (
                     SERVER_PATH.to_owned(),
-                    git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+                    common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
                 ),
             ],
             ..Default::default()
@@ -2611,13 +2578,13 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 
     // Project restored to pre-op (RestoredFromConverged: head was T2).
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
         "[cell5] abort must restore ww's project to pre-op (converged_tips attribution of T2)"
     );
     // Server restored to pre-op.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "[cell5] abort must restore ww's server to pre-op"
     );
@@ -2648,8 +2615,8 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, primary_server_tip, _ww_project_tip) = make_primary_ahead_sync(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     // Advance ww's project to simulate it was ff'd or rebased by the op.
     // (In the incident scenario, the project was the op-advanced repo that
@@ -2665,9 +2632,9 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
     // operator commit on top — making the server genuinely foreign.
     // primary_server_tip is already accessible in the shared object store;
     // use reset --hard directly to move ww's server branch to that SHA.
-    git(&["reset", "--hard", &primary_server_tip], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["reset", "--hard", &primary_server_tip]);
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         primary_server_tip,
         "fixture must reach ff target before adding foreign commit"
     );
@@ -2724,13 +2691,13 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
 
     // Foreign server tip is unchanged.
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         foreign_server_tip,
         "[cell6] server foreign tip must NOT be reset"
     );
     // Op-advanced project IS restored (the regression proof).
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
         "[cell6] op-advanced project must be restored (was attributed via intent)"
     );
@@ -2761,8 +2728,8 @@ fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 
-    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(ww_server_pre, sha);
 
     let op_id = "crash-matrix-cell7-malformed";
@@ -2797,12 +2764,12 @@ fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
     );
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
         "[cell7] a record that fails to parse must not move any repo"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
         "[cell7] a record that fails to parse must not move any repo"
     );

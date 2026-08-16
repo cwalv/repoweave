@@ -24,34 +24,17 @@ use std::process;
 
 mod common;
 
-/// Run a git command in `dir`, silencing output.
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 /// Initialise a bare-minimum git repo (no commit needed — just enough for
 /// `scan_repos_on_disk` to recognise the directory as a git repo).
 fn git_init(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     // Add and commit so the repo is in a clean state.
     std::fs::write(path.join(".gitkeep"), "").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 #[test]
@@ -353,7 +336,7 @@ role = "owned"
     // -------------------------------------------------------------------------
     // Step 3: tag shared-types HEAD as v1.0.0
     // -------------------------------------------------------------------------
-    git(&["tag", "v1.0.0"], &shared_types_dir);
+    common::git_in(&shared_types_dir, &["tag", "v1.0.0"]);
 
     // -------------------------------------------------------------------------
     // Step 4: remove root package.json symlink (simulate switch to release mode)

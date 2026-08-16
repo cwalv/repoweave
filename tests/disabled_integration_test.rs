@@ -19,23 +19,12 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 fn rwv(args: &[&str], cwd: &Path) -> (bool, String) {

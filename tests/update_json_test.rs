@@ -20,30 +20,10 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git should be available");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        cwd.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_bare_repo_with_commit(bare: &Path) {
     let parent = bare.parent().expect("bare repo path needs a parent");
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -53,16 +33,16 @@ fn init_bare_repo_with_commit(bare: &Path) {
         ],
     );
     let seed = parent.join(format!("__seed_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 /// Push a new commit to a bare repo via a working clone. Returns the new HEAD SHA.
@@ -71,24 +51,24 @@ fn advance_bare_main(bare: &Path) -> String {
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
     let work = parent.join(format!("__adv_{stem}"));
     if !work.exists() {
-        git_run(
+        common::git_in(
             parent,
             &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
         );
-        git_run(&work, &["config", "user.email", "test@test.com"]);
-        git_run(&work, &["config", "user.name", "Test"]);
+        common::git_in(&work, &["config", "user.email", "test@test.com"]);
+        common::git_in(&work, &["config", "user.name", "Test"]);
     } else {
-        git_run(&work, &["pull", "origin", "main"]);
+        common::git_in(&work, &["pull", "origin", "main"]);
     }
     std::fs::write(
         work.join("advance.txt"),
         format!("advance-{stem}-{}", uuid_fragment()),
     )
     .unwrap();
-    git_run(&work, &["add", "."]);
-    git_run(&work, &["commit", "-m", &format!("advance {stem}")]);
-    git_run(&work, &["push", "origin", "main"]);
-    git_run(&work, &["rev-parse", "HEAD"])
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", &format!("advance {stem}")]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    common::git_in(&work, &["rev-parse", "HEAD"])
 }
 
 fn uuid_fragment() -> u64 {
@@ -123,7 +103,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         init_bare_repo_with_commit(&bare);
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        git_run(
+        common::git_in(
             workspace.parent().unwrap(),
             &[
                 "clone",
@@ -133,9 +113,9 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
                 canonical.to_str().unwrap(),
             ],
         );
-        git_run(&canonical, &["config", "user.email", "test@test.com"]);
-        git_run(&canonical, &["config", "user.name", "Test"]);
-        let head = git_run(&canonical, &["rev-parse", "HEAD"]);
+        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+        common::git_in(&canonical, &["config", "user.name", "Test"]);
+        let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
         manifest_shas.push(((*repo_path).to_string(), head));
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = common::file_url(&bare);
@@ -147,7 +127,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     let project_bare = tmp.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_dir = workspace.join("projects").join(project_name);
-    git_run(
+    common::git_in(
         workspace.parent().unwrap(),
         &[
             "clone",
@@ -155,8 +135,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
             project_dir.to_str().unwrap(),
         ],
     );
-    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
-    git_run(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
     // Round-trips through the real parser + `lock::write_lock`: a
@@ -173,8 +153,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 

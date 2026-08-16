@@ -16,46 +16,34 @@
 mod common;
 
 use std::path::Path;
-use std::process;
 
 fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 /// A bare repo with one commit on `main`, so it can be cloned or added.
 fn init_bare_repo_with_commit(bare: &Path) {
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
-    git(
+    common::git_in(
+        bare.parent().unwrap(),
         &[
             "init",
             "--bare",
             "--initial-branch=main",
             &bare.to_string_lossy(),
         ],
-        bare.parent().unwrap(),
     );
     let seed = bare.with_extension("seed");
-    git(
-        &["clone", &bare.to_string_lossy(), &seed.to_string_lossy()],
+    common::git_in(
         bare.parent().unwrap(),
+        &["clone", &bare.to_string_lossy(), &seed.to_string_lossy()],
     );
-    git(&["config", "user.email", "test@test.com"], &seed);
-    git(&["config", "user.name", "Test"], &seed);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git(&["add", "."], &seed);
-    git(&["commit", "-m", "initial"], &seed);
-    git(&["push", "origin", "main"], &seed);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 #[test]
@@ -71,10 +59,10 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
         .success();
 
     let project_dir = ws.join("projects/acme/console");
-    git(&["config", "user.email", "test@test.com"], &project_dir);
-    git(&["config", "user.name", "Test"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "initial"], &project_dir);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     let bare = tmp.path().join("remote.git");
     init_bare_repo_with_commit(&bare);
@@ -109,13 +97,13 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
     init_bare_repo_with_commit(&bare2);
     let canonical = ws.join("vendor/second");
     std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-    git(
+    common::git_in(
+        tmp.path(),
         &[
             "clone",
             &bare2.to_string_lossy(),
             &canonical.to_string_lossy(),
         ],
-        tmp.path(),
     );
 
     rwv()

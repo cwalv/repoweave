@@ -15,7 +15,6 @@
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::OnceLock;
 
 mod common;
@@ -125,33 +124,6 @@ fn surface(ws: &Path, project_name: &str, file: &str) {
     .unwrap();
 }
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    assert!(
-        output.status.success(),
-        "git {:?} in {} failed: {}",
-        args,
-        cwd.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
-fn git_run_silent(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {args:?} failed in {}", dir.display());
-}
-
 /// The single line of `output` carrying the member-incompatibility finding.
 /// Panics with the whole output when there is not exactly one — "reported
 /// twice" and "not reported" are both failures worth seeing in full.
@@ -212,9 +184,9 @@ fn make_doctor_workspace(
     std::fs::create_dir_all(&project_dir).unwrap();
 
     // Anchor every subprocess git call inside the sandbox.
-    git_run_silent(&["init", "--initial-branch=main"], &ws);
-    git_run_silent(&["config", "user.email", "test@test.com"], &ws);
-    git_run_silent(&["config", "user.name", "Test"], &ws);
+    common::git_in(&ws, &["init", "--initial-branch=main"]);
+    common::git_in(&ws, &["config", "user.email", "test@test.com"]);
+    common::git_in(&ws, &["config", "user.name", "Test"]);
 
     let repo_path = "github/org/module-a";
     let member_dir = ws.join(repo_path);
@@ -224,11 +196,11 @@ fn make_doctor_workspace(
         format!("module github.com/org/module-a\n\ngo {member_go_version}\n"),
     )
     .unwrap();
-    git_run_silent(&["init", "--initial-branch=main"], &member_dir);
-    git_run_silent(&["config", "user.email", "test@test.com"], &member_dir);
-    git_run_silent(&["config", "user.name", "Test"], &member_dir);
-    git_run_silent(&["add", "."], &member_dir);
-    git_run_silent(&["commit", "-m", "initial"], &member_dir);
+    common::git_in(&member_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&member_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&member_dir, &["config", "user.name", "Test"]);
+    common::git_in(&member_dir, &["add", "."]);
+    common::git_in(&member_dir, &["commit", "-m", "initial"]);
 
     let manifest = format!(
         "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nversion = \"main\"\nrole = \"owned\"\n"
@@ -242,11 +214,11 @@ fn make_doctor_workspace(
     std::fs::write(project_dir.join("go.work"), go_work).unwrap();
     surface(&ws, project_name, "go.work");
 
-    git_run_silent(&["init", "--initial-branch=main"], &project_dir);
-    git_run_silent(&["config", "user.email", "test@test.com"], &project_dir);
-    git_run_silent(&["config", "user.name", "Test"], &project_dir);
-    git_run_silent(&["add", "."], &project_dir);
-    git_run_silent(&["commit", "-m", "init"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "init"]);
 
     std::fs::write(ws.join(".rwv-active"), format!("{project_name}\n")).unwrap();
     ws
@@ -326,7 +298,7 @@ struct UpdateFixture {
 
 fn init_bare_with_go_mod(bare: &Path, go_version: &str) {
     let parent = bare.parent().unwrap();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -336,40 +308,40 @@ fn init_bare_with_go_mod(bare: &Path, go_version: &str) {
         ],
     );
     let seed = parent.join("__seed_member");
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(
         seed.join("go.mod"),
         format!("module github.com/org/module-a\n\ngo {go_version}\n"),
     )
     .unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 /// Push a new tip that raises the member's declared go version.
 fn advance_member_go_version(bare: &Path, go_version: &str) {
     let parent = bare.parent().unwrap();
     let work = parent.join("__adv_member");
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
     );
-    git_run(&work, &["config", "user.email", "test@test.com"]);
-    git_run(&work, &["config", "user.name", "Test"]);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(
         work.join("go.mod"),
         format!("module github.com/org/module-a\n\ngo {go_version}\n"),
     )
     .unwrap();
-    git_run(&work, &["add", "."]);
-    git_run(&work, &["commit", "-m", "raise go directive"]);
-    git_run(&work, &["push", "origin", "main"]);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "raise go directive"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 }
 
 /// Build a workspace pinned at `go_work_version` whose member starts at
@@ -389,7 +361,7 @@ fn build_update_fixture(
 
     let canonical = workspace.join(repo_path);
     std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-    git_run(
+    common::git_in(
         tmp.path(),
         &[
             "clone",
@@ -399,13 +371,13 @@ fn build_update_fixture(
             canonical.to_str().unwrap(),
         ],
     );
-    git_run(&canonical, &["config", "user.email", "test@test.com"]);
-    git_run(&canonical, &["config", "user.name", "Test"]);
-    let member_head = git_run(&canonical, &["rev-parse", "HEAD"]);
+    common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+    common::git_in(&canonical, &["config", "user.name", "Test"]);
+    let member_head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
 
     // Project repo carrying the manifest, lock and go.work.
     let project_bare = tmp.path().join("project.git");
-    git_run(
+    common::git_in(
         tmp.path(),
         &[
             "init",
@@ -415,7 +387,7 @@ fn build_update_fixture(
         ],
     );
     let project_seed = tmp.path().join("__seed_project");
-    git_run(
+    common::git_in(
         tmp.path(),
         &[
             "clone",
@@ -423,15 +395,15 @@ fn build_update_fixture(
             project_seed.to_str().unwrap(),
         ],
     );
-    git_run(&project_seed, &["config", "user.email", "test@test.com"]);
-    git_run(&project_seed, &["config", "user.name", "Test"]);
+    common::git_in(&project_seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_seed, &["config", "user.name", "Test"]);
     std::fs::write(project_seed.join("README"), "seed").unwrap();
-    git_run(&project_seed, &["add", "."]);
-    git_run(&project_seed, &["commit", "-m", "initial"]);
-    git_run(&project_seed, &["push", "origin", "main"]);
+    common::git_in(&project_seed, &["add", "."]);
+    common::git_in(&project_seed, &["commit", "-m", "initial"]);
+    common::git_in(&project_seed, &["push", "origin", "main"]);
 
     let project_dir = workspace.join("projects").join(project_name);
-    git_run(
+    common::git_in(
         tmp.path(),
         &[
             "clone",
@@ -439,8 +411,8 @@ fn build_update_fixture(
             project_dir.to_str().unwrap(),
         ],
     );
-    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
-    git_run(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     let bare_url = common::file_url(&member_bare);
     std::fs::write(
@@ -463,8 +435,8 @@ fn build_update_fixture(
         format!("go {go_work_version}\n\n// managed by repoweave\nuse (\n\t./{repo_path}\n)\n"),
     )
     .unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "manifest + lock + go.work"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock + go.work"]);
 
     surface(&workspace, project_name, "go.work");
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();

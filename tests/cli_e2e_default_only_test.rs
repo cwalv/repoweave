@@ -31,7 +31,6 @@ mod common;
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 // ---------------------------------------------------------------------------
 // Helpers shared by all port tests
@@ -71,46 +70,34 @@ fn make_workspace_with_project(
     // git repository happens to contain the test binary.  Without this,
     // `git init` (and similar commands run without an explicit --git-dir)
     // inherit git's upward discovery and could interact with the host repo.
-    git_run_silent(&["init", "--initial-branch=main"], &ws);
-    git_run_silent(&["config", "user.email", "test@test.com"], &ws);
-    git_run_silent(&["config", "user.name", "Test"], &ws);
+    common::git_in(&ws, &["init", "--initial-branch=main"]);
+    common::git_in(&ws, &["config", "user.email", "test@test.com"]);
+    common::git_in(&ws, &["config", "user.name", "Test"]);
 
     // Initialise project dir as a git repo so workspace resolution succeeds.
     // The project dir is a *nested* git repo (a git repo inside the ws git repo).
     // This mirrors the real-world layout where each project dir has its own
     // rwv.lock history, and is needed for rwv add / lock operations.
-    git_run_silent(&["init", "--initial-branch=main"], &project_dir);
-    git_run_silent(&["config", "user.email", "test@test.com"], &project_dir);
-    git_run_silent(&["config", "user.name", "Test"], &project_dir);
-    git_run_silent(&["add", "rwv.toml"], &project_dir);
-    git_run_silent(&["commit", "-m", "init"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "init"]);
 
     std::fs::write(ws.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 
     (ws, project_dir)
 }
 
-/// Run a git command silently, asserting success.
-fn git_run_silent(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {args:?} failed in {}", dir.display());
-}
-
 /// Create a minimal git repo at `dir` with a single file + commit.
 fn init_git_repo(dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
-    git_run_silent(&["init", "--initial-branch=main"], dir);
-    git_run_silent(&["config", "user.email", "test@test.com"], dir);
-    git_run_silent(&["config", "user.name", "Test"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
     std::fs::write(dir.join(".gitkeep"), "").unwrap();
-    git_run_silent(&["add", ".gitkeep"], dir);
-    git_run_silent(&["commit", "-m", "initial"], dir);
+    common::git_in(dir, &["add", ".gitkeep"]);
+    common::git_in(dir, &["commit", "-m", "initial"]);
 }
 
 // ===========================================================================

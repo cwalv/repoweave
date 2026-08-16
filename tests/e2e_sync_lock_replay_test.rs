@@ -45,45 +45,6 @@ mod common;
 // Git + rwv helpers (local to this test file)
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -91,13 +52,13 @@ fn rwv() -> AssertCommand {
 /// Init a git repo at `path` with one commit on `main`. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Stage and commit `filename` (relative to `repo`). Returns new HEAD SHA.
@@ -107,9 +68,9 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 // ---------------------------------------------------------------------------
@@ -172,11 +133,11 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     // Action verbs require `.rwv-active`.
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -247,7 +208,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
         .assert()
         .success();
 
-    let primary_lib_head = git_out(&["rev-parse", "main"], &primary.manifest_repo);
+    let primary_lib_head = common::git_in(&primary.manifest_repo, &["rev-parse", "main"]);
     assert_eq!(
         primary_lib_head, wa_lib_sha,
         "primary lib should be at WA's commit after first sync"
@@ -308,7 +269,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
         "primary lib should have wb.txt"
     );
     let primary_lock = std::fs::read_to_string(primary.project_dir.join("rwv.lock")).unwrap();
-    let final_head = git_out(&["rev-parse", "main"], &primary.manifest_repo);
+    let final_head = common::git_in(&primary.manifest_repo, &["rev-parse", "main"]);
     assert!(
         primary_lock.contains(&final_head),
         "primary lock should pin lib at final HEAD ({final_head}); lock:\n{primary_lock}"
@@ -413,7 +374,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
     assert!(primary.manifest_repo.join("wc.txt").exists());
 
     let primary_lock = std::fs::read_to_string(primary.project_dir.join("rwv.lock")).unwrap();
-    let final_head = git_out(&["rev-parse", "main"], &primary.manifest_repo);
+    let final_head = common::git_in(&primary.manifest_repo, &["rev-parse", "main"]);
     assert!(
         primary_lock.contains(&final_head),
         "primary lock should pin lib at final HEAD ({final_head}); lock:\n{primary_lock}"
@@ -465,8 +426,8 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git(&["add", "rwv.toml", "rwv.lock"], &project_dir);
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -519,7 +480,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
         .success();
 
     // Record WW's project HEAD before the failed sync attempt.
-    let ww_project_head_before = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_project_head_before = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
     // From WW: attempt rebase sync onto primary. Must fail before any git op.
     let assert = rwv()
@@ -545,7 +506,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     );
 
     // (b) WW's project HEAD must be unchanged — no commits were applied.
-    let ww_project_head_after = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let ww_project_head_after = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         ww_project_head_before, ww_project_head_after,
         "sync must not modify the project repo's HEAD on bail"
@@ -603,7 +564,7 @@ fn sync_ff_preserves_lock_only_commits() {
     let ww = create_workweave(&primary, &weaveroot, "ww");
 
     // Record primary's project tip before anything.
-    let primary_tip_before = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let primary_tip_before = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
 
     // WW: bump the manifest repo and lock. This produces exactly one lock-only
     // commit in the project repo.
@@ -611,8 +572,8 @@ fn sync_ff_preserves_lock_only_commits() {
     rwv_lock_commit(&ww.root);
 
     // Capture WW's lock commit SHA.
-    let ww_lock_commit_sha = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    let ww_project_log_count = git_out(&["rev-list", "--count", "HEAD"], &ww.project_dir);
+    let ww_lock_commit_sha = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
+    let ww_project_log_count = common::git_in(&ww.project_dir, &["rev-list", "--count", "HEAD"]);
 
     // From primary: sync WW → primary via ff (the default).
     rwv()
@@ -625,9 +586,9 @@ fn sync_ff_preserves_lock_only_commits() {
     // Primary's tip is that re-lock commit. WW's lock commit must appear as
     // its parent (or grandparent, depending on whether Phase 3 committed).
     // The key assertion: WW's lock-only commit SHA exists in primary's history.
-    let primary_log = git_out(
-        &["log", "--format=%H", &format!("{primary_tip_before}..HEAD")],
+    let primary_log = common::git_in(
         &primary.project_dir,
+        &["log", "--format=%H", &format!("{primary_tip_before}..HEAD")],
     );
     assert!(
         primary_log.contains(ww_lock_commit_sha.as_str()),
@@ -647,7 +608,7 @@ fn sync_ff_preserves_lock_only_commits() {
 
     // Primary's lock must pin the final lib HEAD.
     let primary_lock = std::fs::read_to_string(primary.project_dir.join("rwv.lock")).unwrap();
-    let lib_head = git_out(&["rev-parse", "main"], &primary.manifest_repo);
+    let lib_head = common::git_in(&primary.manifest_repo, &["rev-parse", "main"]);
     assert!(
         primary_lock.contains(&lib_head),
         "primary lock should pin lib at final HEAD ({lib_head}); lock:\n{primary_lock}"
@@ -773,13 +734,13 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git(
+    common::git_in(
+        &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
-        &project_dir,
     );
-    git(
-        &["commit", "-m", "lock: initial (legacy attrs)"],
+    common::git_in(
         &project_dir,
+        &["commit", "-m", "lock: initial (legacy attrs)"],
     );
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -881,13 +842,13 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git(
+    common::git_in(
+        &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
-        &project_dir,
     );
-    git(
-        &["commit", "-m", "lock: initial (both attrs lines)"],
+    common::git_in(
         &project_dir,
+        &["commit", "-m", "lock: initial (both attrs lines)"],
     );
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -965,7 +926,7 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
         .expect("rwv doctor --fix failed to spawn");
 
     for (label, dir) in [("primary", &primary.project_dir), ("ww", &ww.project_dir)] {
-        let committed_attrs = git_out(&["show", "HEAD:.gitattributes"], dir);
+        let committed_attrs = common::git_in(dir, &["show", "HEAD:.gitattributes"]);
         assert!(
             committed_attrs
                 .lines()
@@ -1016,10 +977,10 @@ fn sync_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory() {
         "rwv.lock merge=rwv-ours\nrwv.lock merge=ours\n",
     )
     .unwrap();
-    git(&["add", ".gitattributes"], &primary.project_dir);
-    git(
-        &["commit", "-m", "corrupt: both attrs lines"],
+    common::git_in(&primary.project_dir, &["add", ".gitattributes"]);
+    common::git_in(
         &primary.project_dir,
+        &["commit", "-m", "corrupt: both attrs lines"],
     );
 
     // Advance primary further via a sibling workweave, landed via ff (ff
@@ -1148,7 +1109,7 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     //    paths: shared.txt (the genuine non-lock conflict that strands the
     //    operator mid-rebase) and rwv.lock (the lock-only pick). --
     commit_file(&repo, "shared.txt", "base\n", "base: add shared.txt");
-    git(&["branch", "feature"], &repo);
+    common::git_in(&repo, &["branch", "feature"]);
 
     // main: bump the lock and shared.txt in one commit.
     let main_lock = lock_json(
@@ -1157,11 +1118,11 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     );
     std::fs::write(repo.join("rwv.lock"), &main_lock).unwrap();
     std::fs::write(repo.join("shared.txt"), "main version\n").unwrap();
-    git(&["add", "rwv.lock", "shared.txt"], &repo);
-    git(&["commit", "-m", "main: bump lock + shared"], &repo);
+    common::git_in(&repo, &["add", "rwv.lock", "shared.txt"]);
+    common::git_in(&repo, &["commit", "-m", "main: bump lock + shared"]);
 
     // feature: F1 = genuine non-lock conflict; F2 = lock-only pick.
-    git(&["checkout", "feature"], &repo);
+    common::git_in(&repo, &["checkout", "feature"]);
     commit_file(
         &repo,
         "shared.txt",
@@ -1173,9 +1134,9 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
         "2222222222222222222222222222222222222222",
     );
     std::fs::write(repo.join("rwv.lock"), &feat_lock).unwrap();
-    git(&["add", "rwv.lock"], &repo);
-    git(&["commit", "-m", "F2: lock-only bump"], &repo);
-    let feature_tip = git_out(&["rev-parse", "HEAD"], &repo);
+    common::git_in(&repo, &["add", "rwv.lock"]);
+    common::git_in(&repo, &["commit", "-m", "F2: lock-only bump"]);
+    let feature_tip = common::git_in(&repo, &["rev-parse", "HEAD"]);
 
     // Sanity: the driver config must be UNSET — nothing has planted yet
     // (make_primary writes files directly; no rwv verb has run).
@@ -1226,7 +1187,7 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     // Roll back to the pre-rebase state.
     bare_git_ok(&["rebase", "--abort"], &repo);
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &repo),
+        common::git_in(&repo, &["rev-parse", "HEAD"]),
         feature_tip,
         "abort must restore the feature tip"
     );
@@ -1467,7 +1428,7 @@ fn sync_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() {
         "merged: keep ww's take, acknowledge primary\n",
     )
     .unwrap();
-    git(&["add", "notes/shared.md"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "notes/shared.md"]);
 
     // Prove `rebase_continue` re-supplies the driver flags inline (not by
     // silently piggybacking on the durable plant) — remove the plant just
@@ -1622,7 +1583,7 @@ fn sync_continue_with_unstaged_resolution_bails_and_second_continue_succeeds() {
     );
 
     // Now stage the resolution — the second `--continue` must succeed.
-    git(&["add", "notes/shared.md"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "notes/shared.md"]);
     rwv()
         .args(["sync", "--continue"])
         .current_dir(&ww.root)

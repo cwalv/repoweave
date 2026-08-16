@@ -37,33 +37,13 @@ fn make_primary(parent: &Path) -> PathBuf {
     ws
 }
 
-/// Run `git <args>` in `dir`, panicking on failure.
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// Initialize a git repo at `path` with one commit so HEAD/main exist.
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// Write an `rwv.toml` with a single owned repo `github/acme/widget`.
@@ -227,7 +207,8 @@ fn wrong_parent_worktree_is_reported() {
     std::fs::create_dir_all(victim_ww.join("github/acme")).unwrap();
     write_marker(&victim_ww, &ws, "app", &ws);
     let victim_repo = victim_ww.join("github/acme/widget");
-    git(
+    common::git_in(
+        &rogue_repo,
         &[
             "worktree",
             "add",
@@ -235,7 +216,6 @@ fn wrong_parent_worktree_is_reported() {
             "victim/main",
             victim_repo.to_str().unwrap(),
         ],
-        &rogue_repo,
     );
 
     let violations = doctor_violations(&ws);
@@ -271,7 +251,8 @@ fn weave_clone_is_worktree_is_reported() {
     let canonical_slot = ws.join("github/acme/widget");
     // The parent of the slot must exist (it does — `make_primary` makes
     // `github/acme`), but the slot itself must not.
-    git(
+    common::git_in(
+        &outsider,
         &[
             "worktree",
             "add",
@@ -279,7 +260,6 @@ fn weave_clone_is_worktree_is_reported() {
             "canonical/main",
             canonical_slot.to_str().unwrap(),
         ],
-        &outsider,
     );
 
     let violations = doctor_violations(&ws);
@@ -311,7 +291,8 @@ fn healthy_canonical_plus_linked_workweave_is_clean() {
     // Link the workweave's checkout into the canonical store via
     // `git worktree add` — the I2 invariant.
     let ww_repo = ww_dir.join("github/acme/widget");
-    git(
+    common::git_in(
+        &canon,
         &[
             "worktree",
             "add",
@@ -319,7 +300,6 @@ fn healthy_canonical_plus_linked_workweave_is_clean() {
             "healthy/main",
             ww_repo.to_str().unwrap(),
         ],
-        &canon,
     );
 
     let violations = doctor_violations(&ws);

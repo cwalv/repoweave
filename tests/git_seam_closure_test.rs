@@ -17,7 +17,6 @@
 mod common;
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 // ---------------------------------------------------------------------------
 // The argv half: `git_command` stays private to the seam
@@ -62,33 +61,19 @@ fn git_command_is_private_to_the_seam() {
 // The layout half: the shared derivation still detects a deleted store
 // ---------------------------------------------------------------------------
 
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// A canonical clone with one commit, plus a linked worktree beside it.
 fn canonical_with_worktree(root: &Path) -> (PathBuf, PathBuf) {
     let canonical = root.join("canonical");
     std::fs::create_dir_all(&canonical).unwrap();
-    git(&canonical, &["init", "-q"]);
-    git(&canonical, &["config", "user.email", "t@example.invalid"]);
-    git(&canonical, &["config", "user.name", "t"]);
+    common::git_in(&canonical, &["init", "-q"]);
+    common::git_in(&canonical, &["config", "user.email", "t@example.invalid"]);
+    common::git_in(&canonical, &["config", "user.name", "t"]);
     std::fs::write(canonical.join("f.txt"), "x\n").unwrap();
-    git(&canonical, &["add", "f.txt"]);
-    git(&canonical, &["commit", "-qm", "init"]);
+    common::git_in(&canonical, &["add", "f.txt"]);
+    common::git_in(&canonical, &["commit", "-qm", "init"]);
 
     let worktree = root.join("linked");
-    git(
+    common::git_in(
         &canonical,
         &["worktree", "add", "-q", worktree.to_str().unwrap()],
     );

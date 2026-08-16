@@ -24,52 +24,13 @@ mod common;
 // Git helpers (mirroring e2e_sync_abort_test.rs pattern)
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
@@ -77,9 +38,9 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -145,11 +106,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -175,7 +136,8 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -183,11 +145,11 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/main",
         ],
-        &primary.server_dir,
     );
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -195,7 +157,6 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "-b",
             "ww/project",
         ],
-        &primary.project_dir,
     );
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -232,8 +193,8 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
         "primary: shared.txt",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary C2"]);
 
     let c_ww = make_commit(
         &ww.server_dir,
@@ -242,8 +203,8 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
         "ww: shared.txt (conflicts with primary)",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     // First sync parks mid-replay on the real conflict.
     rwv()
@@ -359,8 +320,8 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         "primary: add shared.txt",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // ww: make a conflicting commit on the same file (plus lock update).
     let c_ww = make_commit(
@@ -370,8 +331,8 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         "ww: add shared.txt (conflicts with primary)",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     // Attempt rebase sync from ww → primary. Phase 2 (server repo) will conflict.
     // --discard-local-commits bypasses the Phase 1 ancestor precondition
@@ -402,7 +363,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
     // via the gitlink transparently when invoked with `ww.server_dir` as its
     // working directory, so no path probing is needed.
     std::fs::write(ww.server_dir.join("shared.txt"), "resolved version\n").unwrap();
-    git(&["add", "shared.txt"], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["add", "shared.txt"]);
     let continue_rebase = common::git()
         .args(["rebase", "--continue"])
         .current_dir(&ww.server_dir)
@@ -454,8 +415,8 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let landed = make_commit(&ww.server_dir, "advance.txt", "advance\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
     std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
-    git(&["add", "rwv.lock", "notes.txt"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock", "notes.txt"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // The target holds an untracked file where the incoming project commit
     // writes one, so the manifest repo lands but the project repo blocks —
@@ -472,7 +433,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
         "the parked op must leave the owner record in CWD"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         landed,
         "the parked op must have landed the target's manifest repo already"
     );
@@ -715,8 +676,8 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     let landed = make_commit(&ww.server_dir, "advance.txt", "advance\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
     std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
-    git(&["add", "rwv.lock", "notes.txt"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock", "notes.txt"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
     // The target holds an untracked file where the incoming project commit
     // writes one, so the manifest repo lands but the project repo blocks —
@@ -760,23 +721,23 @@ fn abort_restores_repos_and_removes_op_state() {
 
     // Plant an op-state file in ww's workspace (simulate an in-progress sync).
     let op_id = "test-abort-opstate-5678";
-    let ww_project_sha = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    git(
+    let ww_project_sha = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
+    common::git_in(
+        &ww.project_dir,
         &[
             "update-ref",
             &format!("refs/rwv/pre-op/{op_id}"),
             &ww_project_sha,
         ],
-        &ww.project_dir,
     );
-    let ww_server_sha = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    git(
+    let ww_server_sha = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    common::git_in(
+        &primary.server_dir,
         &[
             "update-ref",
             &format!("refs/rwv/pre-op/{op_id}"),
             &ww_server_sha,
         ],
-        &primary.server_dir,
     );
 
     let op_state_json = format!(
@@ -798,7 +759,7 @@ fn abort_restores_repos_and_removes_op_state() {
     );
 
     // Repos should be at their pre-op state.
-    let post_abort_project = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let post_abort_project = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         post_abort_project, ww_project_sha,
         "project repo should be restored to pre-op SHA after abort"
@@ -971,7 +932,7 @@ fn op_guard_precedes_lock_relation_classification() {
     // the server repo without relocking, then rewrite history so the lock's
     // pinned SHA is neither ancestor nor descendant of HEAD (diverged).
     make_commit(&ww.server_dir, "a.txt", "a\n", "ww: A");
-    git(&["checkout", "-b", "throwaway"], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["checkout", "-b", "throwaway"]);
     make_commit(&ww.server_dir, "b.txt", "b\n", "ww: B (diverged)");
 
     // Plant an in-flight op on ww at the same time.
@@ -1031,8 +992,8 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
         "primary: add shared.txt",
     );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     let c_ww = make_commit(
         &ww.server_dir,
@@ -1041,8 +1002,8 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
         "ww: add shared.txt (conflicts with primary)",
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
     rwv()
         .args([
@@ -1069,7 +1030,7 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
     // git resolves that transparently when invoked with `ww.server_dir` as
     // its working directory.
     std::fs::write(ww.server_dir.join("shared.txt"), "resolved version\n").unwrap();
-    git(&["add", "shared.txt"], &ww.server_dir);
+    common::git_in(&ww.server_dir, &["add", "shared.txt"]);
     let continue_out = common::git()
         .args(["rebase", "--continue"])
         .current_dir(&ww.server_dir)

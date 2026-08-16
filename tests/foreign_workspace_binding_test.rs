@@ -20,55 +20,20 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
@@ -104,8 +69,8 @@ fn make_project(root: &Path, name: &str, repos: &[(&str, &str)], locked: &[(&str
     std::fs::write(dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
     write_manifest(&dir, repos);
     write_lock(&dir, locked);
-    git(&["add", ".gitattributes", "rwv.toml", "rwv.lock"], &dir);
-    git(&["commit", "-m", format!("{name}: initial").as_str()], &dir);
+    common::git_in(&dir, &["add", ".gitattributes", "rwv.toml", "rwv.lock"]);
+    common::git_in(&dir, &["commit", "-m", format!("{name}: initial").as_str()]);
 }
 
 struct Weave {
@@ -137,7 +102,8 @@ fn make_pair(parent: &Path) -> (Weave, Weave) {
     std::fs::create_dir_all(dest.join("projects")).unwrap();
 
     let dest_server = dest.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &source_server,
         &[
             "worktree",
             "add",
@@ -145,10 +111,10 @@ fn make_pair(parent: &Path) -> (Weave, Weave) {
             "-b",
             "dest/server",
         ],
-        &source_server,
     );
     let dest_project = dest.join(format!("projects/{SYNCED_PROJECT}"));
-    git(
+    common::git_in(
+        source.join(format!("projects/{SYNCED_PROJECT}")),
         &[
             "worktree",
             "add",
@@ -156,7 +122,6 @@ fn make_pair(parent: &Path) -> (Weave, Weave) {
             "-b",
             "dest/project",
         ],
-        &source.join(format!("projects/{SYNCED_PROJECT}")),
     );
     std::fs::write(dest.join(".rwv-active"), format!("{SYNCED_PROJECT}\n")).unwrap();
 
@@ -187,10 +152,10 @@ fn a_pull_reads_the_source_under_the_invocations_project() {
     // The source advances the project being synced.
     let advanced = make_commit(&source.server_dir, "src.txt", "source\n", "source: advance");
     write_lock(&source.project_dir, &[(SERVER_PATH, SERVER_URL, &advanced)]);
-    git(&["add", "rwv.lock"], &source.project_dir);
-    git(
-        &["commit", "-m", "lock: source advance"],
+    common::git_in(&source.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
         &source.project_dir,
+        &["commit", "-m", "lock: source advance"],
     );
 
     // ...and its operator then activates the sibling project. Nothing about
@@ -201,7 +166,7 @@ fn a_pull_reads_the_source_under_the_invocations_project() {
     )
     .unwrap();
 
-    let before = git_out(&["rev-parse", "HEAD"], &dest.server_dir);
+    let before = common::git_in(&dest.server_dir, &["rev-parse", "HEAD"]);
     assert_ne!(
         before, advanced,
         "the fixture must leave the destination behind the source"
@@ -214,7 +179,7 @@ fn a_pull_reads_the_source_under_the_invocations_project() {
         .success();
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &dest.server_dir),
+        common::git_in(&dest.server_dir, &["rev-parse", "HEAD"]),
         advanced,
         "the pull must read the source's `{SYNCED_PROJECT}` lock; binding the \
          source to its own `.rwv-active` reads a sibling project's lock instead, \

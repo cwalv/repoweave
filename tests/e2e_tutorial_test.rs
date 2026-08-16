@@ -47,17 +47,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn run_git(args: &[&str], cwd: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(status.success(), "git {:?} failed in {:?}", args, cwd);
-}
-
 fn init_bare_repo(path: &Path) {
     let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
@@ -75,12 +64,12 @@ fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
     init_bare_repo(path);
     let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("w");
-    run_git(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
-    run_git(&["config", "user.email", "t@t.com"], &work);
-    run_git(&["config", "user.name", "T"], &work);
+    common::git_in(&work, &["config", "user.email", "t@t.com"]);
+    common::git_in(&work, &["config", "user.name", "T"]);
     std::fs::write(
         work.join("Cargo.toml"),
         format!("[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
@@ -88,9 +77,9 @@ fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
     .unwrap();
     std::fs::create_dir_all(work.join("src")).unwrap();
     std::fs::write(work.join("src/lib.rs"), "// initial\n").unwrap();
-    run_git(&["add", "."], &work);
-    run_git(&["commit", "-m", "initial"], &work);
-    run_git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 }
 
 /// Project source: bare repo whose default-branch tip carries an
@@ -112,16 +101,16 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
     let project_bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&project_bare);
     let work = tmp.join(format!("{name}_work"));
-    run_git(
+    common::git_in(
+        tmp,
         &[
             "clone",
             &project_bare.to_string_lossy(),
             &work.to_string_lossy(),
         ],
-        tmp,
     );
-    run_git(&["config", "user.email", "t@t.com"], &work);
-    run_git(&["config", "user.name", "T"], &work);
+    common::git_in(&work, &["config", "user.email", "t@t.com"]);
+    common::git_in(&work, &["config", "user.name", "T"]);
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
@@ -146,9 +135,9 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).unwrap();
             }
-            run_git(
-                &["clone", url, &dest.to_string_lossy()],
+            common::git_in(
                 staging.as_path().parent().unwrap_or(tmp),
+                &["clone", url, &dest.to_string_lossy()],
             );
         }
         // Drive intent-mode activation against the staging workspace. We
@@ -184,12 +173,12 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         }
     }
 
-    run_git(&["add", "-A"], &work);
-    run_git(
-        &["commit", "-m", "manifest + intent-authored content"],
+    common::git_in(&work, &["add", "-A"]);
+    common::git_in(
         &work,
+        &["commit", "-m", "manifest + intent-authored content"],
     );
-    run_git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["push", "origin", "main"]);
     common::file_url(&project_bare)
 }
 
@@ -210,16 +199,16 @@ fn copy_dir_recursive(src: &Path, dst: &Path) {
 /// Advance a bare repo's `main` by one commit. Returns the new tip SHA.
 fn advance_bare(tmp: &Path, bare: &Path, label: &str) -> String {
     let work = tmp.join(format!("{label}-work"));
-    run_git(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp,
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
-    run_git(&["config", "user.email", "t@t.com"], &work);
-    run_git(&["config", "user.name", "T"], &work);
+    common::git_in(&work, &["config", "user.email", "t@t.com"]);
+    common::git_in(&work, &["config", "user.name", "T"]);
     std::fs::write(work.join("advance.txt"), label).unwrap();
-    run_git(&["add", "."], &work);
-    run_git(&["commit", "-m", label], &work);
-    run_git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", label]);
+    common::git_in(&work, &["push", "origin", "main"]);
     let out = common::git()
         .args(["rev-parse", "main"])
         .current_dir(bare)
@@ -452,11 +441,11 @@ fn tutorial_step3_first_edit_lands_on_disk() {
     let pre_sha = head_sha(&repo_dir);
 
     // Make a real commit in the local clone.
-    run_git(&["config", "user.email", "t@t.com"], &repo_dir);
-    run_git(&["config", "user.name", "T"], &repo_dir);
+    common::git_in(&repo_dir, &["config", "user.email", "t@t.com"]);
+    common::git_in(&repo_dir, &["config", "user.name", "T"]);
     std::fs::write(repo_dir.join("EDIT.md"), "tutorial step 3\n").unwrap();
-    run_git(&["add", "EDIT.md"], &repo_dir);
-    run_git(&["commit", "-m", "feat: add EDIT.md"], &repo_dir);
+    common::git_in(&repo_dir, &["add", "EDIT.md"]);
+    common::git_in(&repo_dir, &["commit", "-m", "feat: add EDIT.md"]);
 
     let post_sha = head_sha(&repo_dir);
     assert_ne!(post_sha, pre_sha, "commit should have advanced HEAD");
@@ -546,11 +535,11 @@ fn tutorial_full_path() {
 
     // 3. edit
     let repo_a = fx.workspace.join(fx.repo_a_path);
-    run_git(&["config", "user.email", "t@t.com"], &repo_a);
-    run_git(&["config", "user.name", "T"], &repo_a);
+    common::git_in(&repo_a, &["config", "user.email", "t@t.com"]);
+    common::git_in(&repo_a, &["config", "user.name", "T"]);
     std::fs::write(repo_a.join("README.tutorial"), "hi\n").unwrap();
-    run_git(&["add", "README.tutorial"], &repo_a);
-    run_git(&["commit", "-m", "step 3: edit"], &repo_a);
+    common::git_in(&repo_a, &["add", "README.tutorial"]);
+    common::git_in(&repo_a, &["commit", "-m", "step 3: edit"]);
     let post_edit_a = head_sha(&repo_a);
 
     // 4. lock — snapshot, then re-run for idempotency

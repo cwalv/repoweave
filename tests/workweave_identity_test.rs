@@ -24,17 +24,6 @@ mod common;
 
 const REPO: &str = "github/org/owned";
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 /// A primary weave holding one project with one owned repo.
 fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     let ws = tmp.join("ws");
@@ -42,12 +31,12 @@ fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
 
     let repo = ws.join(REPO);
     std::fs::create_dir_all(&repo).unwrap();
-    git(&["init", "--initial-branch=main"], &repo);
-    git(&["config", "user.email", "test@test.com"], &repo);
-    git(&["config", "user.name", "Test"], &repo);
+    common::git_in(&repo, &["init", "--initial-branch=main"]);
+    common::git_in(&repo, &["config", "user.email", "test@test.com"]);
+    common::git_in(&repo, &["config", "user.name", "Test"]);
     std::fs::write(repo.join("README"), "init").unwrap();
-    git(&["add", "."], &repo);
-    git(&["commit", "-m", "initial"], &repo);
+    common::git_in(&repo, &["add", "."]);
+    common::git_in(&repo, &["commit", "-m", "initial"]);
 
     let project_dir = ws.join("projects").join(project);
     std::fs::create_dir_all(&project_dir).unwrap();

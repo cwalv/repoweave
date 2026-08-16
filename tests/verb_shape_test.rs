@@ -14,22 +14,6 @@ fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
 
-fn git_run(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed");
-    assert!(
-        status.success(),
-        "git {:?} failed in {}",
-        args,
-        dir.display()
-    );
-}
-
 fn init_bare(path: &Path) {
     let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
@@ -45,16 +29,16 @@ fn init_bare_with_commit(path: &Path) -> String {
     init_bare(path);
     let tmp = common::tempdir().unwrap();
     let work = tmp.path().join("work");
-    git_run(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
-    git_run(&["config", "user.email", "test@test.com"], &work);
-    git_run(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("README"), "init\n").unwrap();
-    git_run(&["add", "README"], &work);
-    git_run(&["commit", "-m", "initial"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "README"]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
     let out = common::git()
         .args(["rev-parse", "HEAD"])
         .current_dir(&work)
@@ -76,25 +60,25 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     init_bare(&project_bare);
 
     let work = tmp.join("work");
-    git_run(
+    common::git_in(
+        tmp,
         &[
             "clone",
             &project_bare.to_string_lossy(),
             &work.to_string_lossy(),
         ],
-        tmp,
     );
-    git_run(&["config", "user.email", "test@test.com"], &work);
-    git_run(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
 
     let dep_url = common::file_url(&dep_bare);
     let manifest_toml = format!(
         "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
-    git_run(&["add", "rwv.toml"], &work);
-    git_run(&["commit", "-m", "manifest"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "rwv.toml"]);
+    common::git_in(&work, &["commit", "-m", "manifest"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 
     let source = common::file_url(&project_bare);
     rwv()
@@ -121,20 +105,20 @@ fn update_advances_dep_to_branch_head_and_relocks() {
 
     // Push a new commit to the dep's bare remote.
     let work = tmp.path().join("dep-work");
-    git_run(
+    common::git_in(
+        tmp.path(),
         &[
             "clone",
             &dep_bare.to_string_lossy(),
             &work.to_string_lossy(),
         ],
-        tmp.path(),
     );
-    git_run(&["config", "user.email", "test@test.com"], &work);
-    git_run(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("advance.txt"), "v2\n").unwrap();
-    git_run(&["add", "advance.txt"], &work);
-    git_run(&["commit", "-m", "v2"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "advance.txt"]);
+    common::git_in(&work, &["commit", "-m", "v2"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 
     // Find the new SHA on the bare repo.
     let new_sha = String::from_utf8(
@@ -236,9 +220,9 @@ fn lock_does_not_write_ecosystem_files() {
 
     let server = workspace.join("github/acme/server");
     std::fs::create_dir_all(&server).unwrap();
-    git_run(&["init", "--initial-branch=main"], &server);
-    git_run(&["config", "user.email", "test@test.com"], &server);
-    git_run(&["config", "user.name", "Test"], &server);
+    common::git_in(&server, &["init", "--initial-branch=main"]);
+    common::git_in(&server, &["config", "user.email", "test@test.com"]);
+    common::git_in(&server, &["config", "user.name", "Test"]);
     std::fs::write(
         server.join("Cargo.toml"),
         "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
@@ -246,8 +230,8 @@ fn lock_does_not_write_ecosystem_files() {
     .unwrap();
     std::fs::create_dir_all(server.join("src")).unwrap();
     std::fs::write(server.join("src/lib.rs"), "").unwrap();
-    git_run(&["add", "."], &server);
-    git_run(&["commit", "-m", "init"], &server);
+    common::git_in(&server, &["add", "."]);
+    common::git_in(&server, &["commit", "-m", "init"]);
 
     let project_dir = workspace.join("projects/app");
     std::fs::create_dir_all(&project_dir).unwrap();

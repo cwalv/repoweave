@@ -768,27 +768,6 @@ fn check_fix_writes_replay_exclusion() {
 // Legacy `merge=ours` migration under `doctor --fix`
 // ---------------------------------------------------------------------------
 
-/// Helper: run a `git` command in `dir` capturing output; panic on failure.
-/// Local to the migration tests so they don't have to import common::git().
-fn git_capture(dir: &Path, args: &[&str]) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git failed to start");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// `rwv doctor` (no `--fix`) surfaces a project still on the LEGACY
 /// `rwv.lock merge=ours` spelling as a `missing-replay-exclusion` warning,
 /// with a message pointing at `rwv doctor --fix` for migration.
@@ -837,12 +816,12 @@ fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
     // Commit a legacy .gitattributes so both the working-tree detector
     // and the committed-tree readers see the old spelling.
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-    git_capture(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
-    git_capture(
+    common::git_in(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
+    common::git_in(
         &project_dir,
         &["commit", "-m", "seed manifest + legacy attrs"],
     );
-    let head_before = git_capture(&project_dir, &["rev-parse", "HEAD"]);
+    let head_before = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
 
     rwv_cmd()
         .args(["doctor", "--fix"])
@@ -861,7 +840,7 @@ fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
     );
 
     // A commit was made — HEAD advanced.
-    let head_after = git_capture(&project_dir, &["rev-parse", "HEAD"]);
+    let head_after = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
     assert_ne!(
         head_before, head_after,
         "doctor --fix must commit the migration; HEAD did not advance"
@@ -869,7 +848,7 @@ fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
 
     // The committed .gitattributes at HEAD carries the new spelling
     // (this is what sync's invariant reads).
-    let committed = git_capture(&project_dir, &["show", "HEAD:.gitattributes"]);
+    let committed = common::git_in(&project_dir, &["show", "HEAD:.gitattributes"]);
     assert!(
         committed.contains("rwv.lock merge=rwv-ours"),
         "HEAD:.gitattributes must contain the new spelling; got: {committed:?}"
@@ -907,17 +886,17 @@ fn check_fix_skips_migration_commit_when_repo_has_other_staged_changes() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
-    git_capture(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
-    git_capture(
+    common::git_in(&project_dir, &["add", ".gitattributes", "rwv.toml"]);
+    common::git_in(
         &project_dir,
         &["commit", "-m", "seed manifest + legacy attrs"],
     );
-    let head_before = git_capture(&project_dir, &["rev-parse", "HEAD"]);
+    let head_before = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
 
     // Stage an unrelated file — the operator's WIP that must not be
     // bundled with rwv's fix.
     std::fs::write(project_dir.join("wip.txt"), "user work\n").unwrap();
-    git_capture(&project_dir, &["add", "wip.txt"]);
+    common::git_in(&project_dir, &["add", "wip.txt"]);
 
     rwv_cmd()
         .args(["doctor", "--fix"])
@@ -937,14 +916,14 @@ fn check_fix_skips_migration_commit_when_repo_has_other_staged_changes() {
     );
 
     // HEAD is UNCHANGED — no auto-commit happened.
-    let head_after = git_capture(&project_dir, &["rev-parse", "HEAD"]);
+    let head_after = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
     assert_eq!(
         head_before, head_after,
         "HEAD must not advance when other work is staged"
     );
 
     // And the user's staged file is still staged, unmolested.
-    let staged = git_capture(
+    let staged = common::git_in(
         &project_dir,
         &["diff", "--cached", "--name-only", "wip.txt"],
     );
@@ -994,7 +973,7 @@ fn check_fix_plants_rwv_ours_driver_config() {
         .success();
 
     // Post-fix: `merge.rwv-ours.driver=true` is planted locally.
-    let post = git_capture(
+    let post = common::git_in(
         &project_dir,
         &["config", "--local", "--get", "merge.rwv-ours.driver"],
     );

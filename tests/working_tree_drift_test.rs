@@ -35,61 +35,22 @@ mod common;
 // Git helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// Initialise a git repo with one commit. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
+    common::git_in(path, &["init", "-b", "main"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Commit a file change. Returns new HEAD SHA.
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 /// Write rwv.toml.
@@ -150,15 +111,16 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
-    git(&["commit", "-m", "lock: initial"], &project_primary);
+    common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
     let ww_root = parent.join(".workweaves").join("ws--ww");
     std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let server_ww = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &server_primary,
         &[
             "worktree",
             "add",
@@ -166,11 +128,11 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
             "ww/main",
             &server_ww.to_string_lossy(),
         ],
-        &server_primary,
     );
 
     let project_ww = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &project_primary,
         &[
             "worktree",
             "add",
@@ -178,7 +140,6 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
             "ww/project",
             &project_ww.to_string_lossy(),
         ],
-        &project_primary,
     );
 
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
@@ -198,9 +159,9 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
 
 /// Advance `refs/heads/<branch>` to `new_sha` from the primary server repo.
 fn advance_ww_branch(server_primary: &Path, branch: &str, new_sha: &str) {
-    git(
-        &["update-ref", &format!("refs/heads/{branch}"), new_sha],
+    common::git_in(
         server_primary,
+        &["update-ref", &format!("refs/heads/{branch}"), new_sha],
     );
 }
 
@@ -211,7 +172,7 @@ fn advance_ww_branch(server_primary: &Path, branch: &str, new_sha: &str) {
 fn make_working_tree_stale(server_ww: &Path, server_primary: &Path, new_sha: &str) {
     advance_ww_branch(server_primary, "ww/main", new_sha);
     // `git reset` (mixed) aligns the index to HEAD without touching the working tree.
-    git(&["reset"], server_ww);
+    common::git_in(server_ww, &["reset"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +273,7 @@ fn doctor_fix_does_not_clobber_live_working_tree_edits() {
     let c2 = make_commit(&ws.server_primary, "unrelated.txt", "x\n", "primary: C2");
     advance_ww_branch(&ws.server_primary, "ww/main", &c2);
     // Reset index to HEAD so the index reflects C2.
-    git(&["reset"], &ws.server_ww);
+    common::git_in(&ws.server_ww, &["reset"]);
 
     // Now write a live edit to a tracked file with UNIQUE content (never committed).
     std::fs::write(
@@ -357,15 +318,16 @@ fn sync_post_refresh_clears_stale_working_tree() {
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
-    git(&["add", "rwv.toml", "rwv.lock"], &project_primary);
-    git(&["commit", "-m", "lock: initial"], &project_primary);
+    common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
     let ww_root = tmp.path().join(".workweaves").join("primary--ww");
     std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let server_ww = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &server_primary,
         &[
             "worktree",
             "add",
@@ -373,11 +335,11 @@ fn sync_post_refresh_clears_stale_working_tree() {
             "ww/main",
             &server_ww.to_string_lossy(),
         ],
-        &server_primary,
     );
 
     let project_ww = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &project_primary,
         &[
             "worktree",
             "add",
@@ -385,7 +347,6 @@ fn sync_post_refresh_clears_stale_working_tree() {
             "ww/project",
             &project_ww.to_string_lossy(),
         ],
-        &project_primary,
     );
 
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
@@ -400,16 +361,16 @@ fn sync_post_refresh_clears_stale_working_tree() {
     // Primary commits C2 and updates lock.
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
     write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &project_primary);
-    git(&["commit", "-m", "lock: advance"], &project_primary);
+    common::git_in(&project_primary, &["add", "rwv.lock"]);
+    common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
 
     // Mirror the lock advance in the workweave's own project worktree so
     // that sync's CWD-lock-freshness precondition passes once the server
     // ref is advanced below. (The workweave's freshness check reads its
     // own committed lock, not primary's.)
     write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &project_ww);
-    git(&["commit", "-m", "lock: ww advance"], &project_ww);
+    common::git_in(&project_ww, &["add", "rwv.lock"]);
+    common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
 
     // Set up working-tree drift in the ww server repo.
     make_working_tree_stale(&server_ww, &server_primary, &c2);
@@ -467,7 +428,8 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
     std::fs::create_dir_all(ww2_root.join("projects")).unwrap();
 
     let server_ww2 = ww2_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &ws.server_primary,
         &[
             "worktree",
             "add",
@@ -475,12 +437,12 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
             "ww2/main",
             &server_ww2.to_string_lossy(),
         ],
-        &ws.server_primary,
     );
 
     let project_primary = ws.primary_root.join("projects/web-app");
     let project_ww2 = ww2_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &project_primary,
         &[
             "worktree",
             "add",
@@ -488,7 +450,6 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
             "ww2/project",
             &project_ww2.to_string_lossy(),
         ],
-        &project_primary,
     );
 
     let primary_canon2 = ws
@@ -505,7 +466,7 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
     make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
     advance_ww_branch(&ws.server_primary, "ww2/main", &c2);
-    git(&["reset"], &server_ww2);
+    common::git_in(&server_ww2, &["reset"]);
 
     // Doctor from primary should detect drift in both workweaves.
     let out = rwv()
@@ -632,7 +593,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
     );
 
     // `git status` should report a clean working directory — no confusion.
-    let status_out = git_out(&["status", "--porcelain"], &ws.server_ww);
+    let status_out = common::git_in(&ws.server_ww, &["status", "--porcelain"]);
     assert!(
         status_out.is_empty(),
         "git status should be clean after fixing both drifts; got:\n{status_out}"

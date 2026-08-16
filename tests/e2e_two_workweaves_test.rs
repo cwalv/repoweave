@@ -21,41 +21,6 @@ mod common;
 // Git + rwv helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -63,13 +28,13 @@ fn rwv() -> AssertCommand {
 /// Init a git repo at `path` with one commit on `main`. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Stage and commit `filename` (relative to `repo`). Returns new HEAD SHA.
@@ -79,9 +44,9 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 // ---------------------------------------------------------------------------
@@ -141,11 +106,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
 
     // Action verbs require `.rwv-active` (or --project).
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -224,7 +189,7 @@ fn sync_two_workweaves_lock_only_changes() {
         .assert()
         .success();
 
-    let main_lib_head = git_out(&["rev-parse", "main"], &main.manifest_repo);
+    let main_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "main"]);
     assert_eq!(
         main_lib_head, ww1_lib_sha,
         "main lib HEAD should be at ww1's commit after first sync"
@@ -268,7 +233,7 @@ fn sync_two_workweaves_lock_only_changes() {
         "main lib should have bar.txt"
     );
     let main_lock = std::fs::read_to_string(main.project_dir.join("rwv.lock")).unwrap();
-    let final_main_lib_head = git_out(&["rev-parse", "main"], &main.manifest_repo);
+    let final_main_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "main"]);
     assert!(
         main_lock.contains(&final_main_lib_head),
         "main's lock should pin lib at the final lib HEAD ({final_main_lib_head}); lock contents:\n{main_lock}"
@@ -368,7 +333,7 @@ fn sync_two_workweaves_with_project_doc_changes() {
     assert!(main.manifest_repo.join("bar.txt").exists());
 
     let main_lock = std::fs::read_to_string(main.project_dir.join("rwv.lock")).unwrap();
-    let final_main_lib_head = git_out(&["rev-parse", "main"], &main.manifest_repo);
+    let final_main_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "main"]);
     assert!(
         main_lock.contains(&final_main_lib_head),
         "main's lock should pin lib at the final lib HEAD ({final_main_lib_head}); lock contents:\n{main_lock}"
@@ -471,14 +436,14 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     let new_repo_abs = main.root.join(new_repo_path);
     let new_repo_sha = init_repo(&new_repo_abs);
     // Add an origin so `rwv add <path>` can infer the URL.
-    git(
-        &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
+    common::git_in(
         &new_repo_abs,
+        &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
     );
     // `rwv add` refuses rather than guess when origin/HEAD is unset, so
     // fetch and set it — the state a real pre-existing clone would have.
-    git(&["fetch", "origin"], &new_repo_abs);
-    git(&["remote", "set-head", "origin", "-a"], &new_repo_abs);
+    common::git_in(&new_repo_abs, &["fetch", "origin"]);
+    common::git_in(&new_repo_abs, &["remote", "set-head", "origin", "-a"]);
 
     rwv()
         .args(["add", new_repo_path])
@@ -487,8 +452,8 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         .success();
 
     // Commit the manifest change and lock.
-    git(&["add", "rwv.toml"], &main.project_dir);
-    git(&["commit", "-m", "add: extras"], &main.project_dir);
+    common::git_in(&main.project_dir, &["add", "rwv.toml"]);
+    common::git_in(&main.project_dir, &["commit", "-m", "add: extras"]);
     rwv_lock_commit(&main.root);
 
     // Sanity: primary's lock now includes the new repo.
@@ -516,7 +481,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         ww1_new_repo.join(".git").exists(),
         "{new_repo_path} should be a git worktree (have a .git entry)"
     );
-    let ww1_head = git_out(&["rev-parse", "HEAD"], &ww1_new_repo);
+    let ww1_head = common::git_in(&ww1_new_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         ww1_head, new_repo_sha,
         "newly-materialized worktree should be at the locked SHA"
@@ -531,7 +496,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     // *unambiguous* name, so a tag sharing the branch's name would make this
     // read `heads/app--ww1` and the assertion would be about the wrong thing.
     assert_eq!(
-        git_out(&["symbolic-ref", "HEAD"], &ww1_new_repo),
+        common::git_in(&ww1_new_repo, &["symbolic-ref", "HEAD"]),
         format!("refs/heads/{PROJECT}--ww1"),
         "a sync-materialized worktree must be born on the minted ephemeral name"
     );
@@ -582,21 +547,21 @@ fn sync_phase3_materialize_failure_is_fatal() {
     let new_repo_path = "github/org/extras";
     let new_repo_abs = main.root.join(new_repo_path);
     init_repo(&new_repo_abs);
-    git(
-        &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
+    common::git_in(
         &new_repo_abs,
+        &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
     );
     // `rwv add` refuses rather than guess when origin/HEAD is unset, so
     // fetch and set it — the state a real pre-existing clone would have.
-    git(&["fetch", "origin"], &new_repo_abs);
-    git(&["remote", "set-head", "origin", "-a"], &new_repo_abs);
+    common::git_in(&new_repo_abs, &["fetch", "origin"]);
+    common::git_in(&new_repo_abs, &["remote", "set-head", "origin", "-a"]);
     rwv()
         .args(["add", new_repo_path])
         .current_dir(&main.root)
         .assert()
         .success();
-    git(&["add", "rwv.toml"], &main.project_dir);
-    git(&["commit", "-m", "add: extras"], &main.project_dir);
+    common::git_in(&main.project_dir, &["add", "rwv.toml"]);
+    common::git_in(&main.project_dir, &["commit", "-m", "add: extras"]);
     rwv_lock_commit(&main.root);
 
     // Now sabotage the canonical clone: remove it so `git worktree add`
@@ -660,7 +625,7 @@ fn sync_with_explicit_primary_source_advances_workweave() {
         .assert()
         .success();
 
-    let ww1_lib_head = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
+    let ww1_lib_head = common::git_in(&ww1.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         ww1_lib_head, primary_sha,
         "after sync primary, ww1's lib HEAD must be at primary's tip"
@@ -701,7 +666,7 @@ fn bare_sync_to_follows_recorded_parent_to_primary() {
         .assert()
         .success();
 
-    let primary_lib_head = git_out(&["rev-parse", "HEAD"], &main.manifest_repo);
+    let primary_lib_head = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         primary_lib_head, ww1_sha,
         "after bare sync-to, primary's lib HEAD must be at ww1's tip"
@@ -788,7 +753,7 @@ fn bare_sync_inside_a_workweave_is_refused_at_argument_parsing() {
     let main = make_main_workspace(tmp.path());
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
-    let ww1_head_before = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
+    let ww1_head_before = common::git_in(&ww1.manifest_repo, &["rev-parse", "HEAD"]);
 
     let primary_sha = commit_file(
         &main.manifest_repo,
@@ -820,7 +785,7 @@ fn bare_sync_inside_a_workweave_is_refused_at_argument_parsing() {
     );
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo),
+        common::git_in(&ww1.manifest_repo, &["rev-parse", "HEAD"]),
         ww1_head_before,
         "bare `rwv sync` must not pull from the recorded parent"
     );
@@ -889,10 +854,10 @@ fn sync_to_retire_clean_path_deletes_workweave() {
         "*.code-workspace\ngita/\n",
     )
     .unwrap();
-    git(&["add", ".gitignore"], &main.project_dir);
-    git(
-        &["commit", "-m", "ignore activation outputs"],
+    common::git_in(&main.project_dir, &["add", ".gitignore"]);
+    common::git_in(
         &main.project_dir,
+        &["commit", "-m", "ignore activation outputs"],
     );
 
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
@@ -1025,8 +990,8 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
         "operator-resolved version\n",
     )
     .unwrap();
-    git(&["add", "notes/shared.md"], &ww2.project_dir);
-    git(&["rebase", "--continue"], &ww2.project_dir);
+    common::git_in(&ww2.project_dir, &["add", "notes/shared.md"]);
+    common::git_in(&ww2.project_dir, &["rebase", "--continue"]);
 
     // After --continue, the repo is no longer mid-rebase.
     assert!(

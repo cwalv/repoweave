@@ -9,7 +9,6 @@
 //! is active at all.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -17,30 +16,14 @@ fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed");
-    assert!(
-        status.success(),
-        "git {:?} failed in {}",
-        args,
-        dir.display()
-    );
-}
-
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init\n").unwrap();
-    git(&["add", "README"], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "README"]);
+    common::git_in(path, &["commit", "-m", "initial"]);
     let out = common::git()
         .args(["rev-parse", "HEAD"])
         .current_dir(path)
@@ -74,30 +57,30 @@ fn make_two_project_workspace(parent: &Path) -> (PathBuf, PathBuf, PathBuf, Stri
     // `origin/main`; without a remote the advance step has nothing to
     // resolve against.
     let bare = parent.join("server.git");
-    git(
+    common::git_in(
+        parent,
         &[
             "clone",
             "--bare",
             server.to_str().unwrap(),
             bare.to_str().unwrap(),
         ],
-        parent,
     );
     let url = common::file_url(&bare);
-    git(&["remote", "add", "origin", &url], &server);
-    git(&["fetch", "origin"], &server);
+    common::git_in(&server, &["remote", "add", "origin", &url]);
+    common::git_in(&server, &["fetch", "origin"]);
 
     let proj_a = ws.join("projects/proj-a");
     init_repo(&proj_a);
     write_manifest_only(&proj_a, &[("github/acme/server", &url)]);
-    git(&["add", "rwv.toml"], &proj_a);
-    git(&["commit", "-m", "init"], &proj_a);
+    common::git_in(&proj_a, &["add", "rwv.toml"]);
+    common::git_in(&proj_a, &["commit", "-m", "init"]);
 
     let proj_b = ws.join("projects/proj-b");
     init_repo(&proj_b);
     write_manifest_only(&proj_b, &[("github/acme/server", &url)]);
-    git(&["add", "rwv.toml"], &proj_b);
-    git(&["commit", "-m", "init"], &proj_b);
+    common::git_in(&proj_b, &["add", "rwv.toml"]);
+    common::git_in(&proj_b, &["commit", "-m", "init"]);
 
     (ws, proj_a, proj_b, sha)
 }
@@ -224,17 +207,17 @@ fn add_with_project_override_regenerates_without_selecting() {
     // rather than fetched, the same local-only state `rwv add` reads.
     let client = ws.join("github/acme/client");
     init_repo(&client);
-    git(
-        &["remote", "add", "origin", "file:///nowhere/client.git"],
+    common::git_in(
         &client,
+        &["remote", "add", "origin", "file:///nowhere/client.git"],
     );
-    git(
+    common::git_in(
+        &client,
         &[
             "symbolic-ref",
             "refs/remotes/origin/HEAD",
             "refs/remotes/origin/main",
         ],
-        &client,
     );
 
     rwv()

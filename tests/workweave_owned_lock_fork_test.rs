@@ -25,7 +25,6 @@
 //! a test built on that passes without the behaviour it means to pin.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -49,28 +48,12 @@ name = \"pinned-only-at-the-source\"
 version = \"0.0.1\"
 ";
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 struct Fixture {
@@ -187,8 +170,8 @@ fn fixture(source_lock: Option<&str>) -> Fixture {
         },
     )
     .expect("primary intent activation should succeed");
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "activate"], &project_dir);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
     if let Some(content) = source_lock {
         std::fs::write(project_dir.join("Cargo.lock"), content).unwrap();

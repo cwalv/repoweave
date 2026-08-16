@@ -78,35 +78,16 @@ const CASES: &[(&str, Case)] = &[
     ),
 ];
 
-fn git_in(dir: &Path, args: &[&str]) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// A workspace with one project whose repo has `attributes` committed, and
 /// the merge driver defined so that finding is not raised alongside.
 fn workspace(root: &Path, attributes: &str) -> PathBuf {
     let repo_path = "github/acme/server";
     let repo = root.join(repo_path);
     std::fs::create_dir_all(&repo).unwrap();
-    git_in(&repo, &["init", "-b", "main"]);
+    common::git_in(&repo, &["init", "-b", "main"]);
     std::fs::write(repo.join("README.md"), "init\n").unwrap();
-    git_in(&repo, &["add", "."]);
-    git_in(&repo, &["commit", "-m", "initial"]);
+    common::git_in(&repo, &["add", "."]);
+    common::git_in(&repo, &["commit", "-m", "initial"]);
 
     let project = root.join("projects").join("my-app");
     std::fs::create_dir_all(&project).unwrap();
@@ -119,10 +100,10 @@ fn workspace(root: &Path, attributes: &str) -> PathBuf {
     )
     .unwrap();
     std::fs::write(project.join(".gitattributes"), attributes).unwrap();
-    git_in(&project, &["init", "-b", "main"]);
-    git_in(&project, &["add", "."]);
-    git_in(&project, &["commit", "-m", "seed manifest and attributes"]);
-    git_in(&project, &["config", "merge.rwv-ours.driver", "true"]);
+    common::git_in(&project, &["init", "-b", "main"]);
+    common::git_in(&project, &["add", "."]);
+    common::git_in(&project, &["commit", "-m", "seed manifest and attributes"]);
+    common::git_in(&project, &["config", "merge.rwv-ours.driver", "true"]);
     project
 }
 
@@ -179,7 +160,7 @@ fn doctor_reports_every_state_its_fix_acts_on() {
         std::fs::create_dir_all(root.join("github")).unwrap();
         std::fs::create_dir_all(root.join("projects")).unwrap();
         let project = workspace(&root, case.attributes);
-        let head_before = git_in(&project, &["rev-parse", "HEAD"]);
+        let head_before = common::git_in(&project, &["rev-parse", "HEAD"]);
 
         let reported = reported(&root);
         let repaired = repaired(&root);
@@ -199,7 +180,7 @@ fn doctor_reports_every_state_its_fix_acts_on() {
             case.attributes
         );
 
-        let head_after = git_in(&project, &["rev-parse", "HEAD"]);
+        let head_after = common::git_in(&project, &["rev-parse", "HEAD"]);
         assert_eq!(
             head_before != head_after,
             case.commits,
@@ -270,7 +251,7 @@ fn doctor_fix_drops_the_legacy_line_and_commits_it() {
         "the operator's account of the commit `--fix` authored must say what it did; got {repaired:?}"
     );
 
-    let committed = git_in(&project, &["show", "HEAD:.gitattributes"]);
+    let committed = common::git_in(&project, &["show", "HEAD:.gitattributes"]);
     assert_eq!(
         committed
             .lines()

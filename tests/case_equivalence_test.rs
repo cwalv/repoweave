@@ -42,7 +42,6 @@ use repoweave::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use repoweave::path_spelling::operator_path;
 use repoweave::workspace::{confusable_siblings, describe_existing, diverged_occupant};
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -236,11 +235,11 @@ fn minting_a_workweave_over_a_foreign_directory_refuses() {
         .assert()
         .success();
     let project_dir = ws.join("projects/web-app");
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "t@t"], &project_dir);
-    git(&["config", "user.name", "T"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "initial"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "t@t"]);
+    common::git_in(&project_dir, &["config", "user.name", "T"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     // A directory already sitting where the workweave would be minted, with
     // no marker: not this workweave, and not rwv's to adopt.
@@ -503,17 +502,6 @@ fn distinct_project_names_produce_no_finding() {
     );
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 // ---------------------------------------------------------------------------
 // Mechanism 2: case drift in steady state
 // ---------------------------------------------------------------------------
@@ -535,11 +523,11 @@ fn case_drift_between_the_record_and_the_disk_is_reported() {
         .assert()
         .success();
     let project_dir = ws.join("projects/web-app");
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "t@t"], &project_dir);
-    git(&["config", "user.name", "T"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "initial"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "t@t"]);
+    common::git_in(&project_dir, &["config", "user.name", "T"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])

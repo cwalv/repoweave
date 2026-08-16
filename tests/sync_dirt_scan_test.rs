@@ -30,45 +30,6 @@ mod common;
 // Git helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -111,13 +72,13 @@ struct Fixture {
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
@@ -125,13 +86,13 @@ fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String 
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn head(repo: &Path) -> String {
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn has_op_state(workspace_root: &Path) -> bool {
@@ -169,11 +130,11 @@ fn fixture() -> Fixture {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &primary_project.join("rwv.lock")).unwrap();
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &primary_project,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &primary_project);
+    common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
     std::fs::write(primary_root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     // -----------------------------------------------------------------------
@@ -198,7 +159,8 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_repo = ww_root.join(REPO_PATH);
-    git(
+    common::git_in(
+        &primary_repo,
         &[
             "worktree",
             "add",
@@ -206,11 +168,11 @@ fn fixture() -> Fixture {
             "-b",
             "ww/main",
         ],
-        &primary_repo,
     );
 
     let ww_project = ww_root.join("projects").join(PROJECT);
-    git(
+    common::git_in(
+        &primary_project,
         &[
             "worktree",
             "add",
@@ -218,7 +180,6 @@ fn fixture() -> Fixture {
             "-b",
             "ww/project",
         ],
-        &primary_project,
     );
     std::fs::write(ww_root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -252,8 +213,8 @@ fn advance_primary(f: &Fixture) -> String {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &f.primary.project_dir.join("rwv.lock")).unwrap();
-    git(&["add", "rwv.lock"], &f.primary.project_dir);
-    git(&["commit", "-m", "lock: advance"], &f.primary.project_dir);
+    common::git_in(&f.primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&f.primary.project_dir, &["commit", "-m", "lock: advance"]);
     new_sha
 }
 
@@ -279,9 +240,9 @@ fn sync_dirty_tracked_manifest_repo_refuses_before_mutation() {
     // was committed during init, so it is a tracked file.
     std::fs::write(f.ww.repo_dir.join("README.md"), "dirty edit\n").unwrap();
     // Confirm the test precondition: the file is actually tracked-dirty.
-    let porcelain = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    let porcelain = common::git_in(
         &f.ww.repo_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         !porcelain.is_empty(),
@@ -318,18 +279,18 @@ fn sync_dirty_tracked_manifest_repo_refuses_before_mutation() {
     );
 
     // No savepoint refs created in the project repo.
-    let proj_savepoints = git_out(
-        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
+    let proj_savepoints = common::git_in(
         &f.ww.project_dir,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
     );
     assert!(
         proj_savepoints.is_empty(),
         "refusal must not create savepoint refs in the project repo; got:\n{proj_savepoints}"
     );
     // No savepoint refs created in the manifest repo.
-    let repo_savepoints = git_out(
-        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
+    let repo_savepoints = common::git_in(
         &f.primary.repo_dir,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
     );
     assert!(
         repo_savepoints.is_empty(),
@@ -376,9 +337,9 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
     std::fs::write(&yaml_path, y).unwrap();
 
     // Confirm it's tracked-dirty.
-    let porcelain = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    let porcelain = common::git_in(
         &f.ww.project_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         !porcelain.is_empty(),
@@ -470,9 +431,9 @@ fn sync_untracked_only_destination_proceeds() {
     // Place an UNTRACKED file in the destination manifest repo.
     std::fs::write(f.ww.repo_dir.join("scratch.tmp"), "untracked content\n").unwrap();
     // Confirm it's untracked (not in the tracked-porcelain output).
-    let tracked = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    let tracked = common::git_in(
         &f.ww.repo_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         tracked.is_empty(),
@@ -532,9 +493,9 @@ fn sync_dirty_lock_in_destination_project_refuses() {
     std::fs::write(&lock_path, lock).unwrap();
 
     // Confirm the test precondition: rwv.lock is tracked-dirty.
-    let porcelain = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    let porcelain = common::git_in(
         &f.ww.project_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         porcelain.contains("rwv.lock"),
@@ -607,12 +568,12 @@ fn sync_staged_tracked_change_in_destination_refuses() {
 
     // Write AND stage a new file in the destination manifest repo.
     std::fs::write(f.ww.repo_dir.join("staged.txt"), "staged content\n").unwrap();
-    git(&["add", "staged.txt"], &f.ww.repo_dir);
+    common::git_in(&f.ww.repo_dir, &["add", "staged.txt"]);
 
     // Confirm it's tracked-dirty (staged).
-    let porcelain = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    let porcelain = common::git_in(
         &f.ww.repo_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         !porcelain.is_empty(),
@@ -661,10 +622,10 @@ fn sync_retry_after_dirt_refusal_succeeds() {
         .failure();
 
     // Fix the dirt.
-    git(&["restore", "README.md"], &f.ww.repo_dir);
-    let clean = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    common::git_in(&f.ww.repo_dir, &["restore", "README.md"]);
+    let clean = common::git_in(
         &f.ww.repo_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         clean.is_empty(),
@@ -705,15 +666,15 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     // store, leaving ww's index/working tree at the old state. Structurally
     // attributable: the lagging index tree is an ancestor commit's tree and
     // the "missing" file exists in HEAD (D entry — restorable from the DAG).
-    git(
-        &["update-ref", "refs/heads/ww/main", &new_sha],
+    common::git_in(
         &f.primary.repo_dir,
+        &["update-ref", "refs/heads/ww/main", &new_sha],
     );
     // Sanity: the drifted repo DOES show tracked differences to git status —
     // without attribution this would have refused.
-    let porcelain = git_out(
-        &["status", "--porcelain", "--untracked-files=no"],
+    let porcelain = common::git_in(
         &f.ww.repo_dir,
+        &["status", "--porcelain", "--untracked-files=no"],
     );
     assert!(
         !porcelain.is_empty(),

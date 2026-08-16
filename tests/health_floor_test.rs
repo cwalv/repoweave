@@ -28,34 +28,15 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
     root
 }
 
-fn git_in(dir: &Path, args: &[&str]) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git command failed to start");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
 fn init_git_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git_in(path, &["init", "--initial-branch=main", "-q"]);
-    git_in(path, &["config", "user.email", "test@test.com"]);
-    git_in(path, &["config", "user.name", "Test"]);
+    common::git_in(path, &["init", "--initial-branch=main", "-q"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git_in(path, &["add", "README.md"]);
-    git_in(path, &["commit", "-q", "-m", "init"]);
-    git_in(path, &["rev-parse", "HEAD"])
+    common::git_in(path, &["add", "README.md"]);
+    common::git_in(path, &["commit", "-q", "-m", "init"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// A weave that `rwv doctor --fix --all` can bring to zero violations: one
@@ -130,10 +111,7 @@ fn a_clean_weave_wide_run_records_the_floor() {
     let tip = floor["project_tips"]["my-app"]
         .as_str()
         .expect("the floor records the project repo tip");
-    let head = git_in(
-        &root.join("projects").join("my-app"),
-        &["rev-parse", "HEAD"],
-    );
+    let head = common::git_in(root.join("projects").join("my-app"), &["rev-parse", "HEAD"]);
     assert_eq!(tip, head, "the recorded tip is the project repo's HEAD");
 }
 
@@ -148,8 +126,8 @@ fn a_run_with_findings_does_not_record_the_floor() {
 
     // Plant a violation: an orphaned savepoint ref in the manifest repo.
     let repo_abs = root.join("github").join("acme").join("server");
-    let head = git_in(&repo_abs, &["rev-parse", "HEAD"]);
-    git_in(
+    let head = common::git_in(&repo_abs, &["rev-parse", "HEAD"]);
+    common::git_in(
         &repo_abs,
         &["update-ref", "refs/rwv/pre-op/611111111111111111", &head],
     );
@@ -238,12 +216,12 @@ fn report_only_warnings_do_not_block_the_floor() {
 
     // A savepoint anchoring a commit no live ref reaches: LIVE, report-only.
     let repo_abs = root.join("github").join("acme").join("server");
-    let tree = git_in(&repo_abs, &["rev-parse", "HEAD^{tree}"]);
-    let dangling = git_in(
+    let tree = common::git_in(&repo_abs, &["rev-parse", "HEAD^{tree}"]);
+    let dangling = common::git_in(
         &repo_abs,
         &["commit-tree", &tree, "-p", "HEAD", "-m", "orphaned work"],
     );
-    git_in(
+    common::git_in(
         &repo_abs,
         &[
             "update-ref",

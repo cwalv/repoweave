@@ -39,39 +39,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(args: &[&str], cwd: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git command failed to start");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        cwd.display()
-    );
-}
-
-fn git_capture(args: &[&str], cwd: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .output()
-        .expect("git command failed to spawn");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed",
-        args,
-        cwd.display()
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 fn init_bare_repo(path: &Path) {
     let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
@@ -92,21 +59,21 @@ fn init_bare_repo_with_two_commits(path: &Path) -> (String, String) {
     let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
 
-    git_run(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
     );
-    git_run(&["config", "user.email", "test@test.com"], &work);
-    git_run(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("README"), "initial\n").unwrap();
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "initial"], &work);
-    let first_sha = git_capture(&["rev-parse", "HEAD"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    let first_sha = common::git_in(&work, &["rev-parse", "HEAD"]);
     std::fs::write(work.join("README"), "second\n").unwrap();
-    git_run(&["add", "."], &work);
-    git_run(&["commit", "-m", "second"], &work);
-    let second_sha = git_capture(&["rev-parse", "HEAD"], &work);
-    git_run(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "second"]);
+    let second_sha = common::git_in(&work, &["rev-parse", "HEAD"]);
+    common::git_in(&work, &["push", "origin", "main"]);
     (first_sha, second_sha)
 }
 
@@ -179,11 +146,11 @@ fn materialize_repo_at(workspace: &Path, repo_path: &str, bare: &Path, sha: &str
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
-    git_run(
-        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+    common::git_in(
         workspace.parent().unwrap_or(workspace),
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
     );
-    git_run(&["checkout", sha], &dest);
+    common::git_in(&dest, &["checkout", sha]);
 }
 
 /// Materialize a manifest repo and leave it ON its default branch, at branch
@@ -198,12 +165,12 @@ fn materialize_repo_on_branch(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).unwrap();
     }
-    git_run(
-        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+    common::git_in(
         workspace.parent().unwrap_or(workspace),
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
     );
-    git_run(&["config", "user.email", "test@test.com"], &dest);
-    git_run(&["config", "user.name", "Test"], &dest);
+    common::git_in(&dest, &["config", "user.email", "test@test.com"]);
+    common::git_in(&dest, &["config", "user.name", "Test"]);
     dest
 }
 
@@ -217,7 +184,7 @@ fn materialize_repo_on_branch_at(
     sha: &str,
 ) -> std::path::PathBuf {
     let dest = materialize_repo_on_branch(workspace, repo_path, bare);
-    git_run(&["reset", "--hard", sha], &dest);
+    common::git_in(&dest, &["reset", "--hard", sha]);
     dest
 }
 
@@ -262,7 +229,7 @@ fn in_place_fetch_materializes_missing_member_at_locked_sha() {
     // ... AT THE LOCKED SHA (not branch HEAD). This is the load-bearing
     // assertion: `rwv fetch` aligns to the lock, unlike `rwv update` which
     // would advance to the second commit.
-    let head = git_capture(&["rev-parse", "HEAD"], &dest);
+    let head = common::git_in(&dest, &["rev-parse", "HEAD"]);
     assert_eq!(
         head, *first_sha,
         "materialized clone must be at LOCKED SHA (first_sha), not branch HEAD"
@@ -281,7 +248,7 @@ fn in_place_fetch_materializes_missing_member_at_locked_sha() {
         "the clone must be born attached to the tracking counterpart, not detached at the pin"
     );
     assert_eq!(
-        git_capture(&["rev-parse", "main"], &dest),
+        common::git_in(&dest, &["rev-parse", "main"]),
         *first_sha,
         "the branch itself is born AT the pin, not at origin's tip"
     );
@@ -303,7 +270,7 @@ fn in_place_fetch_leaves_present_member_at_locked_sha_unmoved() {
     // Pre-materialize repo_a at first_sha (matches the lock).
     materialize_repo_at(&s.workspace, repo_a, bare_a, first_a);
     let dest_a = s.workspace.join(repo_a);
-    let head_before = git_capture(&["rev-parse", "HEAD"], &dest_a);
+    let head_before = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
     // Take a directory-inode marker: record the .git/config mtime.
     let git_config_before = std::fs::metadata(dest_a.join(".git/config"))
         .unwrap()
@@ -318,7 +285,7 @@ fn in_place_fetch_leaves_present_member_at_locked_sha_unmoved() {
         .assert()
         .success();
 
-    let head_after = git_capture(&["rev-parse", "HEAD"], &dest_a);
+    let head_after = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
     assert_eq!(
         head_before, head_after,
         "present member's HEAD must be unchanged by in-place fetch"
@@ -361,7 +328,7 @@ fn in_place_fetch_fast_forwards_the_counterpart_and_stays_attached() {
         .success();
 
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
         second_a,
         "present member must be realigned to the locked SHA"
     );
@@ -371,7 +338,7 @@ fn in_place_fetch_fast_forwards_the_counterpart_and_stays_attached() {
         "realignment is a MOVE of the counterpart, so the checkout stays on it"
     );
     assert_eq!(
-        git_capture(&["rev-parse", "main"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "main"]),
         second_a,
         "the branch ref is what moved — HEAD did not leave it behind"
     );
@@ -409,8 +376,8 @@ fn in_place_fetch_refuses_to_rewind_the_counterpart_even_when_the_member_is_clea
         Some("main"),
         "the refusal must leave the member on its branch"
     );
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *second_a);
-    assert_ne!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
+    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
 }
 
 #[test]
@@ -436,8 +403,8 @@ fn in_place_fetch_refuses_to_rewind_a_counterpart_carrying_uncommitted_changes()
         Some("main"),
         "the refusal must leave the member on its branch"
     );
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *second_a);
-    assert_ne!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
+    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
     assert!(
         dest_a.join("scratch.txt").exists(),
         "a refusal touches nothing, including the working tree"
@@ -451,8 +418,8 @@ fn in_place_fetch_refuses_when_the_branch_carries_commits_origin_does_not_have()
 
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     std::fs::write(dest_a.join("README"), "third\n").unwrap();
-    git_run(&["commit", "-am", "third"], &dest_a);
-    let unpushed = git_capture(&["rev-parse", "HEAD"], &dest_a);
+    common::git_in(&dest_a, &["commit", "-am", "third"]);
+    let unpushed = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
 
     // A branch ahead of the pin can never fast-forward TO the pin, so the
     // unpublished commit is protected by the same predicate that protects a
@@ -466,11 +433,11 @@ fn in_place_fetch_refuses_when_the_branch_carries_commits_origin_does_not_have()
 
     assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
         unpushed,
         "the commit origin has never seen is still checked out"
     );
-    assert_eq!(git_capture(&["rev-parse", "main"], &dest_a), unpushed);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "main"]), unpushed);
 }
 
 #[test]
@@ -484,7 +451,7 @@ fn in_place_fetch_refuses_when_attached_to_a_branch_the_manifest_does_not_declar
     // operator's bookmark to the lock at all. Advancing it would strand no
     // commits and still silently change what the bookmark means.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
-    git_run(&["checkout", "-b", "feature", first_a], &dest_a);
+    common::git_in(&dest_a, &["checkout", "-b", "feature", first_a]);
     let lock_path = s.workspace.join("projects/my-app/rwv.lock");
     let lock = std::fs::read_to_string(&lock_path).unwrap();
     let second_a = s.repos[0].3.clone();
@@ -502,7 +469,7 @@ fn in_place_fetch_refuses_when_attached_to_a_branch_the_manifest_does_not_declar
         .stderr(predicate::str::contains("is not a fast-forward").not());
 
     assert_eq!(current_branch(&dest_a).as_deref(), Some("feature"));
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
 }
 
 #[test]
@@ -512,8 +479,8 @@ fn in_place_fetch_detach_checkouts_waives_the_refusal() {
 
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     std::fs::write(dest_a.join("README"), "third\n").unwrap();
-    git_run(&["commit", "-am", "third"], &dest_a);
-    let unpushed = git_capture(&["rev-parse", "HEAD"], &dest_a);
+    common::git_in(&dest_a, &["commit", "-am", "third"]);
+    let unpushed = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
     std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
 
     rwv()
@@ -522,11 +489,11 @@ fn in_place_fetch_detach_checkouts_waives_the_refusal() {
         .assert()
         .success();
 
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
     assert_eq!(current_branch(&dest_a), None);
     // The waiver is not a discard: the unpushed commits are still on the
     // branch ref, and the uncommitted file came along.
-    assert_eq!(git_capture(&["rev-parse", "main"], &dest_a), unpushed);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "main"]), unpushed);
     assert!(dest_a.join("scratch.txt").exists());
 }
 
@@ -540,7 +507,7 @@ fn in_place_fetch_detach_checkouts_waives_the_relatedness_refusal_too() {
     // personal branch, which is the whole point of naming the flag after the
     // consequence rather than after the precondition.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
-    git_run(&["checkout", "-b", "feature"], &dest_a);
+    common::git_in(&dest_a, &["checkout", "-b", "feature"]);
 
     rwv()
         .args(["fetch", "--detach-checkouts"])
@@ -548,10 +515,10 @@ fn in_place_fetch_detach_checkouts_waives_the_relatedness_refusal_too() {
         .assert()
         .success();
 
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
     assert_eq!(current_branch(&dest_a), None);
     assert_eq!(
-        git_capture(&["rev-parse", "feature"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "feature"]),
         *second_a,
         "the personal branch is left exactly where it was"
     );
@@ -573,7 +540,7 @@ fn in_place_fetch_frozen_does_not_waive_the_refusal() {
         .failure()
         .stderr(predicate::str::contains("is not a fast-forward"));
 
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *second_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
     assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
 }
 
@@ -601,7 +568,7 @@ fn in_place_fetch_moves_an_already_detached_member_without_consent() {
         .assert()
         .success();
 
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
     assert_eq!(
         current_branch(&dest_a),
         None,
@@ -618,7 +585,7 @@ fn in_place_fetch_refuses_to_move_a_detached_member_that_is_mid_operation() {
     let dest_a = s.workspace.join(repo_a);
     // `Detached` collapses "rwv left this at a lock SHA" and "the operator is
     // mid-bisect". Only the first is rwv's to move.
-    git_run(&["bisect", "start"], &dest_a);
+    common::git_in(&dest_a, &["bisect", "start"]);
 
     rwv()
         .arg("fetch")
@@ -628,11 +595,11 @@ fn in_place_fetch_refuses_to_move_a_detached_member_that_is_mid_operation() {
         .stderr(predicate::str::contains("mid-bisect"));
 
     assert_eq!(
-        git_capture(&["rev-parse", "HEAD"], &dest_a),
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
         *second_a,
         "the bisect's HEAD must not be yanked out from under it"
     );
-    assert_ne!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
 }
 
 // ============================================================================
@@ -690,8 +657,8 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     assert!(dest_b.exists(), "repo_b must be materialized");
 
     // repo_a is at first_a (locked); repo_b is at second_b (default branch HEAD).
-    let head_a = git_capture(&["rev-parse", "HEAD"], &dest_a);
-    let head_b = git_capture(&["rev-parse", "HEAD"], &dest_b);
+    let head_a = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+    let head_b = common::git_in(&dest_b, &["rev-parse", "HEAD"]);
     assert_eq!(head_a, first_a, "repo_a must be at LOCKED SHA");
     assert_eq!(
         head_b, second_b,
@@ -755,7 +722,7 @@ fn in_place_fetch_repo_filter_limits_materialization() {
     );
 
     // repo_a is at locked SHA.
-    let head_a = git_capture(&["rev-parse", "HEAD"], &dest_a);
+    let head_a = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
     assert_eq!(head_a, *first_a, "materialized clone must be at LOCKED SHA");
 }
 
@@ -806,7 +773,7 @@ fn dangling_reference_end_to_end_fetch_repairs_and_doctor_clean() {
     // 3. Repo now exists at locked SHA.
     let dest = s.workspace.join(repo);
     assert!(dest.exists(), "fetch must materialize the dangling repo");
-    let head = git_capture(&["rev-parse", "HEAD"], &dest);
+    let head = common::git_in(&dest, &["rev-parse", "HEAD"]);
     assert_eq!(head, *first_sha, "repair must land at LOCKED SHA");
 
     // 4. doctor is now clean.
@@ -932,7 +899,7 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
          not the workweave's slot (clone-topology I1)"
     );
     // …at the locked SHA.
-    let head = git_capture(&["rev-parse", "HEAD"], &primary_dest);
+    let head = common::git_in(&primary_dest, &["rev-parse", "HEAD"]);
     assert_eq!(
         head, *first_sha,
         "primary canonical clone must be at LOCKED SHA"

@@ -26,32 +26,15 @@
 //! which a unit test on either side alone cannot see.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn git_init_with_commit(dir: &Path) {
-    git(&["init", "--initial-branch=main"], dir);
-    git(&["config", "user.email", "test@test.com"], dir);
-    git(&["config", "user.name", "Test"], dir);
-    git(&["add", "-A"], dir);
-    git(&["commit", "-m", "init"], dir);
+    common::git_in(dir, &["init", "--initial-branch=main"]);
+    common::git_in(dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(dir, &["config", "user.name", "Test"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(dir, &["commit", "-m", "init"]);
 }
 
 /// One member repo per ecosystem, so every integration's detection gate opens
@@ -342,8 +325,8 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     };
 
     rwv_in(&["doctor", "--fix"], &ws);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "activate"], &project_dir);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
     let create = rwv_in(&["workweave", "web-app", "create", "agent-1"], &ws);
     let ww = weaveroot.join("web-app--agent-1");

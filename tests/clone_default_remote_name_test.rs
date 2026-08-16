@@ -47,26 +47,11 @@ fn git_under_renamed_default_remote() -> Command {
     cmd
 }
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        cwd.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
-}
-
 /// A bare repo carrying a committed `rwv.toml` on `main`, ready to be adopted
 /// as a project repo and pushed back to.
 fn seed_bare_project_repo(tmp: &Path) -> PathBuf {
     let bare = tmp.join("project.git");
-    git_run(
+    common::git_in(
         tmp,
         &[
             "init",
@@ -77,16 +62,16 @@ fn seed_bare_project_repo(tmp: &Path) -> PathBuf {
     );
 
     let seed = tmp.join("project-seed");
-    git_run(
+    common::git_in(
         tmp,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("rwv.toml"), "[repositories]\n").unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "seed project manifest"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "seed project manifest"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 
     bare
 }
@@ -125,7 +110,7 @@ fn adopted_project_is_publishable_under_a_renamed_default_remote() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        git_run(&control, &["remote"]),
+        common::git_in(&control, &["remote"]),
         OPERATOR_REMOTE_NAME,
         "the fixture's `clone.defaultRemoteName` must reach git, or this test \
          asks nothing"

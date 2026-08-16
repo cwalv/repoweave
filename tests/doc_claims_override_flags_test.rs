@@ -37,30 +37,14 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
@@ -115,16 +99,16 @@ fn init_bare_repo(path: &Path) {
 fn push_empty_manifest_to_bare(bare: &Path) {
     let tmp = common::tempdir().expect("tempdir for manifest work clone");
     let work = tmp.path().join("mwork");
-    git(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp.path(),
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
-    git(&["config", "user.email", "test@test.com"], &work);
-    git(&["config", "user.name", "Test"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
     std::fs::write(work.join("rwv.toml"), "[repositories]\n").unwrap();
-    git(&["add", "rwv.toml"], &work);
-    git(&["commit", "-m", "add manifest"], &work);
-    git(&["push", "origin", "main"], &work);
+    common::git_in(&work, &["add", "rwv.toml"]);
+    common::git_in(&work, &["commit", "-m", "add manifest"]);
+    common::git_in(&work, &["push", "origin", "main"]);
 }
 
 /// `--allow-non-empty-dir` waives exactly the non-empty-non-workspace
@@ -208,8 +192,8 @@ fn make_workweave_with_dirty_and_unmerged_commit(
 
     // Commit work on the ephemeral branch — unmerged anywhere.
     std::fs::write(weave_repo.join("feature.txt"), "committed work\n").unwrap();
-    git(&["add", "feature.txt"], &weave_repo);
-    git(&["commit", "-m", "ww: feature"], &weave_repo);
+    common::git_in(&weave_repo, &["add", "feature.txt"]);
+    common::git_in(&weave_repo, &["commit", "-m", "ww: feature"]);
 
     // On top, an uncommitted edit — dirty.
     std::fs::write(weave_repo.join("scratch.txt"), "uncommitted edit\n").unwrap();
@@ -345,16 +329,16 @@ fn init_bare_repo_with_commit(bare: &Path) {
         "__seed_{}",
         bare.file_stem().unwrap().to_string_lossy()
     ));
-    git(
-        &["clone", &bare.to_string_lossy(), &seed.to_string_lossy()],
+    common::git_in(
         parent,
+        &["clone", &bare.to_string_lossy(), &seed.to_string_lossy()],
     );
-    git(&["config", "user.email", "test@test.com"], &seed);
-    git(&["config", "user.name", "Test"], &seed);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git(&["add", "."], &seed);
-    git(&["commit", "-m", "initial"], &seed);
-    git(&["push", "origin", "main"], &seed);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 fn bare_main_sha(bare: &Path) -> Option<String> {
@@ -388,7 +372,8 @@ fn build_push_fixture() -> PushFixture {
     init_bare_repo_with_commit(&manifest_bare);
     let manifest_local = workspace.join("local/org/repo");
     std::fs::create_dir_all(manifest_local.parent().unwrap()).unwrap();
-    git(
+    common::git_in(
+        workspace.parent().unwrap(),
         &[
             "clone",
             "--origin",
@@ -396,24 +381,23 @@ fn build_push_fixture() -> PushFixture {
             &manifest_bare.to_string_lossy(),
             &manifest_local.to_string_lossy(),
         ],
-        workspace.parent().unwrap(),
     );
-    git(&["config", "user.email", "test@test.com"], &manifest_local);
-    git(&["config", "user.name", "Test"], &manifest_local);
+    common::git_in(&manifest_local, &["config", "user.email", "test@test.com"]);
+    common::git_in(&manifest_local, &["config", "user.name", "Test"]);
 
     let project_bare = tmp.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_dir = workspace.join("projects/alpha");
-    git(
+    common::git_in(
+        workspace.parent().unwrap(),
         &[
             "clone",
             &project_bare.to_string_lossy(),
             &project_dir.to_string_lossy(),
         ],
-        workspace.parent().unwrap(),
     );
-    git(&["config", "user.email", "test@test.com"], &project_dir);
-    git(&["config", "user.name", "Test"], &project_dir);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     let bare_url = common::file_url(&manifest_bare);
     let manifest_head = head_sha(&manifest_local);
@@ -432,8 +416,8 @@ fn build_push_fixture() -> PushFixture {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git(&["add", "."], &project_dir);
-    git(&["commit", "-m", "manifest + lock"], &project_dir);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
     std::fs::write(workspace.join(".rwv-active"), "alpha\n").unwrap();
 
@@ -453,8 +437,8 @@ fn write_lock_at(fixture: &PushFixture, sha: &str) {
     );
     let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
     repoweave::lock::write_lock(&lock, &fixture.project_dir.join("rwv.lock")).unwrap();
-    git(&["add", "rwv.lock"], &fixture.project_dir);
-    git(&["commit", "-m", "relock"], &fixture.project_dir);
+    common::git_in(&fixture.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&fixture.project_dir, &["commit", "-m", "relock"]);
 }
 
 /// `push --force` is not a precondition waiver like the other four flags —
@@ -466,8 +450,8 @@ fn push_force_actually_force_pushes() {
 
     // Advance and push normally: bare moves to commit B.
     std::fs::write(fixture.manifest_local.join("b.txt"), "b").unwrap();
-    git(&["add", "."], &fixture.manifest_local);
-    git(&["commit", "-m", "b"], &fixture.manifest_local);
+    common::git_in(&fixture.manifest_local, &["add", "."]);
+    common::git_in(&fixture.manifest_local, &["commit", "-m", "b"]);
     let sha_b = head_sha(&fixture.manifest_local);
     write_lock_at(&fixture, &sha_b);
     rwv()
@@ -478,10 +462,10 @@ fn push_force_actually_force_pushes() {
     assert_eq!(bare_main_sha(&fixture.manifest_bare), Some(sha_b.clone()));
 
     // Rewrite local history from the same parent: commit C diverges from B.
-    git(&["reset", "--hard", "HEAD~1"], &fixture.manifest_local);
+    common::git_in(&fixture.manifest_local, &["reset", "--hard", "HEAD~1"]);
     std::fs::write(fixture.manifest_local.join("c.txt"), "c").unwrap();
-    git(&["add", "."], &fixture.manifest_local);
-    git(&["commit", "-m", "c"], &fixture.manifest_local);
+    common::git_in(&fixture.manifest_local, &["add", "."]);
+    common::git_in(&fixture.manifest_local, &["commit", "-m", "c"]);
     let sha_c = head_sha(&fixture.manifest_local);
     write_lock_at(&fixture, &sha_c);
 

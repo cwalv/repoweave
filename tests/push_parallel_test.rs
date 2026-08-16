@@ -27,27 +27,10 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn git_run(cwd: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should be available");
-    if !output.status.success() {
-        panic!(
-            "git {:?} in {} failed: {}",
-            args,
-            cwd.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 fn init_bare_repo_with_commit(bare: &Path) {
     let parent = bare.parent().expect("bare repo path needs a parent");
     let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    git_run(
+    common::git_in(
         parent,
         &[
             "init",
@@ -57,16 +40,16 @@ fn init_bare_repo_with_commit(bare: &Path) {
         ],
     );
     let seed = parent.join(format!("__seed_{stem}"));
-    git_run(
+    common::git_in(
         parent,
         &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
     );
-    git_run(&seed, &["config", "user.email", "test@test.com"]);
-    git_run(&seed, &["config", "user.name", "Test"]);
+    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
+    common::git_in(&seed, &["config", "user.name", "Test"]);
     std::fs::write(seed.join("README"), "seed").unwrap();
-    git_run(&seed, &["add", "."]);
-    git_run(&seed, &["commit", "-m", "initial"]);
-    git_run(&seed, &["push", "origin", "main"]);
+    common::git_in(&seed, &["add", "."]);
+    common::git_in(&seed, &["commit", "-m", "initial"]);
+    common::git_in(&seed, &["push", "origin", "main"]);
 }
 
 struct PushWorkspace {
@@ -94,7 +77,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        git_run(
+        common::git_in(
             workspace.parent().unwrap(),
             &[
                 "clone",
@@ -104,9 +87,9 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
                 canonical.to_str().unwrap(),
             ],
         );
-        git_run(&canonical, &["config", "user.email", "test@test.com"]);
-        git_run(&canonical, &["config", "user.name", "Test"]);
-        let head = git_run(&canonical, &["rev-parse", "HEAD"]);
+        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
+        common::git_in(&canonical, &["config", "user.name", "Test"]);
+        let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
         manifest_shas.push(((*repo_path).to_string(), head));
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = common::file_url(&bare);
@@ -118,7 +101,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     let project_bare = tmp.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
     let project_dir = workspace.join("projects").join(project_name);
-    git_run(
+    common::git_in(
         workspace.parent().unwrap(),
         &[
             "clone",
@@ -126,8 +109,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
             project_dir.to_str().unwrap(),
         ],
     );
-    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
-    git_run(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
 
@@ -146,8 +129,8 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
     std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 
@@ -191,9 +174,9 @@ fn advance_all_and_relock(
             "new",
         )
         .unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", "advance"]);
-        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        common::git_in(&local, &["add", "."]);
+        common::git_in(&local, &["commit", "-m", "advance"]);
+        let sha = common::git_in(&local, &["rev-parse", "HEAD"]);
         let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
@@ -210,9 +193,9 @@ fn advance_all_and_relock(
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "advance lock"]);
-    let project_head = git_run(&project_dir, &["rev-parse", "HEAD"]);
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "advance lock"]);
+    let project_head = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
     (expected_shas, project_head)
 }
 
@@ -331,7 +314,7 @@ fn push_dash_j_mid_batch_failure_skips_project_repo() {
     // still complete; project repo must NOT be pushed.
     let local_bad = ws.workspace.join("local/org/bad");
     let bad_url = ws.workspace.join("nonexistent-remote.git");
-    git_run(
+    common::git_in(
         &local_bad,
         &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
     );
@@ -395,7 +378,7 @@ fn push_dash_j_project_repo_runs_after_manifest_pushes() {
     // must all complete first (proving they ran before the project push).
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     let bad_url = ws.workspace.join("nonexistent-project.git");
-    git_run(
+    common::git_in(
         &project_dir,
         &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
     );

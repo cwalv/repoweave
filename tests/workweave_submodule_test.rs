@@ -12,7 +12,6 @@
 //! correctly initialized.
 
 use std::path::{Path, PathBuf};
-use std::process;
 
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workweave::{create_workweave, scan_uninitialized_submodules};
@@ -23,26 +22,15 @@ mod common;
 // Git helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 /// Initialize a git repo with one commit.
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
-    git(&["config", "user.email", "test@test.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
+    common::git_in(path, &["config", "user.email", "test@test.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 /// Create a minimal workspace with one project and one member repo.
@@ -72,50 +60,23 @@ role = "owned"
     ws
 }
 
-/// Build a git command with `protocol.file.allow=always` (appended to the
-/// existing GIT_CONFIG_* chain from `common::git()`).
-///
-/// Recent git versions default `protocol.file.allow=user`, which blocks
-/// `git submodule add` with a `file://` URL in test contexts where the
-/// caller is not an interactive user (i.e. CI and `cargo test`). Injecting
-/// `always` via the GIT_CONFIG env-var mechanism avoids touching any disk
-/// config and stacks on top of whatever common::git() already sets.
-fn git_with_file_protocol(args: &[&str], dir: &Path) {
-    // common::git() already sets GIT_CONFIG_COUNT=1 for init.defaultBranch.
-    // We stack one more entry by bumping the count and adding the next key.
-    let output = common::git()
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
-        .env("GIT_CONFIG_VALUE_1", "always")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git should be available");
-    assert!(
-        output.status.success(),
-        "git {args:?} in {} failed:\n{}",
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 /// Add a real submodule to `repo_dir`, pointing at `submodule_remote`.
 /// The submodule is committed so `git worktree add` inherits the `.gitmodules`.
 fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
     // git submodule add creates .gitmodules and clones the submodule.
     // We need protocol.file.allow=always so that file:// URLs are accepted
     // in test/CI contexts (recent git defaults to `user` which blocks it).
-    git_with_file_protocol(
+    common::git_in(
+        repo_dir,
         &[
             "submodule",
             "add",
             &common::file_url(submodule_remote),
             sub_path,
         ],
-        repo_dir,
     );
-    git(&["add", ".gitmodules", sub_path], repo_dir);
-    git(&["commit", "-m", "add submodule"], repo_dir);
+    common::git_in(repo_dir, &["add", ".gitmodules", sub_path]);
+    common::git_in(repo_dir, &["commit", "-m", "add submodule"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +100,8 @@ fn create_initializes_submodules_when_gitmodules_present() {
     let sub_remote = tmp.path().join("sub-remote");
     init_repo_with_commit(&sub_remote);
     std::fs::write(sub_remote.join("lib.txt"), "submodule content").unwrap();
-    git(&["add", "."], &sub_remote);
-    git(&["commit", "-m", "submodule initial"], &sub_remote);
+    common::git_in(&sub_remote, &["add", "."]);
+    common::git_in(&sub_remote, &["commit", "-m", "submodule initial"]);
 
     // Add the submodule to the member repo and commit it.
     let repo = ws.join("github/org/repo");
@@ -230,21 +191,21 @@ fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
          \turl = file:///nonexistent/rwv-test/sub-that-does-not-exist\n",
     )
     .unwrap();
-    git(&["add", ".gitmodules"], &repo);
+    common::git_in(&repo, &["add", ".gitmodules"]);
     // Plant the gitlink entry itself (mode 160000). The recorded commit sha
     // does not need to exist anywhere — gitlink checkout only creates the
     // placeholder dir, and submodule update will fail at clone time (which
     // is the point of this test).
-    git(
+    common::git_in(
+        &repo,
         &[
             "update-index",
             "--add",
             "--cacheinfo",
             "160000,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,libs/sub",
         ],
-        &repo,
     );
-    git(&["commit", "-m", "record submodule with bad url"], &repo);
+    common::git_in(&repo, &["commit", "-m", "record submodule with bad url"]);
 
     let ww_dir = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir).unwrap();

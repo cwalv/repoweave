@@ -54,49 +54,13 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Run git with standard test env vars set, suppressing output. Panics on failure.
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(
-        status.success(),
-        "git {:?} in {} failed",
-        args,
-        dir.display()
-    );
-}
-
-/// Run git and capture stdout. Panics on failure.
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git should be available");
-    assert!(out.status.success(), "git {:?} failed", args);
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
-
 fn init_repo_with_commit(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "--initial-branch=main"], path);
+    common::git_in(path, &["init", "--initial-branch=main"]);
     std::fs::write(path.join("README"), "init").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// Write a lock file pinning a single repo to the given SHA.
@@ -243,15 +207,15 @@ fn status_human_shows_unreachable_not_no_lock_when_sha_gone() {
     //
     // Implementation: checkout an orphan branch, commit a new root, then
     // replace main with that orphan so the old SHA is dangling.
-    git(&["checkout", "--orphan", "newroot"], &repo_abs);
+    common::git_in(&repo_abs, &["checkout", "--orphan", "newroot"]);
     std::fs::write(repo_abs.join("README"), "rewritten").unwrap();
-    git(&["add", "README"], &repo_abs);
-    git(&["commit", "-m", "rewritten root"], &repo_abs);
+    common::git_in(&repo_abs, &["add", "README"]);
+    common::git_in(&repo_abs, &["commit", "-m", "rewritten root"]);
     // Move main to the new root (force — so old SHA becomes unreachable).
-    git(&["branch", "-f", "main", "HEAD"], &repo_abs);
-    git(&["checkout", "main"], &repo_abs);
+    common::git_in(&repo_abs, &["branch", "-f", "main", "HEAD"]);
+    common::git_in(&repo_abs, &["checkout", "main"]);
     // Prune the old unreferenced object.
-    git(&["gc", "--prune=now"], &repo_abs);
+    common::git_in(&repo_abs, &["gc", "--prune=now"]);
 
     // Verify the old SHA is truly gone (sanity check for the test itself).
     let cat_file = common::git()
@@ -416,30 +380,30 @@ fn make_workspace_with_bare_remote(parent: &Path) -> (PathBuf, PathBuf, PathBuf,
     // Seed the bare repo with an initial commit via a throw-away working clone.
     let tmp_work = common::tempdir().unwrap();
     let work = tmp_work.path().join("work");
-    git(
-        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    common::git_in(
         tmp_work.path(),
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
     std::fs::write(work.join("README"), "initial\n").unwrap();
-    git(&["config", "user.email", "test@test.com"], &work);
-    git(&["config", "user.name", "Test"], &work);
-    git(&["add", "."], &work);
-    git(&["commit", "-m", "initial"], &work);
-    git(&["push", "origin", "main"], &work);
-    let sha = git_out(&["rev-parse", "HEAD"], &work);
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    let sha = common::git_in(&work, &["rev-parse", "HEAD"]);
 
     let ws = parent.join("ws");
     let clone_abs = ws.join("github/org/repo");
     std::fs::create_dir_all(clone_abs.parent().unwrap()).unwrap();
 
     // Clone the bare into the canonical workspace slot.
-    git(
+    common::git_in(
+        ws.parent().unwrap_or(&ws),
         &[
             "clone",
             &bare.to_string_lossy(),
             &clone_abs.to_string_lossy(),
         ],
-        ws.parent().unwrap_or(&ws),
     );
 
     // Build project structure.
@@ -528,7 +492,7 @@ fn missing_repair_drive_fetch_in_place_restores_ok() {
         clone_abs.join(".git").exists(),
         "re-materialized path must be a real git clone"
     );
-    let head_after_repair = git_out(&["rev-parse", "HEAD"], &clone_abs);
+    let head_after_repair = common::git_in(&clone_abs, &["rev-parse", "HEAD"]);
     assert_eq!(
         head_after_repair, locked_sha,
         "repaired clone must be at the LOCKED SHA (not branch HEAD)"
@@ -605,12 +569,12 @@ fn unreachable_repair_drive_git_fetch_restores_ok() {
     // Rewrite history in the local clone so the original SHA becomes
     // unreachable, then GC to prune it from the local object store.
     // The SHA remains present in the bare remote.
-    git(&["checkout", "--orphan", "newroot"], &repo_abs);
+    common::git_in(&repo_abs, &["checkout", "--orphan", "newroot"]);
     std::fs::write(repo_abs.join("README"), "rewritten\n").unwrap();
-    git(&["add", "README"], &repo_abs);
-    git(&["commit", "-m", "rewritten root"], &repo_abs);
-    git(&["branch", "-f", "main", "HEAD"], &repo_abs);
-    git(&["checkout", "main"], &repo_abs);
+    common::git_in(&repo_abs, &["add", "README"]);
+    common::git_in(&repo_abs, &["commit", "-m", "rewritten root"]);
+    common::git_in(&repo_abs, &["branch", "-f", "main", "HEAD"]);
+    common::git_in(&repo_abs, &["checkout", "main"]);
     // Remove the orphan branch ref so the old SHA has no references.
     let _ = common::git()
         .args(["branch", "-D", "newroot"])
@@ -618,7 +582,7 @@ fn unreachable_repair_drive_git_fetch_restores_ok() {
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status();
-    git(&["gc", "--prune=now"], &repo_abs);
+    common::git_in(&repo_abs, &["gc", "--prune=now"]);
 
     // Sanity-check: if GC did not prune the object, the [unreachable] state
     // cannot be constructed — skip rather than asserting a wrong relation.
@@ -666,13 +630,13 @@ fn unreachable_repair_drive_git_fetch_restores_ok() {
 
     // 2. Run the repair: `git fetch` to re-pull the pruned object from the
     //    bare remote (which still has it), then checkout the locked SHA.
-    git(&["fetch", "origin"], &repo_abs);
+    common::git_in(&repo_abs, &["fetch", "origin"]);
     // After fetch the SHA should now be reachable via FETCH_HEAD / remote refs.
     // Directly checkout the locked SHA to align the local clone.
-    git(&["checkout", &sha], &repo_abs);
+    common::git_in(&repo_abs, &["checkout", &sha]);
 
     // 3. Verify the clone is at the locked SHA.
-    let head_after = git_out(&["rev-parse", "HEAD"], &repo_abs);
+    let head_after = common::git_in(&repo_abs, &["rev-parse", "HEAD"]);
     assert_eq!(
         head_after, sha,
         "after repair the clone must be at the locked SHA"

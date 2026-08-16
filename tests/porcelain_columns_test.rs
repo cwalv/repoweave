@@ -16,30 +16,15 @@
 mod common;
 
 use std::path::Path;
-use std::process::Command;
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("run git");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
 
 /// A repo with one committed file, ready to be dirtied one way.
 fn repo_with_one_commit(root: &Path) -> &Path {
-    git(root, &["init", "-q"]);
-    git(root, &["config", "user.email", "t@example.invalid"]);
-    git(root, &["config", "user.name", "t"]);
+    common::git_in(root, &["init", "-q"]);
+    common::git_in(root, &["config", "user.email", "t@example.invalid"]);
+    common::git_in(root, &["config", "user.name", "t"]);
     std::fs::write(root.join("tracked.txt"), "original\n").unwrap();
-    git(root, &["add", "tracked.txt"]);
-    git(root, &["commit", "-qm", "init"]);
+    common::git_in(root, &["add", "tracked.txt"]);
+    common::git_in(root, &["commit", "-qm", "init"]);
     root
 }
 
@@ -85,7 +70,7 @@ fn a_staged_modification_is_reported_as_staged() {
     let tmp = common::tempdir().expect("tempdir");
     let repo = repo_with_one_commit(tmp.path());
     std::fs::write(repo.join("tracked.txt"), "edited\n").unwrap();
-    git(repo, &["add", "tracked.txt"]);
+    common::git_in(repo, &["add", "tracked.txt"]);
 
     assert_eq!(
         repoweave::git::git_vcs()
@@ -137,7 +122,7 @@ fn an_untracked_file_is_dirty_but_not_staged() {
 fn a_staged_rename_reads_differently_to_each_listing() {
     let tmp = common::tempdir().expect("tempdir");
     let repo = repo_with_one_commit(tmp.path());
-    git(repo, &["mv", "tracked.txt", "renamed.txt"]);
+    common::git_in(repo, &["mv", "tracked.txt", "renamed.txt"]);
 
     let vcs = repoweave::git::git_vcs();
     assert_eq!(

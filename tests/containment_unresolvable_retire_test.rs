@@ -22,41 +22,6 @@ fn rwv() -> AssertCommand {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {:?} failed in {}:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
-}
-
 struct Workspace {
     root: PathBuf,
     project_dir: PathBuf,
@@ -65,14 +30,14 @@ struct Workspace {
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-q", "-b", "main"], path);
-    git(&["config", "user.email", "t@example.com"], path);
-    git(&["config", "user.name", "Test"], path);
-    git(&["config", "commit.gpgsign", "false"], path);
+    common::git_in(path, &["init", "-q", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "t@example.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    common::git_in(path, &["config", "commit.gpgsign", "false"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "README.md"], path);
-    git(&["commit", "-m", "init"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "README.md"]);
+    common::git_in(path, &["commit", "-m", "init"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 /// A repo with its own unrelated history. Distinguished from `init_repo`'s
@@ -81,15 +46,15 @@ fn init_repo(path: &Path) -> String {
 /// turn "independent clone" into "same tip by coincidence".
 fn init_independent_repo(path: &Path, marker: &str) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-q", "-b", "main"], path);
-    git(&["config", "user.email", "t@example.com"], path);
-    git(&["config", "user.name", "Test"], path);
-    git(&["config", "commit.gpgsign", "false"], path);
+    common::git_in(path, &["init", "-q", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "t@example.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    common::git_in(path, &["config", "commit.gpgsign", "false"]);
     std::fs::write(path.join("README.md"), format!("{marker}\n")).unwrap();
-    git(&["add", "README.md"], path);
+    common::git_in(path, &["add", "README.md"]);
     let msg = format!("init: {marker}");
-    git(&["commit", "-m", &msg], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["commit", "-m", &msg]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path) {
@@ -124,11 +89,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     .unwrap();
     write_manifest(&project_dir);
     write_lock(&project_dir, &sha);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -159,7 +124,8 @@ fn make_disconnected_retire_workspaces(parent: &Path) -> (Workspace, Workspace) 
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -167,7 +133,6 @@ fn make_disconnected_retire_workspaces(parent: &Path) -> (Workspace, Workspace) 
             "-b",
             "web-app--ww",
         ],
-        &primary.project_dir,
     );
 
     let ww_server = ww_root.join(SERVER_PATH);
@@ -204,10 +169,10 @@ fn write_lease_with_id(workspace: &Path, owner: &Path, id: &str) {
 }
 
 fn create_savepoint(repo: &Path, op_id: &str) {
-    let head = git_out(&["rev-parse", "HEAD"], repo);
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &head],
+    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
+    common::git_in(
         repo,
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &head],
     );
 }
 
@@ -223,8 +188,8 @@ fn retire_names_repos_differ_with_no_verdict_when_the_pair_is_unresolvable() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_disconnected_retire_workspaces(tmp.path());
 
-    let ww_server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
-    let primary_server_tip = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    let ww_server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let primary_server_tip = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
     assert_ne!(
         ww_server_tip, primary_server_tip,
         "fixture sanity: the two independent inits must not collide"

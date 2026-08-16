@@ -11,24 +11,14 @@ use std::path::Path;
 
 mod common;
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git().args(args).current_dir(dir).output().unwrap();
-    assert!(
-        out.status.success(),
-        "git {args:?} in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-b", "main"], path);
-    git(&["config", "user.email", "t@t.com"], path);
-    git(&["config", "user.name", "Test"], path);
+    common::git_in(path, &["init", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "t@t.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], path);
-    git(&["commit", "-m", "initial"], path);
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
 }
 
 fn write_manifest(project_dir: &Path, repo_path: &Path) {
@@ -122,8 +112,8 @@ fn a_silent_hook_refusing_the_project_repo_is_still_named_to_the_operator() {
     let project_dir = ws.join("projects").join("myproject");
     init_repo_with_commit(&project_dir);
     write_manifest(&project_dir, &repo_path);
-    git(&["add", "rwv.toml"], &project_dir);
-    git(&["commit", "-m", "add manifest"], &project_dir);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
     std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
     assert_word_absent_from_paths(&[tmp.path(), &ws, &project_dir]);
 

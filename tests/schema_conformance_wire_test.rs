@@ -65,26 +65,6 @@ const PROJECT: &str = "web-app";
 // Fixture
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "test@test.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .expect("git should be available");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
-}
-
 /// A primary weave with one manifest repo and a project repo, both cloned from
 /// local bare remotes so `rwv push` and `rwv update` have somewhere to go.
 struct Weave {
@@ -120,35 +100,35 @@ fn weave() -> Weave {
     let member_origin = origin.join("server.git");
     let project_origin = origin.join("web-app.git");
     for bare in [&member_origin, &project_origin] {
-        git(
-            &["init", "--bare", "-b", "main", &bare.to_string_lossy()],
+        common::git_in(
             &origin,
+            &["init", "--bare", "-b", "main", &bare.to_string_lossy()],
         );
     }
 
     let member = primary.join(MEMBER);
-    git(
+    common::git_in(
+        &parent,
         &[
             "clone",
             &member_origin.to_string_lossy(),
             &member.to_string_lossy(),
         ],
-        &parent,
     );
     std::fs::write(member.join("README.md"), "init\n").unwrap();
-    git(&["add", "."], &member);
-    git(&["commit", "-m", "initial"], &member);
-    git(&["push", "origin", "main"], &member);
-    let sha = git(&["rev-parse", "HEAD"], &member);
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "initial"]);
+    common::git_in(&member, &["push", "origin", "main"]);
+    let sha = common::git_in(&member, &["rev-parse", "HEAD"]);
 
     let project = primary.join("projects").join(PROJECT);
-    git(
+    common::git_in(
+        &parent,
         &[
             "clone",
             &project_origin.to_string_lossy(),
             &project.to_string_lossy(),
         ],
-        &parent,
     );
     let url = common::file_url(&member_origin);
     std::fs::write(
@@ -161,14 +141,14 @@ fn weave() -> Weave {
     .unwrap();
     std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
     write_lock(&project, &url, &sha);
-    git(&["add", "-A"], &project);
-    git(&["commit", "-m", "lock: initial"], &project);
-    git(&["push", "origin", "main"], &project);
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "-m", "lock: initial"]);
+    common::git_in(&project, &["push", "origin", "main"]);
 
     // `rwv push` refuses a project repo whose remote has no recorded canonical
     // branch, which a clone of a then-empty bare repo does not have.
     for repo in [&member, &project] {
-        git(&["remote", "set-head", "origin", "-a"], repo);
+        common::git_in(repo, &["remote", "set-head", "origin", "-a"]);
     }
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
@@ -346,8 +326,8 @@ fn sync_json_wire_output_conforms() {
     // Advance the primary and re-lock, so the workweave has something to
     // converge onto and the lock-freshness precondition holds.
     std::fs::write(weave.member().join("NOTES.md"), "advance\n").unwrap();
-    git(&["add", "-A"], &weave.member());
-    git(&["commit", "-m", "primary: advance"], &weave.member());
+    common::git_in(weave.member(), &["add", "-A"]);
+    common::git_in(weave.member(), &["commit", "-m", "primary: advance"]);
     let out = common::rwv()
         .args(["lock"])
         .current_dir(&weave.primary)
@@ -358,8 +338,8 @@ fn sync_json_wire_output_conforms() {
         "rwv lock failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    git(&["add", "-A"], &weave.project());
-    git(&["commit", "-m", "lock: advance"], &weave.project());
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(weave.project(), &["commit", "-m", "lock: advance"]);
 
     let primary = weave.primary.to_string_lossy().into_owned();
     let doc = emit(&ww, &["sync", &primary, "--json", "-j", "1"]);
@@ -372,8 +352,8 @@ fn sync_to_json_wire_output_conforms() {
     let ww = workweave(&weave);
 
     std::fs::write(ww.join(MEMBER).join("NOTES.md"), "workweave\n").unwrap();
-    git(&["add", "-A"], &ww.join(MEMBER));
-    git(&["commit", "-m", "ww: advance"], &ww.join(MEMBER));
+    common::git_in(ww.join(MEMBER), &["add", "-A"]);
+    common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
 
     let doc = emit(&ww, &["sync-to", "--json"]);
     assert_conforms("sync-to", &doc, "outcomes");
@@ -439,10 +419,10 @@ fn fetch_json_wire_output_conforms_on_partial_failure() {
         ),
     )
     .unwrap();
-    git(&["add", "-A"], &weave.project());
-    git(
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(
+        weave.project(),
         &["commit", "-m", "manifest: add unreachable repo"],
-        &weave.project(),
     );
 
     let doc = emit_after_failure(&weave.primary, &["fetch", "--json", "-j", "1"]);
@@ -472,10 +452,10 @@ fn update_json_wire_output_conforms_on_failure() {
         ),
     )
     .unwrap();
-    git(&["add", "-A"], &weave.project());
-    git(
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(
+        weave.project(),
         &["commit", "-m", "manifest: point at unreachable branch"],
-        &weave.project(),
     );
 
     let doc = emit_after_failure(&weave.primary, &["update", "--json", "-j", "1"]);
@@ -497,22 +477,22 @@ fn push_json_wire_output_conforms_on_manifest_failure() {
     // Advance the bare remote past local from a scratch clone, so pushing
     // the (also independently advanced) local tip is a non-fast-forward.
     let other = weave.parent.join("other");
-    git(
+    common::git_in(
+        &weave.parent,
         &[
             "clone",
             &weave.member_origin().to_string_lossy(),
             &other.to_string_lossy(),
         ],
-        &weave.parent,
     );
     std::fs::write(other.join("FOREIGN.md"), "foreign\n").unwrap();
-    git(&["add", "."], &other);
-    git(&["commit", "-m", "foreign advance"], &other);
-    git(&["push", "origin", "main"], &other);
+    common::git_in(&other, &["add", "."]);
+    common::git_in(&other, &["commit", "-m", "foreign advance"]);
+    common::git_in(&other, &["push", "origin", "main"]);
 
     std::fs::write(weave.member().join("LOCAL.md"), "local\n").unwrap();
-    git(&["add", "."], &weave.member());
-    git(&["commit", "-m", "local advance"], &weave.member());
+    common::git_in(weave.member(), &["add", "."]);
+    common::git_in(weave.member(), &["commit", "-m", "local advance"]);
 
     let out = common::rwv()
         .args(["lock"])
@@ -524,8 +504,8 @@ fn push_json_wire_output_conforms_on_manifest_failure() {
         "rwv lock failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    git(&["add", "-A"], &weave.project());
-    git(&["commit", "-m", "lock: local advance"], &weave.project());
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(weave.project(), &["commit", "-m", "lock: local advance"]);
 
     let doc = emit_after_failure(&weave.primary, &["push", "--json"]);
     assert_conforms("push", &doc, "outcomes");
@@ -544,8 +524,8 @@ fn push_json_wire_output_conforms_on_project_failure() {
     let weave = weave();
 
     std::fs::write(weave.member().join("LOCAL.md"), "local\n").unwrap();
-    git(&["add", "."], &weave.member());
-    git(&["commit", "-m", "local advance"], &weave.member());
+    common::git_in(weave.member(), &["add", "."]);
+    common::git_in(weave.member(), &["commit", "-m", "local advance"]);
 
     let out = common::rwv()
         .args(["lock"])
@@ -557,15 +537,15 @@ fn push_json_wire_output_conforms_on_project_failure() {
         "rwv lock failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    git(&["add", "-A"], &weave.project());
-    git(&["commit", "-m", "lock: local advance"], &weave.project());
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(weave.project(), &["commit", "-m", "lock: local advance"]);
 
     // Sabotage the project repo's remote so the manifest push succeeds and
     // only the project-repo push fails.
     let bad_url = weave.parent.join("no-such-project.git");
-    git(
+    common::git_in(
+        weave.project(),
         &["remote", "set-url", "origin", &bad_url.to_string_lossy()],
-        &weave.project(),
     );
 
     let doc = emit_after_failure(&weave.primary, &["push", "--json"]);
@@ -700,8 +680,8 @@ fn sync_ndjson_records_conform() {
     let ww = workweave(&weave);
 
     std::fs::write(weave.member().join("NOTES.md"), "advance\n").unwrap();
-    git(&["add", "-A"], &weave.member());
-    git(&["commit", "-m", "primary: advance"], &weave.member());
+    common::git_in(weave.member(), &["add", "-A"]);
+    common::git_in(weave.member(), &["commit", "-m", "primary: advance"]);
     let out = common::rwv()
         .args(["lock"])
         .current_dir(&weave.primary)
@@ -712,8 +692,8 @@ fn sync_ndjson_records_conform() {
         "rwv lock failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    git(&["add", "-A"], &weave.project());
-    git(&["commit", "-m", "lock: advance"], &weave.project());
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(weave.project(), &["commit", "-m", "lock: advance"]);
 
     let primary = weave.primary.to_string_lossy().into_owned();
     let records = emit_ndjson(&ww, &["sync", &primary, "--json", "-j", "2"]);
@@ -726,8 +706,8 @@ fn sync_to_ndjson_records_conform() {
     let ww = workweave(&weave);
 
     std::fs::write(ww.join(MEMBER).join("NOTES.md"), "workweave\n").unwrap();
-    git(&["add", "-A"], &ww.join(MEMBER));
-    git(&["commit", "-m", "ww: advance"], &ww.join(MEMBER));
+    common::git_in(ww.join(MEMBER), &["add", "-A"]);
+    common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
 
     let records = emit_ndjson(&ww, &["sync-to", "--json", "-j", "2"]);
     assert_ndjson_conforms("sync-to", &records, "sync-to-record");

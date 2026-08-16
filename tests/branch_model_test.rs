@@ -37,23 +37,6 @@ mod common;
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/// Run git in `dir`, panicking on failure.
-fn git(dir: &Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git");
-    assert!(
-        output.status.success(),
-        "git {:?} failed in {}: {}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
-}
-
 /// Run git in `dir`, returning whether it succeeded. For the cases where
 /// the failure IS the fixture.
 fn git_ok(dir: &Path, args: &[&str]) -> bool {
@@ -69,9 +52,9 @@ fn git_ok(dir: &Path, args: &[&str]) -> bool {
 /// A repo with no commits: HEAD is symbolic and points at an unborn branch.
 fn empty_repo() -> TempDir {
     let dir = common::tempdir().unwrap();
-    git(dir.path(), &["init"]);
-    git(dir.path(), &["config", "user.email", "test@test.com"]);
-    git(dir.path(), &["config", "user.name", "Test"]);
+    common::git_in(dir.path(), &["init"]);
+    common::git_in(dir.path(), &["config", "user.email", "test@test.com"]);
+    common::git_in(dir.path(), &["config", "user.name", "Test"]);
     dir
 }
 
@@ -85,8 +68,8 @@ fn repo_with_commit() -> TempDir {
 /// Commit `content` to `file` in `repo` and return the resulting tip.
 fn commit(repo: &Path, file: &str, content: &str) -> ResolvedRevisionId {
     std::fs::write(repo.join(file), content).unwrap();
-    git(repo, &["add", "."]);
-    git(repo, &["commit", "-m", file]);
+    common::git_in(repo, &["add", "."]);
+    common::git_in(repo, &["commit", "-m", file]);
     git_vcs().head_revision(repo).unwrap()
 }
 
@@ -147,7 +130,7 @@ fn head_attachment_reports_unborn_separately_from_attached() {
 fn head_attachment_reports_detached_separately_from_unborn() {
     let repo = repo_with_commit();
     let tip = git_vcs().head_revision(repo.path()).unwrap();
-    git(repo.path(), &["checkout", "--detach", tip.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", tip.as_str()]);
 
     match git_vcs().head_attachment(repo.path()).unwrap() {
         HeadAttachment::Detached(d) => {
@@ -170,9 +153,9 @@ fn head_attachment_names_the_branch_not_the_shortest_unambiguous_ref() {
     // `main` into `heads/main`. Every witness minted in the repo would then
     // carry a value that is not a branch name and does not round-trip.
     let repo = repo_with_commit();
-    git(repo.path(), &["tag", "main"]);
+    common::git_in(repo.path(), &["tag", "main"]);
     assert_eq!(
-        git(repo.path(), &["symbolic-ref", "--short", "HEAD"]),
+        common::git_in(repo.path(), &["symbolic-ref", "--short", "HEAD"]),
         "heads/main",
         "fixture really is ambiguous; without this the test proves nothing"
     );
@@ -201,7 +184,7 @@ fn a_symbolic_head_that_names_no_branch_is_an_error_not_an_attachment() {
     // put a non-branch name into a witness — the same corruption the
     // abbreviation caused, arriving by a different route.
     let repo = repo_with_commit();
-    git(repo.path(), &["symbolic-ref", "HEAD", "refs/foo/bar"]);
+    common::git_in(repo.path(), &["symbolic-ref", "HEAD", "refs/foo/bar"]);
 
     let err = git_vcs().head_attachment(repo.path()).unwrap_err();
     assert_eq!(err.kind(), "command-failed");
@@ -259,9 +242,9 @@ fn advance_attached_ref_moves_the_ref_the_checkout_is_on() {
     let base = git_vcs().head_revision(repo.path()).unwrap();
 
     // Build a target commit on a side branch, then come back to main.
-    git(repo.path(), &["checkout", "-b", "side"]);
+    common::git_in(repo.path(), &["checkout", "-b", "side"]);
     let target = commit(repo.path(), "two", "2");
-    git(repo.path(), &["checkout", "main"]);
+    common::git_in(repo.path(), &["checkout", "main"]);
 
     let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
@@ -279,9 +262,9 @@ fn advance_attached_ref_moves_the_ref_the_checkout_is_on() {
 #[test]
 fn advance_attached_ref_refuses_a_witness_whose_repo_moved_under_it() {
     let repo = repo_with_commit();
-    git(repo.path(), &["checkout", "-b", "side"]);
+    common::git_in(repo.path(), &["checkout", "-b", "side"]);
     let target = commit(repo.path(), "two", "2");
-    git(repo.path(), &["checkout", "main"]);
+    common::git_in(repo.path(), &["checkout", "main"]);
 
     let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
@@ -289,7 +272,7 @@ fn advance_attached_ref_refuses_a_witness_whose_repo_moved_under_it() {
 
     // Something else moves the repo between observation and consumption —
     // the TOCTOU form of the cross-repo pass.
-    git(repo.path(), &["checkout", "side"]);
+    common::git_in(repo.path(), &["checkout", "side"]);
 
     match git_vcs().advance_attached_ref(&witness, &target) {
         Err(VcsError::StaleRefWitness {
@@ -309,14 +292,14 @@ fn advance_attached_ref_refuses_a_witness_whose_repo_moved_under_it() {
 fn advance_attached_ref_refuses_a_witness_for_a_repo_that_became_detached() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
-    git(repo.path(), &["checkout", "-b", "side"]);
+    common::git_in(repo.path(), &["checkout", "-b", "side"]);
     let target = commit(repo.path(), "two", "2");
-    git(repo.path(), &["checkout", "main"]);
+    common::git_in(repo.path(), &["checkout", "main"]);
 
     let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
     };
-    git(repo.path(), &["checkout", "--detach", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", base.as_str()]);
 
     // This is the shape that landed commits on nothing: a phase detaches a
     // repo while a later phase still holds a witness for it.
@@ -339,9 +322,9 @@ fn a_witness_from_one_repo_cannot_move_another() {
     // that the target really is derived from the witness.
     let repo_a = repo_with_commit();
     let repo_b = repo_with_commit();
-    git(repo_b.path(), &["checkout", "-b", "side"]);
+    common::git_in(repo_b.path(), &["checkout", "-b", "side"]);
     let b_target = commit(repo_b.path(), "two", "2");
-    git(repo_b.path(), &["checkout", "main"]);
+    common::git_in(repo_b.path(), &["checkout", "main"]);
 
     let HeadAttachment::Attached(witness_a) = git_vcs().head_attachment(repo_a.path()).unwrap()
     else {
@@ -367,10 +350,10 @@ fn a_witness_from_one_repo_cannot_move_another() {
 fn advance_attached_ref_refuses_a_non_fast_forward() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
-    git(repo.path(), &["checkout", "-b", "side"]);
-    git(repo.path(), &["reset", "--hard", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "-b", "side"]);
+    common::git_in(repo.path(), &["reset", "--hard", base.as_str()]);
     let divergent = commit(repo.path(), "side-only", "s");
-    git(repo.path(), &["checkout", "main"]);
+    common::git_in(repo.path(), &["checkout", "main"]);
     let _ = commit(repo.path(), "main-only", "m");
     let main_tip = git_vcs().head_revision(repo.path()).unwrap();
 
@@ -392,7 +375,7 @@ fn advance_detached_head_moves_a_detached_head() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
     let target = commit(repo.path(), "two", "2");
-    git(repo.path(), &["checkout", "--detach", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", base.as_str()]);
 
     let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be detached");
@@ -416,9 +399,9 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
     let mid = commit(repo.path(), "two", "2");
     let tip = commit(repo.path(), "three", "3");
 
-    git(repo.path(), &["bisect", "start"]);
-    git(repo.path(), &["bisect", "bad", tip.as_str()]);
-    git(repo.path(), &["bisect", "good", base.as_str()]);
+    common::git_in(repo.path(), &["bisect", "start"]);
+    common::git_in(repo.path(), &["bisect", "bad", tip.as_str()]);
+    common::git_in(repo.path(), &["bisect", "good", base.as_str()]);
 
     let bisect_position = git_vcs().head_revision(repo.path()).unwrap();
     let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
@@ -445,9 +428,9 @@ fn mid_operation_sees_a_bisect_that_mid_op_cannot() {
     let base = git_vcs().head_revision(repo.path()).unwrap();
     let _ = commit(repo.path(), "two", "2");
     let tip = commit(repo.path(), "three", "3");
-    git(repo.path(), &["bisect", "start"]);
-    git(repo.path(), &["bisect", "bad", tip.as_str()]);
-    git(repo.path(), &["bisect", "good", base.as_str()]);
+    common::git_in(repo.path(), &["bisect", "start"]);
+    common::git_in(repo.path(), &["bisect", "bad", tip.as_str()]);
+    common::git_in(repo.path(), &["bisect", "good", base.as_str()]);
 
     assert_eq!(
         git_vcs().mid_operation(repo.path()).as_deref(),
@@ -471,13 +454,13 @@ fn advance_detached_head_refuses_a_stale_witness() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
     let target = commit(repo.path(), "two", "2");
-    git(repo.path(), &["checkout", "--detach", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", base.as_str()]);
 
     let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be detached");
     };
     // Someone reattaches between observation and consumption.
-    git(repo.path(), &["checkout", "main"]);
+    common::git_in(repo.path(), &["checkout", "main"]);
 
     let err = git_vcs()
         .advance_detached_head(&witness, &target)
@@ -642,8 +625,8 @@ fn remote_default_branch_is_none_when_origin_head_is_unset() {
 #[test]
 fn remote_default_branch_reads_the_symref_when_it_is_set() {
     let repo = repo_with_commit();
-    git(repo.path(), &["branch", "trunk"]);
-    git(
+    common::git_in(repo.path(), &["branch", "trunk"]);
+    common::git_in(
         repo.path(),
         &[
             "update-ref",
@@ -651,7 +634,7 @@ fn remote_default_branch_reads_the_symref_when_it_is_set() {
             "refs/heads/trunk",
         ],
     );
-    git(
+    common::git_in(
         repo.path(),
         &[
             "symbolic-ref",
@@ -676,7 +659,7 @@ fn remote_default_branch_is_none_for_a_symref_outside_the_remote_namespace() {
     // for real: `git remote set-head` is not the only way `origin/HEAD` gets
     // written, and a hand-written one can point anywhere.
     let repo = repo_with_commit();
-    git(
+    common::git_in(
         repo.path(),
         &[
             "symbolic-ref",
@@ -714,16 +697,16 @@ fn remote_default_branch_on_a_non_repo_is_an_error_not_an_absence() {
 #[test]
 fn listings_return_observed_names() {
     let repo = repo_with_commit();
-    git(repo.path(), &["branch", "p--ww"]);
-    git(repo.path(), &["branch", "p--other"]);
-    git(repo.path(), &["branch", "unrelated"]);
+    common::git_in(repo.path(), &["branch", "p--ww"]);
+    common::git_in(repo.path(), &["branch", "p--other"]);
+    common::git_in(repo.path(), &["branch", "unrelated"]);
     // A tag sharing a branch name, because `%(refname:short)` renders that
     // branch as `heads/p--ww` — not a branch name, not matched by the
     // prefix a caller asks for, and not resolvable under refs/heads/. A
     // fixture without the collision cannot see the difference.
-    git(repo.path(), &["tag", "p--ww"]);
+    common::git_in(repo.path(), &["tag", "p--ww"]);
     // Nested too: `lstrip=2` must drop exactly `refs/heads/`, no more.
-    git(repo.path(), &["branch", "p--deep/inner"]);
+    common::git_in(repo.path(), &["branch", "p--deep/inner"]);
 
     let mut all: Vec<String> = git_vcs()
         .list_local_branch_names(repo.path())

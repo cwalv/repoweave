@@ -29,41 +29,6 @@ fn rwv() -> AssertCommand {
     common::rwv()
 }
 
-fn git(args: &[&str], dir: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_AUTHOR_NAME", "Test")
-        .env("GIT_AUTHOR_EMAIL", "t@example.com")
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "t@example.com")
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {:?} in {} failed:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
-fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("git command failed");
-    assert!(
-        out.status.success(),
-        "git {:?} failed in {}:\n{}",
-        args,
-        dir.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_owned()
-}
-
 fn try_git(args: &[&str], dir: &Path) -> bool {
     common::git()
         .args(args)
@@ -81,21 +46,21 @@ struct Workspace {
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
-    git(&["init", "-q", "-b", "main"], path);
-    git(&["config", "user.email", "t@example.com"], path);
-    git(&["config", "user.name", "Test"], path);
-    git(&["config", "commit.gpgsign", "false"], path);
+    common::git_in(path, &["init", "-q", "-b", "main"]);
+    common::git_in(path, &["config", "user.email", "t@example.com"]);
+    common::git_in(path, &["config", "user.name", "Test"]);
+    common::git_in(path, &["config", "commit.gpgsign", "false"]);
     std::fs::write(path.join("README.md"), "init\n").unwrap();
-    git(&["add", "README.md"], path);
-    git(&["commit", "-m", "init"], path);
-    git_out(&["rev-parse", "HEAD"], path)
+    common::git_in(path, &["add", "README.md"]);
+    common::git_in(path, &["commit", "-m", "init"]);
+    common::git_in(path, &["rev-parse", "HEAD"])
 }
 
 fn make_commit(repo: &Path, filename: &str, content: &str, msg: &str) -> String {
     std::fs::write(repo.join(filename), content).unwrap();
-    git(&["add", filename], repo);
-    git(&["commit", "-m", msg], repo);
-    git_out(&["rev-parse", "HEAD"], repo)
+    common::git_in(repo, &["add", filename]);
+    common::git_in(repo, &["commit", "-m", msg]);
+    common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
 fn write_manifest(project_dir: &Path) {
@@ -130,11 +95,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     .unwrap();
     write_manifest(&project_dir);
     write_lock(&project_dir, &sha);
-    git(
-        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
+    common::git_in(
         &project_dir,
+        &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
     );
-    git(&["commit", "-m", "lock: initial"], &project_dir);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -157,7 +122,8 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
     let ww_server = ww_root.join(SERVER_PATH);
-    git(
+    common::git_in(
+        &primary.server_dir,
         &[
             "worktree",
             "add",
@@ -165,11 +131,11 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
             "-b",
             "ww/main",
         ],
-        &primary.server_dir,
     );
 
     let ww_project = ww_root.join("projects/web-app");
-    git(
+    common::git_in(
+        &primary.project_dir,
         &[
             "worktree",
             "add",
@@ -177,7 +143,6 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace) {
             "-b",
             "ww/project",
         ],
-        &primary.project_dir,
     );
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -213,14 +178,14 @@ fn plant_lease(workspace: &Path, owner: &Path, op_id: &str) {
 }
 
 fn plant_savepoint(repo: &Path, restore_id: &str) -> String {
-    let head = git_out(&["rev-parse", "HEAD"], repo);
-    git(
+    let head = common::git_in(repo, &["rev-parse", "HEAD"]);
+    common::git_in(
+        repo,
         &[
             "update-ref",
             &format!("refs/rwv/pre-op/{restore_id}"),
             &head,
         ],
-        repo,
     );
     head
 }
@@ -313,7 +278,7 @@ fn sync_to_abort_refuses_target_side_foreign_tip_without_the_flag() {
         "the refusal must name the target-side pre-abort reference.\nstderr:\n{stderr}"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         foreign_tip,
         "a refusal must not move the target-side branch"
     );
@@ -383,12 +348,12 @@ fn sync_to_abandon_covers_both_copies_under_side_specific_refs() {
         "the target-side copy must be abandoned.\nstdout:\n{stdout}"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_sp,
         "owner-side branch must be restored to the owner-side savepoint"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         primary_server_sp,
         "target-side branch must be restored to the target-side savepoint"
     );
@@ -456,7 +421,7 @@ fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
         "the named repo's target-side copy must be abandoned.\nstdout:\n{stdout}"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         primary_server_sp,
         "the named repo's target-side branch must be restored"
     );
@@ -465,7 +430,7 @@ fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
         "the unnamed repo's target-side refusal must stand.\nstderr:\n{stderr}"
     );
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
         project_foreign,
         "consent must not move a branch it did not name"
     );
@@ -518,7 +483,7 @@ fn sync_to_abandon_advances_target_side_capture_along_ancestry() {
         )));
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         primary_server_sp,
         "the target-side branch must be restored to its savepoint"
     );
@@ -574,9 +539,9 @@ fn sync_to_abandon_refuses_diverged_target_side_capture() {
         Some(first_foreign.as_str()),
     );
 
-    git(
-        &["reset", "--hard", &primary_server_sp],
+    common::git_in(
         &primary.server_dir,
+        &["reset", "--hard", &primary_server_sp],
     );
     let diverged_foreign = make_commit(&primary.server_dir, "d1.txt", "d1\n", "foreign: diverged");
     assert!(
@@ -603,7 +568,7 @@ fn sync_to_abandon_refuses_diverged_target_side_capture() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert_eq!(
-        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         diverged_foreign,
         "a diverged capture must not become consent to move the target-side branch"
     );

@@ -69,20 +69,6 @@ fn stub_bin_dir() -> tempfile::TempDir {
     dir
 }
 
-fn git(args: &[&str], cwd: &Path) {
-    let out = common::git()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("git should run");
-    assert!(
-        out.status.success(),
-        "git {args:?} failed in {}: {}",
-        cwd.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-}
-
 /// A fresh git repo with the three artifact directories the drift stage
 /// diffs, each holding one committed placeholder — isolated from the real
 /// repoweave checkout, so a test that induces drift never touches a tracked
@@ -98,11 +84,11 @@ fn fixture_repo() -> tempfile::TempDir {
         std::fs::create_dir_all(root.join(sub)).unwrap();
         std::fs::write(root.join(sub).join("placeholder.txt"), "generated\n").unwrap();
     }
-    git(&["init", "-q", "--initial-branch=main"], root);
-    git(&["config", "user.email", "test@test.com"], root);
-    git(&["config", "user.name", "Test"], root);
-    git(&["add", "-A"], root);
-    git(&["commit", "-q", "-m", "init"], root);
+    common::git_in(root, &["init", "-q", "--initial-branch=main"]);
+    common::git_in(root, &["config", "user.email", "test@test.com"]);
+    common::git_in(root, &["config", "user.name", "Test"]);
+    common::git_in(root, &["add", "-A"]);
+    common::git_in(root, &["commit", "-q", "-m", "init"]);
     dir
 }
 

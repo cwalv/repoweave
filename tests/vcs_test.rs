@@ -13,33 +13,15 @@ fn init_repo() -> TempDir {
     let dir = common::tempdir().unwrap();
     let p = dir.path();
 
-    git(p, &["init"]);
-    git(p, &["config", "user.email", "test@test.com"]);
-    git(p, &["config", "user.name", "Test"]);
+    common::git_in(p, &["init"]);
+    common::git_in(p, &["config", "user.email", "test@test.com"]);
+    common::git_in(p, &["config", "user.name", "Test"]);
 
     fs::write(p.join("README.md"), "init").unwrap();
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "initial"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "initial"]);
 
     dir
-}
-
-/// Helper: run git in `dir` and panic on failure.
-fn git(dir: &std::path::Path, args: &[&str]) -> String {
-    let output = common::git()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git");
-    if !output.status.success() {
-        panic!(
-            "git {:?} failed in {}: {}",
-            args,
-            dir.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 // ============================================================================
@@ -59,7 +41,7 @@ fn has_uncommitted_changes_staged_changes() {
     let p = dir.path();
 
     fs::write(p.join("new.txt"), "staged content").unwrap();
-    git(p, &["add", "new.txt"]);
+    common::git_in(p, &["add", "new.txt"]);
 
     let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
@@ -104,7 +86,7 @@ fn tag_at_head_lightweight_tag() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "v0.1.0"]);
+    common::git_in(p, &["tag", "v0.1.0"]);
 
     let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
@@ -116,7 +98,7 @@ fn tag_at_head_annotated_tag() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "-a", "v1.0.0", "-m", "release v1.0.0"]);
+    common::git_in(p, &["tag", "-a", "v1.0.0", "-m", "release v1.0.0"]);
 
     let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
@@ -129,11 +111,11 @@ fn tag_at_head_tag_not_at_head() {
     let p = dir.path();
 
     // Tag the first commit, then create a second commit so HEAD moves past the tag.
-    git(p, &["tag", "v0.0.1"]);
+    common::git_in(p, &["tag", "v0.0.1"]);
 
     fs::write(p.join("second.txt"), "second").unwrap();
-    git(p, &["add", "."]);
-    git(p, &["commit", "-m", "second commit"]);
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "second commit"]);
 
     let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(p).unwrap(), None);
@@ -144,8 +126,8 @@ fn tag_at_head_multiple_tags() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "v1.0.0"]);
-    git(p, &["tag", "release-1"]);
+    common::git_in(p, &["tag", "v1.0.0"]);
+    common::git_in(p, &["tag", "release-1"]);
 
     let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
@@ -165,7 +147,7 @@ fn tag_at_head_skips_savepoint_only() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "savepoint/2024-01-01-abc"]);
+    common::git_in(p, &["tag", "savepoint/2024-01-01-abc"]);
 
     let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(p).unwrap(), None);
@@ -176,7 +158,7 @@ fn tag_at_head_skips_pre_op_only() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "rwv/pre-op/op-xyz"]);
+    common::git_in(p, &["tag", "rwv/pre-op/op-xyz"]);
 
     let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(p).unwrap(), None);
@@ -188,8 +170,8 @@ fn tag_at_head_prefers_release_over_transient() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "savepoint/old"]);
-    git(p, &["tag", "v9.9.9"]);
+    common::git_in(p, &["tag", "savepoint/old"]);
+    common::git_in(p, &["tag", "v9.9.9"]);
 
     let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
@@ -203,8 +185,8 @@ fn tag_at_head_prefers_release_over_lightweight() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "aaa-arbitrary"]);
-    git(p, &["tag", "v1.2.3"]);
+    common::git_in(p, &["tag", "aaa-arbitrary"]);
+    common::git_in(p, &["tag", "v1.2.3"]);
 
     let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
@@ -219,7 +201,7 @@ fn head_revision_skips_savepoint_tag_display() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "savepoint/op-1"]);
+    common::git_in(p, &["tag", "savepoint/op-1"]);
 
     let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
@@ -234,8 +216,8 @@ fn head_revision_picks_release_tag_when_mixed() {
     let dir = init_repo();
     let p = dir.path();
 
-    git(p, &["tag", "savepoint/op-1"]);
-    git(p, &["tag", "v9.9.9"]);
+    common::git_in(p, &["tag", "savepoint/op-1"]);
+    common::git_in(p, &["tag", "v9.9.9"]);
 
     let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
@@ -253,7 +235,7 @@ fn revision_id_tag_form_equals_sha_form_after_resolve() {
     // doc-test in `vcs.rs`.
     let dir = init_repo();
     let p = dir.path();
-    git(p, &["tag", "v1.0.0"]);
+    common::git_in(p, &["tag", "v1.0.0"]);
 
     let vcs = git_vcs();
     let head_sha_form = vcs.head_revision(p).unwrap();
@@ -280,8 +262,8 @@ fn has_uncommitted_changes_gitignored_file() {
 
     // Add a .gitignore, commit it, then create an ignored file.
     fs::write(p.join(".gitignore"), "*.log\n").unwrap();
-    git(p, &["add", ".gitignore"]);
-    git(p, &["commit", "-m", "add gitignore"]);
+    common::git_in(p, &["add", ".gitignore"]);
+    common::git_in(p, &["commit", "-m", "add gitignore"]);
 
     fs::write(p.join("debug.log"), "some logs").unwrap();
 
@@ -296,7 +278,7 @@ fn has_uncommitted_changes_staged_deletion() {
     let p = dir.path();
 
     // Stage removal of a tracked file.
-    git(p, &["rm", "README.md"]);
+    common::git_in(p, &["rm", "README.md"]);
 
     let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
@@ -519,8 +501,8 @@ fn revision_id_round_trip_scalar() {
 fn resolve_revision_tag_to_canonical_sha() {
     let dir = init_repo();
     let p = dir.path();
-    git(p, &["tag", "v1.0.0"]);
-    let head_sha = git(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["tag", "v1.0.0"]);
+    let head_sha = common::git_in(p, &["rev-parse", "HEAD"]);
 
     let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, "v1.0.0").unwrap();
@@ -536,7 +518,7 @@ fn resolve_revision_tag_to_canonical_sha() {
 fn resolve_revision_sha_passes_through() {
     let dir = init_repo();
     let p = dir.path();
-    let head_sha = git(p, &["rev-parse", "HEAD"]);
+    let head_sha = common::git_in(p, &["rev-parse", "HEAD"]);
 
     let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, &head_sha).unwrap();
@@ -559,7 +541,7 @@ fn resolve_revision_then_equal_to_head_revision() {
     // the HEAD's ResolvedRevisionId — the canonical-SHA equality the spec requires.
     let dir = init_repo();
     let p = dir.path();
-    git(p, &["tag", "v0.3.4"]);
+    common::git_in(p, &["tag", "v0.3.4"]);
 
     let vcs = git_vcs();
     let lock_entry = vcs.resolve_revision(p, "v0.3.4").unwrap();
@@ -574,11 +556,11 @@ fn resolve_revision_then_equal_to_head_revision() {
 fn head_revision_preserves_tag_at_head_as_display() {
     let dir = init_repo();
     let p = dir.path();
-    git(p, &["tag", "v0.3.4"]);
+    common::git_in(p, &["tag", "v0.3.4"]);
 
     let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
-    let head_sha = git(p, &["rev-parse", "HEAD"]);
+    let head_sha = common::git_in(p, &["rev-parse", "HEAD"]);
     assert_eq!(head.as_str(), &head_sha);
     assert_eq!(head.display_str(), "v0.3.4");
 }
@@ -622,7 +604,7 @@ fn raw_revision_id_tag_resolves_to_head_sha() {
     use repoweave::vcs::RawRevisionId;
     let dir = init_repo();
     let p = dir.path();
-    git(p, &["tag", "v1.0.0"]);
+    common::git_in(p, &["tag", "v1.0.0"]);
 
     let raw = RawRevisionId::new("v1.0.0");
     let vcs = git_vcs();
@@ -647,17 +629,17 @@ fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
 
     // Build the remote repo with one commit on `main`.
     fs::create_dir_all(&remote_path).unwrap();
-    git(&remote_path, &["init", "--initial-branch=main"]);
-    git(&remote_path, &["config", "user.email", "test@test.com"]);
-    git(&remote_path, &["config", "user.name", "Test"]);
+    common::git_in(&remote_path, &["init", "--initial-branch=main"]);
+    common::git_in(&remote_path, &["config", "user.email", "test@test.com"]);
+    common::git_in(&remote_path, &["config", "user.name", "Test"]);
     fs::write(remote_path.join("README.md"), "remote").unwrap();
-    git(&remote_path, &["add", "."]);
-    git(&remote_path, &["commit", "-m", "initial"]);
+    common::git_in(&remote_path, &["add", "."]);
+    common::git_in(&remote_path, &["commit", "-m", "initial"]);
 
     // Clone into local with the requested remote name and fetch.
     let remote_url = common::file_url(&remote_path);
     let local_str = local_path.to_str().unwrap();
-    git(
+    common::git_in(
         workspace.path(),
         &["clone", "--origin", remote_name, &remote_url, local_str],
     );
@@ -668,7 +650,7 @@ fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
 #[test]
 fn resolve_branch_on_remote_resolves_against_origin() {
     let (_ws, local) = repo_with_remote("origin");
-    let expected_sha = git(&local, &["rev-parse", "origin/main"]);
+    let expected_sha = common::git_in(&local, &["rev-parse", "origin/main"]);
 
     let vcs = git_vcs();
     let resolved = vcs
@@ -1087,7 +1069,7 @@ fn plant_rwv_merge_driver_config_sets_repo_local_entries() {
     let dir = init_repo();
     repoweave::git::plant_rwv_merge_driver_config(dir.path()).unwrap();
 
-    let driver = git(
+    let driver = common::git_in(
         dir.path(),
         &["config", "--local", "--get", "merge.rwv-ours.driver"],
     );
@@ -1096,7 +1078,7 @@ fn plant_rwv_merge_driver_config_sets_repo_local_entries() {
         "true",
         "driver config not planted; got: {driver:?}"
     );
-    let name = git(
+    let name = common::git_in(
         dir.path(),
         &["config", "--local", "--get", "merge.rwv-ours.name"],
     );
@@ -1107,7 +1089,7 @@ fn plant_rwv_merge_driver_config_sets_repo_local_entries() {
 
     // Idempotent — a second plant must not fail.
     repoweave::git::plant_rwv_merge_driver_config(dir.path()).unwrap();
-    let driver2 = git(
+    let driver2 = common::git_in(
         dir.path(),
         &["config", "--local", "--get", "merge.rwv-ours.driver"],
     );
@@ -1139,18 +1121,18 @@ fn has_rwv_merge_driver_config_reflects_plant() {
 fn diverged_repo() -> (TempDir, ResolvedRevisionId) {
     let dir = init_repo();
     let p = dir.path();
-    let c1 = git(p, &["rev-parse", "HEAD"]);
+    let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
     // main: advance with a new file `main.txt`.
     fs::write(p.join("main.txt"), "main\n").unwrap();
-    git(p, &["add", "main.txt"]);
-    git(p, &["commit", "-m", "main: advance"]);
+    common::git_in(p, &["add", "main.txt"]);
+    common::git_in(p, &["commit", "-m", "main: advance"]);
 
     // feat branch from C1 with a new file `feat.txt`.
-    git(p, &["checkout", "-b", "feat", &c1]);
+    common::git_in(p, &["checkout", "-b", "feat", &c1]);
     fs::write(p.join("feat.txt"), "feat\n").unwrap();
-    git(p, &["add", "feat.txt"]);
-    git(p, &["commit", "-m", "feat: advance"]);
+    common::git_in(p, &["add", "feat.txt"]);
+    common::git_in(p, &["commit", "-m", "feat: advance"]);
 
     let c1 = ResolvedRevisionId::from_canonical(c1, None);
     (dir, c1)
@@ -1160,7 +1142,8 @@ fn diverged_repo() -> (TempDir, ResolvedRevisionId) {
 fn rebase_clean_advances_head_onto_target() {
     let (dir, _c1) = diverged_repo();
     let p = dir.path();
-    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+    let main_tip =
+        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
 
     // feat is checked out — rebase it onto main.
     git_vcs()
@@ -1193,20 +1176,21 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
     let dir = init_repo();
     let p = dir.path();
     fs::write(p.join("shared"), "v0\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "add shared"]);
-    let c1 = git(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "add shared"]);
+    let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
     fs::write(p.join("shared"), "main version\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "main: change shared"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "main: change shared"]);
 
-    git(p, &["checkout", "-b", "feat", &c1]);
+    common::git_in(p, &["checkout", "-b", "feat", &c1]);
     fs::write(p.join("shared"), "feat version\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "feat: change shared"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "feat: change shared"]);
 
-    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+    let main_tip =
+        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
 
     let result = git_vcs().rebase(
         p,
@@ -1236,26 +1220,27 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     let dir = init_repo();
     let p = dir.path();
     fs::write(p.join("rwv.lock"), "v0\n").unwrap();
-    git(p, &["add", "rwv.lock"]);
+    common::git_in(p, &["add", "rwv.lock"]);
     // Configure replay-exclusion BEFORE the commits that mutate the lock.
     git_vcs()
         .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
         .unwrap();
-    git(p, &["add", ".gitattributes"]);
-    git(p, &["commit", "-m", "lock + .gitattributes"]);
-    let c1 = git(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["add", ".gitattributes"]);
+    common::git_in(p, &["commit", "-m", "lock + .gitattributes"]);
+    let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
     fs::write(p.join("rwv.lock"), "main version\n").unwrap();
-    git(p, &["add", "rwv.lock"]);
-    git(p, &["commit", "-m", "main: change lock"]);
+    common::git_in(p, &["add", "rwv.lock"]);
+    common::git_in(p, &["commit", "-m", "main: change lock"]);
     let main_lock_content = fs::read_to_string(p.join("rwv.lock")).unwrap();
 
-    git(p, &["checkout", "-b", "feat", &c1]);
+    common::git_in(p, &["checkout", "-b", "feat", &c1]);
     fs::write(p.join("rwv.lock"), "feat version\n").unwrap();
-    git(p, &["add", "rwv.lock"]);
-    git(p, &["commit", "-m", "feat: change lock"]);
+    common::git_in(p, &["add", "rwv.lock"]);
+    common::git_in(p, &["commit", "-m", "feat: change lock"]);
 
-    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+    let main_tip =
+        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
 
     git_vcs()
         .rebase(
@@ -1293,21 +1278,22 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     let dir = init_repo();
     let p = dir.path();
     fs::write(p.join("shared.txt"), "base\n").unwrap();
-    git(p, &["add", "shared.txt"]);
-    git(p, &["commit", "-m", "add shared"]);
-    let c1 = git(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["add", "shared.txt"]);
+    common::git_in(p, &["commit", "-m", "add shared"]);
+    let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
     // main advances with a conflicting change.
     fs::write(p.join("shared.txt"), "main side\n").unwrap();
-    git(p, &["add", "shared.txt"]);
-    git(p, &["commit", "-m", "main: conflicting change"]);
-    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+    common::git_in(p, &["add", "shared.txt"]);
+    common::git_in(p, &["commit", "-m", "main: conflicting change"]);
+    let main_tip =
+        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
 
     // feature branches off c1 and commits with a known subject.
-    git(p, &["checkout", "-b", "feature", &c1]);
+    common::git_in(p, &["checkout", "-b", "feature", &c1]);
     fs::write(p.join("shared.txt"), "feature side\n").unwrap();
-    git(p, &["add", "shared.txt"]);
-    git(
+    common::git_in(p, &["add", "shared.txt"]);
+    common::git_in(
         p,
         &[
             "commit",
@@ -1315,7 +1301,7 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
             "lock: refresh — post-OOB drift in gc-formulas",
         ],
     );
-    let feature_sha = git(p, &["rev-parse", "HEAD"]);
+    let feature_sha = common::git_in(p, &["rev-parse", "HEAD"]);
 
     // Rebase feature onto main — will conflict on shared.txt.
     let result = git_vcs().rebase(
@@ -1408,10 +1394,10 @@ fn rebase_continue_on_clean_repo_returns_error_not_silent_noop() {
 
     // The HEAD must not have moved — the wrong-state error must be diagnostic,
     // not destructive.
-    let head_after = git(p, &["rev-parse", "HEAD"]);
+    let head_after = common::git_in(p, &["rev-parse", "HEAD"]);
     assert_eq!(
         head_after,
-        git(p, &["rev-parse", "HEAD"]),
+        common::git_in(p, &["rev-parse", "HEAD"]),
         "HEAD must be stable across a wrong-state rebase_continue call"
     );
 }
@@ -1428,20 +1414,21 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
     let dir = init_repo();
     let p = dir.path();
     fs::write(p.join("shared"), "v0\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "add shared"]);
-    let c1 = git(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "add shared"]);
+    let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
     fs::write(p.join("shared"), "main version\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "main: change shared"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "main: change shared"]);
 
-    git(p, &["checkout", "-b", "feat", &c1]);
+    common::git_in(p, &["checkout", "-b", "feat", &c1]);
     fs::write(p.join("shared"), "feat version\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "feat: change shared"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "feat: change shared"]);
 
-    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+    let main_tip =
+        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
 
     // First rebase stops on the conflict.
     let first = git_vcs().rebase(
@@ -1497,31 +1484,32 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     // trees carry the assignment).
     fs::write(p.join("rwv.lock"), "v0\n").unwrap();
     fs::write(p.join("shared"), "v0\n").unwrap();
-    git(p, &["add", "rwv.lock", "shared"]);
+    common::git_in(p, &["add", "rwv.lock", "shared"]);
     git_vcs()
         .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
         .unwrap();
-    git(p, &["add", ".gitattributes"]);
-    git(p, &["commit", "-m", "base + attrs"]);
-    let c1 = git(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["add", ".gitattributes"]);
+    common::git_in(p, &["commit", "-m", "base + attrs"]);
+    let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
     // main: bump shared AND lock in one commit (both will conflict with feat).
     fs::write(p.join("shared"), "main version\n").unwrap();
     fs::write(p.join("rwv.lock"), "main lock\n").unwrap();
-    git(p, &["add", "shared", "rwv.lock"]);
-    git(p, &["commit", "-m", "main: bump shared + lock"]);
+    common::git_in(p, &["add", "shared", "rwv.lock"]);
+    common::git_in(p, &["commit", "-m", "main: bump shared + lock"]);
     let main_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
 
     // feat: F1 = shared conflict, then F2 = lock-only bump.
-    git(p, &["checkout", "-b", "feat", &c1]);
+    common::git_in(p, &["checkout", "-b", "feat", &c1]);
     fs::write(p.join("shared"), "feat version\n").unwrap();
-    git(p, &["add", "shared"]);
-    git(p, &["commit", "-m", "F1: change shared"]);
+    common::git_in(p, &["add", "shared"]);
+    common::git_in(p, &["commit", "-m", "F1: change shared"]);
     fs::write(p.join("rwv.lock"), "feat lock\n").unwrap();
-    git(p, &["add", "rwv.lock"]);
-    git(p, &["commit", "-m", "F2: bump lock only"]);
+    common::git_in(p, &["add", "rwv.lock"]);
+    common::git_in(p, &["commit", "-m", "F2: bump lock only"]);
 
-    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+    let main_tip =
+        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
 
     // Sanity: the durable merge-driver config MUST be unset, so the test
     // proves `rebase_continue` re-supplies the flag inline: the resume rung
@@ -1556,7 +1544,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
 
     // Operator resolves and stages.
     fs::write(p.join("shared"), "merged version\n").unwrap();
-    git(p, &["add", "shared"]);
+    common::git_in(p, &["add", "shared"]);
 
     // Step 2: `rebase_continue` must apply the resolved F1 pick, then also
     // apply F2 (the lock-only pick) via the inline merge-driver flag — no

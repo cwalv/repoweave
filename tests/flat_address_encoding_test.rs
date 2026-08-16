@@ -19,7 +19,6 @@ use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workspace::{parse_weave_dir_name, weave_dir_name};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process;
 
 mod common;
 
@@ -193,17 +192,6 @@ fn the_unmintable_plus_and_the_decode_hold_together() {
 // The four consumers, driven against the shipped binary
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) {
-    let status = common::git()
-        .args(args)
-        .current_dir(dir)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git {args:?} in {} failed", dir.display());
-}
-
 /// A weave whose only project is multi-segment, with `wtest` created in it.
 /// Returns `(weave root, workweave dir)`.
 fn make_nested_project_weave(tmp: &Path) -> (PathBuf, PathBuf) {
@@ -216,11 +204,11 @@ fn make_nested_project_weave(tmp: &Path) -> (PathBuf, PathBuf) {
         .success();
 
     let project_dir = ws.join("projects/chatly/web-app");
-    git(&["init", "--initial-branch=main"], &project_dir);
-    git(&["config", "user.email", "t@t"], &project_dir);
-    git(&["config", "user.name", "T"], &project_dir);
-    git(&["add", "-A"], &project_dir);
-    git(&["commit", "-m", "initial"], &project_dir);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "t@t"]);
+    common::git_in(&project_dir, &["config", "user.name", "T"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     rwv()
         .args(["workweave", "chatly/web-app", "create", "wtest"])
