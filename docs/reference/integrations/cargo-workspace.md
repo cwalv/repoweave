@@ -124,7 +124,7 @@ workspace-wide with no per-member override) or for internal-only
 The `patch:` mode picks how cross-repo dependencies are made to resolve
 against in-weave sources. Three modes:
 
-| Mode | YAML value(s) | Behavior |
+| Mode | TOML value(s) | Behavior |
 |---|---|---|
 | Off (default) | `off`, `false` | rwv writes no `[patch]` entries. Members declare committed relative `path=` deps for cross-repo deps. Correct default for internal-only (`publish = false`) crates. |
 | Committed-paths | `committed-paths`, `true` | rwv mirrors each member's committed cross-member `path=` deps into `[patch.crates-io]` at the weave-root. Sensible when the weave's canonical shape is a bunch of `path=`-consuming publishable crates. |
@@ -189,7 +189,7 @@ that applies to the entire weave.
 `patch-surface:` decides **where** rwv writes the `[patch.*]` tables.
 Orthogonal to `patch:` (which decides *what* patches to compute).
 
-| Surface | YAML value | Where entries land | Reaches |
+| Surface | TOML value | Where entries land | Reaches |
 |---|---|---|---|
 | Manifest (default) | `manifest` | `[patch.*]` in the managed weave-root `Cargo.toml` | Every consumer of the workspace manifest. **Cannot** reach nested-workspace opt-outs. |
 | Cargo config | `cargo-config` | `[patch.*]` in a generated `.cargo/config.toml` alongside the managed `Cargo.toml` | Every consumer above, PLUS builds run from *inside* a nested-workspace opt-out's directory (via cargo's upward config discovery). |

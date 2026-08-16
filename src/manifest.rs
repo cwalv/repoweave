@@ -638,13 +638,10 @@ pub struct CargoWorkspaceConfig {
     /// (e.g. `"github/cwalv/rvtty"`).
     ///
     /// Example:
-    /// ```yaml
-    /// integrations:
-    ///   cargo-workspace:
-    ///     members:
-    ///       github/cwalv/rvtty:
-    ///         include: [daemon, client, common]
-    ///         exclude: [fuzz]
+    /// ```toml
+    /// [integrations.cargo-workspace.members."github/cwalv/rvtty"]
+    /// include = ["daemon", "client", "common"]
+    /// exclude = ["fuzz"]
     /// ```
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub members: BTreeMap<String, MemberSpec>,
