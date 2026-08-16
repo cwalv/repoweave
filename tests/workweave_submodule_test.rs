@@ -60,20 +60,47 @@ role = "owned"
     ws
 }
 
+/// Build a git command with `protocol.file.allow=always` (appended to the
+/// existing GIT_CONFIG_* chain from `common::git()`).
+///
+/// Recent git versions default `protocol.file.allow=user`, which blocks
+/// `git submodule add` with a `file://` URL in test contexts where the
+/// caller is not an interactive user (i.e. CI and `cargo test`). Injecting
+/// `always` via the GIT_CONFIG env-var mechanism avoids touching any disk
+/// config and stacks on top of whatever common::git() already sets.
+///
+/// Not [`common::git_in`]: that helper carries no protocol allowance, and
+/// this is the one call in the suite that needs one.
+fn git_with_file_protocol(args: &[&str], dir: &Path) {
+    // common::git() already sets GIT_CONFIG_COUNT=1 for init.defaultBranch.
+    // We stack one more entry by bumping the count and adding the next key.
+    let output = common::git()
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
+        .env("GIT_CONFIG_VALUE_1", "always")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("git should be available");
+    assert!(
+        output.status.success(),
+        "git {args:?} in {} failed:\n{}",
+        dir.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Add a real submodule to `repo_dir`, pointing at `submodule_remote`.
 /// The submodule is committed so `git worktree add` inherits the `.gitmodules`.
 fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
-    // git submodule add creates .gitmodules and clones the submodule.
-    // We need protocol.file.allow=always so that file:// URLs are accepted
-    // in test/CI contexts (recent git defaults to `user` which blocks it).
-    common::git_in(
-        repo_dir,
+    git_with_file_protocol(
         &[
             "submodule",
             "add",
             &common::file_url(submodule_remote),
             sub_path,
         ],
+        repo_dir,
     );
     common::git_in(repo_dir, &["add", ".gitmodules", sub_path]);
     common::git_in(repo_dir, &["commit", "-m", "add submodule"]);
