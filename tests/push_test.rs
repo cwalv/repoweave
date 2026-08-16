@@ -370,6 +370,18 @@ fn push_refuses_when_project_repo_origin_head_unset() {
         stderr.contains("origin/HEAD is unset"),
         "error should name the unset origin/HEAD condition, not a fabricated branch; got: {stderr}"
     );
+
+    // The refusal's own advice must cure the state it names — a refusal
+    // whose remedy does not unblock the same command is dead advice. Drives
+    // the advised pair verbatim; the fetch is a no-op here but is part of
+    // the advice because the never-fetched case needs it.
+    common::git_in(&project_dir, &["fetch", "origin"]);
+    common::git_in(&project_dir, &["remote", "set-head", "origin", "-a"]);
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
 }
 
 // ============================================================================

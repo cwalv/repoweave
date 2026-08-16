@@ -453,6 +453,24 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         !manifest_content.contains("main"),
         "must never fabricate 'main' for a repo whose real branch is master, got:\n{manifest_content}"
     );
+
+    // The refusal's own advice must cure the state it names — a refusal
+    // whose remedy does not unblock the same command is dead advice. On a
+    // configured-but-never-fetched remote, bare `set-head -a` fails
+    // (no tracking ref to point at), which is why the advice leads with
+    // the fetch.
+    run(&["fetch", "origin"]);
+    run(&["remote", "set-head", "origin", "-a"]);
+    rwv()
+        .args(["add", repo_path])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();
+    assert!(
+        manifest_content.contains(repo_path),
+        "the advised repair must unblock the same add, got:\n{manifest_content}"
+    );
 }
 
 #[test]
