@@ -890,10 +890,12 @@ fn go_work_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    // Post-C3 split:
-    //   go.sum is fully-owned → stays in generated_files() unconditionally.
-    //   go.work is hybrid → moved to managed_files(), gated on a go.mod existing.
-    assert_eq!(GoWork.generated_files(&ctx), vec!["go.sum"]);
+    // Both methods are gated on a member carrying a go.mod. `go.sum` is
+    // fully-owned and `go.work` is hybrid, which decides WHICH method declares
+    // each — not whether either declares anything into a weave with no Go in
+    // it, where a declaration is a weave-root symlink at a source no go tool
+    // will ever write.
+    assert_eq!(GoWork.generated_files(&ctx), Vec::<String>::new());
     assert_eq!(GoWork.managed_files(&ctx), Vec::<String>::new());
 
     // Repos with go.mod present → files returned

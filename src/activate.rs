@@ -1298,13 +1298,20 @@ pub fn member_incompatibilities(
 /// [`surface_symlinks`] bound to the weave that was scanned — an Axis-1 gap
 /// needs no authoring, and [`activate_intent`] would target primary.
 ///
-/// `skip_missing_sources` mirrors the create path: when `true` (workweave
-/// surfacing), a file whose source does not yet exist on disk is NOT expected
-/// to be surfaced, so an absent symlink is not flagged — this keeps the check
-/// symmetric with what [`surface_symlinks`] actually creates. A symlink
-/// already sitting at that path is a different fact: the create path never
-/// leaves one there in this state, so its presence — however it resolves —
-/// is flagged regardless.
+/// `skip_missing_sources` mirrors [`surface_symlinks`] **at the value this
+/// call passes**: when `true`, a file whose source does not exist is not
+/// expected to be surfaced, so an absent symlink is not flagged. A symlink
+/// already sitting at that path is flagged however it resolves.
+///
+/// The value is a property of the verb, not of the root, and the two disagree
+/// inside a workweave: creation and this check's repair arm pass `true`, while
+/// the verbs that go on to run an ecosystem tool pass `false` at that same
+/// root, deliberately leaving a dangling link for the tool to write a lock
+/// through. So a correctly-resolving link over a missing source is a leftover
+/// from before the source went away in the first case and a link created
+/// moments ago in the second, and nothing on disk distinguishes them — the
+/// finding names the first, and a declaration whose file no tool ever produces
+/// re-arms it on every such verb.
 ///
 /// The expectations are likewise symmetric with what a repair may create: a
 /// project the root does not present is expected to surface its
@@ -1398,10 +1405,6 @@ pub fn verify_surfacing(
         match std::fs::read_link(&link) {
             Ok(actual) if actual == expected_target => {
                 if source_missing {
-                    // The create path never leaves a symlink here once the
-                    // source is gone (`source_missing` skips creation
-                    // entirely) — one resolving correctly anyway is a
-                    // leftover from before the source was removed.
                     issues.push(Issue {
                         integration: integration.clone(),
                         severity: Severity::Warning,
@@ -1844,10 +1847,10 @@ mod tests {
     #[test]
     fn verify_flags_stale_symlink_when_source_missing_in_workweave_mode() {
         // The incident this pins: a symlink surfaced while the source existed
-        // (or left by a repair scoped elsewhere), the source is gone now, and
-        // skip_missing_sources means the create path would never leave a link
-        // here — so a link's mere presence is stale, whether or not it still
-        // resolves to the expected target.
+        // (or left by a repair scoped elsewhere), and the source is gone now.
+        // No create call passing skip_missing_sources would have left a link
+        // here, so under that flag its presence is the finding, whether or not
+        // it still resolves to the expected target.
         let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
         let root = tmp.path();
         let manifest = load_manifest(root, &project);

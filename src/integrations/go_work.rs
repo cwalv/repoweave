@@ -335,13 +335,9 @@ impl Integration for GoWork {
         )))
     }
 
-    /// go.work is HYBRID — it lives in managed_files(), not generated_files().
-    /// `generated_files()` is for fully-rwv-owned files
-    /// (whole-deletable, gitignore-ok); `managed_files()` is for hybrid files
-    /// that are symlinked but never gitignored or whole-deleted.
-    /// `go.work`'s marked `use` block, and nothing else. `go.sum` is declared
-    /// generated so it is surfaced, but the go tool writes it and rwv has never
-    /// authored a byte of one.
+    /// `go.work`'s marked `use` block, and nothing else: the go tool writes
+    /// `go.sum` and rwv has never authored a byte of one, so it is surfaced
+    /// without ever being owned here.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
         if holds_owned_region::<GoWorkDoc>(&ctx.output_dir.join("go.work"), &Self::owned_keys()) {
             vec![OwnedPath::MarkedRegion("go.work".to_string())]
@@ -350,9 +346,10 @@ impl Integration for GoWork {
         }
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        // go.sum is still fully-generated (tool-managed), so it stays here.
-        // go.work itself moves to managed_files().
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        if ctx.detect_repos_with_manifest("go.mod").is_empty() {
+            return vec![];
+        }
         vec!["go.sum".to_string()]
     }
 

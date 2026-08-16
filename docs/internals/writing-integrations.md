@@ -116,6 +116,18 @@ order is the order everything runs in.
   external tool the user may not have installed.
 - **No-op on no-match.** If auto-detection finds nothing, generate nothing and
   raise no error. Activation should succeed.
+
+  This governs `generated_files` and `managed_files` as much as `activate`, and
+  those two are where it gets forgotten. Enablement and detection are separate
+  questions and the framework only answers the first: an integration is enabled
+  by its `default_enabled()` and the operator's config, never by whether a
+  member repo carries its manifest. Nothing downstream re-asks. So an ungated
+  declaration is a claim on a weave-root name in every workspace that leaves
+  the integration on its default, ecosystem present or not — and the surfacing
+  step will symlink it, at a source the integration knows cannot be there. Gate
+  both methods on the same `detect_repos_with_manifest` call, and gate them
+  alike: `go-work` gated `managed_files` and not `generated_files`, and every
+  Go-free weave grew a `go.sum` symlink pointing at nothing.
 - **Idempotent.** Running `activate` twice produces the same result. Running
   `deactivate` then `activate` is a clean re-installation.
 - **Filter `reference` repos.** Use `ctx.active_repos()` rather than
