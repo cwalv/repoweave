@@ -211,6 +211,42 @@ pub fn git() -> Command {
     cmd
 }
 
+/// Run `git args` in `dir`, panic on a non-zero exit, and hand back trimmed
+/// stdout.
+///
+/// The suite's one subprocess-git wrapper. Fixtures hand-rolled this at 155
+/// sites under 13 different names, and the copies drifted: 94 of them set no
+/// author or committer identity, so whether a commit could be made at all
+/// depended on the ambient `user.email` of the machine running the tests —
+/// present on a developer's box, absent on a CI runner. Baking the identity
+/// here is what makes a fixture's commit independent of who runs it.
+///
+/// Reads and writes share one wrapper deliberately: the drift was between a
+/// file's own `git` and `git_out`, one of which set the identity and the other
+/// of which did not.
+pub fn git_in(dir: impl AsRef<std::path::Path>, args: &[&str]) -> String {
+    let dir = dir.as_ref();
+    let out = git()
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap_or_else(|e| panic!("git {args:?} in {} failed to start: {e}", dir.display()));
+    assert!(
+        out.status.success(),
+        "git {args:?} in {} failed:\n{}",
+        dir.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout)
+        .expect("git output is valid UTF-8")
+        .trim()
+        .to_string()
+}
+
 /// Assert that `commit_messages` appear in top-down order (newest-first) in
 /// the log of `repo`.
 ///
