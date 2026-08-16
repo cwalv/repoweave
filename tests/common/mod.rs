@@ -247,6 +247,72 @@ pub fn git_in(dir: impl AsRef<std::path::Path>, args: &[&str]) -> String {
         .to_string()
 }
 
+/// A vendored crate source holding `pinnable` at each of `versions`, plus the
+/// `.cargo/config.toml` that redirects crates-io at it.
+///
+/// Lets a fixture drive a real `cargo` resolution — a version pin surviving a
+/// hook, a lock materializing — without reaching the network.
+pub fn write_local_crate_source(
+    source_dir: &std::path::Path,
+    weave_root: &std::path::Path,
+    versions: &[&str],
+) {
+    for version in versions {
+        let pkg = source_dir.join(format!("pinnable-{version}"));
+        std::fs::create_dir_all(pkg.join("src")).unwrap();
+        std::fs::write(
+            pkg.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"pinnable\"\nversion = \"{version}\"\nedition = \"2021\"\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(pkg.join("src/lib.rs"), "pub fn pinned() {}\n").unwrap();
+        std::fs::write(pkg.join(".cargo-checksum.json"), r#"{"files":{}}"#).unwrap();
+    }
+    std::fs::create_dir_all(weave_root.join(".cargo")).unwrap();
+    std::fs::write(
+        weave_root.join(".cargo/config.toml"),
+        format!(
+            "[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = \"{}\"\n",
+            json_escaped(source_dir)
+        ),
+    )
+    .unwrap();
+}
+
+/// A directory holding a link to `name` and nothing else, to be used as the
+/// whole `PATH` of a child that must find that tool and no other.
+///
+/// Two fixtures minted this separately — one to prove a verb works with no Go
+/// toolchain reachable, one to prove `doctor` works with no plugin reachable —
+/// and the copies disagreed about Windows: only one appended `.exe`, so the
+/// other's shim was invisible to a child's lookup there and the fixture handed
+/// out a directory that resolved nothing.
+///
+/// Not a `TempDir`: one held in a `static` never drops, so it would leave a
+/// directory behind on every run. The directory is reused across runs, which
+/// is why the link is tested for rather than created unconditionally.
+pub fn tool_only_bin(name: &str) -> PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("only-bin-{name}"));
+    std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
+
+    let tool = which::which(name)
+        .unwrap_or_else(|e| panic!("{name} must be resolvable to run these tests: {e}"));
+    // The shim must carry the name a child's lookup resolves: Windows appends
+    // `.exe`, so a link named bare `git` is invisible there.
+    let link = dir.join(if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    });
+    if link.symlink_metadata().is_err() {
+        repoweave::symlink::create(&tool, &link, repoweave::symlink::LinkTarget::File)
+            .unwrap_or_else(|e| panic!("linking {name} into {}: {e}", dir.display()));
+    }
+    dir
+}
+
 /// Assert that `commit_messages` appear in top-down order (newest-first) in
 /// the log of `repo`.
 ///

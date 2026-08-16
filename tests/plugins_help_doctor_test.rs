@@ -25,54 +25,29 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 mod common;
-
-/// A directory holding a symlink to `git` and nothing else, resolved off the
-/// test harness's own PATH.
-///
-/// Doctor shells out to `git` internally, so its tests need `git` reachable
-/// — but PATH discovery of `rwv-*` binaries is exactly the property under
-/// test here, and the operator's real PATH may carry one (that is this
-/// file's own bug report). Handing doctor's subprocess the directory `git`
-/// actually lives in would still leak whatever else lives beside it there;
-/// this shim carries only `git`. Same shape as `go_free_bin` in
-/// `member_incompatibility_test.rs`, solving the same problem for a
-/// different tool.
-fn git_only_bin() -> PathBuf {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        // Not a `TempDir`: one held in a `static` never drops, so it would
-        // leave a directory behind on every run.
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("plugins-doctor-git-only-bin");
-        fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
-
-        let git = which::which("git").expect("git must be resolvable to run these tests");
-        let link = dir.join("git");
-        // The directory is a `static` reused across runs, so the link
-        // usually already exists.
-        if link.symlink_metadata().is_err() {
-            repoweave::symlink::create(&git, &link, repoweave::symlink::LinkTarget::File)
-                .unwrap_or_else(|e| panic!("linking git into {}: {e}", dir.display()));
-        }
-        dir
-    })
-    .clone()
-}
 
 /// Build a PATH string with `extra_dir` ahead of the git-only directory —
 /// doctor shells out to git, so its tests need git reachable, but nothing
 /// else the host's real PATH might carry.
 fn path_with_prefix(extra_dir: &Path) -> String {
-    format!("{}:{}", extra_dir.display(), git_only_bin().display())
+    format!(
+        "{}:{}",
+        extra_dir.display(),
+        common::tool_only_bin("git").display()
+    )
 }
 
 /// Build a PATH string from multiple dirs, each ahead of the git-only
 /// directory.
 fn multi_path_with_prefix(dirs: &[&Path]) -> String {
     let prefix: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
-    format!("{}:{}", prefix.join(":"), git_only_bin().display())
+    format!(
+        "{}:{}",
+        prefix.join(":"),
+        common::tool_only_bin("git").display()
+    )
 }
 
 fn rwv() -> assert_cmd::Command {

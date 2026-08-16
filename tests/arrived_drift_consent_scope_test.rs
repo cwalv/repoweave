@@ -57,36 +57,6 @@ fn init_bare_repo(bare: &Path, files: &[(&str, &str)]) {
     common::git_in(&seed, &["push", "origin", "main"]);
 }
 
-/// A two-version directory source, plus the `.cargo/config.toml` that puts it
-/// in place of crates.io.
-///
-/// Two versions is what makes a resolve observable: a lock holding the older
-/// one is a pin a fresh resolve would move.
-fn write_local_crate_source(source_dir: &Path, weave_root: &Path, versions: &[&str]) {
-    for version in versions {
-        let pkg = source_dir.join(format!("pinnable-{version}"));
-        std::fs::create_dir_all(pkg.join("src")).unwrap();
-        std::fs::write(
-            pkg.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"pinnable\"\nversion = \"{version}\"\nedition = \"2021\"\n"
-            ),
-        )
-        .unwrap();
-        std::fs::write(pkg.join("src/lib.rs"), "pub fn pinned() {}\n").unwrap();
-        std::fs::write(pkg.join(".cargo-checksum.json"), r#"{"files":{}}"#).unwrap();
-    }
-    std::fs::create_dir_all(weave_root.join(".cargo")).unwrap();
-    std::fs::write(
-        weave_root.join(".cargo/config.toml"),
-        format!(
-            "[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = \"{}\"\n",
-            common::json_escaped(source_dir)
-        ),
-    )
-    .unwrap();
-}
-
 fn locked_pinnable_version(lock_text: &str) -> Option<String> {
     let mut lines = lock_text.lines();
     while let Some(line) = lines.next() {
@@ -172,7 +142,7 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
     let root = tmp.path().to_path_buf();
     let ws = root.join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
-    write_local_crate_source(&root.join("crate-source"), &ws, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&root.join("crate-source"), &ws, &["0.1.0", "0.1.1"]);
 
     let bares = root.join("upstream");
     init_bare_repo(

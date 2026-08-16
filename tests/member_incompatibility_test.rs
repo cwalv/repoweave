@@ -15,7 +15,6 @@
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 mod common;
 
@@ -61,45 +60,8 @@ fn go_free_path() -> std::ffi::OsString {
             .collect();
         std::env::join_paths(kept).expect("filtered PATH entries rejoin")
     } else {
-        go_free_bin().into_os_string()
+        common::tool_only_bin("git").into_os_string()
     }
-}
-
-/// A directory holding a symlink to `git` and nothing else — the `PATH` the
-/// helper above hands to `rwv`.
-///
-/// Stated as an allow-list because the subtractive spelling is wrong in a way
-/// that hides. Dropping every `PATH` entry that contains a `go` also drops
-/// `git` wherever the two are installed into one bin directory, as they are on
-/// the CI runner: every subprocess then fails naming the wrong tool (`git fetch
-/// failed to spawn`), and whether the suite passes at all depends on the
-/// operator's Go install layout. A directory is not the unit the intent is
-/// about.
-///
-/// A test under this helper that needs a tool beyond `git` fails loudly and
-/// says which — add it here.
-fn go_free_bin() -> PathBuf {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        // Not a `TempDir`: one held in a `static` never drops, so it would
-        // leave a directory behind on every run.
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("go-free-bin");
-        std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
-
-        let git = which::which("git").expect("git must be on PATH to run these tests");
-        // The shim must carry the name a child's lookup resolves: Windows
-        // appends `.exe`, so a link named bare `git` is invisible there.
-        let link = dir.join(if cfg!(windows) { "git.exe" } else { "git" });
-        // The directory is a `static` reused across runs, so the link
-        // usually already exists. `symlink::create` folds the io error into a
-        // message, so the pre-existing case is tested for rather than caught.
-        if link.symlink_metadata().is_err() {
-            repoweave::symlink::create(&git, &link, repoweave::symlink::LinkTarget::File)
-                .unwrap_or_else(|e| panic!("linking git into {}: {e}", dir.display()));
-        }
-        dir
-    })
-    .clone()
 }
 
 /// Whether the real `go` binary is on `PATH`.

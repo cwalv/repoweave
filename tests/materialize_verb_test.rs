@@ -48,39 +48,6 @@ impl Fixture {
     }
 }
 
-/// Write a two-version directory source under `source_dir` and the
-/// `.cargo/config.toml` at `weave_root` that replaces crates.io with it.
-///
-/// A directory source is the cheapest thing real cargo will resolve a semver
-/// range against without a network, and two versions is what makes a resolve
-/// something that can be observed to move: the newest matching one is what a
-/// fresh resolve picks, so a lock holding the older one is a pin with somewhere
-/// to go.
-fn write_local_crate_source(source_dir: &Path, weave_root: &Path, versions: &[&str]) {
-    for version in versions {
-        let pkg = source_dir.join(format!("pinnable-{version}"));
-        std::fs::create_dir_all(pkg.join("src")).unwrap();
-        std::fs::write(
-            pkg.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"pinnable\"\nversion = \"{version}\"\nedition = \"2021\"\n"
-            ),
-        )
-        .unwrap();
-        std::fs::write(pkg.join("src/lib.rs"), "pub fn pinned() {}\n").unwrap();
-        std::fs::write(pkg.join(".cargo-checksum.json"), r#"{"files":{}}"#).unwrap();
-    }
-    std::fs::create_dir_all(weave_root.join(".cargo")).unwrap();
-    std::fs::write(
-        weave_root.join(".cargo/config.toml"),
-        format!(
-            "[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = \"{}\"\n",
-            common::json_escaped(source_dir)
-        ),
-    )
-    .unwrap();
-}
-
 /// The `version = "x.y.z"` line of the `pinnable` package in a `Cargo.lock`.
 fn locked_pinnable_version(lock_text: &str) -> Option<String> {
     let mut lines = lock_text.lines();
@@ -113,7 +80,7 @@ fn fixture() -> Fixture {
     let root = tmp.path().to_path_buf();
     let ws = root.join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
-    write_local_crate_source(&root.join("crate-source"), &ws, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&root.join("crate-source"), &ws, &["0.1.0", "0.1.1"]);
 
     let server = ws.join("github/acme/server");
     std::fs::create_dir_all(server.join("src")).unwrap();
@@ -178,7 +145,7 @@ fn fixture() -> Fixture {
     );
 
     let ww = weaveroot.join("app--agent-1");
-    write_local_crate_source(&root.join("crate-source"), &ww, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&root.join("crate-source"), &ww, &["0.1.0", "0.1.1"]);
 
     Fixture { _tmp: tmp, ws, ww }
 }

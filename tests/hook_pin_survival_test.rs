@@ -76,39 +76,6 @@ fn make_ctx<'a>(
     }
 }
 
-/// Write a two-version directory source under `dir` and the `.cargo/config.toml`
-/// at `weave_root` that replaces crates.io with it.
-///
-/// A directory source is the cheapest thing real cargo will resolve a semver
-/// range against without a network: each subdirectory is a package, and cargo
-/// picks the newest matching one exactly as it would from an index. The source
-/// lives outside the weave so its packages are never candidates for the
-/// workspace membership rwv authors.
-fn write_local_crate_source(source_dir: &Path, weave_root: &Path, versions: &[&str]) {
-    for version in versions {
-        let pkg = source_dir.join(format!("pinnable-{version}"));
-        std::fs::create_dir_all(pkg.join("src")).unwrap();
-        std::fs::write(
-            pkg.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"pinnable\"\nversion = \"{version}\"\nedition = \"2021\"\n"
-            ),
-        )
-        .unwrap();
-        std::fs::write(pkg.join("src/lib.rs"), "pub fn pinned() {}\n").unwrap();
-        std::fs::write(pkg.join(".cargo-checksum.json"), r#"{"files":{}}"#).unwrap();
-    }
-    std::fs::create_dir_all(weave_root.join(".cargo")).unwrap();
-    std::fs::write(
-        weave_root.join(".cargo/config.toml"),
-        format!(
-            "[source.crates-io]\nreplace-with = \"local\"\n\n[source.local]\ndirectory = \"{}\"\n",
-            common::json_escaped(source_dir)
-        ),
-    )
-    .unwrap();
-}
-
 /// The `version = "x.y.z"` line of the `pinnable` package in a `Cargo.lock`.
 fn locked_pinnable_version(lock_text: &str) -> Option<String> {
     let mut lines = lock_text.lines();
@@ -147,7 +114,7 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
     let root = tmp.path().join("weave");
     let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(&root).unwrap();
-    write_local_crate_source(&source, &root, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&source, &root, &["0.1.0", "0.1.1"]);
 
     write_file(
         &root,
@@ -239,7 +206,7 @@ fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
     let root = tmp.path().join("weave");
     let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(&root).unwrap();
-    write_local_crate_source(&source, &root, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&source, &root, &["0.1.0", "0.1.1"]);
 
     write_file(
         &root,
@@ -559,7 +526,7 @@ fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
     let ws = tmp.path().join("ws");
     let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
-    write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
 
     let server = ws.join("github/acme/server");
     std::fs::create_dir_all(server.join("src")).unwrap();
@@ -645,7 +612,7 @@ fn materialize_leaves_a_pin_byte_identical() {
     let ws = tmp.path().join("ws");
     let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
-    write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
+    common::write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
 
     let server = ws.join("github/acme/server");
     std::fs::create_dir_all(server.join("src")).unwrap();
