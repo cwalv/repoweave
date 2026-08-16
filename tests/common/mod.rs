@@ -247,6 +247,141 @@ pub fn git_in(dir: impl AsRef<std::path::Path>, args: &[&str]) -> String {
         .to_string()
 }
 
+/// Initialize a bare repo and seed it with one commit on `main` so it can
+/// be cloned by `--origin` consumers and act as a push target.
+pub fn init_bare_repo_with_commit(bare: &std::path::Path) {
+    let parent = bare.parent().expect("bare repo path needs a parent");
+    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
+    git_in(
+        parent,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
+    let seed = parent.join(format!("__seed_{stem}"));
+    git_in(
+        parent,
+        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
+    );
+    git_in(&seed, &["config", "user.email", "test@test.com"]);
+    git_in(&seed, &["config", "user.name", "Test"]);
+    std::fs::write(seed.join("README"), "seed").unwrap();
+    git_in(&seed, &["add", "."]);
+    git_in(&seed, &["commit", "-m", "initial"]);
+    git_in(&seed, &["push", "origin", "main"]);
+}
+
+/// A test workspace ready to be driven by `rwv push`.
+///
+/// Holds the workspace root and the bare-remote paths so tests can both
+/// invoke `rwv push` against it and inspect the bare remotes to verify
+/// what was pushed.
+pub struct PushWorkspace {
+    pub _tmp: tempfile::TempDir,
+    pub workspace: PathBuf,
+    pub project_name: String,
+    pub project_bare: PathBuf,
+    pub manifest_bares: Vec<(String, PathBuf)>,
+}
+
+/// Build a workspace with `repos.len()` manifest repos plus a project repo.
+///
+/// Each manifest repo gets a bare remote, a canonical-path local clone, and
+/// is referenced by `rwv.toml`. The project repo gets a bare remote and a
+/// clone under `projects/<project_name>/`. `rwv.lock` is generated to match
+/// the manifest repos' local HEAD SHAs. Returns the workspace handle.
+pub fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
+    // repos is &[(canonical_path, role)]
+    let tmp = tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(workspace.join("projects")).unwrap();
+
+    // Build manifest bare remotes and local clones.
+    let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
+    let mut manifest_shas: Vec<(String, String)> = Vec::new();
+    let mut manifest_yaml = String::from("[repositories]\n");
+    for (repo_path, role) in repos {
+        let bare = tmp
+            .path()
+            .join(format!("{}.git", repo_path.replace('/', "_")));
+        init_bare_repo_with_commit(&bare);
+
+        let canonical = workspace.join(repo_path);
+        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        git_in(
+            workspace.parent().unwrap(),
+            &[
+                "clone",
+                "--origin",
+                "origin",
+                bare.to_str().unwrap(),
+                canonical.to_str().unwrap(),
+            ],
+        );
+        git_in(&canonical, &["config", "user.email", "test@test.com"]);
+        git_in(&canonical, &["config", "user.name", "Test"]);
+        let head = git_in(&canonical, &["rev-parse", "HEAD"]);
+        manifest_shas.push(((*repo_path).to_string(), head));
+        manifest_bares.push(((*repo_path).to_string(), bare.clone()));
+        let bare_url = file_url(&bare);
+        manifest_yaml.push_str(&format!(
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
+        ));
+    }
+
+    // Build a project bare and a `projects/<name>/` clone, then commit
+    // rwv.toml + rwv.lock and push back to the bare.
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo_with_commit(&project_bare);
+    let project_dir = workspace.join("projects").join(project_name);
+    git_in(
+        workspace.parent().unwrap(),
+        &[
+            "clone",
+            project_bare.to_str().unwrap(),
+            project_dir.to_str().unwrap(),
+        ],
+    );
+    git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    git_in(&project_dir, &["config", "user.name", "Test"]);
+
+    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
+
+    // Write a lock that exactly matches manifest HEAD SHAs. Round-trips
+    // through the real parser + `lock::write_lock`: a hand-formatted string
+    // that differs only in whitespace from what `rwv lock` itself would
+    // emit still diffs against a real relock.
+    let mut lock_entries = Vec::new();
+    for (rp, sha) in &manifest_shas {
+        let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
+        let bare_url = file_url(bare);
+        lock_entries.push(format!(
+            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
+        ));
+    }
+    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+
+    git_in(&project_dir, &["add", "."]);
+    git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
+
+    // Mark this project active.
+    std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
+
+    PushWorkspace {
+        _tmp: tmp,
+        workspace,
+        project_name: project_name.to_string(),
+        project_bare,
+        manifest_bares,
+    }
+}
+
 /// A vendored crate source holding `pinnable` at each of `versions`, plus the
 /// `.cargo/config.toml` that redirects crates-io at it.
 ///

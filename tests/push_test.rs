@@ -11,147 +11,12 @@
 //! invariant and the precondition refuse-paths from the spec.
 
 use assert_cmd::Command;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 mod common;
 
 fn rwv() -> Command {
     common::rwv()
-}
-
-/// Initialize a bare repo and seed it with one commit on `main` so it can
-/// be cloned by `--origin` consumers and act as a push target.
-fn init_bare_repo_with_commit(bare: &Path) {
-    let parent = bare.parent().expect("bare repo path needs a parent");
-    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    common::git_in(
-        parent,
-        &[
-            "init",
-            "--bare",
-            "--initial-branch=main",
-            bare.to_str().unwrap(),
-        ],
-    );
-    let seed = parent.join(format!("__seed_{stem}"));
-    common::git_in(
-        parent,
-        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
-    );
-    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
-    common::git_in(&seed, &["config", "user.name", "Test"]);
-    std::fs::write(seed.join("README"), "seed").unwrap();
-    common::git_in(&seed, &["add", "."]);
-    common::git_in(&seed, &["commit", "-m", "initial"]);
-    common::git_in(&seed, &["push", "origin", "main"]);
-}
-
-/// A test workspace ready to be driven by `rwv push`.
-///
-/// Holds the workspace root and the bare-remote paths so tests can both
-/// invoke `rwv push` against it and inspect the bare remotes to verify
-/// what was pushed.
-struct PushWorkspace {
-    _tmp: tempfile::TempDir,
-    workspace: PathBuf,
-    project_name: String,
-    project_bare: PathBuf,
-    manifest_bares: Vec<(String, PathBuf)>,
-}
-
-/// Build a workspace with `repos.len()` manifest repos plus a project repo.
-///
-/// Each manifest repo gets a bare remote, a canonical-path local clone, and
-/// is referenced by `rwv.toml`. The project repo gets a bare remote and a
-/// clone under `projects/<project_name>/`. `rwv.lock` is generated to match
-/// the manifest repos' local HEAD SHAs. Returns the workspace handle.
-fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
-    // repos is &[(canonical_path, role)]
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-    std::fs::create_dir_all(workspace.join("projects")).unwrap();
-
-    // Build manifest bare remotes and local clones.
-    let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
-    let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("[repositories]\n");
-    for (repo_path, role) in repos {
-        let bare = tmp
-            .path()
-            .join(format!("{}.git", repo_path.replace('/', "_")));
-        init_bare_repo_with_commit(&bare);
-
-        let canonical = workspace.join(repo_path);
-        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        common::git_in(
-            workspace.parent().unwrap(),
-            &[
-                "clone",
-                "--origin",
-                "origin",
-                bare.to_str().unwrap(),
-                canonical.to_str().unwrap(),
-            ],
-        );
-        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
-        common::git_in(&canonical, &["config", "user.name", "Test"]);
-        let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
-        manifest_shas.push(((*repo_path).to_string(), head));
-        manifest_bares.push(((*repo_path).to_string(), bare.clone()));
-        let bare_url = common::file_url(&bare);
-        manifest_yaml.push_str(&format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
-        ));
-    }
-
-    // Build a project bare and a `projects/<name>/` clone, then commit
-    // rwv.toml + rwv.lock and push back to the bare.
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo_with_commit(&project_bare);
-    let project_dir = workspace.join("projects").join(project_name);
-    common::git_in(
-        workspace.parent().unwrap(),
-        &[
-            "clone",
-            project_bare.to_str().unwrap(),
-            project_dir.to_str().unwrap(),
-        ],
-    );
-    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
-    common::git_in(&project_dir, &["config", "user.name", "Test"]);
-
-    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
-
-    // Write a lock that exactly matches manifest HEAD SHAs. Round-trips
-    // through the real parser + `lock::write_lock`: a hand-formatted string
-    // that differs only in whitespace from what `rwv lock` itself would
-    // emit still diffs against a real relock.
-    let mut lock_entries = Vec::new();
-    for (rp, sha) in &manifest_shas {
-        let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
-        let bare_url = common::file_url(bare);
-        lock_entries.push(format!(
-            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
-        ));
-    }
-    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-
-    common::git_in(&project_dir, &["add", "."]);
-    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
-
-    // Mark this project active.
-    std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
-
-    PushWorkspace {
-        _tmp: tmp,
-        workspace,
-        project_name: project_name.to_string(),
-        project_bare,
-        manifest_bares,
-    }
 }
 
 /// Get the `main` SHA in a bare repo, or `None` if `main` doesn't exist
@@ -177,7 +42,7 @@ fn bare_main_sha(bare: &Path) -> Option<String> {
 /// skipped (plan-time default). The project repo is pushed last.
 #[test]
 fn push_happy_path_pushes_manifest_then_project() {
-    let ws = build_workspace(
+    let ws = common::build_workspace(
         "alpha",
         &[
             ("local/org/a", "owned"),
@@ -281,7 +146,7 @@ fn push_happy_path_pushes_manifest_then_project() {
 
 #[test]
 fn push_dry_run_prints_plan_and_pushes_nothing() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Capture the baseline manifest-bare SHA before dry-run.
     let (_, manifest_bare) = &ws.manifest_bares[0];
@@ -345,7 +210,7 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
 
 #[test]
 fn push_refuses_from_workweave() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Drop a `.rwv-workweave` marker in a sibling dir so resolve sees a
     // Workweave. This sidesteps the need to actually run `rwv workweave
@@ -387,7 +252,7 @@ fn push_refuses_from_workweave() {
 
 #[test]
 fn push_refuses_when_lock_disagrees_with_local_state() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let (_, manifest_bare) = &ws.manifest_bares[0];
     let baseline_manifest = bare_main_sha(manifest_bare);
 
@@ -425,7 +290,7 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
 
 #[test]
 fn push_refuses_detached_head() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     // Detach HEAD in the manifest repo.
     let local = ws.workspace.join("local/org/a");
     let head_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
@@ -450,7 +315,7 @@ fn push_refuses_detached_head() {
 
 #[test]
 fn push_refuses_when_project_repo_off_canonical_branch() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     // Move project repo to a non-canonical branch.
     common::git_in(&project_dir, &["checkout", "-b", "feat/x"]);
@@ -484,7 +349,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 /// catches it.
 #[test]
 fn push_refuses_when_project_repo_origin_head_unset() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     common::git_in(
         &project_dir,
@@ -516,7 +381,7 @@ fn push_refuses_when_project_repo_origin_head_unset() {
 /// `Ok(None)` collapse produced).
 #[test]
 fn push_refuses_when_project_repo_is_not_a_repo() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     std::fs::remove_dir_all(project_dir.join(".git")).unwrap();
 
@@ -546,7 +411,7 @@ fn push_refuses_when_project_repo_is_not_a_repo() {
 
 #[test]
 fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Create a new branch in the manifest repo and commit there — the
     // manifest declares `main`, so this should warn.
@@ -608,7 +473,7 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
 /// typed refactor didn't drop or garble either side.
 #[test]
 fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
 
     let local = ws.workspace.join("local/org/a");
     common::git_in(&local, &["checkout", "-b", "feat-x"]);
@@ -651,7 +516,7 @@ fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
 fn push_aborts_before_project_when_manifest_push_fails() {
     // Build a workspace; then break a manifest bare so its push fails. The
     // project bare must remain untouched.
-    let ws = build_workspace(
+    let ws = common::build_workspace(
         "alpha",
         &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
@@ -717,7 +582,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
 
 #[test]
 fn push_surfaces_project_push_failure_after_manifest_pushed() {
-    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Advance the manifest repo and the lock so the precondition passes.
     let (_, manifest_bare) = &ws.manifest_bares[0];
@@ -815,8 +680,8 @@ fn push_requires_a_workspace() {
 fn build_workspace_with_advances(
     project_name: &str,
     repos: &[(&str, &str)],
-) -> (PushWorkspace, Vec<(String, String)>) {
-    let ws = build_workspace(project_name, repos);
+) -> (common::PushWorkspace, Vec<(String, String)>) {
+    let ws = common::build_workspace(project_name, repos);
 
     // Advance each manifest repo with a distinct commit so SHAs differ.
     let mut manifest_yaml = String::from("[repositories]\n");
@@ -1010,7 +875,7 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
     // push must still refuse — repo B's HEAD drifts from the committed lock,
     // and the committed lock is shared with collaborators regardless of
     // which subset the operator pushes today.
-    let ws = build_workspace(
+    let ws = common::build_workspace(
         "alpha",
         &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
