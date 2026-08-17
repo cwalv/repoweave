@@ -1354,6 +1354,63 @@ fn flat_lookalike_branch_survives_doctor_fix() {
     );
 }
 
+/// The unowned class's whole jurisdiction, pinned from one listing.
+///
+/// Scope: the scan screens the canonical's branch names with
+/// `looks_like_a_pre_flat_ref`, so the only spelling that can reach the
+/// finding is `<a>--<b>/<c>` — the shape rwv minted before the flat cutover.
+/// Everything else is invisible to it by decision, not by accident: the flat
+/// `<a>--<b>` with no receipt is an operator branch under R2, and so is any
+/// name outside both mint shapes — a segmented name with no `--` left of the
+/// `/` (`fo-city/main`), or no `/` at all (`epic-fo-44ffy`). A stray of those
+/// spellings is the operator's to census by hand; no doctor class reports it.
+///
+/// The firing control in the same store is what keeps the five silence
+/// assertions from passing against a scan that stopped running. To check the
+/// pin is real, weaken either arm of `looks_like_a_pre_flat_ref` — drop the
+/// `split_at_weave_separator` requirement, or answer the slashless arm with
+/// anything but `false` — and the count assertion reddens.
+#[test]
+fn unowned_class_fires_only_on_the_pre_flat_mint_shape() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    make_project(&ws, "myproj");
+
+    create_branch(&canonical, "myproj--ghost/main", "main");
+    create_branch(&canonical, "myproj--noseat", "main");
+    create_branch(&canonical, "fo-city/main", "main");
+    create_branch(&canonical, "epic-fo-44ffy", "main");
+    create_branch(&canonical, "null/main", "main");
+    create_branch(&canonical, "test-worktree/main", "main");
+
+    let json = doctor_json_compact(&ws, false);
+    assert!(
+        json.contains("stale-ephemeral-branch-unowned")
+            && json.contains("myproj--ghost/main"),
+        "the control (pre-flat mint shape, no receipt) must fire as unowned; got:\n{json}"
+    );
+    assert_eq!(
+        json.matches("stale-ephemeral-branch").count(),
+        1,
+        "exactly one stale-ephemeral finding — the control; got:\n{json}"
+    );
+    for silent in [
+        "myproj--noseat",
+        "fo-city/main",
+        "epic-fo-44ffy",
+        "null/main",
+        "test-worktree/main",
+    ] {
+        assert!(
+            !json.contains(silent),
+            "`{silent}` is outside the unowned class's jurisdiction and must \
+             not surface anywhere in the report; got:\n{json}"
+        );
+    }
+}
+
 // ===========================================================================
 // (c) stale-ephemeral-branches: live class
 // ===========================================================================
