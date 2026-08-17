@@ -680,10 +680,10 @@ pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
 // ---------------------------------------------------------------------------
 
 /// The pointer file naming the project a **primary** root presents.
-const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
+pub(crate) const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
 
 /// The marker file naming the project a **workweave** root belongs to.
-const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
+pub(crate) const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
 
 /// Read the active project from the `.rwv-active` file in the workspace root.
 ///
@@ -1974,7 +1974,8 @@ impl WorkweaveMarker {
         let path = Self::path_in(dir);
         let content =
             serde_json::to_string_pretty(self).context("failed to serialize .rwv-workweave")?;
-        std::fs::write(&path, format!("{content}\n"))
+        crate::state_file::StateFile::WorkweaveMarker
+            .publish_in(dir, format!("{content}\n").as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
@@ -2451,7 +2452,8 @@ impl PrimaryIdentity {
     /// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
     pub fn select_project(&self, project: &ProjectName) -> anyhow::Result<()> {
         let path = self.root.join(ACTIVE_PROJECT_FILE);
-        std::fs::write(&path, format!("{}\n", project.as_str()))
+        crate::state_file::StateFile::ActiveProject
+            .publish_in(&self.root, format!("{}\n", project.as_str()).as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))
     }
 }

@@ -138,7 +138,8 @@ pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Re
         recorded_at: Some(crate::op_state::utc_now_rfc3339()),
     };
     let bytes = serde_json::to_vec_pretty(&floor).context("serialize health floor")?;
-    crate::durable_file::replace(&ws_root.join(FLOOR_FILE), &bytes)
+    crate::state_file::StateFile::HealthFloor
+        .publish_in(ws_root, &bytes)
         .context("write health floor")?;
     Ok(())
 }

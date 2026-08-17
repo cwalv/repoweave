@@ -45,7 +45,7 @@ use std::path::Path;
 ///
 /// `tests/` cannot see this constant — it is a separate, external crate —
 /// and spells the name as the literal `".rwv-owned-digests"` instead.
-const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
+pub(crate) const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
 
 /// Outcome of comparing on-disk content against the recorded digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +133,8 @@ fn write_owned_digests(dir: &Path, entries: &BTreeMap<String, LedgerEntry>) -> a
     let path = dir.join(OWNED_DIGESTS_FILE);
     let json = serde_json::to_string_pretty(entries)
         .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
-    std::fs::write(&path, json)
+    crate::state_file::StateFile::OwnedDigests
+        .publish_in(dir, json.as_bytes())
         .with_context(|| format!("writing owned-digest state {}", path.display()))?;
     // Best effort — an ignore failure must never fail the stamp itself.
     let _ = workweave_index::ensure_ignored_in_dir(dir, OWNED_DIGESTS_FILE);

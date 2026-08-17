@@ -1589,7 +1589,12 @@ fn resolve_versions_roundtrip_raw_then_resolved_json_shape() {
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved, _failures) = lock.resolve_versions(&root);
-    let out_path = project_dir.join("rwv.lock.out");
+    // A scratch directory rather than a scratch file name: what is under test
+    // is the serialized round-trip, and `write_lock` publishes a lock file
+    // rather than arbitrary bytes at an arbitrary path.
+    let out_dir = project_dir.join("roundtrip");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let out_path = out_dir.join("rwv.lock");
     repoweave::lock::write_lock(&resolved, &out_path).unwrap();
     let round = std::fs::read_to_string(&out_path).unwrap();
     assert!(

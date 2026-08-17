@@ -158,7 +158,7 @@ pub fn generate_lock(
     Ok(ResolvedLockFile { repositories })
 }
 
-/// Write a lock file as JSON to the given path.
+/// Write a lock file as JSON into `project_dir`.
 ///
 /// Generic over any serializable lock form so callers can write either a
 /// raw [`LockFile`] (round-trip) or a [`ResolvedLockFile`] (post-lock
@@ -167,8 +167,9 @@ pub fn generate_lock(
 pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<()> {
     let mut json = serde_json::to_string_pretty(lock).context("failed to serialize lock file")?;
     json.push('\n');
-    std::fs::write(path, &json).with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
+    crate::state_file::StateFile::ProjectLock
+        .publish_at(path, json.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// Stage `rwv.lock` and commit from `project_dir`.

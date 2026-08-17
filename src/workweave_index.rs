@@ -301,7 +301,7 @@ pub fn write(
     let _ = ensure_ignore_entry(primary_root, project);
     let content =
         serde_json::to_string_pretty(index).context("failed to serialize workweave index")?;
-    crate::durable_file::replace(&path, content.as_bytes())
+    crate::state_file::StateFile::WorkweaveIndex.publish_in(parent, content.as_bytes())
 }
 
 /// Serialises read-modify-write sequences on the index **within one

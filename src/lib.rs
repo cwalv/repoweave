@@ -56,6 +56,7 @@ pub mod registry;
 mod schema_url;
 pub mod selector;
 pub mod setup;
+pub mod state_file;
 pub mod status;
 pub mod symlink;
 pub mod sync;

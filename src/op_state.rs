@@ -89,10 +89,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// Name of the owner op-state file at the initiating workspace.
-const OP_STATE_FILE: &str = ".rwv-op";
+pub(crate) const OP_STATE_FILE: &str = ".rwv-op";
 
 /// Name of the thin-lease file at every other mutated workspace.
-const OP_LEASE_FILE: &str = ".rwv-op-lease";
+pub(crate) const OP_LEASE_FILE: &str = ".rwv-op-lease";
 
 // ---------------------------------------------------------------------------
 // OpId — newtype for sync operation identifiers
