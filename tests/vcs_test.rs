@@ -1106,6 +1106,20 @@ fn has_rwv_merge_driver_config_reflects_plant() {
     assert!(repoweave::git::has_rwv_merge_driver_config(dir.path()).unwrap());
 }
 
+/// A directory that is not a git repo at all must not read the same as one
+/// where the key is merely unset — `git config --get` exits 1 for both, and
+/// folding them into the same `Ok(false)` is what let `doctor --fix` attempt
+/// the plant and surface git's own `fatal: not in a git directory` instead
+/// of naming the actual condition.
+#[test]
+fn has_rwv_merge_driver_config_reports_not_a_repo() {
+    let dir = common::tempdir().unwrap();
+    match repoweave::git::has_rwv_merge_driver_config(dir.path()) {
+        Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
+        other => panic!("expected NotARepo, got {other:?}"),
+    }
+}
+
 // ============================================================================
 // Vcs::rebase
 // ============================================================================

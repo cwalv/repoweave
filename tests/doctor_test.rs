@@ -984,6 +984,54 @@ fn check_fix_plants_rwv_ours_driver_config() {
     );
 }
 
+/// A project directory that loses its `.git` while `rwv.toml` and the rest
+/// of the checkout stay in place — the same damage
+/// `push_refuses_when_project_repo_is_not_a_repo` (tests/push_test.rs)
+/// drives against `rwv push` — must reach the operator as a warning naming
+/// the actual state, not as a raw git-config failure with a non-zero exit.
+///
+/// Before the fix, `has_rwv_merge_driver_config` read this the same as an
+/// ordinary repo simply missing the key, so `--fix` went on to attempt the
+/// plant and surfaced git's own `fatal: not in a git directory` as a raw
+/// `[error]`.
+#[test]
+fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    init_git_repo(&project_dir);
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    std::fs::remove_dir_all(project_dir.join(".git")).unwrap();
+
+    let output = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .expect("rwv doctor --fix");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "a project dir with no .git is a warning, not a hard failure; \
+         got exit {:?}, stdout:\n{stdout}",
+        output.status.code()
+    );
+    assert!(
+        !stdout.contains("[error]"),
+        "no raw git error should reach the operator; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("my-app") && stdout.contains("is not a vcs repository"),
+        "the warning should name the actual state; got:\n{stdout}"
+    );
+}
+
 // ===========================================================================
 // `rwv doctor --json`
 // ===========================================================================

@@ -368,7 +368,14 @@ fn nul_terminated_fields(stream: &str) -> Vec<String> {
 /// `true` when `merge.rwv-ours.driver` is set (to anything) in any config
 /// scope git can see for `repo`. Used by `rwv doctor` to detect projects
 /// that haven't had the durable plant run yet.
+///
+/// Checked ahead of the `--get` rather than folded into its exit code: a
+/// repo lacking the key and a directory that isn't a repo at all both exit 1,
+/// so the code alone can't tell "unset" from "no repo to read."
 pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
+    if !GitVcs.is_repo(repo) {
+        return Err(VcsError::NotARepo(repo.to_path_buf()));
+    }
     let output = git_command()
         .args(["config", "--get", RWV_MERGE_DRIVER_CONFIG_KEY])
         .current_dir(repo)
