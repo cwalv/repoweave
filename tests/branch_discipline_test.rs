@@ -1362,8 +1362,9 @@ fn flat_lookalike_branch_survives_doctor_fix() {
 /// Everything else is invisible to it by decision, not by accident: the flat
 /// `<a>--<b>` with no receipt is an operator branch under R2, and so is any
 /// name outside both mint shapes — a segmented name with no `--` left of the
-/// `/` (`fo-city/main`), or no `/` at all (`epic-fo-44ffy`). A stray of those
-/// spellings is the operator's to census by hand; no doctor class reports it.
+/// `/` (`stray-seat/main`), or no `/` at all (`freeform-stray`). A stray
+/// of those spellings is the operator's to census by hand; no doctor class
+/// reports it.
 ///
 /// The firing control in the same store is what keeps the five silence
 /// assertions from passing against a scan that stopped running. To check the
@@ -1380,15 +1381,14 @@ fn unowned_class_fires_only_on_the_pre_flat_mint_shape() {
 
     create_branch(&canonical, "myproj--ghost/main", "main");
     create_branch(&canonical, "myproj--noseat", "main");
-    create_branch(&canonical, "fo-city/main", "main");
-    create_branch(&canonical, "epic-fo-44ffy", "main");
+    create_branch(&canonical, "stray-seat/main", "main");
+    create_branch(&canonical, "freeform-stray", "main");
     create_branch(&canonical, "null/main", "main");
     create_branch(&canonical, "test-worktree/main", "main");
 
     let json = doctor_json_compact(&ws, false);
     assert!(
-        json.contains("stale-ephemeral-branch-unowned")
-            && json.contains("myproj--ghost/main"),
+        json.contains("stale-ephemeral-branch-unowned") && json.contains("myproj--ghost/main"),
         "the control (pre-flat mint shape, no receipt) must fire as unowned; got:\n{json}"
     );
     assert_eq!(
@@ -1398,8 +1398,8 @@ fn unowned_class_fires_only_on_the_pre_flat_mint_shape() {
     );
     for silent in [
         "myproj--noseat",
-        "fo-city/main",
-        "epic-fo-44ffy",
+        "stray-seat/main",
+        "freeform-stray",
         "null/main",
         "test-worktree/main",
     ] {
