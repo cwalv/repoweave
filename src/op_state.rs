@@ -762,9 +762,12 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// Check that no op-state file (owner record or lease) exists in any of the
 /// given workspace directories.
 ///
-/// This is the cross-verb mutex: any verb that mutates repo state in an
-/// involved workspace (sync / sync-to / update / `lock --commit` / workweave
-/// delete / retire) calls it and refuses while an op involves that workspace.
+/// This is the cross-verb advisory refusal, never an exclusion: it reads, and
+/// the window between the read and what the caller does next stays open.
+/// `update`, `lock --commit`, `workweave delete` and doctor's branch-model
+/// migration call it and refuse while an op involves that workspace. `sync`
+/// and `sync-to` do not call it at all — they take the exclusion itself, via
+/// [`acquire_op`].
 ///
 /// Returns an error if any workspace carries an owner record or a lease. Both
 /// branches name the op (verb), its age, the phase it stalled in, and the two

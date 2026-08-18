@@ -142,11 +142,12 @@ pub fn run_update(
     jobs: usize,
     detach_checkouts: Option<DetachConsent>,
 ) -> anyhow::Result<()> {
-    // Cross-verb mutex (Correction 1, COVERAGE). `update` advances tips and
-    // re-snapshots the lock in the active workspace; if an in-flight
+    // Cross-verb advisory refusal (Correction 1, COVERAGE). `update` advances
+    // tips and re-snapshots the lock in the active workspace; if an in-flight
     // `sync`/`sync-to` op involves that workspace (owner record or lease), its
     // half-applied state must not be perturbed. Refuse, naming the op and its
-    // exits, via the SAME guard the sync engine uses — no new lease machinery.
+    // exits, by reading the op-state the sync engine writes — the engine takes
+    // an exclusion at its own entry; this only looks.
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
 
     let (project_name, workweave_dir) = match &ctx.checkout {

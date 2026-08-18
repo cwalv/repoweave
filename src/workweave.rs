@@ -2780,7 +2780,8 @@ fn delete_workweave_inner_at(
         )?;
     }
 
-    // Cross-verb mutex (Correction 1, COVERAGE). A workweave that is mid-op
+    // Cross-verb advisory refusal (Correction 1, COVERAGE). A workweave that
+    // is mid-op
     // (holds an `.rwv-op` owner record or an `.rwv-op-lease`) must not be
     // deleted out from under the op — that would strand the owner record's
     // pointer or destroy the workspace `--continue`/`rwv abort` restore into.

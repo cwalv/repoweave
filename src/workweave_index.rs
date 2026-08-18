@@ -318,10 +318,15 @@ pub fn write(
 ///
 /// In-process only, deliberately. rwv has no daemon and this is not a file
 /// lock: two concurrent `rwv` invocations mutating the *same* project's
-/// index can still race, and the mutating verbs are gated against each
-/// other by the op-state lease rather than here. Widening this to a
-/// cross-process lock is a design decision with its own blast radius, and
-/// receipt lifecycle beyond the home is undecided.
+/// index can still race, and nothing outside this process holds them apart.
+/// The op-state lease ([`crate::op_state::acquire_op`]) is rwv's one
+/// cross-process exclusion, and `sync` / `sync-to` are its only callers. The
+/// verbs that mutate this index reach at most
+/// [`crate::op_state::check_no_op_in_progress`] — advice, not exclusion: it
+/// reads, refuses while a sync is in flight, and holds nothing off — and
+/// workweave creation, the verb that writes a receipt, does not reach even
+/// that. Widening this to a cross-process lock is a design decision with its
+/// own blast radius, and receipt lifecycle beyond the home is undecided.
 static INDEX_RMW: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Take [`INDEX_RMW`], ignoring poisoning: a writer that panicked mid-way

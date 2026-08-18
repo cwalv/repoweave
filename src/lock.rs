@@ -316,7 +316,8 @@ pub(crate) fn write_project_lock(
     dirty: bool,
     commit: bool,
 ) -> anyhow::Result<Option<PendingLockCommit>> {
-    // Cross-verb mutex (Correction 1, COVERAGE), scoped to `--commit`. Writing
+    // Cross-verb advisory refusal (Correction 1, COVERAGE), scoped to
+    // `--commit`. Writing
     // the working-tree `rwv.lock` (plain `rwv lock`) is benign — it is the
     // auto-relock's own input and the carve-out in Correction 3 treats a dirty
     // `rwv.lock` as non-dirt. But `--commit` writes a NEW lock commit into the
