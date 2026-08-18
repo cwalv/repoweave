@@ -585,7 +585,7 @@ pub struct LeaseRecord {
     /// decision input** — the classification is structural (owner record
     /// absent or op-id mismatch), not elapsed-time based.
     ///
-    /// `write_lease` always populates this. `Option` stays regardless: a
+    /// `acquire_op` always populates this. `Option` stays regardless: a
     /// syntactic `Option<T>` field deserializes a missing key as `None`
     /// unconditionally — `#[serde(default)]` has no bearing on it — so this
     /// key is optional on the wire whether or not that reads as intentional,
@@ -727,17 +727,6 @@ pub fn clear_owner(workspace_dir: &Path) {
 // ---------------------------------------------------------------------------
 // Lease I/O
 // ---------------------------------------------------------------------------
-
-/// Write `lease` to the `.rwv-op-lease` file in `workspace_dir`.
-///
-/// A lease is immutable once written; this function should be called exactly
-/// once per lease workspace at op start.
-pub fn write_lease(workspace_dir: &Path, lease: &LeaseRecord) -> anyhow::Result<()> {
-    let path = LeaseRecord::path_in(workspace_dir);
-    let json = serde_json::to_string_pretty(lease).context("failed to serialize lease record")?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("failed to write lease to {}", path.display()))
-}
 
 /// Read the `.rwv-op-lease` file from `workspace_dir`, returning `None` if absent.
 ///
@@ -1870,6 +1859,19 @@ mod tests {
     // Lease round-trip
     // -----------------------------------------------------------------------
 
+    /// Publish `lease` at `workspace_dir` by replacement — the shape
+    /// `acquire_op` forbids production from using, needed here because
+    /// several fixtures below plant lease states `acquire_op` cannot produce
+    /// directly: a lease with no owner record, or one whose id doesn't match
+    /// the owner's. Private to this module so the replacement shape can't
+    /// reach a caller outside tests.
+    fn overwrite_lease_in_test(workspace_dir: &Path, lease: &LeaseRecord) -> anyhow::Result<()> {
+        let path = LeaseRecord::path_in(workspace_dir);
+        let json = serde_json::to_string_pretty(lease).context("failed to serialize lease record")?;
+        std::fs::write(&path, json)
+            .with_context(|| format!("failed to write lease to {}", path.display()))
+    }
+
     #[test]
     fn lease_write_read_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1879,7 +1881,7 @@ mod tests {
             owner: PathBuf::from("/owner/ws"),
             created_at: None,
         };
-        write_lease(dir, &lease).unwrap();
+        overwrite_lease_in_test(dir, &lease).unwrap();
         let read_back = read_lease(dir).unwrap().unwrap();
         assert_eq!(read_back.id, "1234567890");
         assert_eq!(read_back.owner, PathBuf::from("/owner/ws"));
@@ -1915,7 +1917,7 @@ mod tests {
             owner: PathBuf::from("/owner"),
             created_at: None,
         };
-        write_lease(dir, &lease).unwrap();
+        overwrite_lease_in_test(dir, &lease).unwrap();
         assert!(read_lease(dir).unwrap().is_some());
         clear_lease(dir);
         assert!(read_lease(dir).unwrap().is_none());
@@ -1969,7 +1971,7 @@ mod tests {
             owner: owner_dir.clone(),
             created_at: None,
         };
-        write_lease(&lease_dir, &lease).unwrap();
+        overwrite_lease_in_test(&lease_dir, &lease).unwrap();
 
         let resolved = resolve_to_owner(&lease_dir).unwrap().unwrap();
         assert_eq!(resolved.owner_workspace, owner_dir);
@@ -2026,7 +2028,7 @@ mod tests {
             owner: PathBuf::from("/owner/ws"),
             created_at: None,
         };
-        write_lease(dir, &lease).unwrap();
+        overwrite_lease_in_test(dir, &lease).unwrap();
         let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
         assert!(
             err.contains("in progress"),
@@ -2102,7 +2104,7 @@ mod tests {
             owner: owner_dir.clone(),
             created_at: None,
         };
-        write_lease(&lease_dir, &lease).unwrap();
+        overwrite_lease_in_test(&lease_dir, &lease).unwrap();
 
         let err = check_no_op_in_progress(&[lease_dir.as_path()])
             .unwrap_err()
@@ -2135,7 +2137,7 @@ mod tests {
             owner: owner.clone(),
             created_at: None,
         };
-        write_lease(dir, &lease).unwrap();
+        overwrite_lease_in_test(dir, &lease).unwrap();
         let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
         assert_eq!(
             err,
@@ -2221,7 +2223,7 @@ mod tests {
             owner: owner_dir.clone(),
             created_at: None,
         };
-        write_lease(&lease_dir, &lease).unwrap();
+        overwrite_lease_in_test(&lease_dir, &lease).unwrap();
 
         let (resumed, owner_ws) = resume(&lease_dir).unwrap();
         assert_eq!(resumed.id, record.id);
@@ -2260,7 +2262,7 @@ mod tests {
             owner: PathBuf::from("/owner"),
             created_at: None,
         };
-        write_lease(dir, &lease).unwrap();
+        overwrite_lease_in_test(dir, &lease).unwrap();
         assert!(OwnerRecord::path_in(dir).exists());
         assert!(LeaseRecord::path_in(dir).exists());
         clear_all_at(dir);
@@ -2438,7 +2440,7 @@ mod tests {
             owner: PathBuf::from("/some/prior/owner"),
             created_at: None,
         };
-        write_lease(&target_dir, &prior_lease).unwrap();
+        overwrite_lease_in_test(&target_dir, &prior_lease).unwrap();
 
         let op_id = OpId::new_now();
         let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
@@ -2563,7 +2565,7 @@ mod tests {
         let op_id = OpId::new_now();
         let record = make_sync_to_record(&op_id, &owner_dir, &lease_dir);
         write_owner(&owner_dir, &record).unwrap();
-        write_lease(
+        overwrite_lease_in_test(
             &lease_dir,
             &LeaseRecord {
                 id: op_id.as_str().to_owned(),
@@ -2586,7 +2588,7 @@ mod tests {
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
         std::fs::create_dir_all(&lease_dir).unwrap();
-        write_lease(
+        overwrite_lease_in_test(
             &lease_dir,
             &LeaseRecord {
                 id: "dangling-op".to_owned(),
@@ -2617,7 +2619,7 @@ mod tests {
         let owner_record = make_sync_to_record(&fresh_op_id, &owner_dir, &lease_dir);
         write_owner(&owner_dir, &owner_record).unwrap();
         // Lease references an OLDER op id — stale carry-over.
-        write_lease(
+        overwrite_lease_in_test(
             &lease_dir,
             &LeaseRecord {
                 id: "old-op-id".to_owned(),
@@ -2642,7 +2644,7 @@ mod tests {
     fn fix_dead_lease_removes_lease_file() {
         let tmp = tempfile::tempdir().unwrap();
         let lease_dir = tmp.path();
-        write_lease(
+        overwrite_lease_in_test(
             lease_dir,
             &LeaseRecord {
                 id: "dangling-op".to_owned(),

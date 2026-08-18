@@ -172,25 +172,13 @@ fn every_declared_state_file_is_classified() {
 /// to a name mentioned earlier.
 const PROXIMITY_LINES: usize = 12;
 
-/// A production site that both names a state file and calls `std::fs::write`
-/// is publishing that file the truncating way — the defect itself, as opposed
-/// to the census above, which catches a state file nobody classified.
-///
-/// **Measured coverage, not assumed.** This sees a site only where the name
-/// and the write sit in the same neighbourhood. Reverting `write_owned_digests`
-/// or `select_project` to a bare write reddens it; reverting `write_lock` or
-/// `WorkweaveMarker::write` does not, because those reach their path through a
-/// parameter and through `path_in` respectively and never spell the name. The
-/// type gate is what covers those: `StateFile::publish_in` is the only way to
-/// name one of these files without spelling it, and it publishes durably.
-#[test]
-fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
-    let declared = declared_state_file_names();
-    let durable: BTreeSet<&str> = StateFile::ALL.iter().map(|f| f.file_name()).collect();
-    // `FILE_NAME` is an associated const on more than one type, so the bare
-    // identifier does not say which file it names. An ambiguous identifier is
-    // dropped and only its literal is searched for; keeping it would attribute
-    // `Manifest::FILE_NAME` to `rwv.lock`.
+/// Declarations from `target` paired with each one's identifier, blanked out
+/// where the identifier is ambiguous between two different files —
+/// `FILE_NAME` is an associated const on more than one type, so the bare
+/// identifier does not say which file it names; keeping it would attribute
+/// `Manifest::FILE_NAME` to `rwv.lock`. An ambiguous identifier is dropped
+/// and only its literal is searched for.
+fn keyed_names<'a>(declared: &'a [Declared], target: &BTreeSet<&str>) -> Vec<(&'a str, &'a str)> {
     let ambiguous: BTreeSet<&str> = declared
         .iter()
         .filter(|d| {
@@ -200,9 +188,9 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
         })
         .map(|d| d.ident.as_str())
         .collect();
-    let names: Vec<(&str, &str)> = declared
+    declared
         .iter()
-        .filter(|d| durable.contains(d.value.as_str()))
+        .filter(|d| target.contains(d.value.as_str()))
         .map(|d| {
             let ident = if ambiguous.contains(d.ident.as_str()) {
                 ""
@@ -211,13 +199,19 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
             };
             (ident, d.value.as_str())
         })
-        .collect();
-    assert_eq!(
-        names.len(),
-        StateFile::ALL.len(),
-        "every StateFile variant must have a constant for this scan to key on;          without one its site is invisible here and a green result overstates          what was checked"
-    );
+        .collect()
+}
 
+/// Production sites where a `std::fs::write` call sits within
+/// `PROXIMITY_LINES` of one of `names`' idents or literals — each is
+/// publishing that file the truncating way.
+///
+/// **Measured coverage, not assumed.** This sees a site only where the name
+/// and the write sit in the same neighbourhood. Reverting `write_owned_digests`
+/// or `select_project` to a bare write reddens it; reverting `write_lock` or
+/// `WorkweaveMarker::write` does not, because those reach their path through a
+/// parameter and through `path_in` respectively and never spell the name.
+fn bare_write_sites(names: &[(&str, &str)]) -> Vec<String> {
     let mut findings = Vec::new();
     for path in source_files() {
         let text = std::fs::read_to_string(&path).expect("source must be readable");
@@ -234,7 +228,7 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
             let lo = n.saturating_sub(PROXIMITY_LINES);
             let hi = (n + PROXIMITY_LINES).min(lines.len());
             let window = lines[lo..hi].join("\n");
-            for (ident, value) in &names {
+            for (ident, value) in names {
                 let names_it = (!ident.is_empty() && window.contains(ident))
                     || window.contains(&format!("\"{value}\""));
                 if names_it {
@@ -248,10 +242,62 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
             }
         }
     }
+    findings
+}
 
+/// A production site that both names a state file and calls `std::fs::write`
+/// is publishing that file the truncating way — the defect itself, as opposed
+/// to the census above, which catches a state file nobody classified. The
+/// type gate is what covers `write_lock` and `WorkweaveMarker::write`:
+/// `StateFile::publish_in` is the only way to name one of these files without
+/// spelling it, and it publishes durably.
+#[test]
+fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
+    let declared = declared_state_file_names();
+    let durable: BTreeSet<&str> = StateFile::ALL.iter().map(|f| f.file_name()).collect();
+    let names = keyed_names(&declared, &durable);
+    assert_eq!(
+        names.len(),
+        StateFile::ALL.len(),
+        "every StateFile variant must have a constant for this scan to key on;          without one its site is invisible here and a green result overstates          what was checked"
+    );
+
+    let findings = bare_write_sites(&names);
     assert!(
         findings.is_empty(),
         "publish these through StateFile::publish_in so a crash cannot leave \
          them torn: {findings:#?}"
+    );
+}
+
+/// `EXCLUSIVE_CREATE`'s own prohibition, not covered by the scan above: it
+/// filters to `StateFile::ALL` on purpose, so `.rwv-op` and `.rwv-op-lease`
+/// are invisible to it. Those two are claimed with `durable_file::create_new`,
+/// whose refusal on an occupied path is the mutual exclusion `acquire_op`
+/// provides; a bare `fs::write` at either name replaces instead of refusing,
+/// overwriting whatever peer op holds the claim.
+///
+/// Same proximity-window and `#[cfg(test)]`-boundary limitation as the scan
+/// above: a name and a write farther apart than `PROXIMITY_LINES`, or one
+/// reached through a variable instead of a literal or a named constant, is
+/// invisible to this.
+#[test]
+fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
+    let declared = declared_state_file_names();
+    let exclusive: BTreeSet<&str> = EXCLUSIVE_CREATE.into_iter().collect();
+    let names = keyed_names(&declared, &exclusive);
+    assert_eq!(
+        names.len(),
+        EXCLUSIVE_CREATE.len(),
+        "both EXCLUSIVE_CREATE entries must have a constant for this scan to \
+         key on; without one its site is invisible here and a green result \
+         overstates what was checked"
+    );
+
+    let findings = bare_write_sites(&names);
+    assert!(
+        findings.is_empty(),
+        "publish these with durable_file::create_new so a replacement can't \
+         overwrite a peer op's claim: {findings:#?}"
     );
 }
