@@ -110,6 +110,9 @@ fn cargo(args: &[&str], dir: &Path) -> std::process::Output {
 /// the fixture is only evidence if it is capable of showing movement.
 #[test]
 fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
+    if common::skip_without_tool("cargo") {
+        return;
+    }
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("weave");
     let source = tmp.path().join("crate-source");
@@ -132,14 +135,6 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
 
     let integration = CargoWorkspace;
     integration.activate(&ctx).unwrap();
-
-    if which::which("cargo").is_err() {
-        assert!(
-            integration.activate_hook(&ctx).is_err(),
-            "with cargo absent the hook has nothing to run and must say so"
-        );
-        return;
-    }
 
     // The first activation is the first resolve: no lock exists, so nothing is
     // being discarded and the newest match is the right answer.
@@ -189,6 +184,75 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
         Some("0.1.1"),
         "control: a re-resolve must be able to move this pin, or the survival \
          assertion above is vacuous"
+    );
+}
+
+/// With cargo off the PATH the activation hook has nothing to run, and the
+/// verb fails saying so rather than reporting a success it did not achieve.
+///
+/// Driven as a subprocess with a PATH narrowed to git alone, so this runs on
+/// every host rather than only on one without cargo installed. In-process it
+/// could not: the hook resolves cargo by spawning it, inheriting whatever
+/// environment the caller has, and a test cannot narrow its own process PATH
+/// while other tests run beside it. Handing a child an environment the test
+/// owns is the only sound way to choose the answer.
+#[test]
+fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let source = tmp.path().join("crate-source");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    common::write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
+
+    let server = ws.join("github/acme/server");
+    std::fs::create_dir_all(server.join("src")).unwrap();
+    std::fs::write(
+        server.join("Cargo.toml"),
+        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\npinnable = \"0.1\"\n",
+    )
+    .unwrap();
+    std::fs::write(server.join("src/lib.rs"), "").unwrap();
+    git_init_with_commit(&server);
+
+    let project_dir = ws.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
+    git_init_with_commit(&project_dir);
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    // Authored first, with the ambient PATH, so the run below fails on the
+    // hook rather than on the missing managed file the hook checks for.
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent("app", &ctx).ok();
+
+    let only_git = common::tool_only_bin("git");
+    let output = common::rwv()
+        .args(["activate", "app"])
+        .current_dir(&ws)
+        .env("PATH", only_git.display().to_string())
+        .output()
+        .expect("rwv should run");
+    let report = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !output.status.success(),
+        "with cargo off the PATH the hook cannot run and activate must not \
+         report success:\n{report}"
+    );
+    assert!(
+        report.contains("cargo"),
+        "the failure must name the tool it could not run, or an operator \
+         cannot tell this from any other activate failure:\n{report}"
     );
 }
 
