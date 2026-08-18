@@ -535,12 +535,10 @@ fn materialize_with_a_consent_still_reaches_the_generator() {
 /// indistinguishable from "npm's hook never runs in this fixture at all".
 #[test]
 fn activate_withholds_the_non_cargo_hook_over_cargo_only_drift() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
-    if which::which("npm").is_err() {
-        eprintln!("skipping: `npm` not found on PATH");
+    if common::skip_without_tool("npm") {
         return;
     }
     let f = fixture_with_npm_member();
@@ -582,12 +580,10 @@ fn activate_withholds_the_non_cargo_hook_over_cargo_only_drift() {
 /// The control for the arm above.
 #[test]
 fn a_verb_with_no_drift_in_its_way_still_runs_the_non_cargo_hook() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
-    if which::which("npm").is_err() {
-        eprintln!("skipping: `npm` not found on PATH");
+    if common::skip_without_tool("npm") {
         return;
     }
     let f = fixture_with_npm_member();

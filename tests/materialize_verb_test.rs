@@ -154,8 +154,7 @@ fn fixture() -> Fixture {
 /// split out of is refused.
 #[test]
 fn materialize_runs_in_a_workweave_where_activate_is_refused() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();

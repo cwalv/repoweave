@@ -207,8 +207,7 @@ role = "owned"
 #[test]
 fn npm_release_version_pin_workflow() {
     // Skip if npm is not available.
-    if which::which("npm").is_err() {
-        eprintln!("SKIP: npm not found on PATH");
+    if common::skip_without_tool("npm") {
         return;
     }
 

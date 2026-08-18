@@ -403,8 +403,7 @@ fn weave_with_a_path_dep(root: &Path) -> (PathBuf, PathBuf) {
 /// this fix the whole route was permanently silent.
 #[test]
 fn a_path_dependency_into_a_non_member_directory_fires_the_staleness_axis() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let tmp = common::tempdir().unwrap();
@@ -483,8 +482,7 @@ fn a_path_dependency_into_a_non_member_directory_fires_the_staleness_axis() {
 /// path dependency.
 #[test]
 fn a_bare_cargo_run_after_the_edit_is_caught_by_drift() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let tmp = common::tempdir().unwrap();
@@ -534,8 +532,7 @@ fn a_bare_cargo_run_after_the_edit_is_caught_by_drift() {
 /// `a_producer_writing_while_the_generator_runs_is_refused_by_the_verb`.
 #[test]
 fn a_second_producer_between_regenerate_and_stamp_is_refused() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let tmp = common::tempdir().unwrap();
@@ -778,8 +775,7 @@ fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
 /// because the generation that follows attests its inputs.
 #[test]
 fn a_stale_entry_on_a_drifted_file_is_not_a_deadlock() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let tmp = common::tempdir().unwrap();
@@ -871,8 +867,7 @@ fn weave_with_a_build_script_producer(root: &Path) -> (PathBuf, PathBuf) {
 /// otherwise. Driven through the shipped binary on the sanctioned route.
 #[test]
 fn a_build_script_include_target_cannot_move_cargo_lock() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let tmp = common::tempdir().unwrap();

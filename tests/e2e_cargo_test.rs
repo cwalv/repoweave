@@ -109,9 +109,7 @@ fn setup_weave(tmp: &Path) {
 
 #[test]
 fn e2e_cargo_workspace_wiring() {
-    // Skip if cargo is not available.
-    if which::which("cargo").is_err() {
-        eprintln!("skipping e2e_cargo_test: cargo not on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -182,9 +180,7 @@ fn e2e_cargo_workspace_wiring() {
 
 #[test]
 fn cargo_release_version_pin_workflow() {
-    // Skip if cargo is not available.
-    if which::which("cargo").is_err() {
-        eprintln!("skipping cargo_release_version_pin_workflow: cargo not on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -316,9 +312,7 @@ fn cargo_release_version_pin_workflow() {
 /// (report-not-mandate).
 #[test]
 fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
-    // Skip if cargo is not available.
-    if which::which("cargo").is_err() {
-        eprintln!("skipping e2e_cargo_lock_out_of_band_rewrite: cargo not on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -490,8 +484,7 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
 /// Skips gracefully if cargo is absent.
 #[test]
 fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping e2e_cargo_config_surface: cargo not on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 

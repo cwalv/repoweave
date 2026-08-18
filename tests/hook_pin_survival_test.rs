@@ -261,8 +261,7 @@ fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
 /// dependency, and the pin that was already there does not move.
 #[test]
 fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -581,8 +580,7 @@ fn git_init_with_commit(dir: &Path) {
 /// is move a pin.
 #[test]
 fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -667,8 +665,7 @@ fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
 /// remedy exactly because it cannot move a pin.
 #[test]
 fn materialize_leaves_a_pin_byte_identical() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -912,8 +909,7 @@ fn a_hooked_activation_runs_only_materializing_commands() {
 /// leaves no `go.work.sum` behind to have pinned anything in.
 #[test]
 fn go_activation_records_membership_without_resolving() {
-    if which::which("go").is_err() {
-        eprintln!("skipping: `go` not found on PATH");
+    if common::skip_without_tool("go") {
         return;
     }
 

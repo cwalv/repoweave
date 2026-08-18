@@ -35,8 +35,7 @@ macro_rules! require_registry_e2e {
 /// Skip the test if `tool` is not on PATH.
 macro_rules! require_tool {
     ($tool:expr) => {
-        if which::which($tool).is_err() {
-            eprintln!("SKIP: `{}` not found on PATH", $tool);
+        if common::skip_without_tool($tool) {
             return;
         }
     };

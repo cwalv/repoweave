@@ -30,8 +30,7 @@ mod common;
 /// `cargo generate-lockfile`, so without cargo there is nothing to observe.
 macro_rules! require_cargo {
     () => {
-        if which::which("cargo").is_err() {
-            eprintln!("skipping test: `cargo` not found on PATH");
+        if common::skip_without_tool("cargo") {
             return;
         }
     };

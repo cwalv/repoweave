@@ -563,8 +563,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 /// there is no successful run to assert the no-clobber claim against.
 macro_rules! require_cargo {
     () => {
-        if which::which("cargo").is_err() {
-            eprintln!("skipping test: `cargo` not found on PATH");
+        if common::skip_without_tool("cargo") {
             return;
         }
     };
