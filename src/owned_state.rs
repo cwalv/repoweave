@@ -302,29 +302,116 @@ pub fn stamp_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> anyhow
 }
 
 /// Record `content` as the generation rwv produced for `file_name` in `dir`,
-/// together with the digests of the `inputs` that generation read.
+/// together with the digests of the inputs that generation read — or refuse,
+/// when one of them moved between [`ObservedInputs::observe`] and here.
 ///
 /// The distinction from [`stamp_owned_digest`] is not bookkeeping detail. That
 /// one accepts bytes; this one attests a derivation. Recording inputs beside
 /// bytes rwv did not derive would claim a provenance that does not exist, and
 /// the claim would then read as freshness for as long as those inputs sat
 /// still.
+///
+/// Refusing writes nothing: the generated file stays as the generator left it,
+/// and a generation nobody recorded is what [`stale_generations`] reports until
+/// a rerun earns the record — where a stamp taken across the disagreement would
+/// be silent forever.
 pub fn stamp_owned_generation(
     dir: &Path,
     file_name: &str,
     content: &[u8],
-    inputs: BTreeMap<String, String>,
+    inputs: ObservedInputs,
 ) -> anyhow::Result<()> {
+    let (at_record, moved) = inputs.reread();
+    if !moved.is_empty() {
+        let listed = moved
+            .iter()
+            .map(|path| format!("\n  {path}"))
+            .collect::<String>();
+        anyhow::bail!(
+            "refusing to record {} as generated: {} input(s) it was derived \
+             from changed while it was being generated, so the record would \
+             attest a derivation that did not happen:{listed}\n\
+             Nothing was recorded. Re-run this command to derive the file from \
+             the inputs as they now stand — where what the generator left on \
+             disk differs from the last generation rwv accepted, it stops to \
+             ask which of the two to keep before regenerating.",
+            dir.join(file_name).display(),
+            moved.len()
+        );
+    }
     edit_owned_digests(dir, |entries| {
         entries.insert(
             file_name.to_string(),
             LedgerEntry::Generated {
                 digest: owned_digest(content),
-                inputs,
+                inputs: at_record,
             },
         );
         LedgerEdit::Changed
     })
+}
+
+/// The inputs of a generation, read before the generator that consumes them
+/// runs.
+///
+/// rwv never locks the working tree, so an editor, a build, a landing sync or a
+/// second rwv may write one of these files while the generator is running or
+/// while its output is on its way to the ledger. This carries the reading taken
+/// before the generation so [`stamp_owned_generation`] can take a second one at
+/// the moment of recording and refuse across a disagreement: what the ledger
+/// claims is then always something rwv observed, whoever else was writing.
+///
+/// The window before the first reading is not covered and does not need to be —
+/// what precedes the observation is what the generation ran on.
+pub struct ObservedInputs {
+    project_dir: std::path::PathBuf,
+    project: crate::manifest::ProjectName,
+    workspace_root: std::path::PathBuf,
+    at_observation: BTreeMap<String, String>,
+}
+
+impl ObservedInputs {
+    /// Read what a generation in `project_dir` is about to consume.
+    pub fn observe(
+        project_dir: &Path,
+        project: &crate::manifest::ProjectName,
+        workspace_root: &Path,
+    ) -> Self {
+        Self {
+            at_observation: generation_inputs(project_dir, project, workspace_root),
+            project_dir: project_dir.to_path_buf(),
+            project: project.clone(),
+            workspace_root: workspace_root.to_path_buf(),
+        }
+    }
+
+    /// The inputs as they stand now, and which of them moved since the
+    /// observation.
+    fn reread(&self) -> (BTreeMap<String, String>, Vec<String>) {
+        let now = generation_inputs(&self.project_dir, &self.project, &self.workspace_root);
+        let moved = moved_inputs(&self.at_observation, &now);
+        (now, moved)
+    }
+}
+
+/// The paths `before` and `after` disagree about, keyed on the union and
+/// sorted.
+///
+/// Both directions: an input that has appeared since `before` moved the
+/// derivation just as much as one whose bytes changed, and an input that has
+/// gone away is not evidence that what it produced still holds.
+fn moved_inputs(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Vec<String> {
+    before
+        .keys()
+        .chain(after.keys())
+        .filter(|path| before.get(*path) != after.get(*path))
+        .cloned()
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect()
 }
 
 /// The inputs a generation reads, as workspace-relative path to digest, for the
@@ -366,19 +453,12 @@ pub fn stamp_owned_generation(
 /// weave tracks — can move `Cargo.lock`'s bytes. There is no channel here
 /// for this map to fail to cover.
 ///
-/// **The pairing this function's own accuracy depends on is not enforced.**
-/// Every digest it returns is trusted to describe the inputs that were live
-/// when `cargo` produced the bytes about to be stamped alongside it, which
-/// holds only because the caller runs the `cargo` subprocess and this
-/// function back to back with nothing in between. Nothing locks that window:
-/// a second producer — another `rwv` invocation racing this one, or any
-/// other actor editing a tracked input at the wrong moment — landing inside
-/// it stamps a digest of its own edit against bytes `cargo` resolved from an
-/// earlier one, and the mismatch is then permanently invisible. Widening
-/// this map cannot close that gap; the gap is a missing lock, not a missing
-/// path, and concurrent invocation against one project has no synchronization
-/// story anywhere else in rwv either.
-pub fn generation_inputs(
+/// **A digest here describes one instant, and the pairing with the bytes it is
+/// stamped beside is [`ObservedInputs`]'s job, not this map's.** Widening the
+/// map would not help: an actor writing a tracked input while the generator
+/// runs moves an input this map already covers, which is why the guard is a
+/// second reading rather than another path.
+fn generation_inputs(
     project_dir: &Path,
     project: &crate::manifest::ProjectName,
     workspace_root: &Path,
@@ -779,18 +859,7 @@ pub fn stale_generations(
                     moved_inputs: Vec::new(),
                 });
             };
-            // Both directions, keyed on the union: an input that has appeared
-            // since the generation moved the derivation just as much as one
-            // whose bytes changed, and an input that has gone away is not
-            // evidence that what it produced still holds.
-            let moved: Vec<String> = recorded
-                .keys()
-                .chain(current.keys())
-                .filter(|path| recorded.get(*path) != current.get(*path))
-                .cloned()
-                .collect::<BTreeSet<String>>()
-                .into_iter()
-                .collect();
+            let moved = moved_inputs(recorded, &current);
             (!moved.is_empty()).then_some(StaleGeneration {
                 generated,
                 moved_inputs: moved,

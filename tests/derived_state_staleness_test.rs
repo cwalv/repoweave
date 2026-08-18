@@ -108,7 +108,7 @@ fn weave(root: &Path) -> PathBuf {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws),
     )
     .unwrap();
     ws
@@ -226,7 +226,7 @@ fn an_input_that_appeared_since_the_generation_counts_as_moved() {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws),
     )
     .unwrap();
     assert!(
@@ -334,7 +334,7 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws),
     )
     .unwrap();
     ws
@@ -513,26 +513,27 @@ fn a_bare_cargo_run_after_the_edit_is_caught_by_drift() {
     );
 }
 
-/// The single-producer assumption `generation_inputs`'s docstring rests on:
-/// `activate_hook` runs `cargo fetch`, then immediately reads the bytes it
-/// produced and calls `generation_inputs` to attest them, with nothing
-/// between the two steps that re-reads what `cargo` actually saw. A second
-/// producer writing to a tracked input in that window stamps a digest of
-/// ITS edit against bytes `cargo` resolved from a different, earlier one.
+/// A second producer writing a tracked input between the generator and the
+/// record is refused, not absorbed. `activate_hook` runs `cargo fetch` and then
+/// records what it produced; an edit landing in that window used to be read by
+/// the stamp and attested against bytes `cargo` resolved from a different,
+/// earlier one, and the disagreement was then permanently invisible — the
+/// ledger and the checkout agreed with each other while the generation neither
+/// had been derived from.
 ///
 /// Reconstructed rather than raced: landing inside a live process's window
 /// between one subprocess call and the next few lines of Rust is not a
-/// fixture any test here can hit deterministically without instrumenting the
-/// shipped binary. What follows runs `activate_hook`'s own two halves
-/// directly — the same `cargo fetch` subprocess call the bypass-route
-/// fixture above already drives, then the same
-/// `generation_inputs`/`stamp_owned_generation` pair `weave_with_a_producer`
-/// already drives — with a second edit inserted between them. Every step is
-/// the production call `activate_hook` makes; only the interleaving is
-/// authored, standing in for what a second producer's timing would put in
-/// that window for real.
+/// fixture any test here can hit deterministically. What follows runs
+/// `activate_hook`'s own three steps directly — observe the inputs, run the
+/// same `cargo fetch` subprocess the bypass-route fixture above already
+/// drives, then stamp — with a second edit inserted between the last two.
+/// Every step is the production call `activate_hook` makes; only the
+/// interleaving is authored, standing in for what a second producer's timing
+/// would put in that window for real. The same window driven end to end
+/// through the shipped binary is
+/// `a_producer_writing_while_the_generator_runs_is_refused_by_the_verb`.
 #[test]
-fn a_second_producer_between_regenerate_and_stamp_defeats_the_join_point() {
+fn a_second_producer_between_regenerate_and_stamp_is_refused() {
     if which::which("cargo").is_err() {
         eprintln!("skipping: `cargo` not found on PATH");
         return;
@@ -549,10 +550,14 @@ fn a_second_producer_between_regenerate_and_stamp_defeats_the_join_point() {
         "precondition: the generation is current"
     );
 
-    // Producer A's regenerate half: the same bare `cargo fetch` the
-    // bypass-route fixture above runs, resolving against 0.2.0.
+    // The state of the world when producer A's verb starts: the operator's own
+    // bump, which A is about to derive from.
     let declared = std::fs::read_to_string(&helper_manifest).unwrap();
     std::fs::write(&helper_manifest, declared.replace("0.1.0", "0.2.0")).unwrap();
+
+    // Producer A's three steps, in the hook's order.
+    let project = repoweave::manifest::ProjectName::new("app").unwrap();
+    let observed = repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws);
     let status = std::process::Command::new("cargo")
         .arg("fetch")
         .current_dir(&ws)
@@ -565,53 +570,205 @@ fn a_second_producer_between_regenerate_and_stamp_defeats_the_join_point() {
         "producer A's regenerate resolved against 0.2.0:\n{lock_after_regen}"
     );
 
-    // A second producer's write, landing in the window `activate_hook`
-    // leaves open between that regenerate and its own stamp.
+    // A second producer's write, landing in the window between that regenerate
+    // and A's own stamp.
     let after_regen = std::fs::read_to_string(&helper_manifest).unwrap();
     std::fs::write(&helper_manifest, after_regen.replace("0.2.0", "0.3.0")).unwrap();
 
-    // Producer A's stamp half: exactly what `activate_hook` runs right after
-    // the subprocess call returns — read the bytes cargo just produced, and
-    // attest them against inputs read now.
+    let ledger_before = std::fs::read_to_string(project_dir.join(LEDGER)).unwrap();
     let lock_bytes = std::fs::read(project_dir.join("Cargo.lock")).unwrap();
-    let project = repoweave::manifest::ProjectName::new("app").unwrap();
-    repoweave::owned_state::stamp_owned_generation(
+    let refusal = repoweave::owned_state::stamp_owned_generation(
         &project_dir,
         "Cargo.lock",
         &lock_bytes,
-        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
+        observed,
     )
-    .unwrap();
-
-    // The ledger now attests 0.2.0-produced bytes against 0.3.0 inputs.
-    // Doctor re-hashes current disk (0.3.0) against the recorded digest
-    // (also 0.3.0, since the stamp above just read it) and finds nothing
-    // moved — silent, even though the accepted bytes were never regenerated
-    // from 0.3.0 at all.
+    .expect_err("the stamp must refuse rather than attest a derivation that did not happen")
+    .to_string();
     assert!(
-        advisories(&ws).is_empty(),
-        "MEASURED: the second producer's edit is absorbed into the stamp \
-         with no signal, reopening the pre-qiza shape for any producer that \
-         races the sanctioned one instead of merely preceding it: {:?}",
-        advisories(&ws)
+        refusal.contains("../outside-helper/Cargo.toml"),
+        "the refusal names the input that moved, spelled as the ledger keys \
+         it, so the operator knows who to look at:\n{refusal}"
+    );
+    assert!(
+        refusal.contains("Re-run this command"),
+        "and names the remedy:\n{refusal}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join(LEDGER)).unwrap(),
+        ledger_before,
+        "a refusal records nothing: the ledger still holds the last generation \
+         rwv did observe"
     );
 
-    // Control: the silence above is a false negative, not a coincidence — a
-    // real regenerate against the inputs the ledger just vouched for
-    // produces DIFFERENT bytes from the ones it attested.
-    let (ok, materialized) = rwv(&["materialize"], &ws);
+    // And what was silent is now visible: the unrecorded generation reads as
+    // stale against the input that moved, until a rerun earns the record.
+    let found = advisories(&ws);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert!(
+        found[0]["inputs"]
+            .as_array()
+            .expect("advisory carries a paths array")
+            .iter()
+            .any(|v| v.as_str() == Some("../outside-helper/Cargo.toml")),
+        "{found:?}"
+    );
+
+    // Control: with no producer inside the window the same route stamps and
+    // stays clean, so the refusal above is the interleaving being caught and
+    // not the guard firing on every generation. The bare `cargo fetch` above
+    // left bytes rwv never accepted on disk, which is the case the refusal
+    // says it will be asked about first.
+    let (ok, unsettled) = rwv(&["materialize"], &ws);
+    assert!(!ok, "{unsettled}");
+    assert!(
+        unsettled.contains("content rwv never accepted is on disk"),
+        "{unsettled}"
+    );
+    let (ok, materialized) = rwv(&["materialize", "--regenerate-drifted"], &ws);
     assert!(ok, "{materialized}");
     let lock_final = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
     assert!(
         lock_final.contains("version = \"0.3.0\""),
-        "the attested generation was already stale against 0.3.0 when \
-         doctor called it current:\n{lock_final}"
+        "the rerun derived from the inputs as they now stand:\n{lock_final}"
     );
-    assert_ne!(
-        lock_after_regen, lock_final,
-        "control: the attested bytes and a real regenerate against the same \
-         claimed inputs differ, which is what makes the earlier silence \
-         wrong rather than merely permissive"
+    assert!(
+        advisories(&ws).is_empty(),
+        "and recorded it: {:?}",
+        advisories(&ws)
+    );
+}
+
+/// Run `rwv` with `prepend` ahead of the inherited PATH, so a fixture can
+/// stand in for a tool the verb shells out to.
+#[cfg(unix)]
+fn rwv_with_path_prefix(args: &[&str], cwd: &Path, prepend: &Path) -> (bool, String) {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    let output = common::rwv()
+        .args(args)
+        .current_dir(cwd)
+        .env("PATH", format!("{}:{inherited}", prepend.display()))
+        .output()
+        .expect("rwv should run");
+    (
+        output.status.success(),
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+/// The same window driven end to end through the shipped binary: a `cargo` on
+/// PATH that writes a tracked input once the real `cargo` has resolved, which
+/// is what a second producer's timing does for real. The verb refuses, records
+/// nothing, and the unrecorded generation reads as stale until a rerun earns
+/// the record.
+///
+/// What this pins that the reconstruction above cannot: that reconstruction
+/// takes its own reading of the inputs, so it stays green if the hook's reading
+/// moves to after the subprocess and the guard goes vacuous at the one site
+/// that runs it in production.
+///
+/// Unix only. The fixture is a `#!/bin/sh` script dispatched by name off PATH;
+/// Windows has no executable bit and resolves by PATHEXT, so a discoverable
+/// shim there is a different artifact under a different name. Nothing about the
+/// invariant is platform-specific, and the reconstruction above pins it on
+/// every platform.
+#[test]
+#[cfg(unix)]
+fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Ok(real_cargo) = which::which("cargo") else {
+        eprintln!("skipping: `cargo` not found on PATH");
+        return;
+    };
+    let tmp = common::tempdir().unwrap();
+    let (ws, outside) = weave_with_a_path_dep(tmp.path());
+    let project_dir = ws.join("projects/app");
+    let helper_manifest = outside.join("Cargo.toml");
+
+    let (ok, first) = rwv(&["materialize"], &ws);
+    assert!(ok, "{first}");
+    assert!(
+        advisories(&ws).is_empty(),
+        "precondition: the generation is current"
+    );
+
+    // The second producer's edit, prepared from the fixture's own manifest so
+    // the shim below carries no copy of it.
+    let bumped = tmp.path().join("bumped-helper-manifest.toml");
+    let declared = std::fs::read_to_string(&helper_manifest).unwrap();
+    std::fs::write(&bumped, declared.replace("0.1.0", "0.2.0")).unwrap();
+
+    // Writes the input AFTER the real cargo has resolved, so the bytes cargo
+    // produced are genuinely the ones the pre-edit manifest implies and the
+    // record about to be written would describe an edit cargo never read.
+    let shim_dir = tmp.path().join("shim");
+    std::fs::create_dir_all(&shim_dir).unwrap();
+    let shim = shim_dir.join("cargo");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\n\"{real}\" \"$@\"\nstatus=$?\ncp '{bumped}' '{helper}'\nexit $status\n",
+            real = real_cargo.display(),
+            bumped = bumped.display(),
+            helper = helper_manifest.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let ledger_before = std::fs::read_to_string(project_dir.join(LEDGER)).unwrap();
+    let (ok, refused) = rwv_with_path_prefix(&["materialize"], &ws, &shim_dir);
+    assert!(
+        !ok,
+        "the verb must fail rather than record a derivation that did not \
+         happen:\n{refused}"
+    );
+    assert!(
+        refused.contains("../outside-helper/Cargo.toml"),
+        "the refusal names the input that moved:\n{refused}"
+    );
+    assert!(
+        refused.contains("Re-run this command"),
+        "and names the remedy:\n{refused}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join(LEDGER)).unwrap(),
+        ledger_before,
+        "nothing was recorded"
+    );
+
+    let found = advisories(&ws);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert!(
+        found[0]["inputs"]
+            .as_array()
+            .expect("advisory carries a paths array")
+            .iter()
+            .any(|v| v.as_str() == Some("../outside-helper/Cargo.toml")),
+        "{found:?}"
+    );
+
+    // Control: the same verb over the same tree with no producer inside the
+    // window stamps and stays clean, so the refusal is the interleaving being
+    // caught rather than the guard firing on every generation.
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "{materialized}");
+    let lock_final = std::fs::read_to_string(project_dir.join("Cargo.lock")).unwrap();
+    assert!(
+        lock_final.contains("version = \"0.2.0\""),
+        "the rerun derived from the input as it now stands:\n{lock_final}"
+    );
+    assert!(
+        advisories(&ws).is_empty(),
+        "and recorded it: {:?}",
+        advisories(&ws)
     );
 }
 

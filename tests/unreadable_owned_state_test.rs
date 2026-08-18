@@ -115,7 +115,7 @@ fn weave(root: &Path) -> PathBuf {
         &project_dir,
         "Cargo.lock",
         LOCK.as_bytes(),
-        repoweave::owned_state::generation_inputs(&project_dir, &project, &ws),
+        repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws),
     )
     .unwrap();
     ws

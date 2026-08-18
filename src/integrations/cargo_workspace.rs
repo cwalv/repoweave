@@ -163,8 +163,8 @@ use crate::integrations::merge::{
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use crate::owned_state::{
-    check_owned_digest, fully_owned_digest_mismatch_issue, generation_inputs,
-    stamp_owned_generation, OwnedDigestCheck,
+    check_owned_digest, fully_owned_digest_mismatch_issue, stamp_owned_generation, ObservedInputs,
+    OwnedDigestCheck,
 };
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -834,6 +834,9 @@ impl Integration for CargoWorkspace {
         } else {
             "generate-lockfile"
         };
+        // Before the generator runs, not after it returns: an input that moves
+        // while cargo is resolving is exactly what the record must not absorb.
+        let inputs = ObservedInputs::observe(ctx.output_dir, ctx.project, ctx.workspace_root);
         let status = std::process::Command::new("cargo")
             .arg(subcommand)
             .current_dir(super::subprocess_cwd(ctx.workspace_root))
@@ -892,13 +895,7 @@ impl Integration for CargoWorkspace {
                 lock_path.display()
             )
         })?;
-        stamp_owned_generation(
-            ctx.output_dir,
-            "Cargo.lock",
-            &lock_bytes,
-            generation_inputs(ctx.output_dir, ctx.project, ctx.workspace_root),
-        )
-        .context("recording accepted-generation digest for Cargo.lock")?;
+        stamp_owned_generation(ctx.output_dir, "Cargo.lock", &lock_bytes, inputs)?;
 
         Ok(())
     }
