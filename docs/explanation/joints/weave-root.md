@@ -25,6 +25,14 @@ names are shared and which are per-project). The same project is also
 presented again by every workweave, each with its own root. The root is a
 view, and views multiply; what they are views *of* is versioned exactly once.
 
+The presentation model is the oldest layer of the design — `activate` and the
+weave image predate workweaves. Workweaves then absorbed part of activate's
+job: a workweave presents its project unconditionally, so anyone who needs a
+presentation that cannot switch out from under them takes a workweave rather
+than activating the primary. What switching at the primary retains is the
+ambient default: which project the root presents to a person or tool working
+at the weave itself.
+
 ## Why the root is not a repository
 
 **Everything at the root already has an owner.**
