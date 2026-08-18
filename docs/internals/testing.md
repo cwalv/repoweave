@@ -29,6 +29,67 @@ Every test must be able to answer two questions at review:
 
 A test that cannot answer both is decoration, whatever it asserts.
 
+## Where a test lives
+
+Three homes, and which one is forced by what the test reaches rather than
+by how large the module has grown:
+
+- **An inline `#[cfg(test)]` module beside the source** — the only home for
+  a test whose subject the module does not export. A child module sees its
+  parent's private items; nothing outside the crate does.
+- **`tests/`** — a test that drives the shipped binary, or one that reaches
+  only the library's `pub` surface. These link the library target and get
+  the dev-dependency set; neither binary target is visible to them.
+- **A sibling file declared `#[cfg(test)] mod tests;`** — the option that
+  looks free. It is not, and the next section is why.
+
+**Size is not a reason to move.** `src/sync.rs` carries some 1,950 lines of
+tests inside a 9,100-line file and they stay there: 45 of its 58 tests name
+an item the module does not export — 19 module-level items and three
+associated functions, each the subject of the test that names it. Relocating
+them means exporting `prune_dropped_repo`, `check_store_unclaimed`,
+`materialize_missing_repo`, `ff_advance_repo`, `apply_strategy` and the rest
+so that a test can watch. This crate spends visibility deliberately —
+`src/main.rs` is a logic-free shim exactly so a consent-token constructor can
+stay `pub(in crate::cli)` — and a test is not what it is spent on.
+
+**The integration-shaped tests are the ones that cannot move.** Every test
+in that module which builds a real git topology reaches a private subject;
+the thirteen that compile from `tests/` are string and enum round-trips and
+one rendered line. "Move the integration-shaped half out" inverts under
+measurement — what it would leave inline is the unit-shaped half. Even those
+thirteen are not a byte-for-byte relocation: a test written inside the crate
+spells its own modules `crate::`, which no external target resolves.
+
+### Moving a module out of its host file changes what the gates read
+
+`before_test_module` in `src/bin/generate-explain.rs` defines test scope as
+an inline `#[cfg(test)]` that opens a body. A `#[cfg(test)] mod tests;`
+declaration is deliberately not a boundary, so the file it names is read as
+production by every gate that calls it:
+
+- `check_vcs_seam_bypasses` reddens. A test may spawn git and mint a
+  backend; production may not. `src/sync.rs`'s module moved to
+  `src/sync/tests.rs` reports 62 lines, measured — and the gate bails
+  there, so the checks behind it go unmeasured.
+- `src_code_identifiers` and `src_code_doc_filenames` widen *silently*,
+  which is worse than reddening. They are the evidence and exemption sets
+  `check_doc_symbol_refs` and `check_doc_citations` consult, and 112
+  identifiers spelled only by that module's tests would begin counting as
+  proof that a name a comment cites still exists. `src_code_identifiers`
+  records that this exclusion held a live mutation.
+- `check_env_input_reads` wants an allowlist entry for every `std::env`
+  read the moved file carries.
+
+`src/vcs/testing.rs` lives this way today and trips none of them, because it
+is a fake `Vcs` that spawns nothing and mints nothing. It licenses a
+hand-built double in its own file, not a fixture-heavy module.
+
+A module that must move takes that scope with it: widen
+`before_test_module` to follow the declaration into its file first, with its
+own seeded failure, and measure what those checks report once they can see
+it.
+
 ## Behavioural pins and structural pins
 
 A **behavioural pin** asserts an observable outcome through a supported
