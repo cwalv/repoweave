@@ -524,3 +524,57 @@ fn an_edited_whole_file_stops_being_the_integrations() {
         "rwv's own surfacing link must not survive stranded, even though the edit does"
     );
 }
+
+/// The wider input the unconditional link removal exists for: not one
+/// hand-authored file among several, but every file the integration ever
+/// wrote — so `owned_paths_on_disk` returns nothing at all and this
+/// integration never appears in `disabled_integration_artifacts`'s output.
+/// The per-artifact loop above therefore never runs for it, and the
+/// unconditional link pass is the only thing that can still find its links.
+#[test]
+fn a_disabled_integration_with_nothing_left_on_disk_still_loses_its_links() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "gita");
+
+    let mine_repos = "path,name,flags\n/elsewhere/mine,mine,\n";
+    let mine_groups = "group,repos\nmine,mine\n";
+    std::fs::write(project_dir.join("gita/repos.csv"), mine_repos).unwrap();
+    std::fs::write(project_dir.join("gita/groups.csv"), mine_groups).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("gita is disabled"),
+        "an integration with nothing left on disk holds no artifact to name:\n{report}"
+    );
+
+    let repos_link = ws.join("gita/repos.csv");
+    let groups_link = ws.join("gita/groups.csv");
+    assert!(
+        repos_link.symlink_metadata().is_ok() && groups_link.symlink_metadata().is_ok(),
+        "fixture: the weave root must still surface both pre-disable links"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !materialized.contains("gita/repos.csv") && !materialized.contains("gita/groups.csv"),
+        "neither file may be named under this remedy either:\n{materialized}"
+    );
+    assert_eq!(
+        read(&project_dir.join("gita/repos.csv")),
+        mine_repos,
+        "the operator's repos.csv must survive byte-identical"
+    );
+    assert_eq!(
+        read(&project_dir.join("gita/groups.csv")),
+        mine_groups,
+        "the operator's groups.csv must survive byte-identical"
+    );
+    assert!(
+        repos_link.symlink_metadata().is_err() && groups_link.symlink_metadata().is_err(),
+        "both stranded links must be gone even though disabled_integration_artifacts \
+         never listed gita among what it found"
+    );
+}
