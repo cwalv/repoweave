@@ -35,6 +35,7 @@
 
 - [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)
 - [Clone topology](./explanation/joints/clone-topology.md)
+- [Weave root as presentation](./explanation/joints/weave-root.md)
 - [Symlinks as structure](./explanation/joints/symlinks-as-structure.md)
 - [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
 - [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)

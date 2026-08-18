@@ -18,6 +18,7 @@ If you are new, start with the lens that matches your situation (linked below); 
 
 - [Pyramid of stability](./joints/pyramid-of-stability.md)
 - [Clone topology](./joints/clone-topology.md)
+- [Weave root as presentation](./joints/weave-root.md)
 - [Symlinks as structure](./joints/symlinks-as-structure.md)
 - [Workweave hierarchy](./joints/workweave-hierarchy.md)
 - [Workweave lifecycle](./joints/workweave-lifecycle.md)

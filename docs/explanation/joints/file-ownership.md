@@ -302,6 +302,8 @@ See [lock-as-derived](./lock-as-derived.md) for how lockfiles fit into the fully
 
 ## Related joints
 
+- [weave-root](./weave-root.md) — why the root the symlinks land in is not a repo, and why
+  jurisdiction over root links is rwv's while authorship stays with the files.
 - [sync-semantics](./sync-semantics.md) — how project-repo commits and workweave syncing interact with the files
   hybrid integrations write.
 - [lock-as-derived](./lock-as-derived.md) — why lockfiles are fully owned, not hybrid.
