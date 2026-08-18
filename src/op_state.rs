@@ -763,11 +763,13 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// given workspace directories.
 ///
 /// This is the cross-verb advisory refusal, never an exclusion: it reads, and
-/// the window between the read and what the caller does next stays open.
-/// `update`, `lock --commit`, `workweave delete` and doctor's branch-model
-/// migration call it and refuse while an op involves that workspace. `sync`
-/// and `sync-to` do not call it at all — they take the exclusion itself, via
-/// [`acquire_op`].
+/// the window between the read and what the caller does next stays open. A
+/// caller here declines to START while an op involves the workspace and holds
+/// nothing afterwards; a caller that needs the exclusion itself takes it
+/// through [`acquire_op`] instead, which is `sync` and `sync-to` alone. Which
+/// verbs sit on each side is enumerated where a new one reddens the
+/// enumeration, in `tests/concurrency_boundaries_test.rs`, rather than in this
+/// sentence, where the last enumeration went false without anything noticing.
 ///
 /// Returns an error if any workspace carries an owner record or a lease. Both
 /// branches name the op (verb), its age, the phase it stalled in, and the two

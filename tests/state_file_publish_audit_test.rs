@@ -271,11 +271,13 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
 }
 
 /// `EXCLUSIVE_CREATE`'s own prohibition, not covered by the scan above: it
-/// filters to `StateFile::ALL` on purpose, so `.rwv-op` and `.rwv-op-lease`
-/// are invisible to it. Those two are claimed with `durable_file::create_new`,
-/// whose refusal on an occupied path is the mutual exclusion `acquire_op`
-/// provides; a bare `fs::write` at either name replaces instead of refusing,
-/// overwriting whatever peer op holds the claim.
+/// filters to `StateFile::ALL` on purpose, so no name published by exclusive
+/// create is visible to it. Every one of them is claimed with
+/// `durable_file::create_new`, whose refusal on an occupied path IS the
+/// exclusion — for the op record and its lease that exclusion is `acquire_op`,
+/// and for the ledger and index claim files it is the claim each takes around
+/// its read-modify-write. A bare `fs::write` at any of these names replaces
+/// instead of refusing, overwriting whatever peer holds the claim.
 ///
 /// Same proximity-window and `#[cfg(test)]`-boundary limitation as the scan
 /// above: a name and a write farther apart than `PROXIMITY_LINES`, or one
@@ -289,7 +291,7 @@ fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
     assert_eq!(
         names.len(),
         EXCLUSIVE_CREATE.len(),
-        "both EXCLUSIVE_CREATE entries must have a constant for this scan to \
+        "every EXCLUSIVE_CREATE entry must have a constant for this scan to \
          key on; without one its site is invisible here and a green result \
          overstates what was checked"
     );

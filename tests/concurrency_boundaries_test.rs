@@ -127,6 +127,67 @@ fn the_op_lease_is_syncs_tool_and_not_a_verb_surface_mutex() {
     );
 }
 
+/// Every module that takes the advisory check, so a docstring never has to
+/// carry the list.
+///
+/// Four came with the check; `activate.rs` holds the two `materialize` and
+/// `activate_with_options` added, which is why it is the only entry with a
+/// count above one.
+const ADVISORY_REFUSAL_SITES: [(&str, usize); 5] = [
+    ("activate.rs", 2),
+    ("check.rs", 1),
+    ("lock.rs", 1),
+    ("update.rs", 1),
+    ("workweave.rs", 1),
+];
+
+/// **Which verbs advise and which exclude is enumerated HERE, where adding one
+/// reddens the enumeration.**
+///
+/// This exists because the prose form kept rotting. Three times while this
+/// machinery was being built, a sentence describing it went false while every
+/// test stayed green:
+/// a docstring claiming the index's verbs were gated by the lease when they
+/// reach this read instead; its replacement listing four callers, which a
+/// sibling change made five; and an audit's message saying "both entries" of a
+/// set that had grown to four. Each was a correct mechanism with prose that
+/// enumerated, and prose cannot redden.
+///
+/// So the division of labour is: a docstring states the INVARIANT — this call
+/// advises, `acquire_op` excludes — and this pin owns the MEMBERSHIP. A new
+/// caller of either lands here as a failure with the file named, which is the
+/// moment to ask which side of the boundary it belongs on.
+///
+/// SCOPE: `check_no_op_in_progress(` on non-comment lines of `src/**/*.rs`,
+/// excluding `op_state.rs`. A caller reaching the check through a wrapper this
+/// does not name is invisible, exactly as for the acquisition census above.
+#[test]
+fn the_advisory_checks_callers_are_enumerated_where_a_new_one_reddens_it() {
+    let sites = call_sites("check_no_op_in_progress(");
+
+    assert!(
+        !sites.is_empty(),
+        "non-vacuity: an empty scan means the spelling moved and this pin is \
+         measuring nothing."
+    );
+
+    let expected: BTreeSet<(String, usize)> = ADVISORY_REFUSAL_SITES
+        .iter()
+        .map(|&(file, count)| (file.to_string(), count))
+        .collect();
+    let actual: BTreeSet<(String, usize)> = sites.iter().cloned().collect();
+
+    assert_eq!(
+        actual, expected,
+        "the set of verbs taking the advisory refusal changed. That is not \
+         forbidden — it is the decision this pin exists to surface: a verb that \
+         declines to start while an op is in flight belongs here, and one that \
+         needs the operation excluded belongs on `acquire_op`, which is a \
+         different act with a different cost. Update this list in the same \
+         change, and check that no docstring has re-acquired a copy of it."
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Boundary 2: the working tree is shared, unlocked space
 // ---------------------------------------------------------------------------
