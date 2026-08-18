@@ -422,7 +422,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "activate.rs",
         pattern: "symlink::remove(",
-        count: 2,
+        count: 3,
         callers: &[],
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
@@ -430,7 +430,28 @@ const ALLOWLIST: &[Allowed] = &[
             target is exactly projects/<other-project>/<same-name> — rwv's \
             own surfacing of a shared name out of a project the weave root \
             does not present — and only while surfacing the one it does. \
-            Recoverable by re-surfacing that other project.",
+            Recoverable by re-surfacing that other project. \
+            (3) unsurface_undeclared: links at names the presented project no \
+            longer declares. This one is guarded by a TYPE rather than by a \
+            checked condition at the site, which is why no caller enumeration \
+            appears above for it and why a new caller cannot widen it. It \
+            takes &[UndeclaredLink] and no root; UndeclaredLink has private \
+            fields and no public constructor, so the only values in existence \
+            are those undeclared_project_links minted on the branch where all \
+            four conjuncts held — symlink read without following, rwv's own \
+            surfacing shape for that path, resolving into the PRESENTED \
+            project, and a name the project does not declare. A regular file \
+            cannot be expressed as an argument, and neither can a path this \
+            scan did not classify. \
+            The consent is --remove-undeclared-links on `rwv materialize`, \
+            minted only in cli::dispatch and named for what it destroys. \
+            `rwv doctor` reports each link with its target and names that \
+            command, and has NO --fix arm for it: on disk rwv cannot tell its \
+            own residue from a link an operator made at the same shape, so the \
+            loss list is shown and the choice is left. Recoverable without \
+            rwv: unlinking destroys no content — the file each link pointed at \
+            is untouched — and the finding prints the exact target, so the \
+            link is reconstructable from the report that named it.",
     },
     Allowed {
         file: "activate.rs",

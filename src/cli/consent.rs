@@ -199,6 +199,32 @@ impl AdoptDriftedConsent {
     }
 }
 
+/// Proof that the operator consented to removing weave-root symlinks at names
+/// the presented project no longer declares. Minted from
+/// `--remove-undeclared-links`.
+///
+/// Named for what it destroys, per the house rule — links, at undeclared names
+/// — rather than for a mode. The destruction is narrow in a way the name has to
+/// carry: it unlinks, and the file each link pointed at survives, so the flag
+/// must not read as consent to deleting content.
+///
+/// `Copy`: a zero-sized proof token; see [`DetachConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoveUndeclaredLinksConsent(());
+
+impl RemoveUndeclaredLinksConsent {
+    // No `granted()`: nothing in-crate needs to mint one, and this module's
+    // rule is that the unconditional mint exists only on tokens some fixture
+    // actually needs. The behaviour is driven end to end through the flag.
+
+    /// Mint from the parsed `--remove-undeclared-links` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DetachConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(remove_undeclared_links: bool) -> Option<Self> {
+        remove_undeclared_links.then_some(Self(()))
+    }
+}
+
 /// Which exit the operator chose out of drift in an rwv-attested generated
 /// file. `None` at the call site is the third state — no choice made — and
 /// the one that refuses.

@@ -157,7 +157,7 @@ The install hooks are withheld while a generated file rwv attests holds content 
 
 Anchored by `tests/doc_claims_activate_test.rs`.
 
-### `rwv materialize [--regenerate-drifted | --adopt-drifted]`
+### `rwv materialize [--regenerate-drifted | --adopt-drifted] [--remove-undeclared-links]`
 
 Run the integration install hooks for the project this checkout already presents, and nothing else. No arguments.
 
@@ -177,6 +177,7 @@ A generated file rwv attests whose content differs from the generation rwv accep
 |---|---|
 | `--regenerate-drifted` | Discard the drifted content and regenerate it from the current inputs |
 | `--adopt-drifted` | Record the drifted content as the accepted generation |
+| `--remove-undeclared-links` | Unlink weave-root symlinks at names the active project no longer declares (the files they point at are untouched) |
 
 Passing both is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through rwv — those bytes are content rwv never accepted, so nothing in the workspace holds a copy. `rwv doctor` reports the same files and names the same two flags.
 

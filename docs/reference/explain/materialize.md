@@ -104,6 +104,31 @@ opposite things and only the operator knows which applies:
 Regenerating throws away a deliberate edit; adopting attests an accident.
 Passing both is refused — they are contradictory requests, not a stricter one.
 
+## Links at names the project no longer declares
+
+The weave root surfaces what the active project declares. Drop a name from
+`rwv.toml` — or change a setting that stops an integration declaring one — and
+the link stays: every candidate set rwv builds comes from the *current*
+declarations, so a name that left them is in none of them.
+
+`rwv doctor` reports each such link with the path it resolves to. It does not
+repair it, and `rwv doctor --fix` will not either: on disk rwv cannot tell its
+own leftover from a link you made by hand at the same shape, so the choice is
+yours to make.
+
+| Flag | Effect |
+|---|---|
+| `--remove-undeclared-links` | Unlink the weave-root symlinks `rwv doctor` reported at undeclared names |
+
+**It unlinks; it does not delete.** The file each link pointed at is untouched,
+and `rwv doctor` printed the target, so a link removed by mistake is one
+`ln -s` away. Nothing else at the weave root is reachable: a real file is never
+touched, nor is a symlink pointing anywhere other than this project's copy of
+that same path.
+
+Names belonging to a *disabled* integration are not included here — those have
+their own finding and plain `rwv materialize` removes what rwv authored.
+
 The refusal lists every path it would act on, so running once without a flag is
 how you see what is at stake. **What `--regenerate-drifted` discards is not
 recoverable through rwv**: the bytes are content rwv never accepted, so no
@@ -123,6 +148,7 @@ with — the answer is given here, once, and then they go through.
 
 ```
 rwv materialize [--regenerate-drifted | --adopt-drifted]
+                [--remove-undeclared-links]
 ```
 
 No arguments.
@@ -172,3 +198,6 @@ rwv materialize
   two flags.
 - *integration activate-hook error* — an install command returned non-zero. Fix
   the underlying ecosystem problem and rerun.
+- *`<name>` is a weave-root link into project `<p>` at a name `<p>` no longer
+  declares* — not an error, a standing `rwv doctor` finding. Re-run this verb
+  with `--remove-undeclared-links` to unlink exactly the links it named.

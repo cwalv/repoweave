@@ -36,7 +36,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
-use crate::cli::consent::DriftConsent;
+use crate::cli::consent::{DriftConsent, RemoveUndeclaredLinksConsent};
 use crate::integration::{Integration, OwnedPath, Severity, SurfacedSource};
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
@@ -192,7 +192,11 @@ pub fn activate_intent_with_options(
 ///
 /// The refusal and the target come from one read of the root, so the case that
 /// refuses is exactly the case with no project to name.
-pub fn materialize(ctx: &WorkspaceContext, consent: Option<DriftConsent>) -> anyhow::Result<()> {
+pub fn materialize(
+    ctx: &WorkspaceContext,
+    consent: Option<DriftConsent>,
+    undeclared: Option<RemoveUndeclaredLinksConsent>,
+) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let Some(project) = observe_root(root)
         .as_ref()
@@ -206,12 +210,45 @@ pub fn materialize(ctx: &WorkspaceContext, consent: Option<DriftConsent>) -> any
         );
     };
 
+    if undeclared.is_some() {
+        remove_undeclared_links(root, &project)?;
+    }
+
     activate_at(
         root,
         project.as_str(),
         ActivateOptions::default(),
         ActivationMode::Materialize(consent),
     )
+}
+
+/// Remove the weave-root links at names `project` no longer declares, naming
+/// each as it goes.
+///
+/// Runs before the activation below rather than inside it: surfacing recreates
+/// what the project DOES declare, and a removal that ran afterwards would be
+/// deciding about a tree the same command had just rewritten. Announced per
+/// link because an operator who reached this flag from `rwv doctor` should see
+/// the same list act that they were shown, and one who did not still gets one.
+fn remove_undeclared_links(root: &Path, project: &ProjectName) -> anyhow::Result<()> {
+    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest = Manifest::from_path(&manifest_path)?;
+    let declared = owned_paths(root, project, &manifest);
+    let links = undeclared_project_links(root, project, &manifest, &declared);
+    if links.is_empty() {
+        println!("core: no weave-root links at undeclared names; nothing to remove");
+        return Ok(());
+    }
+    for link in &links {
+        println!(
+            "[removed] core: `{}` -> `{}` (a link at a name `{}` no longer declares; \
+             the file it pointed at is untouched)",
+            link.name(),
+            link.target().display(),
+            project
+        );
+    }
+    unsurface_undeclared(&links)
 }
 
 /// Remove what a disabled integration authored: the state disablement implies
@@ -771,6 +808,24 @@ pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
 /// `rel_from_root` components is the project's own directory, however many
 /// components that takes.
 fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
+    surfacing_owner_dir(rel_from_root, target).is_some()
+}
+
+/// The project directory `target` surfaces `rel_from_root` out of, when it has
+/// the shape [`target_resolves_to_projects`] accepts — the same walk, returning
+/// which project it landed in rather than only that it landed.
+///
+/// The two questions share one implementation deliberately. The owner-scoped
+/// removal path already trusts this shape to authorize an unlink, so a second
+/// reader asking "and whose is it" must not be able to accept a shape the first
+/// one rejects, or the sweep that reads it would reach links the audited
+/// predicate says are none of rwv's business.
+///
+/// Returned as the directory segment rather than a `ProjectName`, because the
+/// caller compares it against a project it already holds. Parsing here would
+/// let a name this repo's validator happens to reject narrow a predicate whose
+/// acceptance set is load-bearing elsewhere.
+fn surfacing_owner_dir(rel_from_root: &Path, target: &Path) -> Option<String> {
     let mut comps = target.components().peekable();
     // Skip any leading parent-dir components (`../../...` for nested links).
     while let Some(c) = comps.peek() {
@@ -781,16 +836,18 @@ fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
         }
     }
     let sited: std::path::PathBuf = comps.collect();
-    let Some(under_projects) = strip_projects_prefix(&sited) else {
-        return false;
-    };
+    let under_projects = strip_projects_prefix(&sited)?;
     let under_components: Vec<_> = under_projects.components().collect();
     let rel_components: Vec<_> = rel_from_root.components().collect();
     if under_components.len() <= rel_components.len() {
-        return false;
+        return None;
     }
     let split = under_components.len() - rel_components.len();
-    under_components[split..] == rel_components[..]
+    if under_components[split..] != rel_components[..] {
+        return None;
+    }
+    let project: std::path::PathBuf = under_components[..split].iter().collect();
+    project.to_str().map(str::to_string)
 }
 
 fn remove_activation_symlinks_in(
@@ -1201,6 +1258,202 @@ fn surfaced_project(target: &Path, name: &str) -> Option<ProjectName> {
     ProjectName::new(project.to_str()?).ok()
 }
 
+/// A weave-root symlink rwv's surfacing shape claims, at a name the presented
+/// project does not declare.
+///
+/// **The confinement is this type, not a rule someone has to remember.** Its
+/// fields are private and it has no public constructor, so the only values that
+/// exist are the ones the scan minted on the branch where every conjunct held.
+/// [`unsurface_undeclared`] takes these and nothing else,
+/// which is what makes "never a file, only a link" a property of the signature:
+/// a path that is a regular file cannot be spelled as an argument.
+///
+/// `target` is the value read at classification time rather than a path to read
+/// again. The predicate that decided this link is removable was evaluated
+/// against those bytes, and re-reading would decide against a state nobody
+/// checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndeclaredLink {
+    path: std::path::PathBuf,
+    name: String,
+    target: std::path::PathBuf,
+    owner: String,
+}
+
+impl UndeclaredLink {
+    /// Root-relative path, `/`-separated.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// What the link resolved to when it was classified.
+    pub fn target(&self) -> &Path {
+        &self.target
+    }
+
+    /// The project directory it resolves into.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+}
+
+/// Weave-root symlinks that surface into the PRESENTED project at a name it no
+/// longer declares — the residue a dropped declaration leaves, which no verb
+/// could see because every candidate set is built from current declarations.
+///
+/// Four conjuncts, and every one of them is confinement rather than policy:
+///
+/// 1. the entry is a symlink, read without following it;
+/// 2. its target has rwv's own surfacing shape for its own root-relative path
+///    ([`surfacing_owner_dir`]) — the predicate the owner-scoped removal
+///    already trusts to authorize an unlink;
+/// 3. that shape resolves into the project the root presents — the other case
+///    belongs to [`foreign_shared_name_links`], and the two partition here
+///    rather than overlapping;
+/// 4. the name is not in the presented project's declarations, which is the
+///    widening: everything else in this file reaches only names rwv currently
+///    claims.
+///
+/// The walk recurses exactly as the removal path does, and skips the same
+/// entries, so a nested declaration that left the union (`.cargo/config.toml`
+/// when the patch surface changes, `gita/repos.csv` on disablement) is not
+/// invisible merely because it sits one directory down.
+fn undeclared_project_links(
+    root: &Path,
+    presented: &ProjectName,
+    manifest: &Manifest,
+    declared: &BTreeSet<String>,
+) -> Vec<UndeclaredLink> {
+    let mut exempt = declared.clone();
+    exempt.extend(disabled_integration_declarations(root, presented, manifest));
+    let mut found = Vec::new();
+    collect_undeclared_links_in(root, root, presented, &exempt, &mut found);
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    found
+}
+
+/// Names declared by integrations that are turned OFF for this project.
+///
+/// Held out of the sweep above, and not as a convenience. Disablement already
+/// has a channel and a verb: the disabled-integration scan reports what rwv
+/// authored and `rwv materialize` removes file and link together, while content
+/// rwv did NOT author is deliberately left unnamed there — because naming it
+/// would propose deleting the operator's own file, which is often the reason
+/// the integration was turned off. A second finding keyed on the link would
+/// print that same path back out under a different remedy and undo the
+/// distinction the first one takes care to make.
+///
+/// A surfacing link left behind for a file rwv did not author is a real
+/// residue, and it is not this predicate's: it comes from disablement rather
+/// than from a name leaving the declarations, and answering it means deciding
+/// what to do about a deliberate silence.
+fn disabled_integration_declarations(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> BTreeSet<String> {
+    let session = WorkspaceSession::new(root);
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let default_config = IntegrationConfig::default();
+
+    integrations
+        .iter()
+        .filter(|integration| {
+            let config = manifest
+                .integrations
+                .get(integration.name())
+                .unwrap_or(&default_config);
+            !crate::integration::is_enabled(**integration, config)
+        })
+        .flat_map(|integration| {
+            let config = manifest
+                .integrations
+                .get(integration.name())
+                .unwrap_or(&default_config);
+            let ctx = ctx_base.build_context(config, manifest);
+            integration
+                .generated_files(&ctx)
+                .into_iter()
+                .chain(integration.managed_files(&ctx))
+                .map(|f| f.into_parts().0)
+        })
+        .collect()
+}
+
+fn collect_undeclared_links_in(
+    dir: &Path,
+    root: &Path,
+    presented: &ProjectName,
+    declared: &BTreeSet<String>,
+    found: &mut Vec<UndeclaredLink>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = path.symlink_metadata() else {
+            continue;
+        };
+        if meta.file_type().is_dir() {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if workspace_marker_names().iter().any(|m| m == name)
+                    || name == crate::git::GIT_DIR_ENTRY_NAME
+                {
+                    continue;
+                }
+            }
+            collect_undeclared_links_in(&path, root, presented, declared, found);
+            continue;
+        }
+        if !meta.file_type().is_symlink() {
+            continue;
+        }
+        let Ok(rel_from_root) = path.strip_prefix(root) else {
+            continue;
+        };
+        let rel = rel_from_root.to_string_lossy().replace('\\', "/");
+        if declared.contains(rel.as_str()) {
+            continue;
+        }
+        let Ok(target) = std::fs::read_link(&path) else {
+            continue;
+        };
+        let Some(owner) = surfacing_owner_dir(rel_from_root, &target) else {
+            continue;
+        };
+        if owner != presented.as_str() {
+            continue;
+        }
+        found.push(UndeclaredLink {
+            path: path.clone(),
+            name: rel,
+            target,
+            owner,
+        });
+    }
+}
+
+/// Unlink the weave-root symlinks `links` names, and prune directories the
+/// removal empties.
+///
+/// Takes receipts and no root: each link carries the absolute path it was found
+/// at, so there is no argument that could redirect this at a different tree, and
+/// no path that was not classified. The unlink goes through the typed symlink
+/// seam, which removes the link by its own type and never follows it.
+pub fn unsurface_undeclared(links: &[UndeclaredLink]) -> anyhow::Result<()> {
+    for link in links {
+        crate::symlink::remove(&link.path)?;
+        if let Some(parent) = link.path.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+    }
+    Ok(())
+}
+
 /// Weave-root symlinks that surface a SHARED name out of a project other than
 /// `presented` — the state the two-class rule forbids, and the residue a
 /// repair scoped to the presented project would otherwise not see, because
@@ -1318,6 +1571,27 @@ pub fn verify_surfacing(
 
     if presents_project {
         let declared: BTreeSet<String> = owned.keys().cloned().collect();
+        for link in undeclared_project_links(root, project, manifest, &declared) {
+            issues.push(Issue {
+                integration: "core".into(),
+                severity: Severity::Warning,
+                message: format!(
+                    "surfacing: `{}` is a weave-root link into project `{}` at a name \
+                     `{}` no longer declares (it resolves to `{}`). Not auto-fixed: on \
+                     disk this is indistinguishable from a link you made by hand at the \
+                     same shape, so `rwv doctor --fix` leaves it. Remove it with \
+                     `rwv materialize --remove-undeclared-links`, which removes exactly \
+                     the links reported here and nothing else; the file it points at is \
+                     untouched either way.",
+                    link.name(),
+                    link.owner(),
+                    project,
+                    link.target().display()
+                ),
+                kind: IssueKind::Surfacing,
+                safe_to_fix: false,
+            });
+        }
         for (file, owner) in foreign_shared_name_links(root, project, &declared) {
             issues.push(Issue {
                 integration: "core".into(),

@@ -639,6 +639,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Materialize {
             regenerate_drifted,
             adopt_drifted,
+            remove_undeclared_links,
         }) => {
             let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             // clap refuses the two together, so this reads as the exclusive
@@ -649,7 +650,9 @@ pub fn run() -> anyhow::Result<()> {
                     consent::AdoptDriftedConsent::from_flag(adopt_drifted)
                         .map(consent::DriftConsent::Adopt)
                 });
-            activate::materialize(&ctx, consent)?;
+            let undeclared =
+                consent::RemoveUndeclaredLinksConsent::from_flag(remove_undeclared_links);
+            activate::materialize(&ctx, consent, undeclared)?;
         }
         Some(Commands::Prime { no_suppress }) => {
             // `prime` tolerates the not-in-a-workspace case (silent unless

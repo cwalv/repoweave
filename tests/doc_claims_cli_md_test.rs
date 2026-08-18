@@ -258,6 +258,31 @@ fn cli_md_push_flags_exist_in_help() {
 }
 
 // ===========================================================================
+// rwv materialize
+// ===========================================================================
+
+/// Added when `--remove-undeclared-links` did: this verb had no arm here, so
+/// a flag documented in `cli.md` under a spelling clap does not accept would
+/// have shipped green.
+///
+/// Note what this direction does and does not buy, because it is the one the
+/// survey in `CLAUDE.md` names: it catches a documented flag the binary
+/// rejects. It does NOT catch a flag the binary accepts and nobody documented
+/// — that gap is real here as everywhere else in this file.
+#[test]
+fn cli_md_materialize_flags_exist_in_help() {
+    let cli_md = read_cli_md();
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv materialize");
+    assert!(
+        !cli_flags.is_empty(),
+        "the materialize section yielded no flags, so this test would pass \
+         against a section slicer that stopped matching"
+    );
+    let help = help_flags(&["materialize"]);
+    assert_all_cli_md_flags_in_help("materialize", &cli_flags, &help);
+}
+
+// ===========================================================================
 // rwv doctor
 // ===========================================================================
 

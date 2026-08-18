@@ -81,6 +81,9 @@ pub enum Commands {
         /// Consent to recording drifted rwv-attested generated files' current content as the accepted generation
         #[arg(long)]
         adopt_drifted: bool,
+        /// Consent to unlinking weave-root symlinks at names the active project no longer declares (the files they point at are untouched)
+        #[arg(long)]
+        remove_undeclared_links: bool,
     },
     /// Print structured workspace context for agent system prompts
     Prime {
