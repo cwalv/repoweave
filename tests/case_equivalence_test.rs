@@ -263,6 +263,81 @@ fn minting_a_workweave_over_a_foreign_directory_refuses() {
     );
 }
 
+/// The reuse path's own guard (`diverged_occupant`) must not adopt a
+/// directory the parent lists under a different spelling than the one asked
+/// for, reached here from the workweave mint rather than from
+/// `create_identity_dir`.
+///
+/// The folding arm has no fixture on this host, for the reason stated at the
+/// top of this file: `web-app--Feat` and `web-app--feat` are distinct entries
+/// where nothing folds, so the requested spelling does not exist and the
+/// mint proceeds beside the untouched squatter rather than encountering it.
+#[test]
+fn workweave_reuse_refuses_to_adopt_a_case_twin_directory() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_weave(tmp.path());
+    rwv()
+        .args(["init", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let project_dir = ws.join("projects/web-app");
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "t@t"]);
+    common::git_in(&project_dir, &["config", "user.name", "T"]);
+    common::git_in(&project_dir, &["add", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "initial"]);
+
+    let container = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&container).unwrap();
+    let folds = filesystem_folds_case(&container);
+
+    // Nothing has recorded "feat" or "Feat" yet, so the name-uniqueness
+    // guard never fires and only the exists()/diverged_occupant guard below
+    // it is under test.
+    let squatter = container.join("web-app--Feat");
+    std::fs::create_dir_all(squatter.join("some-work")).unwrap();
+
+    let out = rwv()
+        .args(["workweave", "web-app", "create", "feat"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+
+    if folds {
+        assert!(
+            !out.status.success(),
+            "reuse must not adopt a directory listed under another spelling: {stderr}"
+        );
+        assert!(
+            stderr.contains("different workweave, not this one"),
+            "the refusal must say why it would be wrong to proceed: {stderr}"
+        );
+        assert!(
+            stderr.contains("lists it as `web-app--Feat`"),
+            "and must name the occupant as the parent lists it: {stderr}"
+        );
+        assert!(
+            squatter.join("some-work").exists(),
+            "the refusal must leave the occupant alone"
+        );
+    } else {
+        assert!(
+            out.status.success(),
+            "no collision exists at this exact spelling, so the mint proceeds: {stderr}"
+        );
+        assert!(
+            container.join("web-app--feat").is_dir(),
+            "the new workweave must exist under the spelling that was asked for"
+        );
+        assert!(
+            squatter.join("some-work").exists(),
+            "the unrelated squatter must be untouched"
+        );
+    }
+}
+
 /// The occupant is named from the parent's listing, not from `canonicalize` —
 /// which on a folding filesystem echoes back the spelling it was asked with
 /// and so can never report the divergence.
