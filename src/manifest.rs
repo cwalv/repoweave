@@ -1310,9 +1310,8 @@ impl Manifest {
     /// header [`Self::SKELETON`] starts a project with.
     pub fn write(&self, path: &Path) -> anyhow::Result<()> {
         let text = toml::to_string(self).context("failed to serialize manifest")?;
-        std::fs::write(path, &text)
-            .with_context(|| format!("failed to write {}", path.display()))?;
-        Ok(())
+        crate::durable_file::replace(path, text.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))
     }
 }
 
@@ -2789,6 +2788,103 @@ role = "owned"
         assert!(
             !text.contains("[lock]") && !text.contains("forgo-tag-names"),
             "an unset policy must not be written back, got: {text}"
+        );
+    }
+
+    // ========================================================================
+    // Manifest::write — durable publish
+    // ========================================================================
+
+    /// Atomicity, pinned by the mechanism rather than by hoping: an overwrite
+    /// replaces `rwv.toml` by `rename(2)`, so the target's inode changes and no
+    /// reader can ever catch a partial write. The pre-fix `std::fs::write`
+    /// would keep the inode — and would be observable half-written.
+    ///
+    /// Not gated because its subject is Unix — replace-by-rename is the
+    /// invariant this rests on, and it holds on any platform. Gated because the
+    /// INSTRUMENT is unverified: this proves the replacement by watching the
+    /// inode change, and whether NTFS gives a renamed-over file a new file
+    /// index is not something this repository can check.
+    #[test]
+    #[cfg(unix)]
+    fn manifest_write_replaces_by_rename_not_in_place() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(Manifest::FILE_NAME);
+
+        let first: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
+        first.write(&path).unwrap();
+        let first_inode = std::fs::metadata(&path).unwrap().ino();
+
+        let second: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
+        second.write(&path).unwrap();
+        assert_ne!(
+            std::fs::metadata(&path).unwrap().ino(),
+            first_inode,
+            "rwv.toml must be replaced by rename, not rewritten in place"
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("github/acme/client"),
+            "the new content must have landed, got: {text}"
+        );
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
+    }
+
+    /// A write that fails partway must not touch `rwv.toml` at all: the
+    /// operator's prior content has to survive exactly as it was. A read-only
+    /// directory forces the failure at the earliest point `durable_file::replace`
+    /// can hit one — its temp file needs `O_CREAT` on a fresh name, which the
+    /// directory refuses — while leaving the existing `rwv.toml` itself
+    /// writable. That is the same asymmetry a crash mid-write exploits:
+    /// truncating an already-existing, already-permitted file needs no
+    /// directory permission at all, so the pre-fix `std::fs::write` would sail
+    /// through this and clobber the operator's manifest instead of failing.
+    ///
+    /// Not gated because its subject is Unix — a failed write must not damage
+    /// the prior content on any platform. Gated on the obstruction: a Windows
+    /// read-only directory attribute does not stop a file being created inside
+    /// it, so the write would succeed, and this would go red against correct
+    /// code rather than pass vacuously.
+    #[test]
+    #[cfg(unix)]
+    fn manifest_write_failure_leaves_prior_content_recoverable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(Manifest::FILE_NAME);
+
+        let original: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
+        original.write(&path).unwrap();
+        let original_text = std::fs::read_to_string(&path).unwrap();
+
+        let writable_perms = std::fs::metadata(dir.path()).unwrap().permissions();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let next: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
+        let result = next.write(&path);
+
+        std::fs::set_permissions(dir.path(), writable_perms).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a write into a read-only directory must fail, not silently succeed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            original_text,
+            "a failed write must leave the operator's manifest exactly as it was"
         );
     }
 
