@@ -38,11 +38,11 @@ file a property of whichever machine ran the command first — and repoweave wou
 then preserve that accident as though you had chosen it. Set `go-version` if you
 want a pin.
 
-Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
+Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `go.work.sum` is produced by the Go toolchain and is also committable persistent state.
 
 ## Deactivation
 
-Removes `go.work`. Does not remove `go.sum`.
+Removes `go.work`. Does not remove `go.work.sum`.
 
 ## Check
 

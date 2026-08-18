@@ -337,8 +337,8 @@ impl Integration for GoWork {
     }
 
     /// `go.work`'s marked `use` block, and nothing else: the go tool writes
-    /// `go.sum` and rwv has never authored a byte of one, so it is surfaced
-    /// without ever being owned here.
+    /// `go.work.sum` and rwv has never authored a byte of one, so it is
+    /// surfaced without ever being owned here.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
         if holds_owned_region::<GoWorkDoc>(&ctx.output_dir.join("go.work"), &Self::owned_keys()) {
             vec![OwnedPath::MarkedRegion("go.work".to_string())]
@@ -351,7 +351,7 @@ impl Integration for GoWork {
         if ctx.detect_repos_with_manifest("go.mod").is_empty() {
             return vec![];
         }
-        vec![SurfacedFile::written_through_link("go.sum")]
+        vec![SurfacedFile::written_through_link("go.work.sum")]
     }
 
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
@@ -1685,7 +1685,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Guard: managed_files() returns go.work; generated_files() returns go.sum.
+    // Guard: managed_files() returns go.work; generated_files() returns
+    // go.work.sum.
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1710,9 +1711,9 @@ mod tests {
             "go.work must not be in generated_files"
         );
         assert!(
-            gen.contains(&SurfacedFile::written_through_link("go.sum")),
-            "go.sum must be in generated_files, as a path a tool writes at the \
-             weave root rather than one rwv authors: {gen:?}"
+            gen.contains(&SurfacedFile::written_through_link("go.work.sum")),
+            "go.work.sum must be in generated_files, as a path a tool writes at \
+             the weave root rather than one rwv authors: {gen:?}"
         );
         assert!(
             man.contains(&SurfacedFile::written_at_source("go.work")),

@@ -56,9 +56,9 @@ fn rwv_output(cwd: &Path, args: &[&str]) -> String {
 }
 
 /// The file `static-files` declares. It exists in the checkout, so its own
-/// surfacing link is the control: every assertion about `go.sum` being absent
-/// would also pass against a surfacing pass that had silently stopped running,
-/// and this is what tells the two apart.
+/// surfacing link is the control: every assertion about `go.work.sum` being
+/// absent would also pass against a surfacing pass that had silently stopped
+/// running, and this is what tells the two apart.
 const SURFACED_CONTROL: &str = "SHARED.md";
 
 /// A name `static-files` declares that is NOT in the project checkout.
@@ -123,22 +123,23 @@ fn workweave() -> (tempfile::TempDir, PathBuf) {
 fn assert_surfacing_is_go_free(root: &Path, where_: &str) {
     assert!(
         root.join(SURFACED_CONTROL).symlink_metadata().is_ok(),
-        "{where_}: the control link `{SURFACED_CONTROL}` is gone, so a `go.sum` \
-         assertion below would pass against a surfacing pass that stopped running"
+        "{where_}: the control link `{SURFACED_CONTROL}` is gone, so a \
+         `go.work.sum` assertion below would pass against a surfacing pass \
+         that stopped running"
     );
-    let go_sum = root.join("go.sum");
+    let go_work_sum = root.join("go.work.sum");
     assert!(
-        go_sum.symlink_metadata().is_err(),
-        "{where_}: surfaced `go.sum` into a weave whose members declare no \
+        go_work_sum.symlink_metadata().is_err(),
+        "{where_}: surfaced `go.work.sum` into a weave whose members declare no \
          go.mod; it resolves to {} which nothing will ever write",
-        go_sum
+        go_work_sum
             .read_link()
             .map_or_else(|e| e.to_string(), |target| target.display().to_string())
     );
 }
 
 #[test]
-fn materialize_surfaces_no_go_sum_into_a_weave_with_no_go_member() {
+fn materialize_surfaces_no_go_work_sum_into_a_weave_with_no_go_member() {
     let (_tmp, ws) = primary_weave();
 
     let out = rwv_output(&ws, &["materialize"]);
@@ -146,7 +147,7 @@ fn materialize_surfaces_no_go_sum_into_a_weave_with_no_go_member() {
 }
 
 #[test]
-fn workweave_materialize_surfaces_no_go_sum_and_doctor_stays_silent() {
+fn workweave_materialize_surfaces_no_go_work_sum_and_doctor_stays_silent() {
     let (_tmp, ww_dir) = workweave();
 
     let materialize = rwv_output(&ww_dir, &["materialize"]);
@@ -157,9 +158,9 @@ fn workweave_materialize_surfaces_no_go_sum_and_doctor_stays_silent() {
 
     let doctor = rwv_output(&ww_dir, &["doctor"]);
     assert!(
-        !doctor.contains("go.sum"),
-        "doctor named `go.sum` after materialize, so the declaration is still \
-         in the surfacing union:\n{doctor}"
+        !doctor.contains("go.work.sum"),
+        "doctor named `go.work.sum` after materialize, so the declaration is \
+         still in the surfacing union:\n{doctor}"
     );
 }
 

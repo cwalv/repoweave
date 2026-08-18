@@ -499,7 +499,7 @@ pub trait Integration {
     /// and detected by nobody is a cache slot no reader has.
     ///
     /// Ecosystem-tool output the integration generates but never scans for
-    /// (`go.sum`, `Cargo.lock`) does not belong here — those are
+    /// (`go.work.sum`, `Cargo.lock`) does not belong here — those are
     /// [`Integration::generated_files`].
     ///
     /// The default is empty: an integration whose member list comes from
@@ -639,8 +639,8 @@ pub trait Integration {
     /// **Default: empty**, and that is the safe answer rather than a stub.
     /// Declaring a file in [`Integration::generated_files`] means "symlink this
     /// from the weave root", not "rwv wrote this": `static-files` declares the
-    /// operator's own committed files, and `go-work` declares a `go.sum` rwv
-    /// has never authored a byte of. An integration that authors content
+    /// operator's own committed files, and `go-work` declares a `go.work.sum`
+    /// rwv has never authored a byte of. An integration that authors content
     /// overrides this and states its own ownership evidence.
     fn owned_paths_on_disk(&self, _ctx: &IntegrationContext) -> Vec<OwnedPath> {
         Vec::new()

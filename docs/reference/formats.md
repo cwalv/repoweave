@@ -223,7 +223,7 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
 ├── package.json -> projects/web-app/package.json       # symlink to active project
 ├── package-lock.json -> projects/web-app/package-lock.json
 ├── go.work -> projects/web-app/go.work
-├── go.sum -> projects/web-app/go.sum
+├── go.work.sum -> projects/web-app/go.work.sum
 ├── node_modules/                             # tool state — gitignored
 ├── .venv/                                    # tool state — gitignored
 ├── .rwv-active                               # "web-app"

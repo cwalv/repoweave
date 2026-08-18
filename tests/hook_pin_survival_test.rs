@@ -845,7 +845,7 @@ fn a_hooked_activation_runs_only_materializing_commands() {
 
 /// go materializes membership and nothing else: `go work use` records which
 /// modules are in the workspace and resolves no version, so a go activation
-/// leaves no `go.sum` behind to have pinned anything in.
+/// leaves no `go.work.sum` behind to have pinned anything in.
 #[test]
 fn go_activation_records_membership_without_resolving() {
     if which::which("go").is_err() {
@@ -880,7 +880,7 @@ fn go_activation_records_membership_without_resolving() {
         "go activation should record membership in go.work"
     );
     assert!(
-        !root.join("go.sum").exists(),
+        !root.join("go.work.sum").exists(),
         "go activation must not resolve module versions"
     );
     assert!(
@@ -911,7 +911,7 @@ fn gita_activation_produces_no_lockfile() {
         .activate_hook(&ctx)
         .expect("gita hook should succeed");
 
-    for lock in ["Cargo.lock", "package-lock.json", "uv.lock", "go.sum"] {
+    for lock in ["Cargo.lock", "package-lock.json", "uv.lock", "go.work.sum"] {
         assert!(
             !root.join(lock).exists(),
             "gita activation produced {lock}, which it has no business writing"

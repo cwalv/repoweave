@@ -1889,7 +1889,7 @@ mod tests {
             .join(", ");
         // Disable the default-enabled integrations that declare files
         // unconditionally (vscode-workspace surfaces `<project>.code-workspace`,
-        // go-work surfaces `go.sum`) so the surfacing union under test is
+        // go-work surfaces `go.work.sum`) so the surfacing union under test is
         // exactly the static-files set we declare. The surfacing machinery is
         // integration-agnostic; isolating one integration keeps the asserts
         // deterministic.

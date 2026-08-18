@@ -908,7 +908,7 @@ fn go_work_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    // Both methods are gated on a member carrying a go.mod. `go.sum` is
+    // Both methods are gated on a member carrying a go.mod. `go.work.sum` is
     // fully-owned and `go.work` is hybrid, which decides WHICH method declares
     // each — not whether either declares anything into a weave with no Go in
     // it, where a declaration is a weave-root symlink at a source no go tool
@@ -940,7 +940,7 @@ fn go_work_generated_files() {
     };
     assert_eq!(
         GoWork.generated_files(&ctx2),
-        vec![SurfacedFile::written_through_link("go.sum")]
+        vec![SurfacedFile::written_through_link("go.work.sum")]
     );
     assert_eq!(
         GoWork.managed_files(&ctx2),

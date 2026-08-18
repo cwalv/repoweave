@@ -200,8 +200,8 @@ exactly the authoring-path guarantee: managed regions, rwv-computed generated ar
 
 The license is keyed on **ownership**, not on `generated_files()` membership: static-files entries
 ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, and no verb —
-context or intent — may write them. Conversely `go.sum` is hook-owned in principle, but rwv runs
-no go install hook today, so nothing rewrites it at a context verb.
+context or intent — may write them. Conversely `go.work.sum` is hook-owned in principle, but rwv
+runs no go install hook today, so nothing rewrites it at a context verb.
 
 A license to rewrite is not an obligation to. A hook whose inputs are not on disk yet **defers**
 rather than failing: `init --adopt` clones only the project repo, so an adopted manifest that

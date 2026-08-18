@@ -428,3 +428,105 @@ func Message() string {
         "rwv.lock should record the tag name 'v1.0.0' for the protocol repo when HEAD is tagged"
     );
 }
+
+/// The file go-work declares under `generated_files()` must be one the `go`
+/// tool actually writes through the weave-root link — `go.work.sum`, not
+/// `go.sum`, which a Go workspace root never carries (a `go.sum` belongs
+/// beside a member's `go.mod`). Reproduces the write-through mechanism end to
+/// end: activation leaves a dangling `go.work.sum` link because nothing has
+/// resolved a module yet, and `go mod download` at the weave root must write
+/// through that link rather than dropping an untracked real file at the root.
+#[test]
+fn go_mod_download_writes_through_the_declared_go_work_sum_link() {
+    require_go!();
+
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+
+    // A real external dependency: `go mod download` writes nothing at all for
+    // a module with no requirements to resolve.
+    let svc_dir = root.join("github/acme/svc");
+    std::fs::create_dir_all(&svc_dir).unwrap();
+    common::git_in(&svc_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        svc_dir.join("go.mod"),
+        "module example.com/svc\n\ngo 1.21\n\nrequire rsc.io/quote v1.5.2\n",
+    )
+    .unwrap();
+    std::fs::write(
+        svc_dir.join("main.go"),
+        "package main\n\nimport (\n\t\"fmt\"\n\n\t\"rsc.io/quote\"\n)\n\nfunc main() {\n\tfmt.Println(quote.Hello())\n}\n",
+    )
+    .unwrap();
+
+    let project_dir = root.join("projects/web-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let rwv_toml = "[repositories.\"github/acme/svc\"]\ntype = \"git\"\nurl = \"https://example.invalid/acme/svc.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    std::fs::write(project_dir.join("rwv.toml"), rwv_toml).unwrap();
+
+    std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
+
+    let root_link = root.join("go.work.sum");
+    let link_meta = root_link
+        .symlink_metadata()
+        .expect("activation should declare go.work.sum and surface a link for it");
+    assert!(
+        link_meta.file_type().is_symlink(),
+        "the weave-root entry must be a link, not a real file, going into the \
+         download below"
+    );
+    assert!(
+        !project_dir.join("go.work.sum").exists(),
+        "nothing has resolved a module yet, so the link this fixture built \
+         must still be dangling — otherwise the download below proves nothing"
+    );
+
+    let download = Command::new("go")
+        .args(["mod", "download"])
+        .current_dir(root)
+        .output()
+        .expect("failed to run `go mod download` at the weave root");
+    assert!(
+        download.status.success(),
+        "`go mod download` failed at the weave root:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&download.stdout),
+        String::from_utf8_lossy(&download.stderr)
+    );
+
+    let root_meta_after = root_link
+        .symlink_metadata()
+        .expect("go.work.sum must still exist at the weave root after download");
+    assert!(
+        root_meta_after.file_type().is_symlink(),
+        "go mod download must write THROUGH the declared link, not drop an \
+         untracked real file at the weave root — the exact hazard a wrong \
+         declaration produces"
+    );
+
+    let project_sum = project_dir.join("go.work.sum");
+    assert!(
+        project_sum.exists(),
+        "the write should have landed at the canonical path the link routes \
+         to: {}",
+        project_sum.display()
+    );
+    let contents = std::fs::read_to_string(&project_sum).unwrap();
+    assert!(
+        contents.contains("rsc.io/quote"),
+        "go.work.sum should record the checksum of the resolved dependency, \
+         got:\n{contents}"
+    );
+
+    assert!(
+        !root.join("go.sum").exists(),
+        "go.sum must never appear at a workspace root; go-work declares \
+         go.work.sum precisely because nothing ever writes a go.sum there"
+    );
+}

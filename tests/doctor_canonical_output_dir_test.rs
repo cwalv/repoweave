@@ -211,7 +211,7 @@ fn no_finding_names_the_weave_root_view_of_an_inactive_project() {
         "Cargo.lock",
         ".cargo/config.toml",
         "go.work",
-        "go.sum",
+        "go.work.sum",
         "package.json",
         "package-lock.json",
         "pnpm-workspace.yaml",
