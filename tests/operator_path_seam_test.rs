@@ -237,6 +237,14 @@ const ROUTED: &[Routed] = &[
         prints: "the same refusal with a dangling lease pointer",
     },
     Routed {
+        file: "owned_state.rs",
+        scope: "",
+        needle: r#""another rwv still holds the owned-digest ledger of {dir} \"#,
+        renders: 2,
+        prints: "the owned-digest ledger claim refusal, naming the directory and the \
+                 claim file to delete",
+    },
+    Routed {
         file: "push.rs",
         scope: "",
         needle: r#"None => format!("at {}","#,

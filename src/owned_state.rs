@@ -47,6 +47,19 @@ use std::path::Path;
 /// and spells the name as the literal `".rwv-owned-digests"` instead.
 pub(crate) const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
 
+/// File name of the claim one rwv holds across a ledger read-modify-write, so
+/// a second rwv cannot publish a snapshot it took before the first landed.
+pub(crate) const OWNED_DIGESTS_CLAIM_FILE: &str = ".rwv-owned-digests.lock";
+
+/// How long [`LedgerClaim::acquire`] waits for a peer to release before it
+/// refuses. A whole ledger read-modify-write is a read, a small serialization
+/// and one durable publish, so a wait this long means the holder is not
+/// running rather than merely slow.
+pub(crate) const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How often the wait re-attempts the claim.
+const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// Outcome of comparing on-disk content against the recorded digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnedDigestCheck {
@@ -167,17 +180,112 @@ pub fn unreadable_ledger(dir: &Path) -> Option<String> {
     }
 }
 
-/// Write `entries` as `dir`'s ledger, and keep the machine-local file out of
-/// VCS. Every writer goes through here so the on-disk shape has one author.
-fn write_owned_digests(dir: &Path, entries: &BTreeMap<String, LedgerEntry>) -> anyhow::Result<()> {
+/// An exclusive claim on one directory's ledger, released when it drops.
+///
+/// Atomic publication settles what a reader sees; it does nothing for what a
+/// writer loses. Two rwv processes that each read the ledger, insert their own
+/// entry and publish the whole map leave only the later one's entry behind,
+/// and the earlier stamp is gone with no error anywhere. `link(2)` onto an
+/// already-written inode is the exclusion: exactly one caller creates the
+/// claim, and the loser waits for it to go rather than proceeding.
+///
+/// A crash between acquisition and drop leaves the claim behind and every
+/// later stamp in that directory refuses until someone removes it. That is
+/// the cost of an exclusion with no daemon to expire it, and it is paid in
+/// full view — the alternative, treating an old claim as abandoned, is a
+/// second writer stamping over a first that is merely slow.
+struct LedgerClaim {
+    dir: std::path::PathBuf,
+}
+
+impl LedgerClaim {
+    /// Claim `dir`'s ledger, waiting up to [`CLAIM_WAIT`] for a peer holding
+    /// it, then refusing with the path to remove.
+    fn acquire(dir: &Path) -> anyhow::Result<Self> {
+        let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
+        let holder = format!("pid {}\n", std::process::id());
+        let deadline = std::time::Instant::now() + CLAIM_WAIT;
+        loop {
+            match crate::durable_file::create_new(&path, holder.as_bytes()) {
+                Ok(()) => {
+                    return Ok(Self {
+                        dir: dir.to_path_buf(),
+                    })
+                }
+                Err(crate::durable_file::CreateNewError::AlreadyExists) => {
+                    if std::time::Instant::now() >= deadline {
+                        let held_by = std::fs::read_to_string(&path)
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_else(|_| "an unreadable holder".to_string());
+                        anyhow::bail!(
+                            "another rwv still holds the owned-digest ledger of {dir} \
+                             ({held_by}). If no rwv is running, delete {claim} and rerun.",
+                            dir = crate::path_spelling::operator_path(dir),
+                            claim = crate::path_spelling::operator_path(&path),
+                        );
+                    }
+                    std::thread::sleep(CLAIM_POLL);
+                }
+                Err(crate::durable_file::CreateNewError::Io(e)) => {
+                    return Err(anyhow::Error::new(e).context(format!(
+                        "failed to claim the owned-digest ledger of {}",
+                        dir.display()
+                    )));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for LedgerClaim {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.dir.join(OWNED_DIGESTS_CLAIM_FILE));
+    }
+}
+
+/// Whether a ledger edit changed the map, and so whether the whole-file write
+/// happens at all.
+enum LedgerEdit {
+    Changed,
+    Unchanged,
+}
+
+/// Read `dir`'s ledger, apply `edit`, publish the result — the whole sequence
+/// under one [`LedgerClaim`], which is what makes it a read-modify-write
+/// rather than three steps a peer can interleave with.
+fn edit_owned_digests(
+    dir: &Path,
+    edit: impl FnOnce(&mut BTreeMap<String, LedgerEntry>) -> LedgerEdit,
+) -> anyhow::Result<()> {
+    let claim = LedgerClaim::acquire(dir)?;
+    let mut entries = read_owned_digests(dir);
+    match edit(&mut entries) {
+        LedgerEdit::Changed => write_owned_digests(&claim, &entries),
+        LedgerEdit::Unchanged => Ok(()),
+    }
+}
+
+/// Write `entries` as the ledger of the directory `claim` covers, and keep the
+/// machine-local file out of VCS. Every writer goes through here so the
+/// on-disk shape has one author, and the claim parameter is why no writer can
+/// reach it without holding the exclusion.
+fn write_owned_digests(
+    claim: &LedgerClaim,
+    entries: &BTreeMap<String, LedgerEntry>,
+) -> anyhow::Result<()> {
+    let dir = claim.dir.as_path();
     let path = dir.join(OWNED_DIGESTS_FILE);
     let json = serde_json::to_string_pretty(entries)
         .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
     crate::state_file::StateFile::OwnedDigests
         .publish_in(dir, json.as_bytes())
         .with_context(|| format!("writing owned-digest state {}", path.display()))?;
-    // Best effort — an ignore failure must never fail the stamp itself.
-    let _ = workweave_index::ensure_ignored_in_dir(dir, OWNED_DIGESTS_FILE);
+    // Best effort — an ignore failure must never fail the stamp itself. Under
+    // the claim, so two rwv processes cannot each append one name and publish
+    // an ignore surface missing the other's.
+    for name in [OWNED_DIGESTS_FILE, OWNED_DIGESTS_CLAIM_FILE] {
+        let _ = workweave_index::ensure_ignored_in_dir(dir, name);
+    }
     Ok(())
 }
 
@@ -192,12 +300,13 @@ fn write_owned_digests(dir: &Path, entries: &BTreeMap<String, LedgerEntry>) -> a
 /// An unparseable existing state file is replaced wholesale (its entries are
 /// unreadable anyway; the fresh stamp is the only recovery).
 pub fn stamp_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> anyhow::Result<()> {
-    let mut map = read_owned_digests(dir);
-    map.insert(
-        file_name.to_string(),
-        LedgerEntry::Adopted(owned_digest(content)),
-    );
-    write_owned_digests(dir, &map)
+    edit_owned_digests(dir, |entries| {
+        entries.insert(
+            file_name.to_string(),
+            LedgerEntry::Adopted(owned_digest(content)),
+        );
+        LedgerEdit::Changed
+    })
 }
 
 /// Record `content` as the generation rwv produced for `file_name` in `dir`,
@@ -214,15 +323,16 @@ pub fn stamp_owned_generation(
     content: &[u8],
     inputs: BTreeMap<String, String>,
 ) -> anyhow::Result<()> {
-    let mut map = read_owned_digests(dir);
-    map.insert(
-        file_name.to_string(),
-        LedgerEntry::Generated {
-            digest: owned_digest(content),
-            inputs,
-        },
-    );
-    write_owned_digests(dir, &map)
+    edit_owned_digests(dir, |entries| {
+        entries.insert(
+            file_name.to_string(),
+            LedgerEntry::Generated {
+                digest: owned_digest(content),
+                inputs,
+            },
+        );
+        LedgerEdit::Changed
+    })
 }
 
 /// The inputs a generation reads, as workspace-relative path to digest, for the
@@ -532,11 +642,10 @@ fn workspace_relative_key(ws_root_canon: &Path, ws_root_raw: &Path, target_canon
 /// stops existing: an attestation of what is not there describes nothing, and
 /// left behind it is a drift report on a file no verb can produce.
 pub fn forget_owned_digest(dir: &Path, file_name: &str) -> anyhow::Result<()> {
-    let mut map = read_owned_digests(dir);
-    if map.remove(file_name).is_none() {
-        return Ok(());
-    }
-    write_owned_digests(dir, &map)
+    edit_owned_digests(dir, |entries| match entries.remove(file_name) {
+        Some(_) => LedgerEdit::Changed,
+        None => LedgerEdit::Unchanged,
+    })
 }
 
 /// The files `dir`'s ledger attests, in ledger order.
@@ -591,8 +700,12 @@ pub fn carry_attested_owned_files(
     if carried.is_empty() {
         return Ok(vec![]);
     }
-    write_owned_digests(dest_dir, &carried)?;
-    Ok(carried.into_keys().collect())
+    let names: Vec<String> = carried.keys().cloned().collect();
+    edit_owned_digests(dest_dir, move |entries| {
+        *entries = carried;
+        LedgerEdit::Changed
+    })?;
+    Ok(names)
 }
 
 /// An attested owned file whose current bytes are not the ones rwv accepted,
@@ -980,17 +1093,86 @@ mod tests {
 
     #[test]
     fn stamp_ignore_is_idempotent() {
-        // A second stamp must not duplicate the ignore entry.
+        // A second stamp must not duplicate the ignore entry. Counted by whole
+        // line: the claim file's name has the ledger's as a prefix, so a
+        // substring count reads one entry for each of the two names.
         let tmp = TempDir::new().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1").unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"v2").unwrap();
 
         let gitignore = tmp.path().join(".gitignore");
         let content = std::fs::read_to_string(&gitignore).unwrap();
-        let occurrences = content.matches(OWNED_DIGESTS_FILE).count();
+        for name in [OWNED_DIGESTS_FILE, OWNED_DIGESTS_CLAIM_FILE] {
+            let occurrences = content.lines().filter(|line| line.trim() == name).count();
+            assert_eq!(
+                occurrences, 1,
+                "ignore entry for {name} must not be duplicated on re-stamp: {content:?}"
+            );
+        }
+    }
+
+    /// A stamp holds the claim only while it runs. Left behind, it is the
+    /// wedge every later stamp in this directory would hit.
+    #[test]
+    fn a_finished_stamp_leaves_no_claim_behind() {
+        let tmp = TempDir::new().unwrap();
+        stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1").unwrap();
+        assert!(
+            !tmp.path().join(OWNED_DIGESTS_CLAIM_FILE).exists(),
+            "the claim must be released when the read-modify-write ends"
+        );
+        // The no-op arm of the edit takes the claim too, and must release it.
+        forget_owned_digest(tmp.path(), "never-stamped.lock").unwrap();
+        assert!(
+            !tmp.path().join(OWNED_DIGESTS_CLAIM_FILE).exists(),
+            "an edit that changes nothing must still release its claim"
+        );
+    }
+
+    /// The decided behaviour for a claim whose holder died: later stamps
+    /// refuse, after a bounded wait, naming the file to remove. Waiting
+    /// forever hangs the verb; treating an old claim as abandoned stamps over
+    /// a holder that is merely slow; failing instantly makes ordinary
+    /// contention look like a fault.
+    #[test]
+    fn an_abandoned_claim_refuses_later_stamps_and_names_what_to_remove() {
+        let tmp = TempDir::new().unwrap();
+        let claim = tmp.path().join(OWNED_DIGESTS_CLAIM_FILE);
+        std::fs::write(&claim, "pid 999999\n").unwrap();
+
+        let started = std::time::Instant::now();
+        let err = stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1")
+            .expect_err("a held claim must refuse the stamp, not drop it silently");
+        let waited = started.elapsed();
+        let message = format!("{err:#}");
+
+        assert!(
+            waited >= CLAIM_WAIT,
+            "the refusal must come after the full wait, so ordinary contention \
+             is not reported as a fault: waited {waited:?}"
+        );
+        assert!(
+            message.contains(OWNED_DIGESTS_CLAIM_FILE),
+            "the refusal must name the file to remove: {message}"
+        );
+        assert!(
+            message.contains("delete") && message.contains("rerun"),
+            "the refusal must carry the operator's exit: {message}"
+        );
+        assert!(
+            message.contains("pid 999999"),
+            "the refusal must carry what the claim records about its holder, \
+             which is how an operator decides whether it is abandoned: {message}"
+        );
+        assert!(
+            claim.exists(),
+            "a refused stamp must leave the holder's claim alone — clearing it \
+             would make the exclusion a suggestion"
+        );
         assert_eq!(
-            occurrences, 1,
-            "ignore entry must not be duplicated on re-stamp"
+            check_owned_digest(tmp.path(), "Cargo.lock", b"v1"),
+            OwnedDigestCheck::NotRecorded,
+            "and must not have written the entry it refused to stamp"
         );
     }
 

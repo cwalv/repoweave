@@ -499,6 +499,21 @@ const ALLOWLIST: &[Allowed] = &[
             cleanup that used to sit here moved to durable_file.rs, audited below.",
     },
     Allowed {
+        file: "owned_state.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "LedgerClaim::drop: releasing the \
+            .rwv-owned-digests.lock claim this value's construction created, \
+            which is rwv-internal bookkeeping and never user data. The name \
+            is not a parameter — it is joined from the claim's own directory \
+            and the one constant — so the site cannot be pointed at anything \
+            else, and the type has no public constructor, so a value that \
+            exists is a claim this process won. Unlinking is the whole \
+            release: left behind, it is the wedge every later stamp in that \
+            directory refuses on.",
+    },
+    Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
         count: 3,
