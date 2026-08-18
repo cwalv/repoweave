@@ -366,7 +366,7 @@ fn drift_stage_exits_non_zero_and_names_the_remedy_on_real_drift() {
         stdout_of(&out)
     );
     assert!(stderr_of(&out).contains(
-        "explain artifacts changed by regeneration — commit them (this check diffs the working tree against the index; it cannot pass with uncommitted regen)"
+        "explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, and docs/reference/prime against the index; it does not inspect files the generator does not write)"
     ));
 }
 

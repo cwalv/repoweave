@@ -110,10 +110,14 @@ if run_stage drift; then
     # types. If anyone changed a `--json`-backing type or a template without
     # committing the regenerated output, this fails.
     # Also regenerates docs/reference/prime/overview.md from its template.
+    # A pass says only that the three directories below match what the
+    # generator currently produces from current inputs — nothing about a
+    # hand edit anywhere else, and nothing about one made inside them, since
+    # regeneration already overwrote it before this diff ran.
     cargo run --quiet --bin generate-explain
     git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/ || {
         status=$?
-        printf 'explain artifacts changed by regeneration — commit them (this check diffs the working tree against the index; it cannot pass with uncommitted regen)\n' >&2
+        printf 'explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, and docs/reference/prime against the index; it does not inspect files the generator does not write)\n' >&2
         exit "$status"
     }
 fi
