@@ -47,6 +47,9 @@ backstop unnecessary.
 - [op-state](./op-state.md) — field-level schemas of the `.rwv-op` owner record
   and the `.rwv-op-lease` pointer, for someone changing sync's resume logic.
   Consumers call back into `rwv` instead of parsing them.
+- [concurrency](./concurrency.md) — the budget for judging interference
+  concerns: git's correctness effort as goal and ceiling, the two tiers of
+  state, and the attestation invariant.
 - [lock-freshness-surfaces](./lock-freshness-surfaces.md) — the three sites that
   compare a tip against `rwv.lock`, the question each one answers, and why
   `rwv doctor --locked` is not a renderer over the violation pipeline.
