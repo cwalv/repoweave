@@ -198,6 +198,13 @@ pub fn materialize(
     undeclared: Option<RemoveUndeclaredLinksConsent>,
 ) -> anyhow::Result<()> {
     let root = ctx.active_path();
+    crate::op_state::check_no_op_in_progress(&[root]).context(
+        "materialize does not start while an operation is in flight in this \
+         workspace — it would regenerate from inputs that operation is still \
+         rewriting. Wait for the operation to finish, or take one of the exits \
+         it names",
+    )?;
+
     let Some(project) = observe_root(root)
         .as_ref()
         .and_then(RootObservation::presented_project)
@@ -533,6 +540,13 @@ pub fn activate_with_options(
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
+    crate::op_state::check_no_op_in_progress(&[ctx.active_path()]).context(
+        "activate does not start while an operation is in flight in this \
+         workspace — it re-surfaces and re-runs the install hooks over repos \
+         that operation is still moving. Wait for the operation to finish, or \
+         take one of the exits it names",
+    )?;
+
     let primary = match ctx.primary_identity() {
         Some(identity) => identity,
         None => anyhow::bail!(

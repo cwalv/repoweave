@@ -883,6 +883,74 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
     assert_in_flight_op_refusal(&stderr, "sync-to");
 }
 
+/// `rwv materialize` refuses while an op involves the workspace it would
+/// regenerate in, and stops refusing the moment the record clears.
+///
+/// The interleaving this closes is the sanctioned one: a landing rewrites this
+/// workspace's member manifests while materialize regenerates from them. The
+/// refusal is advice — the window between this check and the work is accepted,
+/// and `an_op_landing_after_the_check_does_not_stop_the_verb` in
+/// `tests/advisory_op_check_test.rs` pins that it stays advice.
+#[test]
+fn mid_op_materialize_refuses_and_clears_with_the_record() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+
+    let assertion = rwv()
+        .args(["materialize"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert!(
+        stderr.contains("materialize does not start while an operation is in flight"),
+        "the refusal must say which verb declined and why, not only what the \
+         other op is doing; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Wait for the operation to finish"),
+        "a bystander's remedy is to wait — `--continue` belongs to whoever owns \
+         the op; got: {stderr}"
+    );
+
+    std::fs::remove_file(ww.root.join(".rwv-op")).unwrap();
+    rwv()
+        .args(["materialize"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}
+
+/// `rwv activate` refuses while an op involves the workspace, and stops
+/// refusing the moment the record clears.
+#[test]
+fn mid_op_activate_refuses_and_clears_with_the_record() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    plant_owner_record(&primary.root, "sync", "relock", &primary.root, &ww.root);
+
+    let assertion = rwv()
+        .args(["activate", "web-app"])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync");
+    assert!(
+        stderr.contains("activate does not start while an operation is in flight"),
+        "got: {stderr}"
+    );
+
+    std::fs::remove_file(primary.root.join(".rwv-op")).unwrap();
+    rwv()
+        .args(["activate", "web-app"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+}
+
 /// A workspace holding only a thin `.rwv-op-lease` (not the owner record) also
 /// refuses; the guard follows the lease pointer to name the op / age / exits.
 #[test]
