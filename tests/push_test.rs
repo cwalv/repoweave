@@ -255,7 +255,9 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let (_, manifest_bare) = &ws.manifest_bares[0];
     let baseline_manifest = bare_main_sha(manifest_bare);
-    let short_lock = &baseline_manifest.clone().expect("bare should have a main ref")[..7];
+    let short_lock = &baseline_manifest
+        .clone()
+        .expect("bare should have a main ref")[..7];
 
     // Advance the local repo WITHOUT updating the lock.
     let local = ws.workspace.join("local/org/a");
