@@ -540,9 +540,12 @@ pub fn activate_with_options(
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
+    // Named for the act, not for a verb: `init` and `fetch` activate in-process
+    // too, and a refusal naming `activate` would name a verb its reader did not
+    // run.
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()]).context(
-        "activate does not start while an operation is in flight in this \
-         workspace — it re-surfaces and re-runs the install hooks over repos \
+        "surfacing a project and running its install hooks does not start while \
+         an operation is in flight in this workspace — they would run over repos \
          that operation is still moving. Wait for the operation to finish, or \
          take one of the exits it names",
     )?;

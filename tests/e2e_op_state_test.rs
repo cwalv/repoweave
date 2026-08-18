@@ -939,8 +939,9 @@ fn mid_op_activate_refuses_and_clears_with_the_record() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
     assert_in_flight_op_refusal(&stderr, "sync");
     assert!(
-        stderr.contains("activate does not start while an operation is in flight"),
-        "got: {stderr}"
+        stderr.contains("running its install hooks does not start while an operation is in flight"),
+        "the refusal names the ACT, because `init` and `fetch` reach this same \
+         check and an operator who ran one of those never ran activate; got: {stderr}"
     );
 
     std::fs::remove_file(primary.root.join(".rwv-op")).unwrap();
