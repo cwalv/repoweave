@@ -187,31 +187,24 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
     );
 }
 
-/// With cargo off the PATH the activation hook has nothing to run, and the
-/// verb fails saying so rather than reporting a success it did not achieve.
+/// Run `rwv activate` against a weave holding one member with `manifest`, on a
+/// PATH carrying git and nothing else. Returns whether it succeeded and what
+/// it printed.
 ///
-/// Driven as a subprocess with a PATH narrowed to git alone, so this runs on
-/// every host rather than only on one without cargo installed. In-process it
-/// could not: the hook resolves cargo by spawning it, inheriting whatever
-/// environment the caller has, and a test cannot narrow its own process PATH
-/// while other tests run beside it. Handing a child an environment the test
-/// owns is the only sound way to choose the answer.
-#[test]
-fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
+/// The activation is run twice: once with the ambient PATH so the managed file
+/// gets authored, then once narrowed. Without the first run the narrowed one
+/// fails on the missing-managed-file precheck that sits above the hook, and
+/// the test would be passing on a refusal that has nothing to do with the tool.
+fn activate_on_a_path_without(manifest: &str, body: &str) -> (bool, String) {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
-    let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
-    common::write_local_crate_source(&source, &ws, &["0.1.0", "0.1.1"]);
 
     let server = ws.join("github/acme/server");
     std::fs::create_dir_all(server.join("src")).unwrap();
-    std::fs::write(
-        server.join("Cargo.toml"),
-        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
-         [dependencies]\npinnable = \"0.1\"\n",
-    )
-    .unwrap();
+    std::fs::write(server.join(manifest), body).unwrap();
+    // cargo refuses to load a member whose crate root is absent, and that
+    // refusal is not the one under test.
     std::fs::write(server.join("src/lib.rs"), "").unwrap();
     git_init_with_commit(&server);
 
@@ -222,12 +215,9 @@ fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
-    std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-    // Authored first, with the ambient PATH, so the run below fails on the
-    // hook rather than on the missing managed file the hook checks for.
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent("app", &ctx).ok();
 
@@ -243,16 +233,56 @@ fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    (output.status.success(), report)
+}
 
-    assert!(
-        !output.status.success(),
-        "with cargo off the PATH the hook cannot run and activate must not \
-         report success:\n{report}"
+/// With cargo off the PATH the activation hook has nothing to run, and the
+/// verb fails saying so rather than reporting a success it did not achieve.
+///
+/// Driven as a subprocess so this runs on every host rather than only on one
+/// without cargo installed. In-process it could not: the hook resolves cargo
+/// by spawning it, inheriting whatever environment the caller has, and a test
+/// cannot narrow its own process PATH while other tests run beside it.
+#[test]
+fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
+    let (ok, report) = activate_on_a_path_without(
+        "Cargo.toml",
+        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     );
+    assert!(!ok, "activate must not report success:\n{report}");
     assert!(
         report.contains("cargo"),
-        "the failure must name the tool it could not run, or an operator \
-         cannot tell this from any other activate failure:\n{report}"
+        "the failure must name the tool it could not run:\n{report}"
+    );
+}
+
+/// npm's half of the same claim. `NpmWorkspaces` is separate code from
+/// `CargoWorkspace`, so its refusal is its own assertion rather than one the
+/// cargo test covers.
+#[test]
+fn npm_activation_hook_refuses_when_npm_is_off_the_path() {
+    let (ok, report) = activate_on_a_path_without(
+        "package.json",
+        "{\"name\":\"server\",\"version\":\"0.1.0\"}",
+    );
+    assert!(!ok, "activate must not report success:\n{report}");
+    assert!(
+        report.contains("npm"),
+        "the failure must name the tool it could not run:\n{report}"
+    );
+}
+
+/// uv's half of the same claim, separate for the same reason.
+#[test]
+fn uv_activation_hook_refuses_when_uv_is_off_the_path() {
+    let (ok, report) = activate_on_a_path_without(
+        "pyproject.toml",
+        "[project]\nname = \"server\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\n",
+    );
+    assert!(!ok, "activate must not report success:\n{report}");
+    assert!(
+        report.contains("uv"),
+        "the failure must name the tool it could not run:\n{report}"
     );
 }
 
@@ -334,6 +364,9 @@ fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
 /// dependency that a range allows.
 #[test]
 fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
+    if common::skip_without_tool("npm") {
+        return;
+    }
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
 
@@ -351,14 +384,6 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
-
-    if which::which("npm").is_err() {
-        assert!(
-            integration.activate_hook(&ctx).is_err(),
-            "with npm absent the hook has nothing to run and must say so"
-        );
-        return;
-    }
 
     integration
         .activate_hook(&ctx)
@@ -462,6 +487,9 @@ fn locked_npm_version(lock_text: &str) -> Option<String> {
 /// rwv runs, rather than an upgrading resolve.
 #[test]
 fn uv_activation_leaves_a_non_newest_pin_byte_identical() {
+    if common::skip_without_tool("uv") {
+        return;
+    }
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
 
@@ -480,14 +508,6 @@ fn uv_activation_leaves_a_non_newest_pin_byte_identical() {
 
     let integration = UvWorkspace;
     integration.activate(&ctx).unwrap();
-
-    if which::which("uv").is_err() {
-        assert!(
-            integration.activate_hook(&ctx).is_err(),
-            "with uv absent the hook has nothing to run and must say so"
-        );
-        return;
-    }
 
     integration
         .activate_hook(&ctx)
