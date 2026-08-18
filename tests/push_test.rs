@@ -255,12 +255,15 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
     let (_, manifest_bare) = &ws.manifest_bares[0];
     let baseline_manifest = bare_main_sha(manifest_bare);
+    let short_lock = &baseline_manifest.clone().expect("bare should have a main ref")[..7];
 
     // Advance the local repo WITHOUT updating the lock.
     let local = ws.workspace.join("local/org/a");
     std::fs::write(local.join("drift.txt"), "drift").unwrap();
     common::git_in(&local, &["add", "."]);
     common::git_in(&local, &["commit", "-m", "drift past lock"]);
+    let drifted_head = common::git_in(&local, &["rev-parse", "HEAD"]);
+    let short_head = &drifted_head[..7];
 
     let output = rwv()
         .args(["push"])
@@ -275,6 +278,16 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
     assert!(
         stderr.contains("lock") || stderr.contains("rwv lock") || stderr.contains("git checkout"),
         "error should hint at `rwv lock` or `git checkout`; got: {stderr}"
+    );
+    // The per-repo line must attach each abbreviated SHA to its own label —
+    // swap them and an operator resets the wrong side.
+    assert!(
+        stderr.contains(&format!("local/org/a: HEAD {short_head}")),
+        "expected the HEAD label attached to the drifted commit's short SHA; got: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("differs from lock {short_lock}")),
+        "expected the lock label attached to the recorded lock's short SHA; got: {stderr}"
     );
     // Network must not have been touched.
     assert_eq!(

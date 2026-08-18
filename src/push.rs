@@ -920,25 +920,6 @@ mod tests {
         assert_eq!(paths, vec!["a", "b", "c"]);
     }
 
-    // --- defensive: lock-mismatch message shape stays stable ---------------
-
-    /// The lock-mismatch error line that drives the recovery how-to in
-    /// docs/how-to/push-cross-repo-feature.md uses `short_sha`
-    /// directly. Spell out the composition so a contributor can search
-    /// for the message shape from a doc snippet.
-    #[test]
-    fn lock_mismatch_uses_short_sha_for_both_sides() {
-        let head = "1111111111111111111111111111111111111111";
-        let lock = "2222222222222222222222222222222222222222";
-        let msg = format!(
-            "{}: HEAD {} differs from lock {}",
-            "github/x/y",
-            short_sha(head),
-            short_sha(lock),
-        );
-        assert_eq!(msg, "github/x/y: HEAD 1111111 differs from lock 2222222");
-    }
-
     /// The `BTreeMap<RepoPath, RawRevisionId>` shape used by the
     /// lock-precondition block is part of the verb's contract with
     /// `project.lock.repositories`. Spot-check the round-trip via a
