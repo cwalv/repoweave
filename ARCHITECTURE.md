@@ -199,6 +199,69 @@ receipt with it (`src/workweave_index.rs`).
 `.rwv-active` and `.rwv-workweave` are **mutually exclusive**; `rwv doctor`
 reports the conflict.
 
+### What is guarded against a second writer, and what is not
+
+Git is the reference budget, in both directions: a surface where rwv is
+sloppier than git's analog is a defect, and a guard git declines to build on
+the analogous surface is out of scope here too. That splits the state above
+into two tiers with different guarantees, and the difference is not a matter of
+degree.
+
+**rwv's own metadata is guarded.** Every record only rwv writes publishes
+atomically — write-then-rename, so no reader sees a half-written file and a
+crash cannot tear one. Where two processes could otherwise interleave a
+read-modify-write, a `link(2)` claim serializes it, which is git's `index.lock`
+in a different spelling. Two shapes, and they are not the same guarantee:
+
+- **The owned-digest ledger and the workweave index take a claim per
+  read-modify-write**, released when it drops. That one is a type rather than a
+  discipline: `write_owned_digests` takes a `&LedgerClaim` and
+  `workweave_index::write` takes an `&IndexClaim`, so a writer that skips the
+  exclusion does not compile.
+- **The op record and its lease are claimed once, by creation.** `acquire_op`
+  creates them with `link(2)` and a loser gets `EEXIST`, so for the operation's
+  lifetime there is exactly one writer and its later phase writes need no
+  further claim.
+
+The cost is git's cost, paid in full view: a process killed while holding a
+claim leaves it behind, and every later writer refuses — naming the file to
+remove — until a human removes it.
+
+**The working tree is not guarded, and that is the decision.** Member
+checkouts and manifests are shared, unlocked space: an editor, a build, or a
+second rwv may write one at any moment, including while a verb is running, and
+rwv neither locks them nor assumes exclusive access — exactly as git cannot
+stop an editor writing a file during `git add`. Interference here is a
+detection problem, never an exclusion one.
+
+**What makes detection enough is the attestation invariant: rwv never records
+a claim it did not observe.** A verb that derives state from working-tree
+inputs re-reads those inputs at the moment it records what produced the result,
+and refuses to record — naming the input that moved and the rerun that fixes
+it — if they no longer match what the derivation consumed. That converts a
+silent false record into a loud retry, which is why the unguarded tier costs
+less than it looks like it should.
+
+**Where a verb refuses because another operation is in flight, that refusal is
+advice, not exclusion.** `materialize` and `activate` read the op-state marker
+once at startup and refuse while an operation involves the workspace — the
+analog of git refusing to act mid-rebase. They hold nothing: an operation that
+starts after that read proceeds unnoticed. The window is affordable precisely
+because the attestation invariant stands behind it, so removing that backstop
+would silently weaken these refusals too. Checking a marker and acquiring a
+lease are different acts, and this is the first.
+
+Two things follow that rwv deliberately does not do. It does not serialize its
+verbs against each other — the exclusive lease is `sync`'s tool, because a
+half-applied multi-repo operation is the one case worth a stale-lock risk, and
+spreading that risk across the whole verb surface buys little the two rules
+above do not already give. And it does not adjudicate content: a change rwv
+recorded honestly raises nothing here, however unwise it was.
+
+The full calibration, including how to judge a new concern against it, is
+[`docs/internals/concurrency.md`](docs/internals/concurrency.md); the boundaries
+above are pinned by `tests/concurrency_boundaries_test.rs`.
+
 ## 5. The sync phase machine
 
 `sync` and `sync-to` are one machine. `src/sync.rs` exposes four public entry
