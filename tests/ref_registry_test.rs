@@ -247,14 +247,14 @@ fn durability_violation(trace: &str) -> Option<String> {
             calls.join("\n")
         ));
     };
-    let Some(fsync_dir) = position(&|l: &str| {
-        l.contains("fsync(") && l.trim_end().ends_with("projects/web-app>) = 0")
-    }) else {
+    let is_dir_fsync =
+        |l: &str| l.contains("fsync(") && l.trim_end().ends_with("projects/web-app>) = 0");
+    if position(&is_dir_fsync).is_none() {
         return Some(format!(
             "no fsync of the containing directory in:\n{}",
             calls.join("\n")
         ));
-    };
+    }
 
     if fsync_temp >= rename {
         return Some(format!(
@@ -262,7 +262,11 @@ fn durability_violation(trace: &str) -> Option<String> {
             calls.join("\n")
         ));
     }
-    if rename >= fsync_dir {
+    // Some directory fsync must follow the rename, not merely exist. The
+    // index claim is published into this same directory and fsyncs it on the
+    // way in, so an earlier one is present in every trace and says nothing
+    // about whether the rename survives.
+    if !calls.iter().skip(rename + 1).any(|l| is_dir_fsync(l)) {
         return Some(format!(
             "the directory fsync is what makes the rename itself survive:\n{}",
             calls.join("\n")
@@ -370,6 +374,16 @@ fn the_durability_check_reds_on_an_incomplete_or_re_ordered_trace() {
     let fsync_temp = trace_line(".rwv-workweave-index.tmp.4241.0>");
     let rename = trace_line("rename(");
     let fsync_dir = trace_line("web-app>) = 0");
+
+    // The shape a real capture has: the claim is published into this same
+    // directory first, so a directory fsync precedes the rename as well as
+    // following it. The one that follows is the one the property is about.
+    assert_eq!(
+        durability_violation(&[fsync_dir, fsync_temp, rename, fsync_dir].join("\n")),
+        None,
+        "a directory fsync before the rename must not satisfy the ordering \
+         check, nor disqualify a trace whose later one does"
+    );
 
     for (seeded, expected) in [
         ([rename, fsync_dir].join("\n"), "no fsync of the temp file"),

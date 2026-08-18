@@ -499,6 +499,20 @@ const ALLOWLIST: &[Allowed] = &[
             cleanup that used to sit here moved to durable_file.rs, audited below.",
     },
     Allowed {
+        file: "workweave_index.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "IndexClaim::drop: releasing the \
+            .rwv-workweave-index.lock claim this value's construction \
+            created, which is rwv-internal bookkeeping and never user data. \
+            The path is not a parameter — it is derived from the claim's own \
+            (primary root, project) and the one constant — so the site cannot \
+            be pointed at anything else, and the type's only constructor is \
+            the acquire that won it. Unlinking is the whole release: left \
+            behind, it is the wedge every later index write refuses on.",
+    },
+    Allowed {
         file: "owned_state.rs",
         pattern: "remove_file",
         count: 1,

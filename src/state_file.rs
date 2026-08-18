@@ -12,14 +12,14 @@ use std::path::Path;
 /// A file rwv writes as its own record and later parses back, published by
 /// replacement.
 ///
-/// `.rwv-op`, `.rwv-op-lease` and `.rwv-owned-digests.lock` are absent by
-/// construction rather than by oversight: those are published with
+/// The op-state pair and the two `.lock` claims are absent by construction
+/// rather than by oversight: those are published with
 /// `durable_file::create_new`, whose refusal on an occupied path is the mutual
-/// exclusion `acquire_op` and the owned-digest ledger claim are built from.
-/// Replacing one would overwrite a peer's claim, which is the opposite of what
-/// it is for. [`EXCLUSIVE_CREATE`] holds them so a census over rwv's state
-/// files can account for every one without granting them a publish that would
-/// be wrong.
+/// exclusion `acquire_op`, the owned-digest ledger and the workweave index are
+/// each built from. Replacing one would overwrite a peer's claim, which is the
+/// opposite of what it is for. [`EXCLUSIVE_CREATE`] holds them so a census over
+/// rwv's state files can account for every one without granting them a publish
+/// that would be wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateFile {
     OwnedDigests,
@@ -31,10 +31,11 @@ pub enum StateFile {
 }
 
 /// State files whose publish is an exclusive create, not a replacement.
-pub const EXCLUSIVE_CREATE: [&str; 3] = [
+pub const EXCLUSIVE_CREATE: [&str; 4] = [
     crate::op_state::OP_STATE_FILE,
     crate::op_state::OP_LEASE_FILE,
     crate::owned_state::OWNED_DIGESTS_CLAIM_FILE,
+    crate::workweave_index::INDEX_CLAIM_FILE,
 ];
 
 /// Files in rwv's namespace that rwv reads and rewrites but does not own: an

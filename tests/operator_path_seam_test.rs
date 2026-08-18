@@ -245,6 +245,14 @@ const ROUTED: &[Routed] = &[
                  claim file to delete",
     },
     Routed {
+        file: "workweave_index.rs",
+        scope: "",
+        needle: r#""another rwv still holds the workweave index of project \"#,
+        renders: 2,
+        prints: "the workweave-index claim refusal, naming the primary root and \
+                 the claim file to delete",
+    },
+    Routed {
         file: "push.rs",
         scope: "",
         needle: r#"None => format!("at {}","#,

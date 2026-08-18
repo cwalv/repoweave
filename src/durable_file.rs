@@ -45,6 +45,19 @@ pub(crate) enum CreateNewError {
 /// in one process cannot pick the same name and clobber each other's temp.
 static TMP_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// How long a caller waits for a peer's claim on a state file before it
+/// refuses.
+///
+/// A claimed read-modify-write is a read, a small serialization and one
+/// durable publish, so a wait this long means the holder is not running rather
+/// than merely slow. Both claims in the tree share the number: two waits that
+/// drift apart would make "how long does rwv hang before it complains" depend
+/// on which file it was.
+pub(crate) const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How often a wait re-attempts the claim.
+pub(crate) const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
 /// Publish `bytes` at `path`, replacing whatever is there.
 ///
 /// `rename(2)` is atomic within a filesystem, so a concurrent reader sees

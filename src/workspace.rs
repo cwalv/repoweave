@@ -3330,9 +3330,9 @@ mod tests {
             "no index file records no workweaves, so there is no field to migrate"
         );
 
+        let claim = crate::workweave_index::IndexClaim::acquire(&primary, &project).unwrap();
         crate::workweave_index::write(
-            &primary,
-            &project,
+            &claim,
             &crate::workweave_index::WorkweaveIndex::new(PathBuf::from("/c")),
         )
         .unwrap();

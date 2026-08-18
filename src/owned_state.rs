@@ -51,15 +51,6 @@ pub(crate) const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
 /// a second rwv cannot publish a snapshot it took before the first landed.
 pub(crate) const OWNED_DIGESTS_CLAIM_FILE: &str = ".rwv-owned-digests.lock";
 
-/// How long [`LedgerClaim::acquire`] waits for a peer to release before it
-/// refuses. A whole ledger read-modify-write is a read, a small serialization
-/// and one durable publish, so a wait this long means the holder is not
-/// running rather than merely slow.
-pub(crate) const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// How often the wait re-attempts the claim.
-const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(5);
-
 /// Outcome of comparing on-disk content against the recorded digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnedDigestCheck {
@@ -199,12 +190,13 @@ struct LedgerClaim {
 }
 
 impl LedgerClaim {
-    /// Claim `dir`'s ledger, waiting up to [`CLAIM_WAIT`] for a peer holding
+    /// Claim `dir`'s ledger, waiting up to [`crate::durable_file::CLAIM_WAIT`]
+    /// for a peer holding
     /// it, then refusing with the path to remove.
     fn acquire(dir: &Path) -> anyhow::Result<Self> {
         let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
         let holder = format!("pid {}\n", std::process::id());
-        let deadline = std::time::Instant::now() + CLAIM_WAIT;
+        let deadline = std::time::Instant::now() + crate::durable_file::CLAIM_WAIT;
         loop {
             match crate::durable_file::create_new(&path, holder.as_bytes()) {
                 Ok(()) => {
@@ -224,7 +216,7 @@ impl LedgerClaim {
                             claim = crate::path_spelling::operator_path(&path),
                         );
                     }
-                    std::thread::sleep(CLAIM_POLL);
+                    std::thread::sleep(crate::durable_file::CLAIM_POLL);
                 }
                 Err(crate::durable_file::CreateNewError::Io(e)) => {
                     return Err(anyhow::Error::new(e).context(format!(
@@ -1147,7 +1139,7 @@ mod tests {
         let message = format!("{err:#}");
 
         assert!(
-            waited >= CLAIM_WAIT,
+            waited >= crate::durable_file::CLAIM_WAIT,
             "the refusal must come after the full wait, so ordinary contention \
              is not reported as a fault: waited {waited:?}"
         );

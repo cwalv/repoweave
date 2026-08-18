@@ -1969,8 +1969,11 @@ landed — plus a seventh the implementation exposed.
    `adopt_legacy` `:694`, `migrate_legacy_index` `:823`. The store key is
    `std::fs::canonicalize` (`:921-923`), so `record_created` fails rather than
    records an unresolvable key. Writes go through one durable path
-   (`durable_file::replace`: fsync file, rename, fsync dir) under an in-process
-   RMW guard (`workweave_index.rs:306-317`) `[V]`.
+   (`durable_file::replace`: fsync file, rename, fsync dir), and the whole
+   read-modify-write around each of them is held under a cross-process claim
+   (`IndexClaim`, `workweave_index.rs:308-389`) that `write` takes as a
+   parameter, so a second `rwv` cannot publish a snapshot that drops a receipt
+   this one recorded `[V]`.
    Legacy markers and indexes migrate along the path that already existed:
    "Markers written before `parent` was introduced (legacy markers) must be
    migrated with `rwv doctor --fix` before the workweave can be used" is the

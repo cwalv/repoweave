@@ -95,6 +95,10 @@ use std::path::{Path, PathBuf};
 /// The `.rwv-workweave-index` file name (dotted, machine-local).
 pub(crate) const INDEX_FILENAME: &str = ".rwv-workweave-index";
 
+/// File name of the claim one rwv holds across an index read-modify-write, so
+/// a second rwv cannot publish a snapshot it took before the first landed.
+pub(crate) const INDEX_CLAIM_FILE: &str = ".rwv-workweave-index.lock";
+
 /// The recorded workweave registry for one `(primary, project)` pair.
 ///
 /// `container` — where `workweave create` places new workweaves for this
@@ -278,11 +282,8 @@ pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option
 ///
 /// If `projects/<project>/` does not exist yet the write fails with an
 /// actionable error rather than silently succeeding into an unowned parent.
-pub fn write(
-    primary_root: &Path,
-    project: &ProjectName,
-    index: &WorkweaveIndex,
-) -> anyhow::Result<()> {
+pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
+    let (primary_root, project) = (claim.primary_root.as_path(), &claim.project);
     let path = index_path(primary_root, project);
     let parent = path
         .parent()
@@ -304,39 +305,92 @@ pub fn write(
     crate::state_file::StateFile::WorkweaveIndex.publish_in(parent, content.as_bytes())
 }
 
-/// Serialises read-modify-write sequences on the index **within one
-/// process**.
+/// An exclusive claim on one project's index, released when it drops.
 ///
 /// The placement entries could live with last-writer-wins: a dropped entry
 /// is re-adopted by doctor's container scan, which is what the module docs
 /// above describe. A dropped **receipt** cannot be re-adopted — under R2 a
 /// ref with no receipt is not rwv's, permanently — so a whole-snapshot
-/// write that lost one would disown a live ref. That is the failure this
-/// registry exists to prevent, and it is reachable from a per-repo loop
-/// fanned out across worker threads ([`crate::parallel`]), where every
-/// repo's receipt lands in the same project index.
+/// write that lost one disowns a live ref, and every doctor class then goes
+/// quiet on it once the workweave directory is gone.
 ///
-/// In-process only, deliberately. rwv has no daemon and this is not a file
-/// lock: two concurrent `rwv` invocations mutating the *same* project's
-/// index can still race, and nothing outside this process holds them apart.
-/// The op-state lease ([`crate::op_state::acquire_op`]) is rwv's one
-/// cross-process exclusion, and `sync` / `sync-to` are its only callers. The
-/// verbs that mutate this index reach at most
-/// [`crate::op_state::check_no_op_in_progress`] — advice, not exclusion: it
-/// reads, refuses while a sync is in flight, and holds nothing off — and
-/// workweave creation, the verb that writes a receipt, does not reach even
-/// that. Widening this to a cross-process lock is a design decision with its
-/// own blast radius, and receipt lifecycle beyond the home is undecided.
-static INDEX_RMW: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Two concurrent `rwv` processes creating workweaves in the same project
+/// produce exactly that write, and in a fleet they are not a corner case:
+/// without this claim, two such invocations drop at least one receipt in nine
+/// runs out of ten, both exiting zero. `link(2)` onto an already-written inode
+/// is the exclusion, and it holds one winner across threads as well as across
+/// processes — so the per-repo fan-out that lands every repo's receipt in this
+/// one index needs nothing further.
+///
+/// A crash between acquisition and drop leaves the claim behind and every
+/// later write to this index refuses until someone removes it — the cost of
+/// an exclusion with no daemon to expire it, paid in full view.
+#[derive(Debug)]
+pub struct IndexClaim {
+    primary_root: PathBuf,
+    project: ProjectName,
+}
 
-/// Take [`INDEX_RMW`], ignoring poisoning: a writer that panicked mid-way
-/// left the file either as it was or fully replaced (the write is atomic),
-/// so the next writer's read-modify-write is still sound. Wedging every
-/// later write would turn one panic into a dead workspace.
-fn index_rmw_guard() -> std::sync::MutexGuard<'static, ()> {
-    INDEX_RMW
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+impl IndexClaim {
+    /// Claim `(primary_root, project)`'s index, waiting the shared claim
+    /// budget (`durable_file::CLAIM_WAIT`) for a peer holding it, then
+    /// refusing with the path to remove.
+    pub fn acquire(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Self> {
+        let path = claim_path(primary_root, project);
+        let parent = path
+            .parent()
+            .expect("claim_path always has a parent (projects/<name>/)");
+        if !parent.exists() {
+            anyhow::bail!(
+                "cannot claim workweave index: project directory {} does not exist",
+                parent.display()
+            );
+        }
+        let holder = format!("pid {}\n", std::process::id());
+        let deadline = std::time::Instant::now() + crate::durable_file::CLAIM_WAIT;
+        loop {
+            match crate::durable_file::create_new(&path, holder.as_bytes()) {
+                Ok(()) => {
+                    return Ok(Self {
+                        primary_root: primary_root.to_path_buf(),
+                        project: project.clone(),
+                    })
+                }
+                Err(crate::durable_file::CreateNewError::AlreadyExists) => {
+                    if std::time::Instant::now() >= deadline {
+                        let held_by = std::fs::read_to_string(&path)
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_else(|_| "an unreadable holder".to_string());
+                        anyhow::bail!(
+                            "another rwv still holds the workweave index of project \
+                             {project} at {root} ({held_by}). If no rwv is running, \
+                             delete {claim} and rerun.",
+                            root = crate::path_spelling::operator_path(primary_root),
+                            claim = crate::path_spelling::operator_path(&path),
+                        );
+                    }
+                    std::thread::sleep(crate::durable_file::CLAIM_POLL);
+                }
+                Err(crate::durable_file::CreateNewError::Io(e)) => {
+                    return Err(anyhow::Error::new(e).context(format!(
+                        "failed to claim the workweave index at {}",
+                        path.display()
+                    )));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for IndexClaim {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(claim_path(&self.primary_root, &self.project));
+    }
+}
+
+/// Where `(primary_root, project)`'s index claim lives.
+fn claim_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
+    project_dir(primary_root, project.as_str()).join(INDEX_CLAIM_FILE)
 }
 
 /// Resolve the effective container for new workweaves in `(primary_root, project)`.
@@ -367,12 +421,12 @@ pub fn set_container(
     project: &ProjectName,
     container: PathBuf,
 ) -> anyhow::Result<PathBuf> {
-    let _guard = index_rmw_guard();
+    let claim = IndexClaim::acquire(primary_root, project)?;
     let container = canonical_recorded_path(&container);
     let mut index =
         read(primary_root, project)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
     index.container = container.clone();
-    write(primary_root, project, &index)?;
+    write(&claim, &index)?;
     Ok(container)
 }
 
@@ -393,10 +447,10 @@ pub fn record_workweave(
     name: &str,
     path: PathBuf,
 ) -> anyhow::Result<()> {
-    let _guard = index_rmw_guard();
+    let claim = IndexClaim::acquire(primary_root, project)?;
     let mut index = read_or_seed(primary_root, project)?;
     index.workweaves.insert(name.to_string(), path);
-    write(primary_root, project, &index)
+    write(&claim, &index)
 }
 
 /// Read the index, or seed a fresh one when the file does not exist.
@@ -430,7 +484,7 @@ pub fn forget_workweave(
     project: &ProjectName,
     name: &str,
 ) -> anyhow::Result<()> {
-    let _guard = index_rmw_guard();
+    let claim = IndexClaim::acquire(primary_root, project)?;
     let mut index = match read(primary_root, project)? {
         Some(idx) => idx,
         None => return Ok(()),
@@ -438,7 +492,7 @@ pub fn forget_workweave(
     if index.workweaves.remove(name).is_none() {
         return Ok(());
     }
-    write(primary_root, project, &index)
+    write(&claim, &index)
 }
 
 /// Look up the recorded path for a workweave without any marker validation.
@@ -653,7 +707,7 @@ impl RefRegistry {
             )
         })?;
 
-        let _guard = index_rmw_guard();
+        let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
         let mut index = read_or_seed(&self.primary_root, &self.project)?;
         let receipts = index
             .receipts
@@ -672,7 +726,7 @@ impl RefRegistry {
             name: raw_name.clone(),
             created_at: created_at.as_str().to_owned(),
         });
-        write(&self.primary_root, &self.project, &index)?;
+        write(&claim, &index)?;
 
         Ok(OwnedRef::from_receipt(key_store, raw_name, created_at))
     }
@@ -727,7 +781,7 @@ impl RefRegistry {
     /// so retracting into a legacy index cannot quietly create the registry
     /// field and hide that the migration is still pending.
     pub fn retract(&mut self, store: &Path, name: &RawRefName) -> anyhow::Result<bool> {
-        let _guard = index_rmw_guard();
+        let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
         let Some(mut index) = read(&self.primary_root, &self.project)? else {
             return Ok(false);
         };
@@ -740,7 +794,7 @@ impl RefRegistry {
         if receipts.len() == before {
             return Ok(false);
         }
-        write(&self.primary_root, &self.project, &index)?;
+        write(&claim, &index)?;
         Ok(true)
     }
 
@@ -763,7 +817,7 @@ impl RefRegistry {
     /// once every owned weave's health floor records a clean doctor at the
     /// version that removes them (see [`crate::health_floor`]).
     pub fn migrate_legacy_index(&mut self) -> anyhow::Result<bool> {
-        let _guard = index_rmw_guard();
+        let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
         let Some(mut index) = read(&self.primary_root, &self.project)? else {
             // No file: nothing recorded, nothing legacy. The next write
             // seeds a current-shape index.
@@ -773,7 +827,7 @@ impl RefRegistry {
             return Ok(false);
         }
         index.receipts = Some(Vec::new());
-        write(&self.primary_root, &self.project, &index)?;
+        write(&claim, &index)?;
         Ok(true)
     }
 
@@ -880,7 +934,8 @@ fn same_store(recorded: &Path, query_key: &Path) -> bool {
 /// slips through.
 pub fn ensure_ignore_entry(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
     let project_dir = project_dir(primary_root, project.as_str());
-    ensure_ignored_in_dir(&project_dir, INDEX_FILENAME)
+    ensure_ignored_in_dir(&project_dir, INDEX_FILENAME)?;
+    ensure_ignored_in_dir(&project_dir, INDEX_CLAIM_FILE)
 }
 
 /// Ensure `filename` appears in the ignore surface of the git repo rooted at
@@ -1003,6 +1058,87 @@ mod tests {
         EphemeralRefName::mint(project, &WorkweaveName::new(workweave).unwrap())
     }
 
+    /// A finished write holds the claim only while it runs. Left behind, it
+    /// is the wedge every later write to this index would hit.
+    #[test]
+    fn a_finished_write_leaves_no_claim_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = make_project(&primary, "web-app");
+
+        record_workweave(
+            &primary,
+            &project,
+            "hotfix",
+            PathBuf::from("/c/web-app--hotfix"),
+        )
+        .unwrap();
+        assert!(
+            !claim_path(&primary, &project).exists(),
+            "the claim must be released when the read-modify-write ends"
+        );
+        // The no-op arm takes the claim too, and must release it.
+        forget_workweave(&primary, &project, "never-recorded").unwrap();
+        assert!(
+            !claim_path(&primary, &project).exists(),
+            "an edit that changes nothing must still release its claim"
+        );
+    }
+
+    /// The decided behaviour for a claim whose holder died: later writes
+    /// refuse, after a bounded wait, naming the file to remove. Waiting
+    /// forever hangs the verb; treating an old claim as abandoned publishes
+    /// over a holder that is merely slow, which is the receipt loss this
+    /// claim exists to prevent; failing instantly makes ordinary contention
+    /// look like a fault.
+    #[test]
+    fn an_abandoned_claim_refuses_later_writes_and_names_what_to_remove() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = make_project(&primary, "web-app");
+        let claim = claim_path(&primary, &project);
+        std::fs::write(&claim, "pid 999999\n").unwrap();
+
+        let started = std::time::Instant::now();
+        let err = record_workweave(
+            &primary,
+            &project,
+            "hotfix",
+            PathBuf::from("/c/web-app--hotfix"),
+        )
+        .expect_err("a held claim must refuse the write, not drop it silently");
+        let waited = started.elapsed();
+        let message = format!("{err:#}");
+
+        assert!(
+            waited >= crate::durable_file::CLAIM_WAIT,
+            "the refusal must come after the full wait, so ordinary contention \
+             is not reported as a fault: waited {waited:?}"
+        );
+        assert!(
+            message.contains(INDEX_CLAIM_FILE),
+            "the refusal must name the file to remove: {message}"
+        );
+        assert!(
+            message.contains("delete") && message.contains("rerun"),
+            "the refusal must carry the operator's exit: {message}"
+        );
+        assert!(
+            message.contains("pid 999999"),
+            "the refusal must carry what the claim records about its holder, \
+             which is how an operator decides whether it is abandoned: {message}"
+        );
+        assert!(
+            claim.exists(),
+            "a refused write must leave the holder's claim alone — clearing it \
+             would make the exclusion a suggestion"
+        );
+        assert!(
+            read(&primary, &project).unwrap().is_none(),
+            "and must not have written the entry it refused to record"
+        );
+    }
+
     #[test]
     fn read_missing_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1024,7 +1160,8 @@ mod tests {
             "hotfix".to_string(),
             PathBuf::from("/abs/container/web-app--hotfix"),
         );
-        write(&primary, &project, &index).unwrap();
+        let claim = IndexClaim::acquire(&primary, &project).unwrap();
+        write(&claim, &index).unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
         assert_eq!(got.container, PathBuf::from("/abs/container"));
@@ -1123,10 +1260,18 @@ mod tests {
         let gitignore = primary.join("projects/web-app/.gitignore");
         std::fs::write(&gitignore, "target/\n.rwv-workweave-index\nnode_modules/\n").unwrap();
         ensure_ignore_entry(&primary, &project).unwrap();
+        ensure_ignore_entry(&primary, &project).unwrap();
         let content = std::fs::read_to_string(&gitignore).unwrap();
-        // Line count should be unchanged (3 non-empty lines).
-        let occurrences = content.matches(INDEX_FILENAME).count();
-        assert_eq!(occurrences, 1, "must not duplicate the ignore entry");
+        // Counted by whole line: the claim file's name has the index's as a
+        // prefix, so a substring count reads one entry for each of the two
+        // names.
+        for name in [INDEX_FILENAME, INDEX_CLAIM_FILE] {
+            let occurrences = content.lines().filter(|line| line.trim() == name).count();
+            assert_eq!(
+                occurrences, 1,
+                "must not duplicate the ignore entry for {name}: {content:?}"
+            );
+        }
     }
 
     #[test]
@@ -1136,7 +1281,8 @@ mod tests {
         let project = make_project(&primary, "web-app");
 
         let index = WorkweaveIndex::new(PathBuf::from("/container"));
-        write(&primary, &project, &index).unwrap();
+        let claim = IndexClaim::acquire(&primary, &project).unwrap();
+        write(&claim, &index).unwrap();
 
         // The chokepoint owns hygiene: any write path (create, delete,
         // set-container, doctor adoption/prune) must leave the index
@@ -1148,16 +1294,28 @@ mod tests {
         );
     }
 
+    /// The claim sits in front of every write, so its own refusal is the one
+    /// an operator sees when the project directory is missing. A bare I/O
+    /// error from the claim would replace an actionable message with the
+    /// path of a lock file nobody asked about.
     #[test]
-    fn write_fails_without_project_dir() {
+    fn writing_without_a_project_dir_names_the_missing_directory() {
         let tmp = tempfile::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         // Note: no projects/web-app dir.
         let project = ProjectName::new("web-app").unwrap();
 
-        let index = WorkweaveIndex::new(PathBuf::from("/x"));
-        let result = write(&primary, &project, &index);
-        assert!(result.is_err(), "write must fail without project dir");
+        let claim_err = IndexClaim::acquire(&primary, &project)
+            .expect_err("claim must fail without project dir");
+        let message = format!("{claim_err:#}");
+        assert!(
+            message.contains("project directory") && message.contains("does not exist"),
+            "the claim must name the missing directory: {message}"
+        );
+        assert!(
+            message.contains("projects"),
+            "and name which directory it means: {message}"
+        );
     }
 
     #[test]
