@@ -119,6 +119,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         },
         CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker".into(),
         CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index".into(),
+        CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state".into(),
         CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
         CheckViolation::UnparseableProject { .. } => "unparseable-project".into(),
         CheckViolation::WorkweaveTreeIntegrity { sub_kind, .. } => {
@@ -356,6 +357,11 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::LegacyWorkweaveIndex {
             project: project(),
             index_path: path("/ws/projects/proj/.rwv-workweave-index"),
+        },
+        CheckViolation::UnreadableOwnedState {
+            project: project(),
+            state_path: path("/ws/projects/proj/.rwv-owned-digests"),
+            error: "parse failed: expected value at line 1 column 1".into(),
         },
         CheckViolation::UnreadableWorkweaveIndex {
             project: project(),

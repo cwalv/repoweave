@@ -405,6 +405,32 @@ its own, because it holds no receipts and so nothing in it is destroyable.
 
 **What to do:** `rwv doctor --fix` adds the field.
 
+### `unreadable-owned-state`
+
+**Warning. Report-only.** A `.rwv-owned-digests` that exists and does not
+parse. It is rwv's record of the generations it accepted for the project, and
+two checks decide from it: `managed-file-drift`, which compares a generated
+file against the content rwv last accepted, and `derived-state-stale`, which
+compares a generation's recorded inputs against the checkout.
+
+Both read an unreadable record as "nothing is attested" and then report
+nothing, so without this finding the project is indistinguishable from a clean
+one — including for files that had already drifted before the record became
+unreadable. This finding is what says the two checks did not run, rather than
+that they ran and found nothing.
+
+An **absent** record is not this finding and is not a problem: a weave that has
+never run a generator has nothing to attest, and a file it has never stamped
+has no entry. Both stay silent, which is what makes a fresh or upgraded weave
+quiet rather than noisy.
+
+**What to do:** run `rwv materialize` to re-derive the project's generated
+files and record them afresh. `--fix` does not do it for you: rebuilding the
+record attests whatever is on disk at that moment as accepted, and what was
+accepted before is exactly what has been lost, so nothing can check the two
+against each other first. If the current content matters, inspect it before
+you re-derive.
+
 ### `unreadable-workweave-index`
 
 **Error. Report-only.** A `.rwv-workweave-index` that exists and does not

@@ -254,6 +254,29 @@ pub enum CheckViolation {
     ///
     /// No repair: the file is either hand-edited or truncated by a crashed
     /// writer, and rwv cannot tell which entries a corrupt one meant to hold.
+    /// rwv's record of the generations it accepted for a project is present
+    /// and does not parse as that record.
+    ///
+    /// Absence is not this: a weave that has never stamped has nothing to
+    /// record, and the axes reading it are right to stay quiet. Bytes that are
+    /// there and are not the record are different in kind — the managed-file
+    /// drift and derived-state staleness checks both decide from it, both read
+    /// an unparseable one as "nothing is attested", and both then report
+    /// nothing. Without this finding that silence is indistinguishable from a
+    /// clean project, including for files that had already drifted.
+    ///
+    /// No repair: rebuilding the record means re-deriving the generated files
+    /// and attesting whatever results, and what was accepted before is exactly
+    /// what has been lost, so nothing here can check one against the other.
+    UnreadableOwnedState {
+        /// The project whose record does not parse.
+        project: ProjectName,
+        /// Absolute path to the record.
+        state_path: PathBuf,
+        /// Rendered read/parse error.
+        error: String,
+    },
+
     UnreadableWorkweaveIndex {
         /// The project whose index does not parse.
         project: ProjectName,
@@ -664,6 +687,7 @@ impl CheckViolation {
             | CheckViolation::ProjectlessDir { .. }
             | CheckViolation::UnnameableProject { .. }
             | CheckViolation::UnresolvableLockEntry { .. }
+            | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
@@ -774,6 +798,7 @@ impl CheckViolation {
             CheckViolation::WeaveRootIdentityConflict { .. } => "weave-root-identity-conflict",
             CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker",
             CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index",
+            CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state",
             CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index",
             CheckViolation::UnparseableProject { .. } => "unparseable-project",
             CheckViolation::WorkweaveTreeIntegrity { .. } => "workweave-tree-integrity",
@@ -1730,6 +1755,11 @@ pub enum ViolationOutput {
         project: String,
         index_path: String,
     },
+    UnreadableOwnedState {
+        project: String,
+        state_path: String,
+        error: String,
+    },
     UnreadableWorkweaveIndex {
         project: String,
         index_path: String,
@@ -2116,6 +2146,15 @@ impl ViolationOutput {
             } => Self::LegacyWorkweaveIndex {
                 project: project.to_string(),
                 index_path: crate::path_spelling::wire_path(&index_path),
+            },
+            CheckViolation::UnreadableOwnedState {
+                project,
+                state_path,
+                error,
+            } => Self::UnreadableOwnedState {
+                project: project.to_string(),
+                state_path: crate::path_spelling::wire_path(&state_path),
+                error,
             },
             CheckViolation::UnreadableWorkweaveIndex {
                 project,
@@ -2793,6 +2832,27 @@ pub(crate) fn commit_replay_exclusion_migration(
 /// yet, live workweaves at the compiled-in default) surface every
 /// marker-bearing directory as `unregistered-workweave` — the intended
 /// self-heal path is `rwv doctor --fix` on first run after upgrade.
+/// One finding per project whose accepted-generation record is present and
+/// unreadable.
+///
+/// Per project rather than per generated file: the record that would name the
+/// attested files is the one that cannot be read.
+fn scan_unreadable_owned_state(ws_root: &Path) -> Vec<CheckViolation> {
+    crate::workspace::discover_projects(ws_root)
+        .into_iter()
+        .filter_map(|project| {
+            let project_dir = crate::workspace::project_dir(ws_root, project.as_str());
+            crate::owned_state::unreadable_ledger(&project_dir).map(|error| {
+                CheckViolation::UnreadableOwnedState {
+                    state_path: crate::owned_state::ledger_path(&project_dir),
+                    project,
+                    error,
+                }
+            })
+        })
+        .collect()
+}
+
 fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
@@ -3217,6 +3277,7 @@ pub fn scan_workweave_tree_integrity(
     // checks that follow are unchanged from the pre-registry era except
     // that they now iterate over every recorded container.
     violations.extend(scan_registry_reconciliation(vcs, ws_root));
+    violations.extend(scan_unreadable_owned_state(ws_root));
 
     // Enumerate every unique container to scan for marker-shape issues.
     let containers = workweave_containers_for_scan(ws_root);
@@ -6874,6 +6935,22 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                          `rwv doctor --fix` to add the field — it is the precondition \
                          for every other arm of the migration",
                         index_path.display()
+                    ),
+                ),
+                CheckViolation::UnreadableOwnedState {
+                    project,
+                    state_path,
+                    error,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{}: rwv's record of the generations it accepted does not \
+                         parse ({error}); until it is rebuilt, the managed-file \
+                         drift and derived-state staleness checks report nothing \
+                         for project `{project}` — including for files that had \
+                         already drifted. Run `rwv materialize` to re-derive its \
+                         generated files and record them afresh",
+                        state_path.display()
                     ),
                 ),
                 CheckViolation::UnreadableWorkweaveIndex {

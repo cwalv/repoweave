@@ -1685,6 +1685,11 @@ mod doctor_json {
             project: String,
             index_path: String,
         },
+        UnreadableOwnedState {
+            project: String,
+            state_path: String,
+            error: String,
+        },
         UnreadableWorkweaveIndex {
             project: String,
             index_path: String,

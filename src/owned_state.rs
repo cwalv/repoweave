@@ -50,9 +50,16 @@ pub(crate) const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
 /// Outcome of comparing on-disk content against the recorded digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnedDigestCheck {
-    /// No digest recorded for this file (state file absent, entry absent, or
-    /// state file unparseable). Pre-upgrade workspaces land here — the axis
-    /// is skipped silently, never errored.
+    /// No digest recorded for this file: the ledger is absent, or it is
+    /// present and holds no entry for this name. Both are legitimate — a fresh
+    /// or pre-upgrade workspace, or a file this weave has never stamped — so
+    /// the axis is skipped silently, never errored.
+    ///
+    /// An unreadable ledger also reaches here, because from one file's point
+    /// of view there is indeed no digest to compare against. It is not a
+    /// legitimate state, and it is reported on its own channel rather than
+    /// through this variant — a ledger nobody can parse cannot say which files
+    /// it tracked, so there is no per-file finding to raise.
     NotRecorded,
     /// On-disk content matches the last rwv-accepted generation.
     Matches,
@@ -116,15 +123,47 @@ impl LedgerEntry {
     }
 }
 
-/// Read the ledger from `state_dir`, tolerating absence and corruption (both
-/// yield an empty map — the file is advisory bookkeeping that the next stamp
-/// rewrites wholesale).
+/// Read the ledger from `state_dir`. Absence and corruption both yield an
+/// empty map, so every caller here answers "nothing is attested".
+///
+/// That is the right answer for absence and the wrong one for corruption, and
+/// the difference is not visible from the map: two doctor axes decide from
+/// what this returns, so an unreadable file takes them silent rather than
+/// leaving them unaffected. [`unreadable_ledger`] is the channel that reports
+/// it, and it is what keeps this total read from being a claim that nothing is
+/// wrong.
 fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, LedgerEntry> {
     let path = state_dir.join(OWNED_DIGESTS_FILE);
     let Ok(text) = std::fs::read_to_string(&path) else {
         return BTreeMap::new();
     };
     serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Why `dir`'s ledger cannot be read as a ledger, when a file is there but is
+/// not one.
+///
+/// Absence is not a failure — a fresh or pre-upgrade weave has no ledger, and
+/// a file this weave never stamped has no entry. Both are legitimate and stay
+/// silent. Bytes that are present and are not a ledger are neither: something
+/// wrote over it, or a write was cut short, and every axis reading it is
+/// answering from an empty map while reporting nothing.
+///
+/// A read error other than absence is reported here too. It is the same
+/// situation for the axes downstream: the file's content did not reach them.
+pub fn ledger_path(dir: &Path) -> std::path::PathBuf {
+    dir.join(OWNED_DIGESTS_FILE)
+}
+
+pub fn unreadable_ledger(dir: &Path) -> Option<String> {
+    let path = ledger_path(dir);
+    match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => Some(format!("read failed: {e}")),
+        Ok(text) => serde_json::from_str::<BTreeMap<String, LedgerEntry>>(&text)
+            .err()
+            .map(|e| format!("parse failed: {e}")),
+    }
 }
 
 /// Write `entries` as `dir`'s ledger, and keep the machine-local file out of
@@ -509,8 +548,11 @@ pub fn attested_owned_files(dir: &Path) -> Vec<String> {
 ///
 /// Total (never errors): a missing state file, a missing entry, or an
 /// unparseable state file all yield [`OwnedDigestCheck::NotRecorded`] — the
-/// caller skips the axis silently. This is the backward-compat contract for
-/// pre-upgrade workspaces that have generated files but no digest state.
+/// caller skips the axis silently. The first two are the backward-compat
+/// contract for pre-upgrade workspaces that have generated files but no digest
+/// state. The third is a fault, and the silence here is only sound because
+/// [`unreadable_ledger`] reports it once for the ledger rather than once per
+/// file it can no longer enumerate.
 pub fn check_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> OwnedDigestCheck {
     match read_owned_digests(dir).get(file_name) {
         None => OwnedDigestCheck::NotRecorded,
@@ -767,20 +809,46 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_state_file_is_not_recorded_and_stamp_recovers() {
+    fn corrupt_state_file_is_reported_and_stamp_recovers() {
         let tmp = TempDir::new().unwrap();
         std::fs::write(tmp.path().join(OWNED_DIGESTS_FILE), "not json {{{").unwrap();
-        // Corrupt state never errors and never mis-reports: skip silently.
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"x"),
             OwnedDigestCheck::NotRecorded,
-            "corrupt state file must be treated as advisory and skipped"
+            "a ledger nobody can parse records no digest for any file, so the \
+             per-file question still has to be total"
+        );
+        assert!(
+            unreadable_ledger(tmp.path()).is_some(),
+            "and the fault has to be visible somewhere — the per-file answer \
+             above is indistinguishable from a weave that never stamped"
         );
         // A fresh stamp rewrites the file wholesale — self-healing.
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"x").unwrap();
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"x"),
             OwnedDigestCheck::Matches
+        );
+        assert_eq!(
+            unreadable_ledger(tmp.path()),
+            None,
+            "and the fault clears with it"
+        );
+    }
+
+    #[test]
+    fn absence_is_not_a_fault() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(unreadable_ledger(tmp.path()), None, "no ledger at all");
+        stamp_owned_digest(tmp.path(), "Cargo.lock", b"x").unwrap();
+        assert_eq!(
+            unreadable_ledger(tmp.path()),
+            None,
+            "a readable ledger holding no entry for some other file"
+        );
+        assert_eq!(
+            check_owned_digest(tmp.path(), "uv.lock", b"y"),
+            OwnedDigestCheck::NotRecorded
         );
     }
 
