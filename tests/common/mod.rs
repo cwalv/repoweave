@@ -318,6 +318,34 @@ pub struct PushWorkspace {
     pub manifest_bares: Vec<(String, PathBuf)>,
 }
 
+/// Write an `rwv.lock` into `project_dir` pinning each
+/// `(repo_path, url, version)`.
+///
+/// Goes through `LockFile::from_json_str` and `lock::write_lock` rather than
+/// formatting the on-disk JSON, for two reasons a hand-written fixture cannot
+/// give you. The parse means a fixture that has drifted to an unparseable
+/// shape fails loudly here instead of being written and silently skipped past
+/// by whatever reads it. And the serializer means the bytes are the ones
+/// `rwv lock` itself emits for equal content, so nothing that stages or
+/// commits the lock sees a phantom diff.
+///
+/// Only for a lock whose content is incidental to the test. A test whose
+/// subject IS the bytes — an empty lock, a stale one, one that must not parse
+/// — builds them locally and says why.
+pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)]) {
+    let entries: Vec<String> = repos
+        .iter()
+        .map(|(path, url, version)| {
+            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {version:?}}}")
+        })
+        .collect();
+    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw)
+        .expect("a fixture lock must parse before it is written");
+    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock"))
+        .expect("a fixture lock must be writable");
+}
+
 /// Build a workspace with `repos.len()` manifest repos plus a project repo.
 ///
 /// Each manifest repo gets a bare remote, a canonical-path local clone, and
