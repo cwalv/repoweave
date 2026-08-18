@@ -28,6 +28,14 @@
 //! A construct is bounded at the render macro it opens on — balanced
 //! parentheses, string literals skipped — never at a line count. A fixed-size
 //! window is how a neighbouring correct call comes to vouch for a mutated one.
+//!
+//! The bounder has a blind spot of its own: [`paren_delta`] reads each line on
+//! its own, so a continuation line of a multi-line string literal is read as
+//! code rather than as the prose it is. Unbalanced parentheses there would
+//! mis-bound the window. No entry below spans one today; if a future one does,
+//! it surfaces as a wrong `renders` count naming that entry, the same
+//! direction every other failure here fails in — not as a site going quietly
+//! unpinned.
 
 use std::collections::BTreeSet;
 
