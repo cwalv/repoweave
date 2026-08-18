@@ -20,7 +20,7 @@ mod common;
 macro_rules! require_e2e {
     () => {
         if std::env::var("RWV_E2E_INSTALL").as_deref() != Ok("1") {
-            eprintln!("skipping e2e install test (set RWV_E2E_INSTALL=1 to run)");
+            common::report_skip("set RWV_E2E_INSTALL=1 to run the e2e install tests");
             return;
         }
     };

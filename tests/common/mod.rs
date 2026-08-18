@@ -10,6 +10,37 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
+/// Announce a test that is about to return without measuring anything.
+///
+/// Written to the process's own stderr rather than through `eprintln!`.
+/// libtest intercepts the print macros and discards what a *passing* test
+/// wrote, so a skip announced that way reaches nobody unless the run already
+/// passed `--nocapture` — and a reader who knew to pass it already suspected
+/// the skip. A direct write is outside that interception, so the notice lands
+/// beside the `test ... ok` line it contradicts.
+///
+/// One `write_all` of a whole line, because tests run concurrently and a
+/// notice torn across two threads is worse than none.
+pub fn report_skip(reason: &str) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
+}
+
+/// Whether `tool` is absent from PATH, announcing the skip when it is.
+///
+/// ```ignore
+/// if common::skip_without_tool("cargo") {
+///     return;
+/// }
+/// ```
+pub fn skip_without_tool(tool: &str) -> bool {
+    if which::which(tool).is_ok() {
+        return false;
+    }
+    report_skip(&format!("`{tool}` not found on PATH"));
+    true
+}
+
 /// A temporary directory whose path is already canonical. Drop-in for
 /// `tempfile::tempdir()`; use it for every fixture root in the suite.
 ///

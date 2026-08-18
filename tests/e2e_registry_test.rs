@@ -26,7 +26,7 @@ mod common;
 macro_rules! require_registry_e2e {
     () => {
         if std::env::var("RWV_E2E_REGISTRY").is_err() {
-            eprintln!("SKIP: set RWV_E2E_REGISTRY=1 to run registry e2e tests");
+            common::report_skip("set RWV_E2E_REGISTRY=1 to run the registry e2e tests");
             return;
         }
     };
