@@ -1,4 +1,6 @@
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+};
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
     orphaned_region_issues, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, Ownership,
@@ -307,11 +309,11 @@ impl Integration for NpmWorkspaces {
         paths
     }
 
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         if ctx.detect_repos_with_manifest("package.json").is_empty() {
             return vec![];
         }
-        vec!["package-lock.json".to_string()]
+        vec![SurfacedFile::written_through_link("package-lock.json")]
     }
 
     /// `package.json` is **hybrid** (rwv owns `workspaces`/`workspaces.packages`
@@ -319,10 +321,10 @@ impl Integration for NpmWorkspaces {
     /// file). It MUST NOT appear in `generated_files()` — that would mark it
     /// gitignore-eligible and whole-deletable, discarding the user's
     /// dependencies and scripts.
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         let mut files = self.generated_files(ctx);
         if !ctx.detect_repos_with_manifest("package.json").is_empty() {
-            files.push("package.json".to_string());
+            files.push(SurfacedFile::written_at_source("package.json"));
         }
         files
     }
@@ -539,13 +541,16 @@ mod tests {
         let generated = integration.generated_files(&ctx);
         let managed = integration.managed_files(&ctx);
 
-        assert_eq!(generated, vec!["package-lock.json".to_string()]);
+        assert_eq!(
+            generated,
+            vec![SurfacedFile::written_through_link("package-lock.json")]
+        );
         assert!(
-            managed.contains(&"package.json".to_string()),
+            managed.contains(&SurfacedFile::written_at_source("package.json")),
             "managed_files must include the hybrid package.json: {managed:?}"
         );
         assert!(
-            !generated.contains(&"package.json".to_string()),
+            !generated.iter().any(|f| f.name() == "package.json"),
             "package.json must never be gitignore/whole-delete eligible: {generated:?}"
         );
     }

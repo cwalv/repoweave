@@ -212,6 +212,74 @@ impl IssueKind {
     }
 }
 
+/// Where the write that produces a surfaced file lands, which is what decides
+/// whether its weave-root symlink may exist before the file does.
+///
+/// [`SurfacedSource::WrittenThroughLink`] is the mechanism by which an
+/// ecosystem tool's output reaches `projects/<project>/`: the tool runs at the
+/// weave root, opens the declared name, and the kernel follows the symlink to
+/// the canonical file. Take the link away and the tool creates a real file at
+/// the weave root instead, where no repo tracks it and no later pass can see
+/// it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfacedSource {
+    /// A tool writes this path at the weave root. The link may precede the
+    /// file, and a link over an absent file is the pending state rather than a
+    /// stale one.
+    WrittenThroughLink,
+    /// The file is in the project directory before the link is — rwv's own
+    /// `activate()` put it there, or the operator committed it. The link
+    /// follows the file, and one standing over an absent file is stale.
+    WrittenAtSource,
+}
+
+/// One root-relative path an integration asks the framework to surface, and
+/// where the write that produces it lands.
+///
+/// Constructed only through the two named constructors, so a declaration
+/// cannot be written without answering the question. That is deliberate: the
+/// wrong answer is silent and costs an untracked file at the weave root, which
+/// is not a mistake a default should be able to make on an author's behalf.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurfacedFile {
+    name: String,
+    source: SurfacedSource,
+}
+
+impl SurfacedFile {
+    /// Declare `name` as a path an ecosystem tool writes at the weave root.
+    pub fn written_through_link(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            source: SurfacedSource::WrittenThroughLink,
+        }
+    }
+
+    /// Declare `name` as a path that exists in the project directory before it
+    /// is surfaced.
+    pub fn written_at_source(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            source: SurfacedSource::WrittenAtSource,
+        }
+    }
+
+    /// The path, relative to `output_dir`.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn source(&self) -> SurfacedSource {
+        self.source
+    }
+
+    /// Consume the declaration into its two halves, for a consumer building an
+    /// owned map keyed by path.
+    pub fn into_parts(self) -> (String, SurfacedSource) {
+        (self.name, self.source)
+    }
+}
+
 /// One path an integration's ownership is written onto, and the cleanup shape
 /// that ends it.
 ///
@@ -480,10 +548,13 @@ pub trait Integration {
     /// a fully-owned `.code-workspace`.
     ///
     /// Every file here is symlinked from the weave root into the project
-    /// directory.
+    /// directory, and each declaration states where its own write lands (see
+    /// [`SurfacedFile`]) — the two questions are independent, and a lockfile
+    /// and an operator's committed file can both be fully owned while only one
+    /// of them is written through its link.
     ///
     /// The default returns an empty list.
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         Vec::new()
     }
 
@@ -512,8 +583,11 @@ pub trait Integration {
     /// of root-relative paths that the framework will symlink for this
     /// integration. Files that appear in BOTH are coalesced by the union;
     /// no integration should declare the same path with conflicting
-    /// ownership semantics within itself.
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    /// ownership semantics within itself. Where the two disagree about
+    /// [`SurfacedSource`], `WrittenThroughLink` wins — suppressing a link a
+    /// tool needs puts that tool's output where nothing tracks it, and
+    /// keeping one that turns out permanently dangling costs an inert entry.
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         self.generated_files(ctx)
     }
 
@@ -565,9 +639,9 @@ pub trait Integration {
     /// **Default: empty**, and that is the safe answer rather than a stub.
     /// Declaring a file in [`Integration::generated_files`] means "symlink this
     /// from the weave root", not "rwv wrote this": `static-files` declares the
-    /// operator's own committed files and `go-work` declares `go.sum`, which
-    /// the go tool writes. An integration that authors content overrides this
-    /// and states its own ownership evidence.
+    /// operator's own committed files, and `go-work` declares a `go.sum` rwv
+    /// has never authored a byte of. An integration that authors content
+    /// overrides this and states its own ownership evidence.
     fn owned_paths_on_disk(&self, _ctx: &IntegrationContext) -> Vec<OwnedPath> {
         Vec::new()
     }

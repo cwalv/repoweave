@@ -15,14 +15,20 @@
 //! followed by `materialize` has to leave doctor with nothing to say, over
 //! repeated rounds, in a workweave and at primary alike.
 //!
-//! **Scope.** Every fixture here is Go-free, which is the half of the defect
-//! the declaration gate closes. The other half was measured and is open: give a
-//! member a `go.mod` and `go.sum` re-enters the union legitimately, the create
-//! path leaves the dangling link `materialize` is supposed to leave, and doctor
-//! reads it as stale again — one `--fix`/`materialize` round in that shape
-//! still oscillates. Distinguishing "a link a tool is about to write through"
-//! from "a link whose source went away" needs a per-file signal the surfacing
-//! union does not carry, so nothing in this file covers it.
+//! **Scope.** The Go-free fixtures below pin the declaration gate. The second
+//! half — a name that stays in the union while its source does not exist — is
+//! pinned by [`a_declared_file_nothing_produces_converges_in_a_workweave`] and
+//! its primary twin, through `static-files`, which reaches the state with no
+//! ecosystem tool involved at all: one `rwv.toml` line naming a file that is
+//! not in the checkout. Which of the two readings a link over an absent source
+//! gets is now the declaration's own answer, so the case that used to
+//! oscillate has a fixed point.
+//!
+//! What is NOT here: the same convergence for a path an ecosystem tool writes
+//! through its link, where the fixed point is the link SURVIVING rather than
+//! staying absent. That arm is unit-level, in `src/activate.rs`
+//! (`a_missing_source_means_opposite_things_for_the_two_provenances`), because
+//! reaching it end to end costs a real ecosystem toolchain on PATH.
 
 use std::path::{Path, PathBuf};
 
@@ -55,6 +61,14 @@ fn rwv_output(cwd: &Path, args: &[&str]) -> String {
 /// and this is what tells the two apart.
 const SURFACED_CONTROL: &str = "SHARED.md";
 
+/// A name `static-files` declares that is NOT in the project checkout.
+///
+/// The whole "declared, and nothing produces it" class in one `rwv.toml`
+/// entry: no ecosystem tool is involved, so there is no toolchain to install
+/// and no hook that might quietly fill the file in and hide the state under
+/// test.
+const DECLARED_ABSENT: &str = "NOT-IN-CHECKOUT.md";
+
 /// A weave whose project has no Go in it at all: no member declares a `go.mod`,
 /// and `rwv.toml` carries no `go-work` stanza, so the integration sits at its
 /// `default_enabled()`. `static-files` declares one real file so the surfacing
@@ -71,7 +85,8 @@ fn primary_weave() -> (tempfile::TempDir, PathBuf) {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories]\n\n\
-             [integrations.static-files]\nenabled = true\nfiles = [\"{SURFACED_CONTROL}\"]\n\n\
+             [integrations.static-files]\nenabled = true\n\
+             files = [\"{SURFACED_CONTROL}\", \"{DECLARED_ABSENT}\"]\n\n\
              [integrations.vscode-workspace]\nenabled = false\n"
         ),
     )
@@ -172,4 +187,126 @@ fn doctor_fix_then_materialize_reaches_a_fixed_point() {
              stale-surfacing finding again, so the pair has no fixed point:\n{doctor}"
         );
     }
+}
+
+/// The declared-but-absent name must reach a fixed point: no link, and nothing
+/// for doctor to say about one.
+///
+/// Asserted per round rather than once at the end, because the failure this
+/// guards is an oscillation — a pair that ends where it started still passes a
+/// check taken only at the end.
+fn assert_absent_name_converges(root: &Path, where_: &str) {
+    assert!(
+        root.join(SURFACED_CONTROL).symlink_metadata().is_ok(),
+        "{where_}: the control link `{SURFACED_CONTROL}` is gone, so the \
+         assertions below would pass against a surfacing pass that stopped \
+         running"
+    );
+    let absent = root.join(DECLARED_ABSENT);
+    assert!(
+        absent.symlink_metadata().is_err(),
+        "{where_}: surfaced `{DECLARED_ABSENT}`, whose source is not in the \
+         checkout; it resolves to {} and nothing will ever write it",
+        absent
+            .read_link()
+            .map_or_else(|e| e.to_string(), |target| target.display().to_string())
+    );
+}
+
+/// `doctor`'s surfacing channel must be silent about the absent name — and the
+/// silence has to be checked against the finding TEXT, not against a clean
+/// exit, because the declaring integration legitimately reports the missing
+/// file on its own channel in the same run.
+fn assert_no_surfacing_finding(doctor: &str, where_: &str) {
+    for phrase in ["stale symlink", "no longer exists", "is not surfaced"] {
+        assert!(
+            !doctor.contains(phrase),
+            "{where_}: doctor raised a surfacing finding (`{phrase}`) for a \
+             declared file that has no source and no link:\n{doctor}"
+        );
+    }
+    assert!(
+        doctor.contains(DECLARED_ABSENT),
+        "{where_}: doctor said nothing at all about `{DECLARED_ABSENT}`. The \
+         file IS missing and the declaring integration owns that finding — a \
+         silent doctor here would mean this test is passing because the \
+         declaration went away, not because the surfacing channel got it \
+         right:\n{doctor}"
+    );
+}
+
+/// The workweave arm: the root where the loop was measured.
+#[test]
+fn a_declared_file_nothing_produces_converges_in_a_workweave() {
+    let (_tmp, ww_dir) = workweave();
+
+    for round in 1..=3 {
+        let fix = rwv_output(&ww_dir, &["doctor", "--fix"]);
+        assert_absent_name_converges(&ww_dir, &format!("round {round} --fix:\n{fix}"));
+
+        let materialize = rwv_output(&ww_dir, &["materialize"]);
+        assert_absent_name_converges(
+            &ww_dir,
+            &format!("round {round} materialize:\n{materialize}"),
+        );
+
+        let doctor = rwv_output(&ww_dir, &["doctor"]);
+        assert_no_surfacing_finding(&doctor, &format!("round {round}"));
+    }
+}
+
+/// The primary arm, and not a duplicate of the one above.
+///
+/// Primary never reported a stale link at all: the check took its
+/// missing-source flag from "am I in a workweave", which is false here, so the
+/// arm that fires on the link could not be reached from this root. The loop was
+/// the workweave symptom of that; a link standing over a source that had gone
+/// away, forever unreported, was the primary one. Both are the same flag, so
+/// both have to be pinned or half the fix is untested.
+#[test]
+fn a_declared_file_nothing_produces_converges_at_primary() {
+    let (_tmp, ws) = primary_weave();
+
+    for round in 1..=3 {
+        let fix = rwv_output(&ws, &["doctor", "--fix"]);
+        assert_absent_name_converges(&ws, &format!("round {round} --fix:\n{fix}"));
+
+        let materialize = rwv_output(&ws, &["materialize"]);
+        assert_absent_name_converges(&ws, &format!("round {round} materialize:\n{materialize}"));
+
+        let doctor = rwv_output(&ws, &["doctor"]);
+        assert_no_surfacing_finding(&doctor, &format!("round {round}"));
+    }
+}
+
+/// A link left behind at a declared name whose source went away IS stale, and
+/// at primary too. The complement of the two tests above: they pin that a link
+/// is never created, this pins that one already there is reported and removed.
+#[test]
+fn a_link_over_a_vanished_source_is_reported_and_removed_at_primary() {
+    let (_tmp, ws) = primary_weave();
+
+    // Through rwv's own seam, not `std::os::unix`: it is what production uses,
+    // and it is the spelling that compiles for the Windows target the gate
+    // cross-checks.
+    repoweave::symlink::create(
+        Path::new(&format!("projects/alpha/{DECLARED_ABSENT}")),
+        &ws.join(DECLARED_ABSENT),
+        repoweave::symlink::LinkTarget::File,
+    )
+    .unwrap();
+
+    let doctor = rwv_output(&ws, &["doctor"]);
+    assert!(
+        doctor.contains("stale symlink") && doctor.contains(DECLARED_ABSENT),
+        "a link standing over an absent source is stale, and primary used to \
+         be unable to say so:\n{doctor}"
+    );
+
+    let fix = rwv_output(&ws, &["doctor", "--fix"]);
+    assert!(
+        ws.join(DECLARED_ABSENT).symlink_metadata().is_err(),
+        "--fix should have removed the stale link:\n{fix}"
+    );
+    assert_absent_name_converges(&ws, "after --fix");
 }

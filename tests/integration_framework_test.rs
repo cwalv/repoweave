@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use repoweave::integration::{
-    is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity,
+    is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
 };
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::RefName;
@@ -697,7 +697,10 @@ fn cargo_workspace_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(CargoWorkspace.generated_files(&ctx), Vec::<String>::new());
+    assert_eq!(
+        CargoWorkspace.generated_files(&ctx),
+        Vec::<SurfacedFile>::new()
+    );
 
     // Repos with Cargo.toml present → files returned
     let mut repos_with_manifest = BTreeMap::new();
@@ -724,10 +727,16 @@ fn cargo_workspace_generated_files() {
     // Post-port: Cargo.toml moved to managed_files() because
     // it is hybrid (rwv owns the [workspace] region, user owns
     // [profile.*]/[workspace.lints.*]/etc.). Cargo.lock stays fully-owned.
-    assert_eq!(CargoWorkspace.generated_files(&ctx2), vec!["Cargo.lock"]);
+    assert_eq!(
+        CargoWorkspace.generated_files(&ctx2),
+        vec![SurfacedFile::written_through_link("Cargo.lock")]
+    );
     assert_eq!(
         CargoWorkspace.managed_files(&ctx2),
-        vec!["Cargo.lock", "Cargo.toml"]
+        vec![
+            SurfacedFile::written_through_link("Cargo.lock"),
+            SurfacedFile::written_at_source("Cargo.toml")
+        ]
     );
 }
 
@@ -759,7 +768,10 @@ fn npm_workspaces_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(NpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
+    assert_eq!(
+        NpmWorkspaces.generated_files(&ctx),
+        Vec::<SurfacedFile>::new()
+    );
 
     // Repos with package.json present → files returned
     let mut repos_with_manifest = BTreeMap::new();
@@ -788,11 +800,14 @@ fn npm_workspaces_generated_files() {
     // package-lock.json is fully-owned and stays in generated_files().
     assert_eq!(
         NpmWorkspaces.generated_files(&ctx2),
-        vec!["package-lock.json"]
+        vec![SurfacedFile::written_through_link("package-lock.json")]
     );
     assert_eq!(
         NpmWorkspaces.managed_files(&ctx2),
-        vec!["package-lock.json", "package.json"]
+        vec![
+            SurfacedFile::written_through_link("package-lock.json"),
+            SurfacedFile::written_at_source("package.json")
+        ]
     );
 }
 
@@ -824,7 +839,10 @@ fn pnpm_workspaces_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(PnpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
+    assert_eq!(
+        PnpmWorkspaces.generated_files(&ctx),
+        Vec::<SurfacedFile>::new()
+    );
 
     // Repos with package.json present → files returned
     let mut repos_with_manifest = BTreeMap::new();
@@ -854,11 +872,11 @@ fn pnpm_workspaces_generated_files() {
     // install`) and stays in generated_files().
     assert_eq!(
         PnpmWorkspaces.generated_files(&ctx2),
-        vec!["pnpm-lock.yaml"]
+        vec![SurfacedFile::written_through_link("pnpm-lock.yaml")]
     );
     assert_eq!(
         PnpmWorkspaces.managed_files(&ctx2),
-        vec!["pnpm-workspace.yaml"]
+        vec![SurfacedFile::written_at_source("pnpm-workspace.yaml")]
     );
 }
 
@@ -895,8 +913,8 @@ fn go_work_generated_files() {
     // each — not whether either declares anything into a weave with no Go in
     // it, where a declaration is a weave-root symlink at a source no go tool
     // will ever write.
-    assert_eq!(GoWork.generated_files(&ctx), Vec::<String>::new());
-    assert_eq!(GoWork.managed_files(&ctx), Vec::<String>::new());
+    assert_eq!(GoWork.generated_files(&ctx), Vec::<SurfacedFile>::new());
+    assert_eq!(GoWork.managed_files(&ctx), Vec::<SurfacedFile>::new());
 
     // Repos with go.mod present → files returned
     let mut repos_with_manifest = BTreeMap::new();
@@ -920,8 +938,14 @@ fn go_work_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(GoWork.generated_files(&ctx2), vec!["go.sum"]);
-    assert_eq!(GoWork.managed_files(&ctx2), vec!["go.work"]);
+    assert_eq!(
+        GoWork.generated_files(&ctx2),
+        vec![SurfacedFile::written_through_link("go.sum")]
+    );
+    assert_eq!(
+        GoWork.managed_files(&ctx2),
+        vec![SurfacedFile::written_at_source("go.work")]
+    );
 }
 
 #[test]
@@ -952,7 +976,10 @@ fn uv_workspace_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(UvWorkspace.generated_files(&ctx), Vec::<String>::new());
+    assert_eq!(
+        UvWorkspace.generated_files(&ctx),
+        Vec::<SurfacedFile>::new()
+    );
 
     // Repos with pyproject.toml present → files returned
     let mut repos_with_manifest = BTreeMap::new();
@@ -979,10 +1006,16 @@ fn uv_workspace_generated_files() {
     // Post-port: pyproject.toml is hybrid — it lives in managed_files(),
     // NOT generated_files(). generated_files() is for fully-owned artifacts
     // that are gitignore-eligible and whole-deletable; pyproject.toml is neither.
-    assert_eq!(UvWorkspace.generated_files(&ctx2), vec!["uv.lock"]);
+    assert_eq!(
+        UvWorkspace.generated_files(&ctx2),
+        vec![SurfacedFile::written_through_link("uv.lock")]
+    );
     assert_eq!(
         UvWorkspace.managed_files(&ctx2),
-        vec!["uv.lock", "pyproject.toml"]
+        vec![
+            SurfacedFile::written_through_link("uv.lock"),
+            SurfacedFile::written_at_source("pyproject.toml")
+        ]
     );
 }
 
@@ -1014,7 +1047,13 @@ fn gita_generated_files() {
     };
 
     let files = Gita.generated_files(&ctx);
-    assert_eq!(files, vec!["gita/repos.csv", "gita/groups.csv"]);
+    assert_eq!(
+        files,
+        vec![
+            SurfacedFile::written_at_source("gita/repos.csv"),
+            SurfacedFile::written_at_source("gita/groups.csv")
+        ]
+    );
 }
 
 #[test]
@@ -1050,7 +1089,7 @@ fn vscode_workspace_generated_files_includes_project_name() {
     assert!(VscodeWorkspace.generated_files(&ctx).is_empty());
     assert_eq!(
         VscodeWorkspace.managed_files(&ctx),
-        vec!["web-app.code-workspace"]
+        vec![SurfacedFile::written_at_source("web-app.code-workspace")]
     );
 }
 
@@ -1086,7 +1125,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
     assert!(VscodeWorkspace.generated_files(&ctx).is_empty());
     assert_eq!(
         VscodeWorkspace.managed_files(&ctx),
-        vec!["mobile-app.code-workspace"]
+        vec![SurfacedFile::written_at_source("mobile-app.code-workspace")]
     );
 }
 
@@ -1103,7 +1142,9 @@ mod generated_managed_split_and_trigger_model {
     use std::sync::{Arc, Mutex};
 
     use repoweave::activate::{activate, activate_intent_with_options, ActivateOptions};
-    use repoweave::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+    use repoweave::integration::{
+        Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
+    };
     use repoweave::manifest::ProjectName;
     use repoweave::workspace::ContainerKind;
 
@@ -1174,11 +1215,17 @@ mod generated_managed_split_and_trigger_model {
             self.calls.lock().unwrap().verify += 1;
             Ok(Vec::new())
         }
-        fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-            self.generated.clone()
+        fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+            self.generated
+                .iter()
+                .map(SurfacedFile::written_at_source)
+                .collect()
         }
-        fn managed_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-            self.managed.clone()
+        fn managed_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+            self.managed
+                .iter()
+                .map(SurfacedFile::written_at_source)
+                .collect()
         }
     }
 
@@ -1211,8 +1258,11 @@ mod generated_managed_split_and_trigger_model {
             fn check(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
                 Ok(Vec::new())
             }
-            fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-                vec!["legacy.lock".into(), "legacy.toml".into()]
+            fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+                vec![
+                    SurfacedFile::written_through_link("legacy.lock"),
+                    SurfacedFile::written_at_source("legacy.toml"),
+                ]
             }
             // managed_files NOT overridden — should default to generated_files
         }
@@ -1470,8 +1520,8 @@ mod generated_managed_split_and_trigger_model {
             fn check(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
                 Ok(Vec::new())
             }
-            fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-                vec!["lock.txt".into()]
+            fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+                vec![SurfacedFile::written_through_link("lock.txt")]
             }
         }
         let legacy_inline = LegacyOnlyGenerated;
@@ -1485,10 +1535,10 @@ mod generated_managed_split_and_trigger_model {
         // the symlink set as a unioned membership test.
         let mut union: std::collections::BTreeSet<String> = Default::default();
         for f in split.generated_files(&ctx) {
-            union.insert(f);
+            union.insert(f.name().to_string());
         }
         for f in split.managed_files(&ctx) {
-            union.insert(f);
+            union.insert(f.name().to_string());
         }
         assert_eq!(
             union,

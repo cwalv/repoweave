@@ -74,7 +74,9 @@
 //! `uv.lock` stays in `generated_files()` — it is fully-owned by rwv and
 //! gitignore-eligible.
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+};
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
     orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult,
@@ -600,11 +602,11 @@ impl Integration for UvWorkspace {
         paths
     }
 
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         if ctx.detect_repos_with_manifest("pyproject.toml").is_empty() {
             return vec![];
         }
-        vec!["uv.lock".to_string()]
+        vec![SurfacedFile::written_through_link("uv.lock")]
     }
 
     /// `pyproject.toml` is **hybrid** (rwv owns `[tool.uv.workspace].members`
@@ -612,10 +614,10 @@ impl Integration for UvWorkspace {
     /// owns everything else). It MUST NOT appear in `generated_files()` — that
     /// would mark it gitignore-eligible and whole-deletable, the exact
     /// data-loss bug the merge port fixes.
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         let mut files = self.generated_files(ctx);
         if !ctx.detect_repos_with_manifest("pyproject.toml").is_empty() {
-            files.push("pyproject.toml".to_string());
+            files.push(SurfacedFile::written_at_source("pyproject.toml"));
         }
         files
     }

@@ -387,10 +387,16 @@ files = ["turbo.json"]
         .stdout(predicate::str::contains(
             "[warning] vscode-workspace: my-app.code-workspace does not exist",
         ))
-        .stdout(predicate::str::contains("is not surfaced"))
         .stdout(predicate::str::contains(
             "[warning] static-files: declared file 'turbo.json' not found in project directory",
-        ));
+        ))
+        // Both declared files are absent at their source, and neither is
+        // written through its link, so there is no link to expect and the
+        // surfacing channel says nothing — the integrations own the finding.
+        // A third report naming the link would be the same fact again, and
+        // the only repair it could offer is the dangling link this fixture
+        // must not grow.
+        .stdout(predicate::str::contains("is not surfaced").not());
 }
 
 // ===========================================================================

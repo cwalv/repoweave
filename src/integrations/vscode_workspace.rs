@@ -13,7 +13,9 @@
 //! and `verify` go through it — regeneration and drift detection cannot
 //! disagree about what the region should hold.
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+};
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc,
     RwvGeneratedMarker,
@@ -661,7 +663,7 @@ impl Integration for VscodeWorkspace {
         }
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         vec![]
     }
 
@@ -670,11 +672,11 @@ impl Integration for VscodeWorkspace {
     /// inside a file that also carries the user's own folders and settings.
     /// It MUST NOT appear in `generated_files()` — that would mark it
     /// gitignore-eligible and whole-deletable.
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        vec![format!(
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+        vec![SurfacedFile::written_at_source(format!(
             "{}.code-workspace",
             crate::workspace::flat_project_segment(ctx.project)
-        )]
+        ))]
     }
 }
 
@@ -728,7 +730,9 @@ mod tests {
         );
         assert_eq!(
             integration.managed_files(&ctx),
-            vec!["test-project.code-workspace".to_string()]
+            vec![SurfacedFile::written_at_source(
+                "test-project.code-workspace"
+            )]
         );
     }
 

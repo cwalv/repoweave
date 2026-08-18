@@ -32,7 +32,9 @@
 //! config sees a clear message rather than relying on the framework's
 //! tie-breaking (defense in depth).
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
+};
 use serde::Deserialize;
 use std::path::Path;
 
@@ -168,10 +170,13 @@ impl Integration for StaticFiles {
         Ok(issues)
     }
 
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         ctx.config
             .settings::<StaticFilesConfig>()
             .unwrap_or_default()
             .files
+            .into_iter()
+            .map(SurfacedFile::written_at_source)
+            .collect()
     }
 }

@@ -153,7 +153,9 @@
 //! Opt-out keys that don't match any active Rust repo are silently ignored
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+};
 use crate::integrations::merge::{
     drift_issues, fully_owned_parse_fail_issue, holds_owned_region, keypath, merge_activate,
     missing_issue, orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath,
@@ -902,14 +904,14 @@ impl Integration for CargoWorkspace {
     }
 
     /// `Cargo.lock` is fully-owned — gitignore-eligible, whole-deletable.
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
             return vec![];
         };
         if !Self::has_active_cargo_work(ctx, &cfg) {
             return vec![];
         }
-        vec!["Cargo.lock".to_string()]
+        vec![SurfacedFile::written_through_link("Cargo.lock")]
     }
 
     /// `Cargo.toml`'s marked `[workspace]` region, and the `Cargo.lock` that
@@ -1024,13 +1026,13 @@ impl Integration for CargoWorkspace {
     /// to a hand-authored `.gitignore` if they prefer local regeneration.
     /// Same policy already applies to the `.rwv-owned-digests` bookkeeping
     /// file — rwv publishes it, the operator commits or ignores per policy.
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         let mut files = self.generated_files(ctx);
         let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
             return files;
         };
         if Self::has_active_cargo_work(ctx, &cfg) {
-            files.push("Cargo.toml".to_string());
+            files.push(SurfacedFile::written_at_source("Cargo.toml"));
             // The generated `.cargo/config.toml` is hybrid — surfacing lets
             // cargo's upward config discovery find the WEAVE-ROOT symlink
             // (whose `read_link` resolves to the project-dir file). Only
@@ -1046,7 +1048,7 @@ impl Integration for CargoWorkspace {
                 || (cfg.rustc_wrapper.is_some()
                     && ctx.output_dir.join(".cargo").join("config.toml").is_file())
             {
-                files.push(".cargo/config.toml".to_string());
+                files.push(SurfacedFile::written_at_source(".cargo/config.toml"));
             }
         }
         files

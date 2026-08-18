@@ -1,4 +1,6 @@
-use crate::integration::{Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity};
+use crate::integration::{
+    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -172,7 +174,10 @@ impl Integration for Gita {
             .collect()
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        vec!["gita/repos.csv".to_string(), "gita/groups.csv".to_string()]
+    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+        vec![
+            SurfacedFile::written_at_source("gita/repos.csv"),
+            SurfacedFile::written_at_source("gita/groups.csv"),
+        ]
     }
 }

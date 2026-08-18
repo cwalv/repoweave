@@ -8753,14 +8753,9 @@ fn disabled_integration_issues(
 /// Under [`Repair::Report`] nothing here mints an [`IssueKind::CoreFinding`] —
 /// every core finding is a `CheckViolation` — which is what lets `--json`
 /// carry the two channels as disjoint arrays.
-fn collect_doctor_issues(
-    ctx: &crate::workspace::WorkspaceContext,
-    world: &DoctorWorld,
-    repair: Repair,
-) -> Vec<Issue> {
+fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
     use crate::integration::Severity;
     use crate::integration_runner::run_checks;
-    use crate::workspace::Checkout;
 
     let workspace_dir = &world.workspace_dir;
     let builtin = crate::integrations::builtin_integrations();
@@ -8870,13 +8865,8 @@ fn collect_doctor_issues(
         // exist and resolve. Scoped to `workspace_dir` (= `ctx.active_path()`),
         // so it checks primary's surfacing at primary and the workweave's
         // inside a workweave.
-        let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
-        let surfacing_issues = crate::activate::verify_surfacing(
-            workspace_dir,
-            &project.name,
-            &project.manifest,
-            in_workweave,
-        );
+        let surfacing_issues =
+            crate::activate::verify_surfacing(workspace_dir, &project.name, &project.manifest);
         let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
             surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
         // A real file or dir occupying a surfacing path is user-held and never
@@ -8892,7 +8882,6 @@ fn collect_doctor_issues(
                 workspace_dir,
                 &project.name,
                 &project.manifest,
-                in_workweave,
                 crate::activate::SurfacingMode::Repair,
             ) {
                 Ok(()) => println!(
@@ -9119,7 +9108,6 @@ pub fn run_check(
 
     if kind_filter.is_none() {
         all_issues.extend(collect_doctor_issues(
-            ctx,
             &world,
             if fix { Repair::Apply } else { Repair::Report },
         ));
@@ -9804,7 +9792,7 @@ pub fn run_check_json(
         None => violations,
     };
     let issues = if kind_filter.is_none() {
-        collect_doctor_issues(ctx, &world, Repair::Report)
+        collect_doctor_issues(&world, Repair::Report)
     } else {
         Vec::new()
     };

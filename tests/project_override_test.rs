@@ -158,12 +158,28 @@ fn project_override_runs_without_changing_active() {
 
 /// Select `proj-a` for real (symlinks + `.rwv-active`) so a later
 /// `--project proj-b` run has an established selection to disturb.
+///
+/// `activate` is a context verb and authors nothing, so the repair verb runs
+/// after it to write the `.code-workspace` this fixture then requires to be
+/// surfaced. Without that step the weave root holds no link for it at all:
+/// a managed file written at its source is not surfaced until it exists, so
+/// what this helper asserts would otherwise be a link resolving to nothing —
+/// which is not a selection anything downstream could disturb.
 fn select_proj_a(ws: &Path) {
     rwv()
         .args(["activate", "proj-a"])
         .current_dir(ws)
         .assert()
         .success();
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    assert!(
+        ws.join("projects/proj-a/proj-a.code-workspace").is_file(),
+        "fixture: proj-a's managed file must exist before it can be surfaced"
+    );
     assert_eq!(
         std::fs::read_link(ws.join("proj-a.code-workspace")).unwrap(),
         Path::new("projects/proj-a/proj-a.code-workspace"),

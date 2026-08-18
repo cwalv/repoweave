@@ -37,7 +37,7 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::cli::consent::DriftConsent;
-use crate::integration::{Integration, OwnedPath, Severity};
+use crate::integration::{Integration, OwnedPath, Severity, SurfacedSource};
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
     run_activate_hooks, run_activations, run_checks, run_deactivations, run_verifications,
@@ -151,26 +151,16 @@ pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<
 /// at primary and the workweave directory inside a workweave — the isolation
 /// contract pinned by `doctor_workweave_content_fix_isolation_test`.
 ///
-/// Both non-default knobs of the workweave-flavoured
-/// [`activate_workweave_intent`] are deliberately absent here, because a
-/// generated lockfile needs both to exist at all:
-///
-/// - **Install hooks run.** A `generated_files()` lockfile has no other
-///   author — only `cargo generate-lockfile` / `npm install` / `uv sync`
-///   produce one, so a hook-suppressed `--fix` reports the lock as
-///   regenerable and then leaves it missing. Hooks only fire when doctor
-///   already found safe-to-fix drift, so a clean weave still pays nothing.
-/// - **Dangling symlinks are created** (`skip_missing_sources = false`).
-///   That is the mechanism by which a lock the ecosystem tool writes at the
-///   weave root lands in `projects/<project>/`: the surfacing step precedes
-///   the hooks, and the tool writes *through* the link into the canonical
-///   file. Skip it and the tool drops a real file at the weave root that no
-///   repo tracks and no later verify pass can see.
+/// **Install hooks run**, unlike the workweave-flavoured
+/// [`activate_workweave_intent`]. A `generated_files()` lockfile has no other
+/// author — only `cargo generate-lockfile` / `npm install` / `uv sync`
+/// produce one, so a hook-suppressed `--fix` reports the lock as regenerable
+/// and then leaves it missing. Hooks only fire when doctor already found
+/// safe-to-fix drift, so a clean weave still pays nothing.
 pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()> {
     activate_at(
         weave_dir,
         project,
-        false,
         ActivateOptions::default(),
         ActivationMode::Intent,
     )
@@ -184,13 +174,7 @@ pub fn activate_intent_with_options(
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    activate_at(
-        ctx.primary_path(),
-        project,
-        false,
-        opts,
-        ActivationMode::Intent,
-    )
+    activate_at(ctx.primary_path(), project, opts, ActivationMode::Intent)
 }
 
 /// Run `rwv materialize`: the integration hooks, for the project this checkout
@@ -225,7 +209,6 @@ pub fn materialize(ctx: &WorkspaceContext, consent: Option<DriftConsent>) -> any
     activate_at(
         root,
         project.as_str(),
-        false,
         ActivateOptions::default(),
         ActivationMode::Materialize(consent),
     )
@@ -367,14 +350,23 @@ fn forget_unproduced_attestations(
         return Ok(());
     }
     let default_config = IntegrationConfig::default();
-    let produced: BTreeSet<String> = enabled_integrations(integrations, manifest, &default_config)
-        .flat_map(|(integration, config)| {
-            let ctx = ctx_base.build_context(config, manifest);
-            integration.generated_files(&ctx)
-        })
-        .collect();
+    // Fully-owned declaration, not [`SurfacedSource`]: an attestation follows
+    // whether rwv vouches for the bytes, and both a lock a hook writes and a
+    // CSV `activate()` writes are vouched for while differing on where the
+    // write lands.
+    let declared_fully_owned: BTreeSet<String> =
+        enabled_integrations(integrations, manifest, &default_config)
+            .flat_map(|(integration, config)| {
+                let ctx = ctx_base.build_context(config, manifest);
+                integration.generated_files(&ctx)
+            })
+            .map(|f| f.into_parts().0)
+            .collect();
 
-    for name in attested.iter().filter(|name| !produced.contains(*name)) {
+    for name in attested
+        .iter()
+        .filter(|name| !declared_fully_owned.contains(*name))
+    {
         forget_owned_digest(output_dir, name)?;
         eprintln!(
             "[forgot] core: nothing enabled here generates {name}; rwv no longer \
@@ -477,13 +469,7 @@ pub fn activate_with_options(
         ),
     };
 
-    activate_at(
-        ctx.primary_path(),
-        project,
-        false,
-        opts,
-        ActivationMode::Context,
-    )?;
+    activate_at(ctx.primary_path(), project, opts, ActivationMode::Context)?;
 
     // Project SELECTION, after activation rather than inside it. An activate
     // hook that errored bails above, so a partially-activated workspace
@@ -507,12 +493,6 @@ pub fn strip_project_regions(
 
 /// Shared activation logic.
 ///
-/// `skip_missing_sources`: when `true`, symlinks whose source file does not yet
-/// exist on disk are skipped (used for workweave activation). When `false`,
-/// dangling symlinks are created intentionally so that lock files written by
-/// ecosystem tools (Cargo.lock, package-lock.json, …) flow back through the
-/// symlink into the project directory.
-///
 /// `mode`: which class of verb is driving activation (see [`ActivationMode`]).
 /// In `Intent` mode the integrations' `activate()` is called (regenerate and
 /// commit). In `Context` mode the integrations' `verify()` is called instead
@@ -520,7 +500,6 @@ pub fn strip_project_regions(
 fn activate_at(
     root: &Path,
     project: &str,
-    skip_missing_sources: bool,
     opts: ActivateOptions,
     mode: ActivationMode,
 ) -> anyhow::Result<()> {
@@ -619,13 +598,7 @@ fn activate_at(
         ActivationMode::Context => SurfacingMode::Select,
         ActivationMode::Intent | ActivationMode::Materialize(_) => SurfacingMode::Repair,
     };
-    surface_symlinks(
-        root,
-        &project_name,
-        &manifest,
-        skip_missing_sources,
-        surfacing_mode,
-    )?;
+    surface_symlinks(root, &project_name, &manifest, surfacing_mode)?;
 
     // Run integration activate hooks (install commands).
     //    Per-integration hooks operate on the now-in-place symlinks at the
@@ -893,9 +866,6 @@ fn remove_activation_symlinks_in(
 /// return the primary root via the `.rwv-workweave` marker). Instead it works
 /// directly against the workweave directory.
 ///
-/// Symlinks for files that do not yet exist on disk are skipped (the workweave
-/// is a view onto an existing project, so dangling symlinks are not useful).
-///
 /// Install hooks (`npm install`, `cargo fetch`, …) are
 /// skipped at workweave creation: the workweave shares clones with
 /// primary, so install state is typically inherited rather than
@@ -911,7 +881,6 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
     activate_at(
         workweave_dir,
         project,
-        true,
         ActivateOptions {
             no_materialize: true,
         },
@@ -923,9 +892,7 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
 /// into the workweave's project directory, which writes through to the
 /// project repo the workweave is a view onto.
 ///
-/// Symlinks for files that do not yet exist on disk are skipped (the
-/// workweave is a view onto an existing project, so dangling symlinks are
-/// not useful). Install hooks remain suppressed in the workweave (mirroring
+/// Install hooks remain suppressed in the workweave (mirroring
 /// [`activate_workweave`]).
 ///
 /// Used by the intent verbs (`add`, `remove`, `update`) when they run inside
@@ -936,12 +903,28 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
     activate_at(
         workweave_dir,
         project,
-        true,
         ActivateOptions {
             no_materialize: true,
         },
         ActivationMode::Intent,
     )
+}
+
+/// One entry of the surfacing union: who declared the path, and whether its
+/// link may stand over a file that does not exist yet.
+struct SurfacedEntry {
+    integration: String,
+    source: SurfacedSource,
+}
+
+/// Whether the link for this declaration should not exist yet: its file has to
+/// be written at the source, and nothing has written it.
+///
+/// The one predicate [`surface_symlinks`] and [`verify_surfacing`] share, so
+/// what the creator declines to make is exactly what the check declines to
+/// expect. Splitting it is how the two came to disagree at the same root.
+fn link_waits_for_its_source(entry: &SurfacedEntry, source: &Path) -> bool {
+    entry.source == SurfacedSource::WrittenAtSource && !source.exists()
 }
 
 /// Compute the owner-scoped surfacing set for `project` at `root`: the union
@@ -955,14 +938,14 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
 /// enabled integration the first declarer wins for the label; the path itself
 /// is coalesced (the set is keyed by path).
 ///
-/// Returns `(path -> declaring-integration-name)`. Iteration order is sorted
-/// by path (`BTreeMap`), matching the deterministic ordering the previous
-/// `BTreeSet` provided to symlink creation.
+/// Returns `(path -> declaring integration and where its write lands)`.
+/// Iteration order is sorted by path (`BTreeMap`), matching the deterministic
+/// ordering the previous `BTreeSet` provided to symlink creation.
 fn compute_owned_set(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-) -> std::collections::BTreeMap<String, String> {
+) -> std::collections::BTreeMap<String, SurfacedEntry> {
     let session = WorkspaceSession::new(root);
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
@@ -970,7 +953,8 @@ fn compute_owned_set(
     let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     let default_config = IntegrationConfig::default();
 
-    let mut owned: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut owned: std::collections::BTreeMap<String, SurfacedEntry> =
+        std::collections::BTreeMap::new();
     for (integration, config) in enabled_integrations(&integrations, manifest, &default_config) {
         let int_ctx = ctx_base.build_context(config, manifest);
         for f in integration
@@ -978,9 +962,18 @@ fn compute_owned_set(
             .into_iter()
             .chain(integration.managed_files(&int_ctx))
         {
+            let (name, source) = f.into_parts();
             owned
-                .entry(f)
-                .or_insert_with(|| integration.name().to_string());
+                .entry(name)
+                .and_modify(|held| {
+                    if source == SurfacedSource::WrittenThroughLink {
+                        held.source = source;
+                    }
+                })
+                .or_insert_with(|| SurfacedEntry {
+                    integration: integration.name().to_string(),
+                    source,
+                });
         }
     }
     owned
@@ -1040,10 +1033,12 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 /// is valid in any weave — it is exactly what workweave-create runs at
 /// creation, and what `rwv doctor --fix` re-runs to repair missing surfacing.
 ///
-/// `skip_missing_sources`: when `true`, symlinks whose source file does not yet
-/// exist are skipped (workweave surfacing — a view onto an existing project).
-/// When `false`, dangling symlinks are created intentionally so ecosystem lock
-/// files written later flow back through the symlink into the project dir.
+/// Whether a link is created over a source that does not exist is the
+/// declaration's own answer, not this call's: a
+/// [`SurfacedSource::WrittenThroughLink`] path gets its link either way,
+/// because the link is what routes the tool's write into the project dir,
+/// while a [`SurfacedSource::WrittenAtSource`] path is skipped until its file
+/// is there.
 ///
 /// `mode` decides whether `project` may take the root's shared names. In
 /// [`SurfacingMode::Repair`] it may only when the root already presents it, so
@@ -1053,7 +1048,6 @@ pub fn surface_symlinks(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-    skip_missing_sources: bool,
     mode: SurfacingMode,
 ) -> anyhow::Result<()> {
     let project_dir = project_dir(root, project.as_str());
@@ -1083,7 +1077,10 @@ pub fn surface_symlinks(
             );
         }
     }
-    let new_generated: Vec<String> = new_owned.iter().cloned().collect();
+    let new_generated: Vec<(&String, &SurfacedEntry)> = owned
+        .iter()
+        .filter(|(file, _)| new_owned.contains(file.as_str()))
+        .collect();
 
     // 2. Remove old symlinks from a previous activation using the
     //    owner-scoped predicate: a root symlink is unlinked only if its
@@ -1124,18 +1121,13 @@ pub fn surface_symlinks(
     }
 
     // 3. Create new symlinks at root pointing to project_dir files.
-    for file in &new_generated {
+    for (file, entry) in &new_generated {
         let source = project_dir.join(file);
         let link = root.join(file);
 
-        if skip_missing_sources && !source.exists() {
+        if link_waits_for_its_source(entry, &source) {
             continue;
         }
-
-        // When skip_missing_sources is false, create symlinks even if the
-        // target doesn't exist yet — lock files (Cargo.lock, package-lock.json,
-        // etc.) are populated by ecosystem tools on first build/install,
-        // writing through the dangling symlink.
 
         // Ensure parent directory exists for nested files (e.g., gita/repos.csv).
         if let Some(parent) = link.parent() {
@@ -1298,20 +1290,11 @@ pub fn member_incompatibilities(
 /// [`surface_symlinks`] bound to the weave that was scanned — an Axis-1 gap
 /// needs no authoring, and [`activate_intent`] would target primary.
 ///
-/// `skip_missing_sources` mirrors [`surface_symlinks`] **at the value this
-/// call passes**: when `true`, a file whose source does not exist is not
-/// expected to be surfaced, so an absent symlink is not flagged. A symlink
-/// already sitting at that path is flagged however it resolves.
-///
-/// The value is a property of the verb, not of the root, and the two disagree
-/// inside a workweave: creation and this check's repair arm pass `true`, while
-/// the verbs that go on to run an ecosystem tool pass `false` at that same
-/// root, deliberately leaving a dangling link for the tool to write a lock
-/// through. So a correctly-resolving link over a missing source is a leftover
-/// from before the source went away in the first case and a link created
-/// moments ago in the second, and nothing on disk distinguishes them — the
-/// finding names the first, and a declaration whose file no tool ever produces
-/// re-arms it on every such verb.
+/// Expectations mirror [`surface_symlinks`] through the one predicate both
+/// consult, so the check expects exactly what the creator makes. A link
+/// standing over an absent file therefore reads two
+/// ways by declaration rather than by verb: pending for a path a tool writes
+/// through it, stale for a path whose file should already be there.
 ///
 /// The expectations are likewise symmetric with what a repair may create: a
 /// project the root does not present is expected to surface its
@@ -1322,7 +1305,6 @@ pub fn verify_surfacing(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
-    skip_missing_sources: bool,
 ) -> Vec<crate::integration::Issue> {
     use crate::integration::{Issue, IssueKind, Severity};
 
@@ -1350,12 +1332,13 @@ pub fn verify_surfacing(
         }
     }
 
-    for (file, integration) in &owned {
+    for (file, entry) in &owned {
         if !presents_project && !is_project_named(file, project) {
             continue;
         }
         let source = project_dir.join(file);
-        let source_missing = skip_missing_sources && !source.exists();
+        let source_missing = link_waits_for_its_source(entry, &source);
+        let integration = &entry.integration;
 
         let link = root.join(file);
         let expected_target = relative_symlink_target(project.as_str(), file);
@@ -1650,8 +1633,7 @@ mod tests {
         let manifest = load_manifest(root, &project);
         std::fs::write(root.join(".claude"), "user content").unwrap();
 
-        let err =
-            surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap_err();
+        let err = surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains(".claude"),
@@ -1675,7 +1657,7 @@ mod tests {
         std::fs::write(claude.join("agents").join("a.md"), "x").unwrap();
         let manifest = load_manifest(root, &project);
 
-        surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap();
+        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
 
         let link = root.join(".claude");
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
@@ -1691,7 +1673,7 @@ mod tests {
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
 
-        surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap();
+        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
 
         // The symlink exists at the root and resolves to the project copy.
         let link = root.join(".claude");
@@ -1703,7 +1685,7 @@ mod tests {
         );
 
         // verify_surfacing reports nothing — surfacing matches the union.
-        let issues = verify_surfacing(root, &project, &manifest, false);
+        let issues = verify_surfacing(root, &project, &manifest);
         assert!(
             issues.is_empty(),
             "expected clean surfacing, got: {issues:?}"
@@ -1719,7 +1701,7 @@ mod tests {
         let manifest = load_manifest(root, &project);
 
         // Do NOT surface — the symlink is absent.
-        let issues = verify_surfacing(root, &project, &manifest, false);
+        let issues = verify_surfacing(root, &project, &manifest);
         assert_eq!(issues.len(), 1, "expected one missing-surfacing issue");
         let issue = &issues[0];
         assert_eq!(issue.integration, "static-files");
@@ -1751,7 +1733,7 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &project, &manifest, false);
+        let issues = verify_surfacing(root, &project, &manifest);
         assert_eq!(issues.len(), 1);
         assert!(issues[0].safe_to_fix);
         assert!(
@@ -1772,7 +1754,7 @@ mod tests {
 
         std::fs::write(root.join(".claude"), "i am a real file\n").unwrap();
 
-        let issues = verify_surfacing(root, &project, &manifest, false);
+        let issues = verify_surfacing(root, &project, &manifest);
         assert_eq!(issues.len(), 1);
         assert!(
             !issues[0].safe_to_fix,
@@ -1792,12 +1774,12 @@ mod tests {
         // Start from the un-surfaced (missing) state — the symlink was never
         // created in this weave (manifest gained the file after create, or a
         // manual rm). The check flags it.
-        assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
+        assert_eq!(verify_surfacing(root, &project, &manifest).len(), 1);
 
         // The fix primitive (NOT activate_intent) creates the symlink.
-        surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap();
+        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
         assert!(
-            verify_surfacing(root, &project, &manifest, false).is_empty(),
+            verify_surfacing(root, &project, &manifest).is_empty(),
             "re-surfacing should clear the missing-symlink finding"
         );
     }
@@ -1814,7 +1796,7 @@ mod tests {
         let other = write_surfacing_project(root, "other-app", &[".claude"], &[".claude"]);
         let manifest = load_manifest(root, &other);
 
-        surface_symlinks(root, &other, &manifest, false, SurfacingMode::Select).unwrap();
+        surface_symlinks(root, &other, &manifest, SurfacingMode::Select).unwrap();
         assert_eq!(
             std::fs::read_to_string(root.join(".rwv-active"))
                 .unwrap()
@@ -1824,33 +1806,123 @@ mod tests {
         );
     }
 
+    /// A declared file written at its source, with no source yet, is not
+    /// expected to be surfaced anywhere — the answer no longer depends on
+    /// which verb is asking.
     #[test]
-    fn verify_skips_missing_source_in_workweave_mode() {
-        // In workweave mode (skip_missing_sources=true), a declared file whose
-        // source does not exist on disk is intentionally not surfaced, so its
-        // absent symlink must NOT be flagged — the check stays symmetric with
-        // what surface_symlinks actually creates.
-        //
-        // Build the state directly: `.claude` is DECLARED but NOT authored in
-        // the project dir, modelling a source that doesn't exist yet.
+    fn verify_does_not_expect_a_link_for_a_source_that_is_not_there() {
         let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
 
-        // skip_missing_sources = true → no finding (source absent, not surfaced).
-        assert!(verify_surfacing(root, &project, &manifest, true).is_empty());
-        // skip_missing_sources = false → the missing symlink IS flagged
-        // (primary semantics create dangling symlinks for lockfiles etc.).
-        assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
+        assert!(verify_surfacing(root, &project, &manifest).is_empty());
+    }
+
+    /// A weave with one cargo member and nothing authored in the project dir,
+    /// so the surfacing union holds `Cargo.lock` (written through its link)
+    /// and `Cargo.toml` (written at its source) with BOTH sources absent.
+    ///
+    /// The fixture exists to stop provenance being tested one arm at a time:
+    /// every input the two paths could differ on is held equal here, so the
+    /// declaration is the only thing left that can explain a difference in
+    /// outcome. `cargo` is never invoked — the declaration gate is a
+    /// filesystem test for a member manifest.
+    fn make_cargo_surfacing_workspace() -> (tempfile::TempDir, ProjectName) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let member = root.join("github/acme/server");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+
+        let project_dir = root.join("projects").join("web-app");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join(Manifest::FILE_NAME),
+            "[repositories.\"github/acme/server\"]\n\
+             type = \"git\"\n\
+             url = \"https://example.com/server.git\"\n\
+             version = \"main\"\n\
+             role = \"owned\"\n\
+             \n\
+             [integrations.vscode-workspace]\n\
+             enabled = false\n\
+             \n\
+             [integrations.go-work]\n\
+             enabled = false\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+        (tmp, ProjectName::new("web-app").unwrap())
+    }
+
+    /// The two rows the provenance signal exists for, driven from one fixture
+    /// so the difference cannot be an artifact of anything else.
+    ///
+    /// Catches the loop directly: before the signal, `Cargo.lock`'s dangling
+    /// link was created by one verb and reported stale by the next, and
+    /// `Cargo.toml` got a dangling link nothing would ever fill.
+    #[test]
+    fn a_missing_source_means_opposite_things_for_the_two_provenances() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(root.join("Cargo.lock")).ok(),
+            Some(std::path::PathBuf::from("projects/web-app/Cargo.lock")),
+            "the lock's link is the route cargo's write takes into the project \
+             dir, so it must exist before the file does"
+        );
+        assert!(
+            root.join("Cargo.toml").symlink_metadata().is_err(),
+            "nothing writes the managed manifest through its link, so a link \
+             over its absent source would dangle forever"
+        );
+
+        let issues = verify_surfacing(root, &project, &manifest);
+        assert!(
+            issues.is_empty(),
+            "surfacing just produced this state, so the check that reads it \
+             must agree: {issues:?}"
+        );
+    }
+
+    /// The pending link survives the repair that used to remove it. One round
+    /// of the loop, which is all it took to never converge.
+    #[test]
+    fn repairing_twice_leaves_the_pending_lock_link_alone() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        for round in 1..=3 {
+            surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+            assert!(
+                root.join("Cargo.lock").symlink_metadata().is_ok(),
+                "round {round}: the pending link was removed"
+            );
+            let issues = verify_surfacing(root, &project, &manifest);
+            assert!(
+                issues.is_empty(),
+                "round {round}: a repair left something for the next check to \
+                 report, which is the loop: {issues:?}"
+            );
+        }
     }
 
     #[test]
-    fn verify_flags_stale_symlink_when_source_missing_in_workweave_mode() {
+    fn verify_flags_stale_symlink_when_source_missing() {
         // The incident this pins: a symlink surfaced while the source existed
         // (or left by a repair scoped elsewhere), and the source is gone now.
-        // No create call passing skip_missing_sources would have left a link
-        // here, so under that flag its presence is the finding, whether or not
-        // it still resolves to the expected target.
+        // Nothing writes a static file through its link, so the link standing
+        // over an absent source is the finding, whether or not it still
+        // resolves to the expected target.
         let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
@@ -1862,7 +1934,7 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &project, &manifest, true);
+        let issues = verify_surfacing(root, &project, &manifest);
         assert_eq!(
             issues.len(),
             1,
@@ -1877,7 +1949,7 @@ mod tests {
     }
 
     #[test]
-    fn fix_removes_stale_symlink_without_recreating_it_in_workweave_mode() {
+    fn fix_removes_stale_symlink_without_recreating_it() {
         // End-to-end of the --fix primitive for the same state: the stale
         // link is removed, and (unlike the missing-symlink case) nothing
         // replaces it, because the source is still absent.
@@ -1891,16 +1963,16 @@ mod tests {
             LinkTarget::File,
         )
         .unwrap();
-        assert_eq!(verify_surfacing(root, &project, &manifest, true).len(), 1);
+        assert_eq!(verify_surfacing(root, &project, &manifest).len(), 1);
 
-        surface_symlinks(root, &project, &manifest, true, SurfacingMode::Repair).unwrap();
+        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
 
         assert!(
             root.join(".claude").symlink_metadata().is_err(),
             "the stale symlink should be removed, not recreated (source still missing)"
         );
         assert!(
-            verify_surfacing(root, &project, &manifest, true).is_empty(),
+            verify_surfacing(root, &project, &manifest).is_empty(),
             "after --fix, doctor should report nothing"
         );
     }
@@ -1941,14 +2013,7 @@ mod tests {
             &[".claude", "other-app.code-workspace"],
         );
         let manifest = load_manifest(tmp.path(), &presented);
-        surface_symlinks(
-            tmp.path(),
-            &presented,
-            &manifest,
-            false,
-            SurfacingMode::Repair,
-        )
-        .unwrap();
+        surface_symlinks(tmp.path(), &presented, &manifest, SurfacingMode::Repair).unwrap();
         (tmp, presented, other)
     }
 
@@ -1964,7 +2029,6 @@ mod tests {
             root,
             &other,
             &load_manifest(root, &other),
-            false,
             SurfacingMode::Repair,
         )
         .unwrap();
@@ -1996,7 +2060,6 @@ mod tests {
             root,
             &other,
             &load_manifest(root, &other),
-            false,
             SurfacingMode::Repair,
         )
         .unwrap();
@@ -2015,7 +2078,7 @@ mod tests {
         let (tmp, _presented, other) = make_two_project_workspace();
         let root = tmp.path();
 
-        let issues = verify_surfacing(root, &other, &load_manifest(root, &other), false);
+        let issues = verify_surfacing(root, &other, &load_manifest(root, &other));
         assert_eq!(
             issues.len(),
             1,
@@ -2042,7 +2105,7 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented), false);
+        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented));
         assert_eq!(
             issues.len(),
             1,
@@ -2067,12 +2130,11 @@ mod tests {
             root,
             &other,
             &load_manifest(root, &other),
-            false,
             SurfacingMode::Repair,
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented), false);
+        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented));
         assert!(
             issues.is_empty(),
             "expected clean surfacing, got: {issues:?}"
@@ -2094,7 +2156,6 @@ mod tests {
             root,
             &presented,
             &load_manifest(root, &presented),
-            false,
             SurfacingMode::Repair,
         )
         .unwrap();
@@ -2120,19 +2181,12 @@ mod tests {
             root,
             &presented,
             &load_manifest(root, &presented),
-            false,
             SurfacingMode::Repair,
         )
         .unwrap();
 
-        let err = surface_symlinks(
-            root,
-            &go,
-            &load_manifest(root, &go),
-            false,
-            SurfacingMode::Repair,
-        )
-        .unwrap_err();
+        let err = surface_symlinks(root, &go, &load_manifest(root, &go), SurfacingMode::Repair)
+            .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("go.work") && msg.contains("web-app"),

@@ -296,15 +296,19 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
         doctor_path,
         repoweave::path_spelling::operator_path(&f.ww_canonical_lock()),
         "and that file is the canonical one `--fix` writes, not the weave-root view \
-         (which a workweave does not even surface while the source is missing)"
+         (which is a link to it, and names nothing a report could send anyone to)"
     );
 }
 
 /// A real file sitting on the surfacing path is user-held: rwv will not
-/// overwrite it, so the generation cannot reach the canonical location. That
-/// state is reachable by anyone who runs a bare `cargo build` in a workweave
-/// before `doctor --fix` — cargo finds the workspace through the root
-/// `Cargo.toml` symlink and drops a real lock beside it.
+/// overwrite it, so the generation cannot reach the canonical location.
+///
+/// Reaching that state now takes a deliberate unlink. A fresh workweave
+/// carries the lock's surfacing link from creation, and a `cargo build`
+/// through it writes to the canonical file rather than beside it — which is
+/// the point of declaring the lock as written through its link. What stays
+/// reachable, and is what this pins, is the same weave after someone removes
+/// the link by hand and then builds.
 ///
 /// Pinned because the honest failure is the whole point: `--fix`
 /// must not report success when the file it names is still missing.
@@ -317,6 +321,11 @@ fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
     require_cargo!();
     let f = fixture();
 
+    // The link create leaves is the route the generation takes, so the orphan
+    // has to be built by removing it first — writing over it would write
+    // THROUGH it and produce the canonical lock this arm needs absent. That
+    // unlink is what a `cargo build` after a hand `rm` of the link amounts to.
+    std::fs::remove_file(f.ww_surfaced_lock()).unwrap();
     std::fs::write(f.ww_surfaced_lock(), "# not a symlink\n").unwrap();
 
     let fix_output = f.rwv(&["doctor", "--fix"], &f.ww_dir);

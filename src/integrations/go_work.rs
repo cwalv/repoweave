@@ -57,6 +57,7 @@
 
 use crate::integration::{
     Integration, IntegrationContext, Issue, IssueKind, MemberIncompatibility, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -346,18 +347,18 @@ impl Integration for GoWork {
         }
     }
 
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         if ctx.detect_repos_with_manifest("go.mod").is_empty() {
             return vec![];
         }
-        vec!["go.sum".to_string()]
+        vec![SurfacedFile::written_through_link("go.sum")]
     }
 
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         if ctx.detect_repos_with_manifest("go.mod").is_empty() {
             return vec![];
         }
-        vec!["go.work".to_string()]
+        vec![SurfacedFile::written_at_source("go.work")]
     }
 }
 
@@ -1705,16 +1706,18 @@ mod tests {
         let man = integration.managed_files(&ctx);
 
         assert!(
-            !gen.contains(&"go.work".to_string()),
+            !gen.iter().any(|f| f.name() == "go.work"),
             "go.work must not be in generated_files"
         );
         assert!(
-            gen.contains(&"go.sum".to_string()),
-            "go.sum must be in generated_files"
+            gen.contains(&SurfacedFile::written_through_link("go.sum")),
+            "go.sum must be in generated_files, as a path a tool writes at the \
+             weave root rather than one rwv authors: {gen:?}"
         );
         assert!(
-            man.contains(&"go.work".to_string()),
-            "go.work must be in managed_files"
+            man.contains(&SurfacedFile::written_at_source("go.work")),
+            "go.work must be in managed_files, and rwv authors it into the \
+             project dir: {man:?}"
         );
     }
 

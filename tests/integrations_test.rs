@@ -12,7 +12,7 @@
 mod common;
 
 use common::contract;
-use repoweave::integration::{Integration, IntegrationContext, Severity};
+use repoweave::integration::{Integration, IntegrationContext, Severity, SurfacedFile};
 use repoweave::integrations::*;
 use repoweave::manifest::{
     IntegrationConfig, Manifest, ProjectName, RepoPath, Role, WorkweaveConfig,
@@ -305,25 +305,43 @@ fn activate_with_tool_shim(
 /// a substring would answer for the wrong one. `tool-missing` is an *issue*,
 /// not a *violation* — the report carries both arrays, and reading the wrong
 /// one returns `false` for every input, which reads as "the tool was found".
-///
-/// Hence the emptiness assertion: a caller asking whether a finding is ABSENT
-/// gets a true answer from a broken enumeration just as readily as from a
-/// working one, so this refuses to answer over an array it did not find.
 #[cfg(unix)]
 fn reports_tool_missing(report: &str, integration: &str) -> bool {
     let parsed: serde_json::Value =
         serde_json::from_str(report).expect("doctor --json emits a JSON report");
-    let issues = parsed["issues"]
+    parsed["issues"]
         .as_array()
-        .expect("a doctor report carries an issues array");
-    assert!(
-        !issues.is_empty(),
-        "these fixtures always leave managed files unwritten, so an empty issues \
-         array means the report was not read: {report}"
-    );
-    issues
+        .expect("a doctor report carries an issues array")
         .iter()
         .any(|v| v["kind"] == "tool-missing" && v["integration"] == integration)
+}
+
+/// Assert `integration`'s `tool-missing` finding fires with its tool off the
+/// child's PATH and clears with it on.
+///
+/// **One call, not two assertions, because the positive half is the negative
+/// half's control.** A broken enumeration — the array renamed, the issue
+/// channel not run, the predicate reading the wrong key — answers "not
+/// reported" for every input, which is indistinguishable from the finding
+/// legitimately clearing. Only the `absent` half can tell those apart, so it
+/// cannot be a separate assertion someone might drop or reorder.
+///
+/// An emptiness check on the array used to serve this, justified by these
+/// fixtures leaving managed files unwritten. That stopped being true when a
+/// declared file with no source stopped drawing a surfacing finding: an empty
+/// `issues` array is now a healthy report, so the control has to come from a
+/// second input rather than from the shape of one.
+#[cfg(unix)]
+fn tool_missing_fires_then_clears(absent: &str, present: &str, integration: &str, tool: &str) {
+    assert!(
+        reports_tool_missing(absent, integration),
+        "with {tool} off the child's PATH, doctor must raise tool-missing for \
+         {integration}; got:\n{absent}"
+    );
+    assert!(
+        !reports_tool_missing(present, integration),
+        "with a {tool} on the child's PATH, the finding must clear; got:\n{present}"
+    );
 }
 
 // ===========================================================================
@@ -788,22 +806,14 @@ mod npm_workspaces {
             "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
             &[],
         );
-        assert!(
-            reports_tool_missing(&absent, "npm-workspaces"),
-            "with npm off the child's PATH, doctor must raise tool-missing for \
-             npm-workspaces; got:\n{absent}"
-        );
-
         let present = doctor_json_on_tool_only_path(
             "npm-workspaces",
             "github/acme/server/package.json",
             "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
             &["npm"],
         );
-        assert!(
-            !reports_tool_missing(&present, "npm-workspaces"),
-            "with a npm on the child's PATH, the finding must clear; got:\n{present}"
-        );
+
+        tool_missing_fires_then_clears(&absent, &present, "npm-workspaces", "npm");
     }
 
     // -----------------------------------------------------------------------
@@ -1396,22 +1406,14 @@ mod pnpm_workspaces {
             "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
             &[],
         );
-        assert!(
-            reports_tool_missing(&absent, "pnpm-workspaces"),
-            "with pnpm off the child's PATH, doctor must raise tool-missing for \
-             pnpm-workspaces; got:\n{absent}"
-        );
-
         let present = doctor_json_on_tool_only_path(
             "pnpm-workspaces",
             "github/acme/server/package.json",
             "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
             &["pnpm"],
         );
-        assert!(
-            !reports_tool_missing(&present, "pnpm-workspaces"),
-            "with a pnpm on the child's PATH, the finding must clear; got:\n{present}"
-        );
+
+        tool_missing_fires_then_clears(&absent, &present, "pnpm-workspaces", "pnpm");
     }
 
     // -----------------------------------------------------------------------
@@ -1946,22 +1948,14 @@ mod go_work {
             "module github.com/acme/server\n\ngo 1.20\n",
             &[],
         );
-        assert!(
-            reports_tool_missing(&absent, "go-work"),
-            "with go off the child's PATH, doctor must raise tool-missing for \
-             go-work; got:\n{absent}"
-        );
-
         let present = doctor_json_on_tool_only_path(
             "go-work",
             "github/acme/server/go.mod",
             "module github.com/acme/server\n\ngo 1.20\n",
             &["go"],
         );
-        assert!(
-            !reports_tool_missing(&present, "go-work"),
-            "with a go on the child's PATH, the finding must clear; got:\n{present}"
-        );
+
+        tool_missing_fires_then_clears(&absent, &present, "go-work", "go");
     }
 
     // -----------------------------------------------------------------------
@@ -2426,22 +2420,14 @@ mod uv_workspace {
             "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
             &[],
         );
-        assert!(
-            reports_tool_missing(&absent, "uv-workspace"),
-            "with uv off the child's PATH, doctor must raise tool-missing for \
-             uv-workspace; got:\n{absent}"
-        );
-
         let present = doctor_json_on_tool_only_path(
             "uv-workspace",
             "github/acme/server/pyproject.toml",
             "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
             &["uv"],
         );
-        assert!(
-            !reports_tool_missing(&present, "uv-workspace"),
-            "with a uv on the child's PATH, the finding must clear; got:\n{present}"
-        );
+
+        tool_missing_fires_then_clears(&absent, &present, "uv-workspace", "uv");
     }
 
     // -----------------------------------------------------------------------
@@ -3018,22 +3004,14 @@ mod cargo_workspace {
             "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
             &[],
         );
-        assert!(
-            reports_tool_missing(&absent, "cargo-workspace"),
-            "with cargo off the child's PATH, doctor must raise tool-missing for \
-             cargo-workspace; got:\n{absent}"
-        );
-
         let present = doctor_json_on_tool_only_path(
             "cargo-workspace",
             "github/acme/server/Cargo.toml",
             "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
             &["cargo"],
         );
-        assert!(
-            !reports_tool_missing(&present, "cargo-workspace"),
-            "with a cargo on the child's PATH, the finding must clear; got:\n{present}"
-        );
+
+        tool_missing_fires_then_clears(&absent, &present, "cargo-workspace", "cargo");
     }
 
     // -----------------------------------------------------------------------
@@ -6589,22 +6567,14 @@ mod gita {
             "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
             &[],
         );
-        assert!(
-            reports_tool_missing(&absent, "gita"),
-            "with gita off the child's PATH, doctor must raise tool-missing for \
-             gita; got:\n{absent}"
-        );
-
         let present = doctor_json_on_tool_only_path(
             "gita",
             "github/acme/server/package.json",
             "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
             &["gita"],
         );
-        assert!(
-            !reports_tool_missing(&present, "gita"),
-            "with a gita on the child's PATH, the finding must clear; got:\n{present}"
-        );
+
+        tool_missing_fires_then_clears(&absent, &present, "gita", "gita");
     }
 
     /// A repo path containing a comma must be emitted as a properly-quoted CSV
@@ -8360,7 +8330,16 @@ mod static_files {
 
         let integration = StaticFiles;
         let files = integration.generated_files(&ctx);
-        assert_eq!(files, vec!["turbo.json", ".eslintrc.json", ".prettierrc"]);
+        assert_eq!(
+            files,
+            vec![
+                SurfacedFile::written_at_source("turbo.json"),
+                SurfacedFile::written_at_source(".eslintrc.json"),
+                SurfacedFile::written_at_source(".prettierrc")
+            ],
+            "an operator's committed file is surfaced, never written through \
+             its link"
+        );
     }
 
     #[test]
