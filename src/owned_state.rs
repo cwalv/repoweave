@@ -140,6 +140,11 @@ fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, LedgerEntry> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
+/// Where `dir`'s ledger lives.
+pub fn ledger_path(dir: &Path) -> std::path::PathBuf {
+    dir.join(OWNED_DIGESTS_FILE)
+}
+
 /// Why `dir`'s ledger cannot be read as a ledger, when a file is there but is
 /// not one.
 ///
@@ -151,10 +156,6 @@ fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, LedgerEntry> {
 ///
 /// A read error other than absence is reported here too. It is the same
 /// situation for the axes downstream: the file's content did not reach them.
-pub fn ledger_path(dir: &Path) -> std::path::PathBuf {
-    dir.join(OWNED_DIGESTS_FILE)
-}
-
 pub fn unreadable_ledger(dir: &Path) -> Option<String> {
     let path = ledger_path(dir);
     match std::fs::read_to_string(&path) {
