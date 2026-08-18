@@ -8005,11 +8005,11 @@ mod activate_hooks {
     /// lock still missing, if whatever it wrote replaced the dangling
     /// symlink `surface_symlinks` put there rather than writing through it.
     ///
-    /// `activate_at` always runs `surface_symlinks` with
-    /// `skip_missing_sources = false` immediately before any hook fires (see
-    /// `activate_intent_at`'s doc comment) — on a first-ever activation the
-    /// hook is always handed a freshly-created dangling symlink at this
-    /// path. Real `cargo generate-lockfile` currently writes through it
+    /// `activate_at` always runs `surface_symlinks` immediately before any
+    /// hook fires, and cargo-workspace declares `Cargo.lock` with
+    /// `SurfacedFile::written_through_link`, so its link is created whether or
+    /// not the source is there — on a first-ever activation the hook is always
+    /// handed a freshly-created dangling symlink at this path. Real `cargo generate-lockfile` currently writes through it
     /// rather than replacing it (see
     /// `doctor_fix_in_a_workweave_generates_the_missing_cargo_lock`), but
     /// nothing in cargo's interface guarantees that, which is what the
