@@ -261,10 +261,40 @@ name out; an unqualified mention of a foreign name (`into_boxed_path` rather
 than the qualified form) is out of scope by construction, and is the way past a
 wrong report from the gate.
 
+## Comments do not enumerate derived sets
+
+A comment, docstring, or failure message that lists or counts the members of a
+population the code derives — the callers of a function, the entries in a
+constant, the mutations in a harness — rots the moment the set moves, and no
+gate notices, because prose is not an assertion. Five instances landed in one
+epic: a docstring claiming a lease gated "the mutating verbs" when the lease
+had one caller; its replacement, which enumerated the callers by name and was
+falsified by two new callers within the same epic — the fix for an enumeration
+defect acquiring an enumeration defect; a failure message printing "both …
+entries" beside a captured `left: 4`; a 2-of-4 enumeration that also
+misattributed the mechanism; and a harness comment reading "the nine
+mutations" above an enumeration of ten, written while its author was producing
+the evidence for this rule.
+
+State the invariant that survives membership change: "callers refuse
+advisorily; the exclusion is taken only by sync and sync-to" outlives a new
+caller, where naming the four does not. When the list itself is load-bearing,
+make it an assertion keyed on the set — a count from `.len()`, a census-shaped
+pin in the style of the audit tests — never prose. A failure message that
+states a count derives it from the collection it prints.
+
+### What is mechanised, and what is not
+
+Nothing mechanises this. Distinguishing a derived population from a closed set
+stated normatively is the reader's judgment, and a matcher for "numerals near
+plurals in comments" reports correct code, which is the property that gets
+matchers turned off. When a sweep turns one up, prefer deleting the
+enumeration to correcting it — a corrected count is the same defect re-armed.
+
 ## A green gate is not coverage
 
-Both rules above end with a "What is mechanised, and what is not". That is not
-boilerplate. It is the same defect written down twice: **a check green-lights
+The rules above each end with a "What is mechanised, and what is not". That is not
+boilerplate. It is the same defect written down at each rule: **a check green-lights
 what it examined, and reading it as green-lighting what it was pointed at is
 the error.**
 
