@@ -459,6 +459,11 @@ pub fn write_local_crate_source(
 /// Not a `TempDir`: one held in a `static` never drops, so it would leave a
 /// directory behind on every run. The directory is reused across runs, which
 /// is why the link is tested for rather than created unconditionally.
+///
+/// Two callers can also race that test on a cold target: both see the link
+/// absent, one create fails on the winner's identical, already-usable link.
+/// A failed create is therefore only a failure while the link is still
+/// absent.
 pub fn tool_only_bin(name: &str) -> PathBuf {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("only-bin-{name}"));
     std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
@@ -473,8 +478,13 @@ pub fn tool_only_bin(name: &str) -> PathBuf {
         name.to_string()
     });
     if link.symlink_metadata().is_err() {
-        repoweave::symlink::create(&tool, &link, repoweave::symlink::LinkTarget::File)
-            .unwrap_or_else(|e| panic!("linking {name} into {}: {e}", dir.display()));
+        if let Err(e) =
+            repoweave::symlink::create(&tool, &link, repoweave::symlink::LinkTarget::File)
+        {
+            if link.symlink_metadata().is_err() {
+                panic!("linking {name} into {}: {e}", dir.display());
+            }
+        }
     }
     dir
 }
