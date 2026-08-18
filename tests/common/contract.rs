@@ -3,8 +3,9 @@
 //! This module captures the three regression-test shapes shared by every
 //! hybrid integration (npm/vscode/cargo/uv — the four hybrid JSON/TOML cases
 //! the spec names) plus pnpm/go-work where the helper applies. The shapes
-//! are extracted from the npm precedent in `tests/integrations_test.rs:290-385`
-//! and described normatively in `docs/explanation/joints/file-ownership.md`.
+//! are extracted from the npm precedent in
+//! `tests/integrations_test/npm_workspaces.rs` and described normatively in
+//! `docs/explanation/joints/file-ownership.md`.
 //!
 //! # The three shapes
 //!
