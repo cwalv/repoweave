@@ -264,9 +264,15 @@ fn remove_undeclared_links(root: &Path, project: &ProjectName) -> anyhow::Result
 /// goes with the file, since an attestation of something absent is stale by
 /// construction.
 ///
-/// Each removal is announced. Doctor's finding is the loss list an operator
-/// reads before choosing this verb, but an operator who never ran doctor still
-/// gets one — from the operation itself, as it acts.
+/// Each file removal is announced. Doctor's finding is the loss list an
+/// operator reads before choosing this verb, but an operator who never ran
+/// doctor still gets one — from the operation itself, as it acts.
+///
+/// A weave-root link is a separate object from the file it surfaces, owned by
+/// rwv regardless of who authored that file, so [`strip_disabled_links`]
+/// clears every link a disabled integration declares unconditionally — the
+/// file-removal loop above stays scoped to `owned_paths_on_disk`, which
+/// answers only for the file.
 fn strip_disabled_integrations(
     root: &Path,
     integrations: &[&dyn Integration],
@@ -274,9 +280,6 @@ fn strip_disabled_integrations(
     ctx_base: &crate::integration_runner::IntegrationContextBase,
 ) -> anyhow::Result<()> {
     let found = disabled_integration_artifacts(integrations, manifest, ctx_base);
-    if found.is_empty() {
-        return Ok(());
-    }
     let output_dir = ctx_base.output_dir.as_path();
     let default_config = IntegrationConfig::default();
 
@@ -350,7 +353,40 @@ fn strip_disabled_integrations(
             );
         }
     }
-    Ok(())
+    strip_disabled_links(root, manifest, ctx_base)
+}
+
+/// Unsurface every weave-root link a disabled integration declares, whether
+/// or not [`Integration::owned_paths_on_disk`] still evidences its authorship
+/// of what the link points at.
+///
+/// The predicate the file-removal loop above applies — content on disk still
+/// matches what rwv would author — exists to protect an operator's edit from
+/// being deleted; a link carries no content of its own to protect, and taking
+/// it down destroys nothing the operator wrote. So this reuses
+/// [`disabled_integration_declarations`] — the same full
+/// `generated_files() ∪ managed_files()` union [`undeclared_project_links`]
+/// holds out of the general scan — rather than the authorship-filtered
+/// subset above: a name a disabled integration ever declared is a name its
+/// link may still be stranded at. [`unsurface_names`] is a no-op for a name
+/// with no matching symlink, so re-offering names the loop above already
+/// cleared costs nothing.
+///
+/// Silent: an operator reading this output must never see the path of a file
+/// they authored, and for a `SurfacedSource::WrittenAtSource` declaration the
+/// link's own name and the file's are the same string.
+fn strip_disabled_links(
+    root: &Path,
+    manifest: &Manifest,
+    ctx_base: &crate::integration_runner::IntegrationContextBase,
+) -> anyhow::Result<()> {
+    let names: Vec<String> = disabled_integration_declarations(root, ctx_base.project, manifest)
+        .into_iter()
+        .collect();
+    if names.is_empty() {
+        return Ok(());
+    }
+    unsurface_names(root, &names)
 }
 
 /// Remove the directory a removed file lived in, if that removal emptied it and
@@ -1335,18 +1371,14 @@ fn undeclared_project_links(
 /// Names declared by integrations that are turned OFF for this project.
 ///
 /// Held out of the sweep above, and not as a convenience. Disablement already
-/// has a channel and a verb: the disabled-integration scan reports what rwv
-/// authored and `rwv materialize` removes file and link together, while content
-/// rwv did NOT author is deliberately left unnamed there — because naming it
-/// would propose deleting the operator's own file, which is often the reason
-/// the integration was turned off. A second finding keyed on the link would
-/// print that same path back out under a different remedy and undo the
-/// distinction the first one takes care to make.
-///
-/// A surfacing link left behind for a file rwv did not author is a real
-/// residue, and it is not this predicate's: it comes from disablement rather
-/// than from a name leaving the declarations, and answering it means deciding
-/// what to do about a deliberate silence.
+/// has a channel and a verb: the disabled-integration pass reports and
+/// removes what rwv authored, and [`strip_disabled_links`] unsurfaces every
+/// one of these names' weave-root links unconditionally, authored or not —
+/// but never the file behind a link it did not author, because that is the
+/// operator's own content and is often the reason the integration was turned
+/// off. A second finding keyed on the link here would print that same path
+/// back out under a different remedy and undo the distinction the
+/// disabled-integration pass takes care to make.
 fn disabled_integration_declarations(
     root: &Path,
     project: &ProjectName,

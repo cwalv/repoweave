@@ -390,6 +390,11 @@ fn the_finding_reaches_the_json_surface_marked_unfixable() {
 /// because keeping a hand-written `gita/repos.csv` is a reason to disable this
 /// integration in the first place. Attributing it by location would make the
 /// remedy delete exactly what the config change was protecting.
+///
+/// The weave root itself surfaces this file through a link that is rwv's own
+/// creation rather than the operator's, though: unlike the file, that link is
+/// removed, and materialize's own output must not name the file either, on
+/// the same "would propose deleting it" grounds as doctor's report.
 #[test]
 fn a_hand_authored_whole_file_is_not_attributed_to_the_integration() {
     let tmp = common::tempdir().unwrap();
@@ -406,12 +411,27 @@ fn a_hand_authored_whole_file_is_not_attributed_to_the_integration() {
         "a CSV rwv did not write must not be named as its artifact:\n{report}"
     );
 
+    let link = ws.join("gita/repos.csv");
+    assert!(
+        link.symlink_metadata().is_ok(),
+        "fixture: the weave root must still surface the pre-disable link"
+    );
+
     let (ok, materialized) = rwv(&["materialize"], &ws);
     assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !materialized.contains("gita/repos.csv"),
+        "the operator's file must not be named under this remedy either:\n{materialized}"
+    );
     assert_eq!(
         read(&project_dir.join("gita/repos.csv")),
         mine,
         "the operator's own file must survive the verb whose job is removal"
+    );
+    assert!(
+        link.symlink_metadata().is_err(),
+        "rwv's own surfacing link must not survive stranded, even though the file it \
+         pointed at does"
     );
 }
 
@@ -419,6 +439,10 @@ fn a_hand_authored_whole_file_is_not_attributed_to_the_integration() {
 /// blanket refusal: the CSV rwv actually authored is still named and still
 /// removed. Without this arm, an implementation that attributed nothing at all
 /// would pass the test above.
+///
+/// The control for the link-removal behaviour too: here the file is rwv's, so
+/// both it and the link that surfaced it go, unlike the hand-authored case
+/// where only the link does.
 #[test]
 fn the_csv_rwv_authored_is_still_named_and_removed() {
     let tmp = common::tempdir().unwrap();
@@ -432,11 +456,21 @@ fn the_csv_rwv_authored_is_still_named_and_removed() {
         "content rwv wrote is content rwv owns:\n{report}"
     );
 
+    let link = ws.join("gita/repos.csv");
+    assert!(
+        link.symlink_metadata().is_ok(),
+        "fixture: the weave root must surface the link before materialize runs"
+    );
+
     let (ok, materialized) = rwv(&["materialize"], &ws);
     assert!(ok, "materialize should succeed:\n{materialized}");
     assert!(
         !project_dir.join("gita/repos.csv").exists(),
         "and it is removed"
+    );
+    assert!(
+        link.symlink_metadata().is_err(),
+        "the link goes with the content it surfaced"
     );
 }
 
@@ -446,6 +480,9 @@ fn the_csv_rwv_authored_is_still_named_and_removed() {
 /// no longer what is in the file. Reporting it would offer to delete an edit,
 /// and rwv cannot tell a deliberate edit from an accident — the same fork A2
 /// refuses at, reached from the other side.
+///
+/// Same link-removal obligation as the hand-authored case: the edit makes the
+/// file the operator's, but the link stays rwv's to clean up, and silently.
 #[test]
 fn an_edited_whole_file_stops_being_the_integrations() {
     let tmp = common::tempdir().unwrap();
@@ -465,11 +502,25 @@ fn an_edited_whole_file_stops_being_the_integrations() {
         "an edited file is no longer rwv's content:\n{report}"
     );
 
-    let (ok, _) = rwv(&["materialize"], &ws);
+    let link = ws.join("gita/repos.csv");
+    assert!(
+        link.symlink_metadata().is_ok(),
+        "fixture: the weave root must still surface the pre-disable link"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
     assert!(ok, "materialize should succeed");
+    assert!(
+        !materialized.contains("gita/repos.csv"),
+        "the edited file must not be named under this remedy either:\n{materialized}"
+    );
     assert_eq!(
         read(&project_dir.join("gita/repos.csv")),
         edited,
         "the edit must survive"
+    );
+    assert!(
+        link.symlink_metadata().is_err(),
+        "rwv's own surfacing link must not survive stranded, even though the edit does"
     );
 }
