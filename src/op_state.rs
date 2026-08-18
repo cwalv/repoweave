@@ -1867,7 +1867,8 @@ mod tests {
     /// reach a caller outside tests.
     fn overwrite_lease_in_test(workspace_dir: &Path, lease: &LeaseRecord) -> anyhow::Result<()> {
         let path = LeaseRecord::path_in(workspace_dir);
-        let json = serde_json::to_string_pretty(lease).context("failed to serialize lease record")?;
+        let json =
+            serde_json::to_string_pretty(lease).context("failed to serialize lease record")?;
         std::fs::write(&path, json)
             .with_context(|| format!("failed to write lease to {}", path.display()))
     }
