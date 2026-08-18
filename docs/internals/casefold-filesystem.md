@@ -1,4 +1,4 @@
-# The casefold rig: measuring the identity match on a folding filesystem
+# The casefold filesystem: measuring the identity match for real
 
 > **Implementation, not interface.** Nothing in this document is a stable
 > surface: the structures described here may change without notice, and
@@ -55,7 +55,7 @@ both before spending time on the image.
    filesystem wasn't formatted with it), but it says nothing about requirement
    2, since it needs no mount of its own.
 
-## Building the rig
+## Building the filesystem
 
 ```sh
 # A sparse 64 MiB image is enough for the fixtures this suite builds.
@@ -64,21 +64,21 @@ mkfs.ext4 -O casefold -F casefold.img
 
 # Requires privilege (root, or CAP_SYS_ADMIN in the current namespace).
 sudo losetup -f --show casefold.img   # prints the loop device, e.g. /dev/loop0
-sudo mkdir -p /mnt/casefold-rig
-sudo mount /dev/loop0 /mnt/casefold-rig
-sudo chown "$(id -u):$(id -g)" /mnt/casefold-rig
+sudo mkdir -p /mnt/casefold
+sudo mount /dev/loop0 /mnt/casefold
+sudo chown "$(id -u):$(id -g)" /mnt/casefold
 
 # The casefold feature is per-directory, opt-in, and set only on an empty
 # directory.
-mkdir /mnt/casefold-rig/fixtures
-sudo chattr +F /mnt/casefold-rig/fixtures
-lsattr -d /mnt/casefold-rig/fixtures   # confirm the F flag took
+mkdir /mnt/casefold/fixtures
+sudo chattr +F /mnt/casefold/fixtures
+lsattr -d /mnt/casefold/fixtures   # confirm the F flag took
 ```
 
 Cleanup, once done — reverse order, and the image can be deleted last:
 
 ```sh
-sudo umount /mnt/casefold-rig
+sudo umount /mnt/casefold
 sudo losetup -d /dev/loop0
 rm casefold.img
 ```
@@ -88,19 +88,19 @@ rm casefold.img
 `tests/common::tempdir()` roots every fixture in the suite under
 `std::env::temp_dir()`, which reads `TMPDIR` on Unix. Running with `TMPDIR`
 set to a directory under the casefold mount routes every fixture this suite
-builds onto the rig, with no test code changed — this is the same mechanism
+builds onto it, with no test code changed — this is the same mechanism
 `tests/common/mod.rs`'s own doc comment already documents for reproducing the
 macOS symlinked-temp-root geometry, applied to a different host property:
 
 ```sh
-TMPDIR=/mnt/casefold-rig/fixtures cargo test --release --no-fail-fast
+TMPDIR=/mnt/casefold/fixtures cargo test --release --no-fail-fast
 ```
 
 The case-equivalence suite (`tests/case_equivalence_test.rs`) asks the
 fixture directory itself whether it folds (`filesystem_folds_case`) rather
 than branching on the host, so every folding-arm assertion in that file
-activates automatically once `TMPDIR` points at the rig — no `#[ignore]`, no
-feature flag, no environment variable the tests themselves read.
+activates automatically once `TMPDIR` points at the mount — no `#[ignore]`,
+no feature flag, no environment variable the tests themselves read.
 
 ## What to check, per target
 
@@ -109,16 +109,17 @@ by itself; the folding-arm assertions in
 `tests/case_equivalence_test.rs::a_confusable_sibling_warns_at_mint_and_is_still_created`
 reach it (via `listed_occupant`, which calls `same_directory`) but would also
 pass under a canonicalize-based comparison that happened to resolve
-correctly — which on this rig it would not, and that is the measurement:
+correctly — which on this filesystem it would not, and that is the
+measurement:
 
-1. Run the suite against the rig as above and confirm
+1. Run the suite against the mount as above and confirm
    `a_confusable_sibling_warns_at_mint_and_is_still_created` passes, folding
    arm, with output showing `lists it as`.
 2. Apply the mutation: in `src/workweave_index.rs`, change
    `same_directory`'s body to the old comparison —
    `canonical_recorded_path(a) == canonical_recorded_path(b)` unconditionally,
    deleting the `cfg(unix)` `(dev, ino)` block above it.
-3. Re-run the same test against the rig. It must fail, and the failure must
+3. Re-run the same test against the mount. It must fail, and the failure must
    be the `lists it as` assertion specifically — check which assertion fired,
    not just that the test went red; an earlier assertion failing first would
    mean the mutation broke something else and the identity-match claim is
@@ -132,27 +133,28 @@ needs anywhere in this tree, just run against a filesystem where the
 predicate this pins can actually vary.
 
 **Target 2 — occupant naming.** Already behaviorally pinned in CI on any
-folding host (macOS, Windows). Running the suite against this rig adds a
-Linux-native confirmation of the same pin; nothing new to check beyond the
+folding host (macOS, Windows). Running the suite against this filesystem adds
+a Linux-native confirmation of the same pin; nothing new to check beyond the
 suite passing.
 
 **Target 3 — the workweave reuse guard.** Pinned by
 `tests/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`.
-Its folding arm has not been executed anywhere before this rig exists — run
-the suite against the rig and confirm it passes, folding arm, with output
-containing `different workweave, not this one` and `lists it as`.
+Its folding arm has not been executed anywhere before this document was
+written — run the suite against the mount and confirm it passes, folding
+arm, with output containing `different workweave, not this one` and `lists
+it as`.
 
 **Target 4 — the fetch materialization path.** No test in the tree exercises
-this yet. Manual reproduction, run against the rig:
+this yet. Manual reproduction, run against the mount:
 
 ```sh
-mkdir -p /mnt/casefold-rig/fixtures/remotes
-git init --bare --initial-branch=main /mnt/casefold-rig/fixtures/remotes/chatly.git
+mkdir -p /mnt/casefold/fixtures/remotes
+git init --bare --initial-branch=main /mnt/casefold/fixtures/remotes/chatly.git
 # ... push one commit to it, as any fetch fixture does ...
 
-mkdir /mnt/casefold-rig/fixtures/ws && cd /mnt/casefold-rig/fixtures/ws
-rwv fetch /mnt/casefold-rig/fixtures/remotes/chatly.git      # mints projects/chatly
-rwv fetch /mnt/casefold-rig/fixtures/remotes/Chatly.git      # same repo, case-twin name
+mkdir /mnt/casefold/fixtures/ws && cd /mnt/casefold/fixtures/ws
+rwv fetch /mnt/casefold/fixtures/remotes/chatly.git      # mints projects/chatly
+rwv fetch /mnt/casefold/fixtures/remotes/Chatly.git      # same repo, case-twin name
 ```
 
 The second fetch must refuse, and the refusal must name the occupant as the

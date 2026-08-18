@@ -59,10 +59,10 @@ backstop unnecessary.
   construction. Cited by section from `docs/reference/explain/doctor.md` and
   `docs/reference/schemas/doctor.json`, so its section numbering is
   load-bearing.
-- [casefold-rig](./casefold-rig.md) — building a loopback ext4 image with the
-  `casefold` feature to measure the filesystem-identity match in workweave
-  name resolution for real, and what each of the four affected call sites
-  needs from it.
+- [casefold-filesystem](./casefold-filesystem.md) — building a loopback ext4
+  image with the `casefold` feature to measure the filesystem-identity match
+  in workweave name resolution for real, and what each of the four affected
+  call sites needs from it.
 
 ## Where else to look
 
