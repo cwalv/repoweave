@@ -71,10 +71,33 @@ struct Declared {
 
 /// Where a file's `#[cfg(test)]` module starts, so the scans below read
 /// production code only. Fixtures legitimately write these names directly.
+///
+/// A bare `#[cfg(test)]` gates one item — a function, a `mod name;` stub, a
+/// macro invocation — not a module, and does not end the production region:
+/// only a `#[cfg(test)]` immediately followed by `mod <name> {` does. A file
+/// with no such module (every `#[cfg(test)]` gates a single item) has no
+/// boundary at all and is read to its end. A `mod <name> {` separated from
+/// its `#[cfg(test)]` by another attribute line is not recognised either —
+/// unmeasured against this tree, which has none of that shape.
 fn test_module_line(text: &str) -> usize {
-    text.lines()
-        .position(|l| l.trim_start().starts_with("#[cfg(test)]"))
-        .unwrap_or(usize::MAX)
+    let lines: Vec<&str> = text.lines().collect();
+    for (n, line) in lines.iter().enumerate() {
+        if line.trim_start() != "#[cfg(test)]" {
+            continue;
+        }
+        let Some(next) = lines.get(n + 1) else {
+            continue;
+        };
+        let after_mod = next
+            .trim_start()
+            .strip_prefix("mod ")
+            .or_else(|| next.trim_start().strip_prefix("pub mod "))
+            .or_else(|| next.trim_start().strip_prefix("pub(crate) mod "));
+        if after_mod.is_some_and(|rest| rest.trim_end().ends_with('{')) {
+            return n;
+        }
+    }
+    usize::MAX
 }
 
 fn declared_state_file_names() -> Vec<Declared> {
