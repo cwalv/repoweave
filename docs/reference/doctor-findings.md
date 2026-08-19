@@ -507,6 +507,11 @@ the candidates: an unrecorded one there produces no finding and `--fix` has
 nothing to adopt. Retire the directory and create the workweave again instead,
 which does not depend on where it sits.
 
+With no registry entry the name comes from the basename, read against the
+marker's own project — so a directory in a container whose basename that
+project does not render carries no name to adopt, and reports
+[`misnamed-dir`](#misnamed-dir) instead of this.
+
 #### `stale-registry-entry`
 
 **Warning. Auto-fixable.** A registered workweave whose recorded path is not a
@@ -562,8 +567,7 @@ nothing here to guess a repair from, so `--fix` leaves the file untouched.
 
 **Warning. Report-only.** A marker-bearing workweave directory whose basename
 disagrees with its records: it does not spell `{marker project}--{name}`,
-where the name is the one the project's registry records for this path (or,
-for an unregistered directory, the basename's own name half). Only a
+where the name is the one the project's registry records for this path. Only a
 hand-rename produces this — `rwv workweave create` derives the directory name
 from the same pair it writes into the marker and the registry.
 
@@ -571,9 +575,11 @@ Identity is by record, so the scans keep working from the records — a renamed
 directory keeps its recorded branch expectation and its project scope. What
 this finding reports is that the directory's name now lies about those
 records, which misleads operators and collides with any future workweave
-whose records genuinely mint this basename. When the basename is unparseable
-AND no registry entry names the path, identity is unrecoverable, the scans
-skip the directory entirely, and this finding is the only signal.
+whose records genuinely mint this basename. Where no registry entry names the
+path there is no recorded name to disagree with, and the question narrows to
+whether the basename is one the marker's project could have rendered at all:
+when it is not, identity is unrecoverable, the scans skip the directory
+entirely, and this finding is the only signal.
 
 **What to do:** rename the directory to the name the finding reports (the
 checkouts inside were registered under the recorded name, so restoring it

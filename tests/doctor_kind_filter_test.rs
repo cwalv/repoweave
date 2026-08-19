@@ -197,10 +197,22 @@ fn kind_filter_json_carries_the_subset_with_unchanged_records() {
     };
 
     // The unfiltered run carries both kinds (the fixture's premise). The
-    // misnamed dir yields two tree-integrity records: `misnamed-dir` and,
-    // being unregistered, `unregistered-workweave`.
+    // misnamed dir yields one tree-integrity record, and it is `misnamed-dir`
+    // rather than `unregistered-workweave`: the basename is not one `my-app`
+    // renders, so no name half is derivable from it and the container scan
+    // skips the directory rather than offering an identity to adopt. Named,
+    // not counted — the two records swap for each other one-for-one, so a
+    // count cannot tell them apart.
     assert_eq!(of_kind(&unfiltered, "orphaned-savepoint").len(), 2);
-    assert_eq!(of_kind(&unfiltered, "workweave-tree-integrity").len(), 2);
+    let tree_sub_kinds: Vec<String> = of_kind(&unfiltered, "workweave-tree-integrity")
+        .iter()
+        .map(|v| match &v["sub_kind"] {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Object(o) => o.keys().next().unwrap().clone(),
+            other => panic!("unexpected sub_kind shape: {other}"),
+        })
+        .collect();
+    assert_eq!(tree_sub_kinds, vec!["misnamed-dir".to_string()]);
 
     // The filtered run carries the named kind's records BYTE-IDENTICAL to
     // their unfiltered selves, and nothing of any other kind.

@@ -16,7 +16,8 @@
 
 use assert_cmd::Command;
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::workspace::{parse_weave_dir_name, weave_dir_name};
+use repoweave::naming::resolve_flat_address;
+use repoweave::workspace::{weave_dir_name, workweave_name_in};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -124,29 +125,62 @@ fn the_rendered_directory_name_is_injective_over_the_namespace() {
     assert!(pairs > 400, "only {pairs} pairs — the corpus collapsed");
 }
 
-/// The decode is the same seam's other direction, so it recovers exactly what
-/// the render was given. Delete the `+`→`/` decode and this reports the
-/// project half coming back with the encoding still in it.
+/// Every rendered name is recoverable, through the two seams that recover it:
+/// resolution against what is recorded, and the name half read against the
+/// project that rendered it.
+///
+/// This is the round trip. There is no third seam that takes the string alone
+/// — the pair it would name is what injectivity above makes unique, not what
+/// any function reads out of it — so what "round trips" means here is that the
+/// rendering identifies its own pair among every other pair in the namespace,
+/// and that a caller holding the project gets the name half back exactly.
+///
+/// Sampled against the whole corpus rather than every pair against it: the
+/// full cross product is quadratic in a namespace of thousands, and the
+/// property under test is per-address. Every pair is still checked through
+/// `workweave_name_in`, and the sample the resolver takes covers each
+/// metacharacter the grammar turns on.
 #[test]
-fn every_rendered_name_round_trips_through_the_decode() {
+fn every_rendered_name_round_trips_through_the_seams_that_recover_it() {
     let projects = valid_projects();
     let workweaves = valid_workweaves();
+    let recorded: Vec<(ProjectName, WorkweaveName)> = projects
+        .iter()
+        .flat_map(|p| workweaves.iter().map(move |w| (p.clone(), w.clone())))
+        .collect();
+
     let mut checked = 0usize;
-    for project in &projects {
-        for workweave in &workweaves {
-            let rendered = weave_dir_name(project, workweave);
-            let (decoded_project, decoded_workweave) = parse_weave_dir_name(&rendered)
-                .unwrap_or_else(|| panic!("`{rendered}` must parse back"));
-            assert_eq!(
-                decoded_project,
-                project.as_str(),
-                "project half of `{rendered}` must decode to what rendered it"
-            );
-            assert_eq!(&decoded_workweave, workweave);
-            checked += 1;
-        }
+    for (project, workweave) in &recorded {
+        let rendered = weave_dir_name(project, workweave);
+        assert_eq!(
+            workweave_name_in(project, &rendered).as_ref(),
+            Some(workweave),
+            "the name half of `{rendered}` must come back exactly"
+        );
+        checked += 1;
     }
     assert!(checked > 400, "only {checked} round-trips exercised");
+
+    let mut resolved = 0usize;
+    for (project, workweave) in recorded.iter().step_by(37) {
+        let rendered = weave_dir_name(project, workweave);
+        let matches = resolve_flat_address(&rendered, &recorded);
+        assert_eq!(
+            matches,
+            vec![(project.clone(), workweave.clone())],
+            "`{rendered}` must resolve to the one pair that rendered it"
+        );
+        resolved += 1;
+    }
+    assert!(resolved > 20, "only {resolved} addresses resolved");
+    assert!(
+        recorded
+            .iter()
+            .step_by(37)
+            .any(|(p, _)| p.as_str().contains('/')),
+        "the sample must reach a multi-segment project, or the encoding is \
+         never resolved through"
+    );
 }
 
 /// The rendered project half is one path segment. Everything downstream — a
@@ -167,11 +201,12 @@ fn the_rendered_project_half_is_one_segment() {
     }
 }
 
-/// The prohibition the decode rests on, and the decode that rests on it,
-/// asserted together. They may not ship apart: a project name carrying `+`
-/// that predated the decode would come back as a nesting it never had.
+/// The prohibition the unique resolution rests on, and the resolution that
+/// rests on it, asserted together. They may not ship apart: a project name
+/// carrying `+` renders what the nested name renders, and then one address
+/// names two workweaves.
 #[test]
-fn the_unmintable_plus_and_the_decode_hold_together() {
+fn the_unmintable_plus_and_the_resolution_hold_together() {
     let err =
         ProjectName::new("chatly+web-app").expect_err("`+` must not be mintable in a project name");
     let rendered = format!("{err}");
@@ -180,11 +215,13 @@ fn the_unmintable_plus_and_the_decode_hold_together() {
         "the refusal must name the character it refuses: {rendered}"
     );
 
-    let (project, _) =
-        parse_weave_dir_name("chatly+web-app--wtest").expect("the flat address must parse");
+    let nested = ProjectName::new("chatly/web-app").unwrap();
+    let wtest = WorkweaveName::new("wtest").unwrap();
+    let recorded = vec![(nested.clone(), wtest.clone())];
     assert_eq!(
-        project, "chatly/web-app",
-        "`+` in the project half must decode as the segment separator"
+        resolve_flat_address("chatly+web-app--wtest", &recorded),
+        vec![(nested, wtest)],
+        "`+` in the project half must resolve as the segment separator"
     );
 }
 

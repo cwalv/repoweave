@@ -12,9 +12,9 @@
 //! be `/`-segmented (`chatly/web-app`), and the projects tree nests to match,
 //! but everything downstream needs one segment instead: a directory name, a
 //! `-w` address, a ref component, a `.code-workspace` filename. So `/` is
-//! written as `+` on the way out and read back as `/` on the way in.
+//! written as `+` on the way out.
 //!
-//! That round trip is injective only because two rules hold together, and
+//! The rendering is injective only because two rules hold together, and
 //! they are enforced in different places:
 //!
 //! - the renderer writes `+` for `/`, and nothing else writes `+`;
@@ -22,11 +22,23 @@
 //!   `--` the two halves are joined with.
 //!
 //! Drop either half and two distinct addresses collapse onto one spelling: a
-//! project genuinely named `a+b` would decode as the nested `a/b`, and a
-//! project named `x--y` would split at its own middle. The rules ship
-//! together or the encoding stops being a bijection, which is why the
-//! validators and the renderer live in one file rather than agreeing across
-//! two.
+//! project genuinely named `a+b` and the nested `a/b` render alike, and a
+//! project named `x--y` splits at its own middle. The rules ship together or
+//! the rendering stops being a bijection, which is why the validators and the
+//! renderer live in one file rather than agreeing across two.
+//!
+//! # Nothing reads a flat name back into an identity
+//!
+//! There is no inverse of [`weave_dir_name`] taking a string alone, and the
+//! absence is the design. A caller holding the project — a `.rwv-workweave`
+//! marker, a registry entry — recovers the name half exactly with
+//! [`workweave_name_in`], because the split point is that project's own
+//! rendered length rather than the first `--` in the string. A caller holding
+//! only what an operator typed — the `-w` address — resolves it with
+//! [`resolve_flat_address`], which renders what is recorded and compares.
+//! Neither can invent an identity the records do not already hold, so the
+//! injectivity above is what makes an address unambiguous, not what makes a
+//! decode safe.
 
 use serde::Serialize;
 use std::fmt;
@@ -36,9 +48,10 @@ use std::fmt;
 // ---------------------------------------------------------------------------
 
 /// Split `s` at the first workweave separator, without validating either
-/// half. [`parse_weave_dir_name`] layers validation on top; a caller that
-/// needs its own error text for an invalid half, or that only wants to test
-/// for the separator's presence, calls this instead of writing `"--"` again.
+/// half. A caller that only wants to test for the separator's presence, or
+/// that needs its own error text for an empty half, calls this instead of
+/// writing `"--"` again. The halves it returns say where the separator is,
+/// not whose workweave the string names.
 pub fn split_at_weave_separator(s: &str) -> Option<(&str, &str)> {
     s.split_once("--")
 }
@@ -390,12 +403,6 @@ pub fn flat_project_segment(project: &ProjectName) -> String {
     encode_segment(project.as_str())
 }
 
-/// The inverse of [`flat_project_segment`], for a segment already split off a
-/// flat address.
-fn nested_project_name(segment: &str) -> String {
-    decode_segment(segment)
-}
-
 /// Build a workweave directory name using the `{project}--{name}` convention,
 /// with the project half rendered as one segment.
 ///
@@ -406,23 +413,82 @@ pub fn weave_dir_name(project: &ProjectName, workweave_name: &WorkweaveName) -> 
     join_flat(&flat_project_segment(project), workweave_name.as_str())
 }
 
-/// Parse a directory name into `(project, workweave_name)` if it matches the
-/// `{left}--{name}` shape, decoding the left half back through
-/// [`flat_project_segment`].
+/// The workweave name half of `dir_name`, for a caller that already knows
+/// whose workweave the directory is.
 ///
-/// A discovery aid: it answers what a directory's own name says, which is a
-/// weaker claim than what the records say. A resolution takes the workweave's
-/// name from the registry entry recording the directory, so a decode that
-/// disagrees misdirects a scan and cannot corrupt an identity.
-pub fn parse_weave_dir_name(dir_name: &str) -> Option<(String, WorkweaveName)> {
-    let (left, workweave) = split_at_weave_separator(dir_name)?;
-    if left.is_empty() || workweave.is_empty() {
-        return None;
+/// The project is a parameter because it is the split point: `dir_name` must
+/// begin with exactly that project's own rendering followed by the separator,
+/// so a project whose name contains the separator would still split at its own
+/// end rather than at the first `--` in the string. A name that does not carry
+/// that prefix is not this project's workweave directory and answers `None`,
+/// as does one whose remainder is not a legal workweave name.
+///
+/// Callers hold the project as a record — a `.rwv-workweave` marker, a
+/// registry entry — so the answer is what the records say the directory is
+/// called, never a reading of the string on its own.
+///
+/// # A flat name on its own names nobody
+///
+/// The project parameter is the prohibition. Reading a directory name without
+/// one is the shape that let `a--b--c` be read as project `a`, workweave
+/// `b--c` — a guess, and at a caller that writes its answer into a record, a
+/// durable one. There is no overload that omits it:
+///
+/// ```
+/// use repoweave::manifest::ProjectName;
+/// use repoweave::naming::workweave_name_in;
+/// let project = ProjectName::new("chatly/web-app").unwrap();
+/// let name = workweave_name_in(&project, "chatly+web-app--wtest").unwrap();
+/// assert_eq!(name.as_str(), "wtest");
+/// ```
+///
+/// ```compile_fail
+/// use repoweave::manifest::WorkweaveName;
+/// use repoweave::naming::workweave_name_in;
+/// fn f(dir_name: &str) -> Option<WorkweaveName> {
+///     workweave_name_in(dir_name) // E0061: this function takes 2 arguments
+/// }
+/// ```
+pub fn workweave_name_in(project: &ProjectName, dir_name: &str) -> Option<WorkweaveName> {
+    let prefix = join_flat(&flat_project_segment(project), "");
+    WorkweaveName::new(dir_name.strip_prefix(&prefix)?).ok()
+}
+
+/// Every recorded `(project, workweave)` pair that renders `address`.
+///
+/// This is how a `-w` address becomes an identity: rwv renders what it has
+/// recorded and keeps the pairs that match, so an address nothing recorded
+/// resolves to nothing instead of minting a project name out of a string an
+/// operator typed.
+///
+/// More than one match is a rendering collision — two recorded pairs spelled
+/// alike. [`validate_project_name`] and [`validate_workweave_name`] make that
+/// unreachable today, which is why the caller reports it rather than choosing:
+/// picking one would be picking which of two live workweaves an operator meant.
+pub fn resolve_flat_address(
+    address: &str,
+    recorded: &[(ProjectName, WorkweaveName)],
+) -> Vec<(ProjectName, WorkweaveName)> {
+    recorded
+        .iter()
+        .filter(|(project, name)| weave_dir_name(project, name) == address)
+        .cloned()
+        .collect()
+}
+
+/// Has `s` the shape of a bare flat address — no path separator, a workweave
+/// separator, and a legal workweave name on its right?
+///
+/// A `bool`, deliberately. This screens strings an operator typed where a path
+/// was expected, or a path where an address was; nothing downstream may learn
+/// which project or workweave the string mentions, because the shape does not
+/// say and only [`resolve_flat_address`] can.
+pub fn has_flat_address_shape(s: &str) -> bool {
+    if s.contains('/') || s.contains('\\') {
+        return false;
     }
-    Some((
-        nested_project_name(left),
-        WorkweaveName::new(workweave).ok()?,
-    ))
+    split_at_weave_separator(s)
+        .is_some_and(|(project, name)| !project.is_empty() && WorkweaveName::new(name).is_ok())
 }
 
 #[cfg(test)]
@@ -456,6 +522,83 @@ mod tests {
         assert!(collides_with_separator("-lead"));
         assert!(collides_with_separator("trail-"));
         assert!(!collides_with_separator("mid-dle"));
+    }
+
+    fn project(s: &str) -> ProjectName {
+        ProjectName::new(s).expect("fixture project name must validate")
+    }
+
+    fn workweave(s: &str) -> WorkweaveName {
+        WorkweaveName::new(s).expect("fixture workweave name must validate")
+    }
+
+    #[test]
+    fn the_name_half_is_taken_at_the_projects_own_length_not_the_first_separator() {
+        let nested = project("chatly/web-app");
+        assert_eq!(
+            workweave_name_in(&nested, "chatly+web-app--wtest"),
+            Some(workweave("wtest"))
+        );
+        assert_eq!(
+            workweave_name_in(&project("chatly"), "chatly+web-app--wtest"),
+            None
+        );
+        assert_eq!(workweave_name_in(&project("a"), "b--seat"), None);
+    }
+
+    /// A directory whose name half is not a legal workweave name has no name
+    /// half at all. `a--b--c` is the case: read without a project it splits at
+    /// the first separator and offers `b--c`, which is exactly the identity
+    /// `fix_unregistered_workweave` would have written into the registry.
+    #[test]
+    fn a_remainder_that_is_not_a_legal_workweave_name_is_not_one() {
+        assert_eq!(workweave_name_in(&project("a"), "a--b--c"), None);
+        assert_eq!(workweave_name_in(&project("a"), "a--"), None);
+    }
+
+    #[test]
+    fn an_address_resolves_to_the_recorded_pair_that_renders_it() {
+        let recorded = vec![
+            (project("chatly/web-app"), workweave("wtest")),
+            (project("chatly"), workweave("wtest")),
+        ];
+        assert_eq!(
+            resolve_flat_address("chatly+web-app--wtest", &recorded),
+            vec![(project("chatly/web-app"), workweave("wtest"))]
+        );
+        assert!(resolve_flat_address("chatly+web-app--other", &recorded).is_empty());
+        assert!(resolve_flat_address("no-separator", &recorded).is_empty());
+    }
+
+    /// Two recorded pairs spelled alike are both returned, so the caller can
+    /// refuse instead of picking.
+    ///
+    /// The pair is built past [`ProjectName::new`] on purpose: `a+b` is what
+    /// [`validate_project_name`] refuses, and refusing it is the only reason
+    /// the collision cannot occur. This asserts the resolver does not lean on
+    /// that refusal — it reports what it is given, so the arm that reports the
+    /// collision is live code and not a comment.
+    #[test]
+    fn two_pairs_that_render_alike_both_come_back() {
+        assert!(ProjectName::new("a+b").is_err());
+        let recorded = vec![
+            (project("a/b"), workweave("seat")),
+            (ProjectName("a+b".to_owned()), workweave("seat")),
+        ];
+        assert_eq!(weave_dir_name(&recorded[0].0, &recorded[0].1), "a+b--seat");
+        assert_eq!(resolve_flat_address("a+b--seat", &recorded).len(), 2);
+    }
+
+    #[test]
+    fn the_address_shape_predicate_answers_for_bare_names_only() {
+        assert!(has_flat_address_shape("proj--seat"));
+        assert!(has_flat_address_shape("chatly+web-app--seat"));
+        assert!(!has_flat_address_shape("proj/seat--x"));
+        assert!(!has_flat_address_shape("proj\\seat--x"));
+        assert!(!has_flat_address_shape("bareword"));
+        assert!(!has_flat_address_shape("--seat"));
+        assert!(!has_flat_address_shape("proj--"));
+        assert!(!has_flat_address_shape("a--b--c"));
     }
 
     #[test]

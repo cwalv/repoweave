@@ -49,7 +49,7 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
     // workweave name (<project>--<name>) that does not exist on disk.
     // That is the most common mistake: passing a workweave identity to
     // -C instead of -w/--workweave.
-    if !p.exists() && looks_like_workweave_name(raw) {
+    if !p.exists() && crate::naming::has_flat_address_shape(raw) {
         anyhow::bail!(
             "'-C {raw}' looks like a workweave name rather than a path, \
              and no path exists at '{raw}'.\n\
@@ -76,40 +76,33 @@ fn flat_spelling_of(raw: &str) -> Option<String> {
     let project = ProjectName::new(project).ok()?;
     let name = WorkweaveName::new(name).ok()?;
     let flat = crate::workspace::weave_dir_name(&project, &name);
-    looks_like_workweave_name(&flat).then_some(flat)
-}
-
-/// Returns true when `s` has no path separators and parses as the
-/// `<project>--<name>` workweave name shape via
-/// [`crate::workspace::parse_weave_dir_name`].
-fn looks_like_workweave_name(s: &str) -> bool {
-    // Must not contain any path separator — a bare name, not a path.
-    if s.contains('/') || s.contains('\\') {
-        return false;
-    }
-    crate::workspace::parse_weave_dir_name(s).is_some()
+    crate::naming::has_flat_address_shape(&flat).then_some(flat)
 }
 
 /// Resolve the workweave directory for a `-w <project>--<name>` argument.
 ///
 /// ## Validation
 ///
-/// The argument must be in strict `<project>--<name>` form: exactly one `--`
-/// separator (split at the FIRST `--`, matching the directory-name convention
-/// used elsewhere in workweave.rs), non-empty project and name on both sides,
-/// and no path separators. A path-shaped argument (contains `/` or `\`, or
-/// exists on disk as a path) gets a corrective error pointing at `-C`.
+/// The argument must carry the separator with something on each side of it,
+/// and must not be path-shaped: a `/` or `\`, or an argument that exists on
+/// disk, gets a corrective error pointing at `-C`. That is the whole of the
+/// form check, and it decides only which refusal to print — where the halves
+/// end is not its question, because nothing downstream reads them.
 ///
 /// ## Resolution
 ///
 /// Workspace is located from `workspace_origin` (already resolved from `-C` or
-/// process cwd). The workweave path is resolved via the registry for the named
-/// project, with `.rwv-workweave` marker round-trip validation.
+/// process cwd). The address is then **resolved, not decoded**: every
+/// `(project, name)` pair the weave's registries record is rendered and the
+/// ones spelling `raw` are kept, and the unique match is confirmed against its
+/// `.rwv-workweave` marker. A project half nothing recorded therefore reports
+/// that no such workweave exists, where reading the project out of the string
+/// reported that the operator's typo was not a valid project name.
 ///
 /// ## Return value
 ///
 /// Returns `(workweave_path, project)` — the path to feed to the resolver as
-/// origin, and the project name parsed from the `-w` prefix.
+/// origin, and the project of the pair the address resolved to.
 fn resolve_workweave_flag(
     raw: &str,
     workspace_origin: &Path,
@@ -170,15 +163,6 @@ fn resolve_workweave_flag(
         );
     }
 
-    // `-w` takes the address in the spelling `weave_dir_name` writes, so the
-    // project half is decoded through the same seam rather than read as typed:
-    // a multi-segment project's `+` stands for a `/`, and `ProjectName` rejects
-    // `+` precisely so that decode is unambiguous.
-    let (project_str, name) = crate::workspace::parse_weave_dir_name(raw)
-        .ok_or_else(|| anyhow::anyhow!("'-w {raw}' has an invalid name"))?;
-    let project = ProjectName::new(project_str)
-        .with_context(|| format!("'-w {raw}' has an invalid project name"))?;
-
     // Find the primary workspace root from the workspace_origin path (from -C
     // or process cwd). The registry lives on the primary; look up from there.
     let primary_ctx =
@@ -190,57 +174,76 @@ fn resolve_workweave_flag(
         })?;
     let primary_root = primary_ctx.primary_path().to_path_buf();
 
-    // Registry lookup with marker round-trip validation.
+    let recorded = crate::workweave::registered_workweaves(&primary_root);
+    let matched = crate::naming::resolve_flat_address(raw, &recorded);
+
+    let (project, name) = match matched.as_slice() {
+        [pair] => pair,
+        [] => return Err(no_such_workweave(raw, &recorded)),
+        ambiguous => {
+            let spelled = ambiguous
+                .iter()
+                .map(|(project, name)| format!("  project `{}`, workweave `{}`", project, name))
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::bail!(
+                "'-w {raw}' is ambiguous — {} registered workweaves render that \
+                 address:\n{spelled}\n\
+                 \n\
+                 Address one of them from its own directory with -C, or rename \
+                 a project so the two stop spelling the same thing.",
+                ambiguous.len(),
+            )
+        }
+    };
+
+    // The pair is recorded; whether the directory it points at still is a
+    // workweave of that project is the marker round-trip's question.
     let workweave_path =
-        crate::workweave::resolve_registered_workweave(&primary_root, &project, &name)
-            .with_context(|| {
-                format!(
-                    "'-w {raw}': registry lookup failed for project `{}`, name `{}`",
-                    project.as_str(),
-                    name.as_str()
-                )
-            })?;
+        crate::workweave::resolve_registered_workweave(&primary_root, project, name).with_context(
+            || format!("'-w {raw}': registry lookup failed for project `{project}`, name `{name}`"),
+        )?;
 
     match workweave_path {
-        Some(path) => Ok((path, project)),
-        None => {
-            // Registry has no valid entry for this name. Build an actionable
-            // error: list the known names for the project so the operator can
-            // spot a typo or learn what workweaves exist.
-            let known = crate::workweave_index::read(&primary_root, &project)
-                .ok()
-                .flatten()
-                .map(|idx| {
-                    let mut names: Vec<String> = idx.workweaves.into_keys().collect();
-                    names.sort();
-                    names
-                })
-                .unwrap_or_default();
-
-            if known.is_empty() {
-                anyhow::bail!(
-                    "no workweave named `{}` is registered for project `{}` \
-                     (the registry has no entries; create one with \
-                     `rwv workweave {} create <name>`)",
-                    name.as_str(),
-                    project.as_str(),
-                    project.as_str(),
-                )
-            } else {
-                anyhow::bail!(
-                    "no workweave named `{}` is registered for project `{}`.\n\
-                     \n\
-                     Known workweaves for `{}`:\n  {}\n\
-                     \n\
-                     Run `rwv doctor` if a workweave exists on disk but is missing from the registry.",
-                    name.as_str(),
-                    project.as_str(),
-                    project.as_str(),
-                    known.join("\n  "),
-                )
-            }
-        }
+        Some(path) => Ok((path, project.clone())),
+        // Listing `raw` back to the operator as a candidate is what a plain
+        // "no such workweave" would do here, since the entry is recorded.
+        None => anyhow::bail!(
+            "'-w {raw}' is recorded for project `{project}` as workweave `{name}`, but that \
+             registry entry does not round-trip through a `.rwv-workweave` marker — the \
+             directory is gone, or is another workspace's.\n\
+             \n\
+             Run `rwv doctor --fix` to prune or re-adopt the entry, then retry."
+        ),
     }
+}
+
+/// The `-w` refusal for an address nothing recorded renders.
+///
+/// The candidate menu is every address the weave can actually be given, which
+/// is what makes a mistyped project half legible — it is listed beside the
+/// spellings that would have worked, where reading the project out of the
+/// string could only report that the typo was not a valid project name.
+fn no_such_workweave(raw: &str, recorded: &[(ProjectName, WorkweaveName)]) -> anyhow::Error {
+    if recorded.is_empty() {
+        return anyhow::anyhow!(
+            "no workweave is addressable as `{raw}` (this weave's registries \
+             record no workweaves at all; create one with \
+             `rwv workweave <project> create <name>`)"
+        );
+    }
+    let known = recorded
+        .iter()
+        .map(|(project, name)| crate::workspace::weave_dir_name(project, name))
+        .collect::<Vec<_>>()
+        .join("\n  ");
+    anyhow::anyhow!(
+        "no workweave is addressable as `{raw}`.\n\
+         \n\
+         Registered workweaves:\n  {known}\n\
+         \n\
+         Run `rwv doctor` if a workweave exists on disk but is missing from the registry."
+    )
 }
 
 /// Resolve the workspace context for a project-scoped verb and surface the

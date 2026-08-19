@@ -3153,6 +3153,137 @@ fn doctor_kinds(ws: &Path) -> Vec<String> {
     kinds
 }
 
+// ===========================================================================
+// The unregistered-directory name fallback, at the two places it is written
+// down
+//
+// `doctor_scan_container` takes an unregistered directory's name half from the
+// basename, and two `--fix` arms persist it: the registry adopt, and the
+// branch-model migration's rename. The name half is read against the marker's
+// own project, so a directory some *other* name rendered yields nothing rather
+// than a plausible answer. Both fixtures below carry a correctly-named
+// unregistered sibling as the reachability control: the fallback is what
+// registers and migrates it, so the skip beside it is a decision and not a
+// scan that stopped running.
+// ===========================================================================
+
+/// One project, two unregistered marker-bearing directories under the
+/// container: `myproj--good`, which `myproj` renders, and `other--seat`, which
+/// it does not. Each holds a project-repo checkout on its own pre-flat ref.
+/// Returns `(ws, project_repo)`.
+fn unregistered_dirs_one_named_for_another_project(tmp: &Path) -> (PathBuf, PathBuf) {
+    let ws = make_primary(tmp);
+    let project_repo = ws.join("projects").join("myproj");
+    init_repo_with_commit(&project_repo);
+
+    for (dir_name, branch) in [
+        ("myproj--good", "myproj--good/project"),
+        ("other--seat", "myproj--seat/project"),
+    ] {
+        let ww_dir = workweaves_dir(&ws).join(dir_name);
+        write_marker(&ww_dir, &ws, "myproj", &ws);
+        let ww_project = ww_dir.join("projects").join("myproj");
+        std::fs::create_dir_all(ww_project.parent().unwrap()).unwrap();
+        worktree_add(&project_repo, &ww_project, branch);
+    }
+
+    (ws, project_repo)
+}
+
+/// The names a project's registry records, sorted — the value the adopt arm
+/// writes, read back as itself rather than probed for a substring. The index
+/// also stores each workweave's path, which ends in the directory name, so a
+/// `contains("seat")` would pass on the path of a directory that was never
+/// adopted.
+fn recorded_workweave_names(ws: &Path, project: &str) -> Vec<String> {
+    repoweave::workweave_index::read(ws, &ProjectName::new(project).unwrap())
+        .expect("index is readable")
+        .map(|idx| idx.workweaves.into_keys().collect())
+        .unwrap_or_default()
+}
+
+/// `doctor --fix` adopts an unregistered workweave under the name its own
+/// project renders, and adopts nothing at all from a directory that project
+/// never rendered.
+///
+/// The defect: read at the first `--`, `other--seat` offers the name `seat`,
+/// and the adopt writes `myproj -> seat -> <container>/other--seat` into the
+/// authoritative registry. Every later resolution then trusts it — `-w
+/// myproj--seat` resolves to a directory spelled for somebody else, and a real
+/// `myproj--seat` created afterwards collides with the entry.
+#[test]
+fn the_adopt_arm_registers_only_directories_the_marker_project_renders() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _project_repo) = unregistered_dirs_one_named_for_another_project(tmp.path());
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert_eq!(
+        recorded_workweave_names(&ws, "myproj"),
+        vec!["good".to_string()],
+        "the adopt must register the directory `myproj` renders and nothing \
+         else; got:\n{fix_stdout}"
+    );
+
+    let report = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&report.stdout);
+    assert!(
+        stdout.contains("intended name is not derivable"),
+        "and the directory it declined to name must be reported rather than \
+         silently skipped; got:\n{stdout}"
+    );
+}
+
+/// The branch-model migration mints the flat ref from the same name half, and
+/// a rename is a write to a ref that outlives the directory.
+///
+/// The defect: `other--seat` read at the first `--` mints `myproj--seat`, so
+/// `--fix` renames that workweave's pre-flat ref onto a flat name derived from
+/// a directory `myproj` never spelled, and records an ownership receipt for it
+/// — a receipt is exactly what lifts a branch out of the class `--fix` refuses
+/// to delete.
+#[test]
+fn the_migration_mints_a_flat_ref_only_for_directories_the_marker_project_renders() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, project_repo) = unregistered_dirs_one_named_for_another_project(tmp.path());
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert!(
+        branch_exists(&project_repo, "myproj--good")
+            && !branch_exists(&project_repo, "myproj--good/project"),
+        "the correctly-named sibling must migrate — without it a skip proves \
+         nothing about the fallback; got:\n{fix_stdout}"
+    );
+    assert!(
+        !branch_exists(&project_repo, "myproj--seat"),
+        "no flat ref may be minted from a directory `myproj` never rendered; \
+         got:\n{fix_stdout}"
+    );
+    assert!(
+        branch_exists(&project_repo, "myproj--seat/project"),
+        "and its pre-flat ref must be left exactly where it was"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--seat"),
+        "nor may a receipt be recorded for it"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--good"),
+        "while the sibling's rename does carry one"
+    );
+}
+
 /// Build the fixture `migration_skips_a_workweave_namespace_holding_two_refs`
 /// drives from the `--fix` side: one workweave, its checkout attached to
 /// `<flat>/main`, and a second ref `<flat>/master` sharing the namespace.

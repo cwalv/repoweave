@@ -2421,10 +2421,9 @@ direction — a directory basename derived from a branch name `[V]`.
 (`OwnedRef::is_attached_by`, `check.rs:3632`, `:3887`), and the one surviving
 name-shaped predicate, `looks_like_a_pre_flat_ref` (`check.rs:3218-3228`),
 returns a `bool` that feeds a report and nothing else `[V]`. The
-name-to-directory coupling also reversed: `branch_discipline_in_scope`
-(`check.rs:4529-4583`) derives a *project* from a directory basename via
-`parse_weave_dir_name` (`:4549`), and no directory name is derived from a
-branch name anywhere `[V]`. Tests holding the rejection:
+name-to-directory coupling also reversed: `branch_discipline_in_scope` takes
+the *project* from the workweave directory's own `.rwv-workweave` marker, and
+no directory name is derived from a branch name anywhere `[V]`. Tests holding the rejection:
 `tests/branch_discipline_test.rs:1028 handmade_lookalike_branch_survives_doctor_fix`
 and `:1080 flat_lookalike_branch_survives_doctor_fix` — note the second, which
 covers a hand-made branch that matches the *new* flat shape exactly, the case

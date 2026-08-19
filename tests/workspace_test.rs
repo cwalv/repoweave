@@ -1,6 +1,6 @@
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workspace::{
-    observe_root, parse_weave_dir_name, read_active_project, weave_dir_name, PrimaryIdentity,
+    observe_root, read_active_project, weave_dir_name, workweave_name_in, PrimaryIdentity,
     WeaveRootIdentity,
 };
 
@@ -47,84 +47,69 @@ fn weave_dir_name_weave_with_numbers() {
 }
 
 // ============================================================================
-// parse_weave_dir_name — splits valid "{primary}--{workweave}" names (legacy convention)
+// workweave_name_in — the name half, read against the project that rendered it
 // ============================================================================
 
 #[test]
-fn parse_valid_simple() {
-    let result = parse_weave_dir_name("web-app--agent-42");
-    let (primary, workweave) = result.expect("should parse valid workweave dir name");
-    assert_eq!(primary, "web-app");
-    assert_eq!(workweave, WorkweaveName::new("agent-42").unwrap());
+fn name_half_of_a_directory_this_project_rendered() {
+    let name = workweave_name_in(&ProjectName::new("web-app").unwrap(), "web-app--agent-42");
+    assert_eq!(name, Some(WorkweaveName::new("agent-42").unwrap()));
 }
 
 #[test]
-fn parse_valid_single_word() {
-    let (primary, workweave) = parse_weave_dir_name("proj--fix").unwrap();
-    assert_eq!(primary, "proj");
-    assert_eq!(workweave, WorkweaveName::new("fix").unwrap());
+fn name_half_when_both_halves_are_single_words() {
+    let name = workweave_name_in(&ProjectName::new("proj").unwrap(), "proj--fix");
+    assert_eq!(name, Some(WorkweaveName::new("fix").unwrap()));
 }
 
 #[test]
-fn parse_valid_hyphenated_components() {
-    let (primary, workweave) = parse_weave_dir_name("my-app--my-feature").unwrap();
-    assert_eq!(primary, "my-app");
-    assert_eq!(workweave, WorkweaveName::new("my-feature").unwrap());
+fn name_half_when_both_halves_are_hyphenated() {
+    let name = workweave_name_in(&ProjectName::new("my-app").unwrap(), "my-app--my-feature");
+    assert_eq!(name, Some(WorkweaveName::new("my-feature").unwrap()));
+}
+
+/// The project is the split point, so a directory another project rendered has
+/// no name half here however well-formed it looks. This is what a marker-held
+/// project buys over a guess at the first separator: `doctor --fix` writes the
+/// answer into the registry, and a directory belonging to someone else must
+/// produce nothing rather than a plausible name.
+#[test]
+fn a_directory_another_project_rendered_has_no_name_half() {
+    let proj = ProjectName::new("proj").unwrap();
+    assert!(workweave_name_in(&proj, "other--fix").is_none());
+    assert!(workweave_name_in(&proj, "proj-extra--fix").is_none());
+    assert!(workweave_name_in(&ProjectName::new("a/b").unwrap(), "a--b--fix").is_none());
 }
 
 // ============================================================================
-// parse_weave_dir_name — edge cases
+// workweave_name_in — edge cases
 // ============================================================================
 
 #[test]
-fn parse_no_double_dash_returns_none() {
-    assert!(parse_weave_dir_name("web-app").is_none());
+fn no_separator_has_no_name_half() {
+    let proj = ProjectName::new("web-app").unwrap();
+    assert!(workweave_name_in(&proj, "web-app").is_none());
+    assert!(workweave_name_in(&proj, "web-app-feature").is_none());
+    assert!(workweave_name_in(&proj, "").is_none());
 }
 
 #[test]
-fn parse_single_dash_returns_none() {
-    assert!(parse_weave_dir_name("web-app-feature").is_none());
+fn an_empty_name_half_is_not_a_name() {
+    assert!(workweave_name_in(&ProjectName::new("primary").unwrap(), "primary--").is_none());
 }
 
+/// `a--b--c` read against project `a` offers `b--c`, which a workweave name
+/// may not be. Reading it without a project is what would let it be taken for
+/// project `a`, workweave `b--c` — or for project `a--b`, workweave `c` — and
+/// the two are indistinguishable from the string.
 #[test]
-fn parse_empty_string_returns_none() {
-    assert!(parse_weave_dir_name("").is_none());
-}
-
-#[test]
-fn parse_empty_primary_returns_none() {
-    // "--name" has empty primary
-    assert!(parse_weave_dir_name("--weave").is_none());
-}
-
-#[test]
-fn parse_empty_weave_returns_none() {
-    // "primary--" has empty workweave name
-    assert!(parse_weave_dir_name("primary--").is_none());
-}
-
-#[test]
-fn parse_only_double_dash_returns_none() {
-    assert!(parse_weave_dir_name("--").is_none());
-}
-
-#[test]
-fn parse_multiple_double_dashes_is_rejected() {
-    // Splitting "a--b--c" at the first "--" gives workweave "b--c" — but a
-    // workweave name may not itself contain "--" (WorkweaveName::new
-    // refuses it), so this no longer parses. Guessing the split here is
-    // exactly what would let project="a--b" + workweave="c" mint the same
-    // flat name.
-    assert!(parse_weave_dir_name("a--b--c").is_none());
-}
-
-#[test]
-fn parse_workweave_portion_with_double_dash_is_rejected() {
-    assert!(parse_weave_dir_name("proj--feat--v2--rc1").is_none());
+fn a_name_half_that_spells_the_separator_is_rejected() {
+    assert!(workweave_name_in(&ProjectName::new("a").unwrap(), "a--b--c").is_none());
+    assert!(workweave_name_in(&ProjectName::new("proj").unwrap(), "proj--feat--v2--rc1").is_none());
 }
 
 // ============================================================================
-// Round-trip: weave_dir_name -> parse_weave_dir_name
+// Round-trip: weave_dir_name -> workweave_name_in
 // ============================================================================
 
 #[test]
@@ -132,9 +117,7 @@ fn round_trip_simple() {
     let primary = ProjectName::new("web-app").unwrap();
     let workweave = WorkweaveName::new("agent-42").unwrap();
     let dir_name = weave_dir_name(&primary, &workweave);
-    let (parsed_primary, parsed_workweave) = parse_weave_dir_name(&dir_name).unwrap();
-    assert_eq!(parsed_primary, primary.as_str());
-    assert_eq!(parsed_workweave, workweave);
+    assert_eq!(workweave_name_in(&primary, &dir_name), Some(workweave));
 }
 
 #[test]
@@ -142,9 +125,7 @@ fn round_trip_single_char_components() {
     let primary = ProjectName::new("a").unwrap();
     let workweave = WorkweaveName::new("b").unwrap();
     let dir_name = weave_dir_name(&primary, &workweave);
-    let (parsed_primary, parsed_workweave) = parse_weave_dir_name(&dir_name).unwrap();
-    assert_eq!(parsed_primary, primary.as_str());
-    assert_eq!(parsed_workweave, workweave);
+    assert_eq!(workweave_name_in(&primary, &dir_name), Some(workweave));
 }
 
 // ============================================================================

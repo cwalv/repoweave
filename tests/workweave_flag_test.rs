@@ -238,6 +238,112 @@ fn w_flag_unknown_name_empty_registry_corrective_message() {
 }
 
 // ===========================================================================
+// The address is resolved against the registry, not read as a pair
+// ===========================================================================
+
+/// A project half nothing recorded reports that no workweave answers to the
+/// address, and offers the addresses that do.
+///
+/// The regression: the project half used to be turned into a `ProjectName`
+/// before the registry was asked, so `.hidden` — which no project may be
+/// named — refused as an invalid project name. That answers a question the
+/// operator did not ask: whether the string they typed could name a project,
+/// rather than whether it names a workweave.
+#[test]
+fn w_flag_project_half_no_project_could_carry_reports_absence_not_invalidity() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "myproj");
+    register_workweave(&ws, "myproj", "feat");
+
+    let out = rwv()
+        .args(["-w", ".hidden--feat", "resolve"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "an unrecorded address must refuse");
+    assert!(
+        stderr.contains("no workweave is addressable as `.hidden--feat`"),
+        "the refusal must be about the workweave, not about the spelling of a \
+         project name: {stderr}"
+    );
+    assert!(
+        stderr.contains("myproj--feat"),
+        "and it must offer the address that would have worked: {stderr}"
+    );
+    assert!(
+        !stderr.contains("invalid project name"),
+        "nothing may report on whether the project half could name a project: {stderr}"
+    );
+}
+
+/// The recorded pair is what the address matches, so a name registered under
+/// one project is not reachable by pairing it with another. Both projects are
+/// real and both have registries, so the refusal cannot come from either being
+/// unknown.
+#[test]
+fn w_flag_does_not_pair_a_name_with_a_project_that_never_recorded_it() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "proj-a");
+    let proj_b = ws.join("projects").join("proj-b");
+    std::fs::create_dir_all(&proj_b).unwrap();
+    std::fs::write(proj_b.join("rwv.toml"), "[repositories]\n").unwrap();
+    let ww_a = register_workweave(&ws, "proj-a", "seat");
+    register_workweave(&ws, "proj-b", "other");
+
+    rwv()
+        .args(["-w", "proj-a--seat", "resolve"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .stdout(common::operator_path_stdout(ww_a.canonicalize().unwrap()));
+
+    let out = rwv()
+        .args(["-w", "proj-b--seat", "resolve"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "`proj-b--seat` was never recorded");
+    assert!(
+        stderr.contains("no workweave is addressable as `proj-b--seat`"),
+        "and the refusal names the address, not a half of it: {stderr}"
+    );
+    assert!(
+        stderr.contains("proj-a--seat") && stderr.contains("proj-b--other"),
+        "the candidate menu is weave-wide — an address does not say which \
+         project it names until it has matched one: {stderr}"
+    );
+}
+
+/// A recorded entry whose directory is gone is a different failure from an
+/// address nothing recorded, and says so. Reported as an absence it would list
+/// the operator's own address back at them as a candidate.
+#[test]
+fn w_flag_separates_a_broken_registry_entry_from_an_unrecorded_address() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "myproj");
+    let ww = register_workweave(&ws, "myproj", "feat");
+    std::fs::remove_dir_all(&ww).unwrap();
+
+    let out = rwv()
+        .args(["-w", "myproj--feat", "resolve"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a stale entry must refuse");
+    assert!(
+        stderr.contains("does not round-trip") && stderr.contains("rwv doctor --fix"),
+        "the remedy for a broken entry is doctor, not a typo hunt: {stderr}"
+    );
+    assert!(
+        !stderr.contains("no workweave is addressable"),
+        "and it must not be reported as an address nothing recorded: {stderr}"
+    );
+}
+
+// ===========================================================================
 // Path-shaped argument corrective errors
 // ===========================================================================
 

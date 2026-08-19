@@ -36,7 +36,7 @@ use crate::vcs::{
     ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
-    parse_weave_dir_name, project_dir, project_rel_dir, project_rel_path, weave_dir_name,
+    project_dir, project_rel_dir, project_rel_path, weave_dir_name, workweave_name_in,
     CanonicalPath, WorkweaveMarker,
 };
 use crate::workweave_index;
@@ -205,9 +205,9 @@ pub fn resolve_registered_workweave(
 /// identity against every recorded entry.
 ///
 /// For a caller that holds a path and needs the identity the registry gave
-/// it — never for guessing a name from the path's own shape, which is a
-/// syntax question [`crate::workspace::parse_weave_dir_name`] answers, not a
-/// registry one.
+/// it. A caller with no entry to find has
+/// [`crate::workspace::workweave_name_in`], which reads the basename against
+/// the project it already holds — a syntax question, not a registry one.
 pub fn workweave_name_for_path(
     primary_root: &Path,
     project: &ProjectName,
@@ -222,6 +222,41 @@ pub fn workweave_name_for_path(
         .into_iter()
         .find(|(_, recorded)| workweave_index::same_directory(recorded, path));
     Ok(found.and_then(|(name, _)| WorkweaveName::new(name).ok()))
+}
+
+/// Every `(project, name)` pair any project's registry records, sorted.
+///
+/// The population a `-w` address is resolved against: rwv renders these and
+/// keeps the ones that spell what the operator typed, so an address resolves
+/// to a workweave that is recorded or to none at all. Weave-wide rather than
+/// per-project because the address does not say which project it names until
+/// it has matched one.
+///
+/// Entries whose recorded name is not a legal [`WorkweaveName`] are dropped —
+/// nothing rwv writes produces one, and a hand-edited index that does could
+/// not be addressed anyway. Recorded, not validated: whether the matched
+/// entry still round-trips through its marker is
+/// [`resolve_registered_workweave`]'s question, asked once a pair is in hand.
+pub fn registered_workweaves(primary_root: &Path) -> Vec<(ProjectName, WorkweaveName)> {
+    let mut out = Vec::new();
+    for project in crate::workspace::discover_projects(primary_root) {
+        let Ok(Some(index)) = workweave_index::read(primary_root, &project) else {
+            continue;
+        };
+        for name in index.workweaves.into_keys() {
+            if let Ok(name) = WorkweaveName::new(name) {
+                out.push((project.clone(), name));
+            }
+        }
+    }
+    out.sort_by(|a, b| {
+        (a.0.as_str().cmp(b.0.as_str())).then_with(|| a.1.as_str().cmp(b.1.as_str()))
+    });
+    // A project reached twice by the walk would otherwise present one
+    // workweave as two, and two matches is how a caller is told an address
+    // names more than one workweave.
+    out.dedup();
+    out
 }
 
 /// Return the registered path for a workweave AND require the marker
@@ -3149,14 +3184,16 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
 /// **Identity is by record, never by name shape.** The PROJECT comes from
 /// the marker — the record the directory itself carries — and the NAME
 /// comes from the registry entry naming this path when one exists
-/// ([`workweave_name_for_path`]), falling back to the directory basename's
-/// name half only for unregistered directories, where no record exists.
-/// The basename is discovery, not identity: a hand-renamed directory keeps
-/// its recorded identity, so the branch scans keep validating the branch
-/// the records own instead of deriving a new expectation from the rename.
-/// A directory whose identity is unrecoverable (unparseable basename AND
-/// no registry entry) is skipped here; the tree-integrity scan's
-/// misnamed-dir finding owns reporting it.
+/// ([`workweave_name_for_path`]), falling back for unregistered directories
+/// to the name half the marker's project would have rendered, which is an
+/// exact strip of that project's own spelling and not a split at the first
+/// separator in the basename. The basename is discovery, not identity: a
+/// hand-renamed directory keeps its recorded identity, so the branch scans
+/// keep validating the branch the records own instead of deriving a new
+/// expectation from the rename. A directory whose identity is unrecoverable
+/// (no registry entry, and a basename the marker's project does not render)
+/// is skipped here; the tree-integrity scan's misnamed-dir finding owns
+/// reporting it.
 ///
 /// This is the ONLY surviving on-disk scan (the pre-registry list/delete
 /// scan was deleted). Every other code path resolves via the registry.
@@ -3188,10 +3225,11 @@ pub fn doctor_scan_container(
             .flatten();
         let name = match recorded {
             Some(n) => n.as_str().to_string(),
-            None => match parse_weave_dir_name(&dir_name) {
-                Some((_, parsed_name)) => parsed_name.as_str().to_string(),
-                // No record and no parseable basename: identity is not
-                // recoverable. The misnamed-dir finding owns this state.
+            None => match workweave_name_in(&project_name, &dir_name) {
+                Some(from_basename) => from_basename.as_str().to_string(),
+                // No record, and a basename this project could not have
+                // rendered: identity is not recoverable. The misnamed-dir
+                // finding owns this state.
                 None => continue,
             },
         };

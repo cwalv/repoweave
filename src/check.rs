@@ -1141,8 +1141,7 @@ pub enum WorkweaveTreeIntegrityKind {
     },
     /// A marker-bearing workweave directory whose basename disagrees with
     /// its records: it does not spell `{marker project}--{name}`, where the
-    /// name is the one the project's registry records for this path (or,
-    /// for an unregistered directory, the basename's own name half).
+    /// name is the one the project's registry records for this path.
     ///
     /// Only a hand-rename produces this — `rwv workweave create` derives
     /// the directory name from the same (project, name) pair it writes into
@@ -1150,9 +1149,11 @@ pub enum WorkweaveTreeIntegrityKind {
     /// working from the records; what this finding reports is that the
     /// directory's own name now lies about them, which misleads operators
     /// and collides with any future workweave whose records genuinely mint
-    /// this basename. When the basename is unparseable AND no registry
-    /// entry names the path, identity is unrecoverable and the scans skip
-    /// the directory entirely — this finding is then the only signal.
+    /// this basename. Where no registry entry names the path there is no
+    /// recorded name to disagree with, and the question narrows to whether
+    /// the basename is one the marker's project could have rendered at all:
+    /// when it is not, identity is unrecoverable and the scans skip the
+    /// directory entirely — this finding is then the only signal.
     ///
     /// Report-only: renaming the directory back is the operator's one-step
     /// remedy (the checkouts inside were registered under the recorded
@@ -1161,8 +1162,8 @@ pub enum WorkweaveTreeIntegrityKind {
     /// the directory itself.
     MisnamedDir {
         /// The basename the records expect (`{project}--{name}`), when the
-        /// records pin one. `None` when the basename is unparseable and no
-        /// registry entry names this path.
+        /// records pin one. `None` when no registry entry names this path
+        /// and the basename is not one the marker's project renders.
         expected_dir_name: Option<String>,
         /// What disagrees: which half, and with which record.
         detail: String,
@@ -2617,8 +2618,7 @@ fn nested_workweave_findings(ws_root: &Path, dir: &Path) -> Vec<CheckViolation> 
             .or_else(|| {
                 basename
                     .as_deref()
-                    .and_then(crate::workspace::parse_weave_dir_name)
-                    .map(|(_, n)| n)
+                    .and_then(|b| crate::workspace::workweave_name_in(marker.project(), b))
             });
         let Some(name) = name else {
             continue;
@@ -3390,53 +3390,52 @@ pub fn scan_workweave_tree_integrity(
 
         // Misnamed-dir check: the basename must spell what the records say.
         // Identity is by record — project from the marker, name from the
-        // registry entry naming this path (basename name half for
-        // unregistered dirs) — so a disagreement here never shifts what the
-        // scans validate; it reports that the directory's name now lies
-        // about the records it carries.
+        // registry entry naming this path — so a disagreement here never
+        // shifts what the scans validate; it reports that the directory's
+        // name now lies about the records it carries. Without a registry
+        // entry there is no name to disagree with, and all that is left to
+        // ask is whether the basename is one the marker's project could have
+        // rendered at all.
         if let Some(basename) = dir.file_name().map(|n| n.to_string_lossy().into_owned()) {
             let recorded =
                 crate::workweave::workweave_name_for_path(ws_root, marker.project(), dir)
                     .ok()
                     .flatten();
-            let parsed = crate::workspace::parse_weave_dir_name(&basename);
-            let expected_name = recorded.clone().or_else(|| parsed.map(|(_, n)| n));
-            match expected_name {
+            match recorded {
                 Some(name) => {
                     let expected_dir = crate::workspace::weave_dir_name(marker.project(), &name);
                     if basename != expected_dir {
-                        let name_source = if recorded.is_some() {
-                            "the name the registry records for this path"
-                        } else {
-                            "the basename's own name half"
-                        };
                         violations.push(CheckViolation::WorkweaveTreeIntegrity {
                             workweave_dir: dir.clone(),
                             sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
                                 expected_dir_name: Some(expected_dir.clone()),
                                 detail: format!(
-                                    "the marker records project `{}` and {name_source} is \
-                                     `{name}`, so the records expect `{expected_dir}`",
+                                    "the marker records project `{}` and the name the registry \
+                                     records for this path is `{name}`, so the records expect \
+                                     `{expected_dir}`",
                                     marker.project().as_str(),
                                 ),
                             },
                         });
                     }
                 }
-                None => {
+                None if crate::workspace::workweave_name_in(marker.project(), &basename)
+                    .is_none() =>
+                {
                     violations.push(CheckViolation::WorkweaveTreeIntegrity {
                         workweave_dir: dir.clone(),
                         sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
                             expected_dir_name: None,
                             detail: format!(
-                                "the basename does not parse as `<project>--<name>` and no \
-                                 registry entry of project `{}` names this path, so the \
-                                 intended name is not derivable",
-                                marker.project().as_str(),
+                                "the basename is not a directory name project `{p}` renders \
+                                 for any workweave name, and no registry entry of project \
+                                 `{p}` names this path, so the intended name is not derivable",
+                                p = marker.project().as_str(),
                             ),
                         },
                     });
                 }
+                None => {}
             }
         }
 

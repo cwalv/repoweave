@@ -333,6 +333,28 @@ fn c_flag_path_with_double_dash_in_component_is_not_confused_for_workweave_name(
         );
 }
 
+/// The two halves of the address shape, each on its own: a `/` anywhere makes
+/// the argument a path, and a `--` with nothing after it is not an address
+/// however path-free the rest is.
+///
+/// `./some--dir/sub` above does not separate them — its name half carries the
+/// `/`, so either rule alone refuses it and neither is shown to be doing the
+/// work. These two are refused by exactly one rule each.
+#[test]
+fn c_flag_corrective_needs_both_halves_of_the_address_shape() {
+    for arg in ["dir/proj--seat", "proj--"] {
+        rwv()
+            .args(["-C", arg, "resolve"])
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains("-w/--workweave")
+                    .not()
+                    .and(predicate::str::contains("workweave name").not()),
+            );
+    }
+}
+
 /// An ordinary non-existent path that does NOT match workweave-name shape
 /// must fail with a plain "path does not exist" error, NOT the corrective
 /// workweave message.

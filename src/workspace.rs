@@ -1842,7 +1842,7 @@ pub enum AdvisoryKindOutput {
 // `crate::naming`, which nothing in the crate sits below. These stay
 // reachable here because every caller of a weave directory name is a caller
 // about workspace layout.
-pub use crate::naming::{flat_project_segment, parse_weave_dir_name, weave_dir_name};
+pub use crate::naming::{flat_project_segment, weave_dir_name, workweave_name_in};
 
 // ---------------------------------------------------------------------------
 // WorkweaveMarker — `.rwv-workweave` marker file

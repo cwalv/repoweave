@@ -88,7 +88,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 
 | Module | Owns |
 |---|---|
-| `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, and the typed rendering pair `weave_dir_name` / `parse_weave_dir_name`. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
+| `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, `weave_dir_name`, and the two seams that recover an identity from what it renders — `workweave_name_in` for a caller holding the project, `resolve_flat_address` for one holding only what an operator typed. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
 | `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
