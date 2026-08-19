@@ -245,6 +245,10 @@ name through the validator first, so `rwv activate`, `rwv workweave` and
 `--project` all refuse it. Reported whatever `--project` narrows the run to,
 since a name the validator refuses can never equal the scope.
 
+The character policy behind the refusal — and the alternative that was
+measured and left closed on purpose — is documented in
+[formats.md — Names, and the characters they exclude](formats.md#names-and-the-characters-they-exclude).
+
 **What to do:** rename the directory to a name that validates. Nothing inside
 it needs to change — the name is the weave's, not the project repo's.
 

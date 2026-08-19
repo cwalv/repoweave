@@ -285,6 +285,9 @@ freedom with no measured demand. A real name that forces the question is the
 signal to revisit; until then, this section is the record that the door was
 examined and left closed on purpose.
 
+`rwv doctor` reports a directory whose name these rules refuse as
+[`unnameable-project`](doctor-findings.md#unnameable-project).
+
 ## Related
 
 - [reference/cli](./cli.md) — verbs that read/write these files
