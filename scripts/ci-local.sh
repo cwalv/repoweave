@@ -95,8 +95,8 @@ if run_stage clippy; then
 fi
 
 if run_stage doc; then
-    header "cargo doc --no-deps (rustdoc warnings deny)"
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+    header "cargo doc --no-deps --document-private-items (rustdoc warnings deny)"
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
 fi
 
 if run_stage fmt; then

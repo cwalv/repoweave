@@ -2739,7 +2739,7 @@ pub(crate) enum CommitOutcome {
 }
 
 /// Stage and commit the `.gitattributes` change written by
-/// [`Vcs::set_replay_exclusion`] during the legacy `merge=ours` →
+/// [`crate::vcs::Vcs::set_replay_exclusion`] during the legacy `merge=ours` →
 /// `merge=rwv-ours` migration.
 ///
 /// Refuses to commit when the project repo has any staged change other than

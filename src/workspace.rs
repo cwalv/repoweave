@@ -811,7 +811,7 @@ pub struct ProjectScan {
 /// Directory entries of `dir`, dot-directories excluded.
 ///
 /// A leading `.` marks host or VCS state — `.git`, an editor's cache — and
-/// [`crate::vcs::validate_ref_name`] refuses it as a name component anyway,
+/// [`crate::naming::validate_ref_name`] refuses it as a name component anyway,
 /// so descending into one can only mint a name no project could carry.
 fn undotted_child_dirs(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {

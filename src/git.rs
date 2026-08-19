@@ -412,7 +412,7 @@ pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
 /// Git-based version control operations.
 ///
 /// Private to this module: outside it the git backend is reachable only as a
-/// [`Vcs`](crate::vcs::Vcs) handle from [`git_vcs`], so no call site can name
+/// [`Vcs`] handle from [`git_vcs`], so no call site can name
 /// a backend it could not be handed a different one of.
 struct GitVcs;
 
@@ -891,10 +891,12 @@ impl GitVcs {
 
     /// Pull the file list out of git's untracked-collision refusal:
     ///
-    ///   error: The following untracked working tree files would be overwritten by merge:
-    ///           <path>
-    ///   Please move or remove them before you merge.
-    ///   Aborting
+    /// ```text
+    /// error: The following untracked working tree files would be overwritten by merge:
+    ///         <path>
+    /// Please move or remove them before you merge.
+    /// Aborting
+    /// ```
     ///
     /// `None` when `stderr` isn't shaped like that refusal, so a caller falls
     /// back to the raw [`VcsError::CommandFailed`] instead of misreading an

@@ -441,36 +441,6 @@ fn orphan_prune_pairs(
         .collect()
 }
 
-/// Scope guard that rolls back a partial workweave create on drop.
-///
-/// Tracks:
-/// - The workweave directory (`workweave_dir`): removed with `remove_dir_all`.
-/// - Registered worktrees (`registered_worktrees`): each entry is
-///   `(repo_abs, worktree_path)`; pruned via [`prune_orphan_worktrees_for`].
-/// - Created ephemeral branches (`created_branches`): each entry is
-///   `(repo_abs, branch_name)`; deleted on rollback after worktree removal.
-/// - Repos to prune on rollback (`prune_on_rollback`): repos where a worktree
-///   creation was ATTEMPTED (even if it failed mid-way due to a git hook).
-///   A failing hook can create the worktree directory AND the `.git/worktrees/`
-///   registration before returning a non-zero exit — these stale registrations
-///   must be pruned even though the worktree was never fully recorded as
-///   successful. After `remove_dir_all(&workweave_dir)` removes the worktree
-///   path, the registration becomes prunable; running `git worktree prune` in
-///   each attempted repo clears it.
-///
-/// Call `defuse()` to commit the create — the guard then does nothing on drop.
-/// If the guard is dropped without being defused (i.e. due to any failure path,
-/// including `bail!` / `?` propagation), the rollback runs automatically.
-///
-/// For explicit failure points (where the caller has an error to return),
-/// prefer calling [`rollback_and_collect_failures`] before bailing so that
-/// cleanup failures can be appended to the returned error message rather than
-/// only being printed to stderr.
-///
-/// **Design:** A single drop-based guard centralises rollback so future code
-/// cannot accidentally bypass it. Adding a new failure point that returns early
-/// (via `?` or `bail!`) automatically triggers cleanup — no extra boilerplate
-/// required.
 /// What one create attempt did to the ref its receipt names.
 ///
 /// Rollback must not destroy a branch this create merely **adopted**:
@@ -500,6 +470,36 @@ struct RefAttempt {
     birth: RefBirth,
 }
 
+/// Scope guard that rolls back a partial workweave create on drop.
+///
+/// Tracks:
+/// - The workweave directory (`workweave_dir`): removed with `remove_dir_all`.
+/// - Registered worktrees (`registered_worktrees`): each entry is
+///   `(repo_abs, worktree_path)`; pruned via [`prune_orphan_worktrees_for`].
+/// - Created ephemeral branches (`created_branches`): each entry is
+///   `(repo_abs, branch_name)`; deleted on rollback after worktree removal.
+/// - Repos to prune on rollback (`prune_on_rollback`): repos where a worktree
+///   creation was ATTEMPTED (even if it failed mid-way due to a git hook).
+///   A failing hook can create the worktree directory AND the `.git/worktrees/`
+///   registration before returning a non-zero exit — these stale registrations
+///   must be pruned even though the worktree was never fully recorded as
+///   successful. After `remove_dir_all(&workweave_dir)` removes the worktree
+///   path, the registration becomes prunable; running `git worktree prune` in
+///   each attempted repo clears it.
+///
+/// Call `defuse()` to commit the create — the guard then does nothing on drop.
+/// If the guard is dropped without being defused (i.e. due to any failure path,
+/// including `bail!` / `?` propagation), the rollback runs automatically.
+///
+/// For explicit failure points (where the caller has an error to return),
+/// prefer calling [`CreateRollbackGuard::rollback_and_collect_failures`]
+/// before bailing so that cleanup failures can be appended to the returned
+/// error message rather than only being printed to stderr.
+///
+/// **Design:** A single drop-based guard centralises rollback so future code
+/// cannot accidentally bypass it. Adding a new failure point that returns early
+/// (via `?` or `bail!`) automatically triggers cleanup — no extra boilerplate
+/// required.
 struct CreateRollbackGuard {
     /// The handle the create ran through, used again to undo it. One create
     /// spans every repo in the manifest, so this is the backend of the
