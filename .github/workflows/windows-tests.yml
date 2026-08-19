@@ -42,19 +42,29 @@
 #
 # It would not mean the tests pass on Windows, for two separate reasons.
 #
-# FIRST, 52 tests do not EXIST there — `#[cfg(unix)]` on the test, or a
-# file-level `#![cfg(unix)]` — so they neither run nor report, and a suite is
+# FIRST, a set of tests does not EXIST there — `#[cfg(unix)]` on the test, or
+# a file-level `#![cfg(unix)]` — so they neither run nor report, and a suite is
 # green over their absence exactly as it is over their success. Each states its
-# reason at its own site. At the time of writing:
+# reason at its own site, and they fall into three groups:
 #
-#   41  plugin discovery and dispatch. Windows has no executable bit and
-#       lookup selects on PATHEXT, so what a discoverable plugin is even NAMED
-#       there is an undecided product question, not a porting task.
-#   10  hook, permission and rename fixtures. The settled ones are pinned by
-#       tests/hook_fixture_portability_test.rs; the rest are gated on an ACL
-#       deny entry, a PATH shim Windows will not spawn, or an inode instrument
-#       NTFS may not honour.
-#    1  an #[ignore]d static-files placeholder, which runs on no platform.
+#   plugin discovery and dispatch. Windows has no executable bit and lookup
+#   selects on PATHEXT, so what a discoverable plugin is even NAMED there is
+#   an undecided product question, not a porting task.
+#
+#   hook, permission and rename fixtures. The settled ones are pinned by
+#   tests/hook_fixture_portability_test.rs; the rest are gated on an ACL deny
+#   entry, a PATH shim Windows will not spawn, or an inode instrument NTFS may
+#   not honour.
+#
+#   an #[ignore]d static-files placeholder, which runs on no platform.
+#
+# This section carried a total and a count per group until they were wrong.
+# They are derived from the tree, so they rot the moment anyone gates another
+# test, and a corrected count is the same defect re-armed with a fresh clock.
+# If a magnitude is worth having, derive it then — and note that `cfg(unix)`
+# also gates helpers and whole files, so a raw grep is not a test count. Read
+# the sites instead: whether an absence is acceptable turns on the REASON, and
+# only the site carries that.
 #
 # SECOND, and this is the harder one to see: a test can be PRESENT here,
 # EXECUTED here, and GREEN here while proving nothing, because its fixture
@@ -66,8 +76,9 @@
 # new assertion present and it goes red; remove that assertion and the same
 # mutation passes. Absent tests can at least be counted. These cannot.
 #
-# Read the 52 as a floor. It counts only tests absent by `cfg`; a test that
-# exists here and fails for a reason nobody predicted is what this job is for.
+# Whatever that set's size, it is a floor. It holds only tests absent by
+# `cfg`; a test that exists here and fails for a reason nobody predicted is
+# what this job is for.
 #
 # Symlink CREATION is not among the reasons, which is worth recording because
 # it was the obstacle most expected. GitHub's Windows runner images enable
