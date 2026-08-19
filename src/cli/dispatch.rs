@@ -484,6 +484,13 @@ pub fn run() -> anyhow::Result<()> {
         //     workweave literally named `crete`. The genuine bare-name case
         //     (`hotfix`, edit distance 6 from every action) is far from any
         //     subcommand and still gets the create-shaped reframe.
+        //
+        // Within that, PROJECT itself being a known WorkweaveAction (e.g. the
+        // natural spelling `rwv workweave create <seat>`) gets its own message
+        // instead of the generic one: the generic "Did you mean" suggestion
+        // reinserts PROJECT ahead of WORD, so for this case it reads `rwv
+        // workweave create create <seat>` — repeating the exact mistake one
+        // level deeper instead of naming it.
         if raw_args.get(1).map(|s| s.as_str()) == Some("workweave") {
             let project = raw_args.get(2).map(|s| s.as_str());
             let word = raw_args.get(3).map(|s| s.as_str());
@@ -511,6 +518,16 @@ pub fn run() -> anyhow::Result<()> {
                     .get_subcommands()
                     .any(|c| c.get_name() == word);
                 if !is_flag(project) && !is_flag(word) && !is_known_subcommand && !near_subcommand {
+                    if subcommand_actions.contains(&project) {
+                        eprintln!(
+                            "error: 'rwv workweave {project} {word}' reads '{project}' as \
+                             [PROJECT], not a subcommand — a positional argument is filled \
+                             before rwv looks for a subcommand to run.\n\
+                             To run `{project}` against a project, name the project explicitly:\n\
+                             \n  rwv workweave <PROJECT> {project} {word}\n"
+                        );
+                        std::process::exit(2);
+                    }
                     eprintln!(
                         "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
                          Did you mean:  rwv workweave {project} create {word}\n\

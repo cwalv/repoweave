@@ -192,3 +192,65 @@ fn workweave_create_reaches_clap() {
                 .and(predicate::str::contains("<NAME>")),
         );
 }
+
+/// The trap this closes: `rwv workweave create <seat>` — the natural spelling
+/// a user reaches for — parses `create` into `[PROJECT]` (clap fills the
+/// positional before it looks for a subcommand), leaving `<seat>` unconsumed.
+/// Before this fix that fell into the generic reframe above, whose
+/// `create`-shaped suggestion re-inserted the same `create` PROJECT ahead of
+/// WORD and read back as `rwv workweave create create <seat>` — repeating the
+/// exact mistake rather than naming it. The message must instead name `create`
+/// as the value bound to PROJECT and quote an invocation that actually works.
+#[test]
+fn workweave_subcommand_name_as_project_names_the_mistake() {
+    rwv()
+        .args(["workweave", "create", "myseat"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("reads 'create' as [PROJECT]")
+                .and(predicate::str::contains("PROJECT"))
+                .and(predicate::str::contains(
+                    "rwv workweave <PROJECT> create myseat",
+                ))
+                // The old double-create suggestion must be gone.
+                .and(predicate::str::contains("create create").not())
+                .and(predicate::str::contains("is not a valid subcommand").not()),
+        );
+}
+
+/// Every `WorkweaveAction` subcommand name triggers the same reframe when it
+/// binds to `[PROJECT]`, not just `create` — `delete` and `set-container` are
+/// exactly as reachable as project-shaped tokens and exactly as wrong.
+#[test]
+fn workweave_other_subcommand_names_as_project_are_also_named() {
+    rwv()
+        .args(["workweave", "delete", "myseat"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reads 'delete' as [PROJECT]").and(
+            predicate::str::contains("rwv workweave <PROJECT> delete myseat"),
+        ));
+
+    rwv()
+        .args(["workweave", "set-container", "/some/path"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("reads 'set-container' as [PROJECT]").and(
+                predicate::str::contains("rwv workweave <PROJECT> set-container /some/path"),
+            ),
+        );
+}
+
+/// Unrelated case, guarding against over-matching: a real project name that
+/// merely *contains* a subcommand word (`created-stuff`) must not trip the
+/// new reframe — only an exact subcommand name bound to PROJECT does.
+#[test]
+fn workweave_project_name_containing_a_subcommand_word_is_not_reframed() {
+    rwv()
+        .args(["workweave", "created-stuff", "myseat"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reads").not());
+}
