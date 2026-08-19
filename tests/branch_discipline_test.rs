@@ -3581,9 +3581,9 @@ fn divergent_marker_fixture(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
 /// fix, the report showed the rename promise here and `--fix` skipped it.
 ///
 /// **Mutation evidence**: revert `branch_discipline_in_scope`'s (a)-arm to
-/// compare `parse_weave_dir_name(dir_name).0` instead of the marker's
-/// project and the first assertion reddens (the finding reappears under
-/// proja while the repair still skips).
+/// take the project from the directory basename's own left half instead of
+/// from the marker it carries, and the first assertion reddens (the finding
+/// reappears under proja while the repair still skips).
 #[test]
 fn divergent_marker_report_and_repair_agree_under_dirname_project() {
     let tmp = common::tempdir().unwrap();

@@ -1,7 +1,8 @@
 //! Pins the prohibition this test enforces: `--` is not spelled as
 //! the `<project>--<name>` workweave separator anywhere outside
 //! `naming.rs`. Everywhere else routes through `join_flat`,
-//! `weave_dir_name`, `split_at_weave_separator`, or `parse_weave_dir_name`.
+//! `weave_dir_name`, `split_at_weave_separator`, `workweave_name_in`, or
+//! `resolve_flat_address`.
 //!
 //! The `+` half of the same grammar is pinned by
 //! `tests/segment_escape_one_owner_test.rs`. Both metacharacters have the
@@ -10,7 +11,7 @@
 //! The needles are the two shapes that spell the separator directly: a
 //! format string joining two placeholders with a bare `--` (the mint shape,
 //! `}--{`) and `split_once("--")` (the split shape, which
-//! `parse_weave_dir_name` is itself built on). A bare substring scan for
+//! `split_at_weave_separator` is itself built on). A bare substring scan for
 //! `"--"` is unusable here: `check.rs`, `git.rs`, `lock.rs`, and `plugins.rs`
 //! all pass the literal `--` as a positional git/shell-CLI argument
 //! separator, unrelated to workweave naming, and those hits would drown any
@@ -100,7 +101,8 @@ fn no_module_outside_the_owner_spells_the_weave_separator() {
         format_hits.is_empty() && split_hits.is_empty(),
         "the `<project>--<name>` workweave separator must be spelled only \
          in src/{OWNER} — mint via join_flat or weave_dir_name, split via \
-         split_at_weave_separator or parse_weave_dir_name. \
+         split_at_weave_separator, and read an identity back via \
+         workweave_name_in or resolve_flat_address. \
          format-join hits: {format_hits:#?}, split hits: {split_hits:#?}"
     );
 }

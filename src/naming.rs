@@ -67,6 +67,13 @@ pub fn encode_segment(s: &str) -> String {
 }
 
 /// The inverse of [`encode_segment`].
+///
+/// No production caller reads a rendering back this way — one that holds the
+/// project strips it, and one that holds only a typed address resolves it. Its
+/// remaining consumer is `tests/segment_escape_one_owner_test.rs`, whose
+/// decode needle is this body: removing this as unused silently vacates that
+/// scan's non-vacuity check, which is the thing standing between the `+`
+/// escape and a second module inventing its own handling of it.
 pub fn decode_segment(s: &str) -> String {
     s.replace('+', "/")
 }
