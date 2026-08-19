@@ -402,14 +402,6 @@ fn every_skip_announcement_goes_through_the_one_reporter() {
 /// is how two earlier counts of this same population disagreed.
 ///
 /// A block that asserts is measuring, not skipping, and is not a finding.
-///
-/// `PROBES` is the population boundary, not a convenience: a return whose
-/// guard names none of them is not seen here at all. The known case is a
-/// guard on a subprocess's exit status — `status_broken_clone_test.rs` skips
-/// on `cat_file.success()` when the object survived GC, and stripping its
-/// announcement leaves this test green. Widening `PROBES` to reach that shape
-/// would match every `Command` status check in the corpus, most of which are
-/// measuring rather than skipping.
 #[test]
 fn no_environment_guard_returns_without_announcing() {
     const PROBES: &[&str] = &[
