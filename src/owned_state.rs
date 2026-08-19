@@ -244,14 +244,16 @@ enum LedgerEdit {
 
 /// Read `dir`'s ledger, apply `edit`, publish the result — the whole sequence
 /// under one [`LedgerClaim`], which is what makes it a read-modify-write
-/// rather than three steps a peer can interleave with.
+/// rather than three steps a peer can interleave with. `edit` returning `Err`
+/// aborts before the write; [`LedgerEdit::Unchanged`] is for a no-op edit, not
+/// a way to abort one.
 fn edit_owned_digests(
     dir: &Path,
-    edit: impl FnOnce(&mut BTreeMap<String, LedgerEntry>) -> LedgerEdit,
+    edit: impl FnOnce(&mut BTreeMap<String, LedgerEntry>) -> anyhow::Result<LedgerEdit>,
 ) -> anyhow::Result<()> {
     let claim = LedgerClaim::acquire(dir)?;
     let mut entries = read_owned_digests(dir);
-    match edit(&mut entries) {
+    match edit(&mut entries)? {
         LedgerEdit::Changed => write_owned_digests(&claim, &entries),
         LedgerEdit::Unchanged => Ok(()),
     }
@@ -297,7 +299,7 @@ pub fn stamp_owned_digest(dir: &Path, file_name: &str, content: &[u8]) -> anyhow
             file_name.to_string(),
             LedgerEntry::Adopted(owned_digest(content)),
         );
-        LedgerEdit::Changed
+        Ok(LedgerEdit::Changed)
     })
 }
 
@@ -347,7 +349,7 @@ pub fn stamp_owned_generation(
                 inputs: at_record,
             },
         );
-        LedgerEdit::Changed
+        Ok(LedgerEdit::Changed)
     })
 }
 
@@ -715,8 +717,8 @@ fn workspace_relative_key(ws_root_canon: &Path, ws_root_raw: &Path, target_canon
 /// left behind it is a drift report on a file no verb can produce.
 pub fn forget_owned_digest(dir: &Path, file_name: &str) -> anyhow::Result<()> {
     edit_owned_digests(dir, |entries| match entries.remove(file_name) {
-        Some(_) => LedgerEdit::Changed,
-        None => LedgerEdit::Unchanged,
+        Some(_) => Ok(LedgerEdit::Changed),
+        None => Ok(LedgerEdit::Unchanged),
     })
 }
 
@@ -775,7 +777,7 @@ pub fn carry_attested_owned_files(
     let names: Vec<String> = carried.keys().cloned().collect();
     edit_owned_digests(dest_dir, move |entries| {
         *entries = carried;
-        LedgerEdit::Changed
+        Ok(LedgerEdit::Changed)
     })?;
     Ok(names)
 }
@@ -1234,6 +1236,35 @@ mod tests {
             check_owned_digest(tmp.path(), "Cargo.lock", b"v1"),
             OwnedDigestCheck::NotRecorded,
             "and must not have written the entry it refused to stamp"
+        );
+    }
+
+    /// A closure that decides mid-edit not to write must be able to say so
+    /// and have it reach the caller as an error — not fall back to
+    /// [`LedgerEdit::Unchanged`], which [`edit_owned_digests`] also takes for
+    /// a legitimate no-op and publishes as `Ok(())`.
+    #[test]
+    fn a_refusing_edit_reaches_the_caller_and_writes_nothing() {
+        let tmp = TempDir::new().unwrap();
+        stamp_owned_digest(tmp.path(), "Cargo.lock", b"before").unwrap();
+
+        let result = edit_owned_digests(tmp.path(), |entries| {
+            entries.insert(
+                "Cargo.lock".to_string(),
+                LedgerEntry::Adopted(owned_digest(b"corrupted")),
+            );
+            Err(anyhow::anyhow!("refusing"))
+        });
+
+        assert!(
+            result.is_err(),
+            "a refusal must surface as Err, not the Ok(()) a bare Unchanged gives"
+        );
+        assert_eq!(
+            check_owned_digest(tmp.path(), "Cargo.lock", b"before"),
+            OwnedDigestCheck::Matches,
+            "the in-memory mutation the closure made before refusing must never \
+             reach disk"
         );
     }
 
