@@ -756,27 +756,12 @@ pub fn node_tool(name: &str) -> String {
     }
 }
 
-/// Whether two spellings denote one path: compared by components with the
-/// Windows verbatim prefix simplified away, so `\\?\C:\ws\x`, `C:\ws/x` and
-/// `C:/ws/x` are one path and a genuinely different file never is.
-///
-/// Which spelling a published path is owed is settled, not open: `wire_path`
-/// for a `--json` field, `operator_path` for text a person reads. This helper
-/// sees neither, so a site reading through it is green whether or not the
-/// surface it reads still leaks the internal spelling — it cannot be the pin
-/// for a surface that mints. Reach for it only where the render under test
-/// stringifies the path itself, and replace the call when that render moves
-/// onto a seam; the assertion becomes an exact comparison against the mint.
-pub fn same_path(a: impl AsRef<std::path::Path>, b: impl AsRef<std::path::Path>) -> bool {
-    dunce::simplified(a.as_ref()) == dunce::simplified(b.as_ref())
-}
-
 /// Flatten path spelling inside prose: separators to `/`, the verbatim
 /// prefix dropped. Compare both sides through this, never one.
 ///
-/// Blind in the same way [`same_path`] is, and for the same reason — it is
-/// green whether or not the message it reads carries the spelling that message
-/// is owed. Two kinds of call site keep it. One reads a render that still
+/// Green whether or not the message it reads carries the spelling that message
+/// is owed, so it cannot be the pin for a surface that mints. Two kinds of
+/// call site keep it. One reads a render that still
 /// stringifies its own path, and gives the call up when that render moves onto
 /// `operator_path`. The other reads text this repository does not author:
 /// `git worktree list --porcelain` answers in git's spelling, which no decision
