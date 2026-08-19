@@ -414,9 +414,10 @@ fn every_skip_announcement_goes_through_the_one_reporter() {
 /// behind it, and stripping their announcement leaves this test green.
 ///
 /// The list is not widened to close that, deliberately: `PROBES` is matched
-/// against the guard line, and admitting "any expression derived from a
-/// subprocess" would report every early return in the corpus. The boundary is
-/// stated instead, because a structural pin's scope IS its coverage claim.
+/// against the guard line, and widening it to reach that shape would match
+/// every `Command` status check in the corpus, most of which are measuring
+/// rather than skipping. The boundary is stated instead, because a structural
+/// pin's scope IS its coverage claim.
 #[test]
 fn no_environment_guard_returns_without_announcing() {
     const PROBES: &[&str] = &[
