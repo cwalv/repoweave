@@ -6,18 +6,19 @@ The procedure is nearly identical for both verbs because the conflict surface is
 
 ## The error you'll see
 
-When a Phase 1' replay or Phase 2 strategy hits a real conflict, the operation bails with a message that names the affected repo and embeds the resolution hint:
+When a Phase 1' replay or Phase 2 strategy hits a real conflict, rwv prints a per-repo line naming the conflicted repo, then bails with a summary that embeds the resolution hint. For a Phase 2 (manifest-repo) conflict, shown here, the summary's own `cd` step is a generic `<repo>` placeholder — the per-repo line above it is what names the repo:
 
 ```text
-error: sync stopped — conflict in github/chatly/server during rebase
+  github/chatly/server: Rebase in <workspace-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
+Error: sync hit conflicts in one or more manifest repos (see per-repo lines above).
 
-To resolve:
-  edit the conflicted files
-  cd github/chatly/server
+To resolve each conflicted repo:
+cd <repo>
+  # edit conflicted files
   git add <files>
+rwv sync --continue   # resume; already-converged repos are no-ops
 
-Then re-run with `rwv sync --continue` to resume.
-To give up entirely: `rwv abort`.
+If you'd rather roll everything back: `rwv abort`.
 ```
 
 The hint text is owned by the VCS layer (`Vcs::conflict_resolution_hint` — see [vcs-as-seam](../explanation/joints/vcs-as-seam.md)). For rebase ops, the hint stops at staging; rwv core appends the appropriate `rwv <verb> --continue` line. The sync engine composes and emits the full message so the operator sees concrete next steps without trial-and-error.
