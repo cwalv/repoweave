@@ -94,19 +94,35 @@
 # vacuous: a test that EXISTS here, is not gated, compiles, and NEVER RUNS.
 # `cargo test` builds one binary per target and runs them in sequence, and
 # without --no-fail-fast it stops at the first binary that fails. The lib
-# target goes first. So one failing unit test ends the command before any of
-# the 182 files in tests/ has started, and what cargo prints as it gives up —
+# target goes first. So one failing unit test ends the command before any file
+# in tests/ has started, and what cargo prints as it gives up —
 # `error: test failed, to rerun pass --lib` — names the target it stopped at
 # without saying that it stopped.
 #
 # What separates a small suite from a truncated one is the number of
 # `test result:` lines cargo prints for its OWN targets: one per binary that
-# ran, plus one for the doctests. That is one for the lib target, one for each
-# bin and one for each file in tests/ — 186 at the time of writing, a total
-# that does not move with the platform, because a file gated `#![cfg(unix)]`
+# ran, plus one for the doctests. DERIVE that total when you read a log, rather
+# than trusting one written here — ask cargo what it built, and add the
+# doctests, which build no executable:
+#
+#     echo $(( $(cargo test --no-run 2>&1 | grep -c '^ *Executable ') + 1 ))
+#
+# Ask CARGO rather than counting files. A `ls tests/*.rs` plus `ls src/bin/*.rs`
+# undercounts by one, because `src/main.rs` is a bin target that lives in
+# neither, and a `[[bin]]` section could add more that no directory listing
+# shows.
+#
+# It does not move with the platform, because a file gated `#![cfg(unix)]`
 # still builds and still reports zero tests, so it costs a line either way.
 # Fewer than that means the command stopped early. ONE means it never left the
 # lib target.
+#
+# This carried a frozen total until someone measured it and found it ~35 short
+# of the tree. That is worse than untidy, and it is why the number had to go
+# rather than be corrected: the comparison is "fewer than that means it stopped
+# early", so a stale-LOW total lets a run that truncated ~25 binaries short
+# clear the threshold and read as complete. It failed in the safe-looking
+# direction, which is exactly why it sat unnoticed. A derived total cannot.
 #
 # Match on the crate name each line carries, not on a raw count and not on the
 # target name, because three lines in a complete log are not cargo's.
