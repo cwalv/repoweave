@@ -226,10 +226,12 @@ fn status_human_shows_unreachable_not_no_lock_when_sha_gone() {
         .status()
         .expect("git cat-file");
     if cat_file.success() {
-        // Object survived GC — skip this test rather than assert a wrong relation.
-        // (Some CI environments have pack-refs / loose-object policies that keep
-        // objects longer; the unreachable variant is still tested structurally by
-        // the JSON test below which writes a fabricated bad SHA.)
+        // The unreachable variant is still pinned structurally by the JSON test
+        // below, which writes a fabricated bad SHA rather than relying on GC.
+        common::report_skip(
+            "the object survived GC here, so the unreachable-SHA relation cannot \
+             be built — some hosts keep loose objects longer",
+        );
         return;
     }
 
@@ -594,7 +596,10 @@ fn unreachable_repair_drive_git_fetch_restores_ok() {
         .status()
         .expect("git cat-file");
     if cat_file.success() {
-        // Object survived GC — skip.
+        common::report_skip(
+            "the object survived GC here, so the unreachable-SHA relation cannot \
+             be built — some hosts keep loose objects longer",
+        );
         return;
     }
 

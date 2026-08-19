@@ -78,10 +78,9 @@ fn doctor_reports_an_unreadable_projects_dir() {
     let ws = make_workspace(tmp.path());
 
     if !permissions_are_enforced(tmp.path()) {
-        eprintln!(
-            "skipping doctor_reports_an_unreadable_projects_dir: permission bits do not \
-             block reads for this user (likely root) — the test's precondition (an \
-             unreadable projects/) cannot be built here"
+        common::report_skip(
+            "permission bits do not block reads for this user (likely root) — the \
+             test's precondition (an unreadable projects/) cannot be built here",
         );
         return;
     }
@@ -110,10 +109,9 @@ fn doctor_json_includes_projects_dir_unreadable() {
     let ws = make_workspace(tmp.path());
 
     if !permissions_are_enforced(tmp.path()) {
-        eprintln!(
-            "skipping doctor_json_includes_projects_dir_unreadable: permission bits do not \
-             block reads for this user (likely root) — the test's precondition (an \
-             unreadable projects/) cannot be built here"
+        common::report_skip(
+            "permission bits do not block reads for this user (likely root) — the \
+             test's precondition (an unreadable projects/) cannot be built here",
         );
         return;
     }

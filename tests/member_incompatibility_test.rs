@@ -469,9 +469,7 @@ fn update_reports_breach_it_newly_created() {
 #[test]
 fn update_reports_breach_on_the_go_tool_path() {
     if !go_is_installed() {
-        eprintln!(
-            "skipping test: `go` is not on PATH, so the go-tool activate path is unreachable"
-        );
+        common::report_skip("`go` is not on PATH, so the go-tool activate path is unreachable");
         return;
     }
 

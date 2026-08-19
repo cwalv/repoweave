@@ -3844,7 +3844,7 @@ mod tests {
         let home = match std::env::home_dir() {
             Some(h) => h,
             None => {
-                // If we can't determine $HOME, skip.
+                crate::report_skip("$HOME is not determinable, so the ceiling has no anchor");
                 return;
             }
         };
@@ -3854,8 +3854,7 @@ mod tests {
         let tmp_under_home = match tempfile::TempDir::new_in(&home) {
             Ok(t) => t,
             Err(_) => {
-                // If we can't create a temp dir inside $HOME (e.g., permissions),
-                // skip rather than fail.
+                crate::report_skip("a temp dir cannot be created inside $HOME here");
                 return;
             }
         };

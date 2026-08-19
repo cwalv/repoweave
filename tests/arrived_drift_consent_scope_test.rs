@@ -327,8 +327,7 @@ fn assert_the_operator_was_told(run: &Run, verb: &str) {
 /// test is the doctor finding and not the pin.
 #[test]
 fn activate_does_not_settle_the_drift_it_just_named() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -368,8 +367,7 @@ fn activate_does_not_settle_the_drift_it_just_named() {
 /// from a fixture where it never runs.
 #[test]
 fn a_verb_with_no_drift_in_its_way_still_runs_the_generator() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -403,8 +401,7 @@ fn a_verb_with_no_drift_in_its_way_still_runs_the_generator() {
 /// landed is not the repair.
 #[test]
 fn add_withholds_the_generator_over_unsettled_drift() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -444,8 +441,7 @@ fn add_withholds_the_generator_over_unsettled_drift() {
 /// member leaves the resolve rather than entering it.
 #[test]
 fn remove_withholds_the_generator_over_unsettled_drift() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -478,8 +474,7 @@ fn remove_withholds_the_generator_over_unsettled_drift() {
 /// runs when nothing is in the way" half for this arm.
 #[test]
 fn update_withholds_the_generator_over_unsettled_drift() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -500,8 +495,7 @@ fn update_withholds_the_generator_over_unsettled_drift() {
 /// to withhold and the run must go through.
 #[test]
 fn materialize_with_a_consent_still_reaches_the_generator() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();

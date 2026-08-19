@@ -13,10 +13,7 @@ mod common;
 /// Return early (skip) if `go` is not on PATH.
 macro_rules! require_go {
     () => {
-        if which::which("go").is_ok() {
-            // go is available, continue
-        } else {
-            eprintln!("skipping test: `go` not found on PATH");
+        if common::skip_without_tool("go") {
             return;
         }
     };

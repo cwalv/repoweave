@@ -1322,7 +1322,7 @@ mod tests {
         if go_on_path() {
             return true;
         }
-        eprintln!("skipping test: `go` is not on PATH, so the PRIMARY path is unreachable");
+        crate::report_skip("`go` is not on PATH, so the PRIMARY path is unreachable");
         false
     }
 

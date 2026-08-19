@@ -290,11 +290,14 @@ fn durability_violation(trace: &str) -> Option<String> {
 #[test]
 fn the_receipt_reaches_the_disk_before_record_created_returns() {
     if !cfg!(target_os = "linux") {
-        eprintln!("SKIP: the probe reads Linux strace's syscall trace; other hosts ship a different strace or none");
+        common::report_skip(
+            "the probe reads Linux strace's syscall trace; other hosts ship a \
+             different strace or none",
+        );
         return;
     }
     if Command::new("strace").arg("-V").output().is_err() {
-        eprintln!("SKIP: strace not installed; the durability claim is unchecked here");
+        common::report_skip("strace not installed; the durability claim is unchecked here");
         return;
     }
     let tmp = common::tempdir().unwrap();
@@ -318,7 +321,7 @@ fn the_receipt_reaches_the_disk_before_record_created_returns() {
     let trace = String::from_utf8_lossy(&out.stderr);
     let child_stdout = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() && trace.contains("ptrace") {
-        eprintln!("SKIP: ptrace is not permitted here: {trace}");
+        common::report_skip(&format!("ptrace is not permitted here: {trace}"));
         return;
     }
     assert!(

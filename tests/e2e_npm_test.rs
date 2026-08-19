@@ -40,8 +40,7 @@ fn git_init(path: &Path) {
 #[test]
 fn npm_workspace_wiring_e2e() {
     // Skip if npm is not available.
-    if which::which("npm").is_err() {
-        eprintln!("SKIP: npm not found on PATH");
+    if common::skip_without_tool("npm") {
         return;
     }
 

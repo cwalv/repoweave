@@ -97,15 +97,15 @@ fn recipe_checkout_branch_across_forks_via_jq_xargs() {
     // through the same `jq` and asserts its exact bytes without an `xargs`
     // hop.
     if cfg!(windows) {
-        eprintln!(
-            "SKIP: the pipeline receives CR line endings on Windows and \
-             `git -C` refuses a path with one; the wire spelling itself is \
-             pinned by recipe_filter_by_role_owned_via_jq"
+        common::report_skip(
+            "the pipeline receives CR line endings on Windows and `git -C` refuses \
+             a path with one; the wire spelling itself is pinned by \
+             recipe_filter_by_role_owned_via_jq",
         );
         return;
     }
     if !ensure_tool("jq") || !ensure_tool("xargs") {
-        eprintln!("skipping: jq or xargs not on PATH");
+        common::report_skip("`jq` or `xargs` not found on PATH");
         return;
     }
 
@@ -140,7 +140,7 @@ fn recipe_filter_by_role_owned_via_jq() {
     // (that requires a network remote); just verifies the role filter
     // selects the right repos.
     if !ensure_tool("jq") {
-        eprintln!("skipping: jq not on PATH");
+        common::report_skip("`jq` not found on PATH");
         return;
     }
 

@@ -680,7 +680,7 @@ fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
     use std::os::unix::fs::PermissionsExt;
 
     let Ok(real_cargo) = which::which("cargo") else {
-        eprintln!("skipping: `cargo` not found on PATH");
+        common::report_skip("`cargo` not found on PATH");
         return;
     };
     let tmp = common::tempdir().unwrap();

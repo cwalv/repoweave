@@ -29,6 +29,23 @@ pub fn rwv_version() -> &'static str {
     option_env!("RWV_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
 }
 
+/// Announce a test that is about to return without measuring anything.
+///
+/// The inline `#[cfg(test)]` modules' counterpart to `report_skip` in
+/// `tests/common/mod.rs`, which they cannot name: that module is compiled into
+/// each test TARGET and the library crate cannot see it. Same bytes for the
+/// same reason — libtest intercepts the print macros and discards what a
+/// PASSING test wrote, so a skip announced with `eprintln!` reaches nobody, and
+/// a reader who knew to pass `--nocapture` already suspected the skip.
+///
+/// One `write_all` of a whole line: tests run concurrently, and a notice torn
+/// across two threads is worse than none.
+#[cfg(test)]
+pub(crate) fn report_skip(reason: &str) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
+}
+
 pub mod activate;
 pub mod add_remove;
 pub mod check;

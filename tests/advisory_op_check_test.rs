@@ -143,7 +143,7 @@ fn an_op_landing_after_the_check_does_not_stop_the_verb() {
     use std::os::unix::fs::PermissionsExt;
 
     let Ok(real_cargo) = which::which("cargo") else {
-        eprintln!("skipping: `cargo` not found on PATH");
+        common::report_skip("`cargo` not found on PATH");
         return;
     };
     let tmp = common::tempdir().unwrap();

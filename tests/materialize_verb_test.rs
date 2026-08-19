@@ -317,8 +317,7 @@ fn materialized_then_pinned_back(f: &Fixture) -> PathBuf {
 /// it.
 #[test]
 fn doctor_in_a_workweave_names_a_remedy_that_runs_there() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -353,8 +352,7 @@ fn doctor_in_a_workweave_names_a_remedy_that_runs_there() {
 /// adoption wearing no name.
 #[test]
 fn materialize_refuses_on_content_it_never_accepted() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();
@@ -386,8 +384,7 @@ fn materialize_refuses_on_content_it_never_accepted() {
 /// demonstration.
 #[test]
 fn the_two_consents_move_opposite_things() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
 
@@ -479,8 +476,7 @@ fn move_the_managed_members_list(f: &Fixture) -> (PathBuf, String) {
 /// the drift is settled and the same finding is re-broken.
 #[test]
 fn doctor_fix_withholds_regeneration_while_drift_is_unsettled() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
+    if common::skip_without_tool("cargo") {
         return;
     }
     let f = fixture();

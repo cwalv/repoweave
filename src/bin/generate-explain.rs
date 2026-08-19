@@ -3425,6 +3425,16 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// This binary is its own crate, so it cannot reach the library's
+    /// `#[cfg(test)]` `report_skip` — a `cfg(test)` item does not exist for a
+    /// dependent. Same bytes for the same reason: libtest intercepts the print
+    /// macros and discards what a PASSING test wrote, so a skip announced with
+    /// `eprintln!` reaches nobody.
+    fn report_skip(reason: &str) {
+        use std::io::Write;
+        let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
+    }
+
     /// Findings spell paths as the platform walked them; the seeded
     /// assertions below name locations with `/`.
     fn slashed(s: &str) -> String {
@@ -4493,7 +4503,7 @@ mod tests {
         let root = repo_root();
         let script = root.join("scripts/reap-orphaned-savepoints.sh");
         if !script.exists() {
-            // If the script is absent (different branch, stripped checkout), skip.
+            report_skip("scripts/reap-orphaned-savepoints.sh is not in this checkout");
             return;
         }
         let consumer_errors = check_no_consumer_vocabulary(&root);

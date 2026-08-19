@@ -69,7 +69,7 @@ fn uv_tool_install_repoweave() {
     let uv = match which("uv") {
         Some(p) => p,
         None => {
-            eprintln!("skipping uv_tool_install_repoweave: uv not on PATH");
+            common::report_skip("`uv` not found on PATH");
             return;
         }
     };
@@ -122,7 +122,7 @@ fn cargo_install_repoweave() {
     require_e2e!();
 
     if which("cargo").is_none() {
-        eprintln!("skipping cargo_install_repoweave: cargo not on PATH");
+        common::report_skip("`cargo` not found on PATH");
         return;
     }
 
@@ -163,7 +163,7 @@ fn curl_install_script() {
     require_e2e!();
 
     if which("curl").is_none() {
-        eprintln!("skipping curl_install_script: curl not on PATH");
+        common::report_skip("`curl` not found on PATH");
         return;
     }
 
@@ -268,7 +268,7 @@ fn nix_devshell_provides_rwv() {
         let nix = match which("nix") {
             Some(p) => p,
             None => {
-                eprintln!("skipping nix_devshell_provides_rwv: nix not on PATH");
+                common::report_skip("`nix` not found on PATH");
                 return;
             }
         };

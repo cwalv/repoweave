@@ -213,7 +213,7 @@ fn a_write_into_a_member_while_a_verb_runs_is_not_prevented() {
     use std::os::unix::fs::PermissionsExt;
 
     let Ok(real_cargo) = which::which("cargo") else {
-        eprintln!("skipping: `cargo` not found on PATH");
+        common::report_skip("`cargo` not found on PATH");
         return;
     };
     let tmp = common::tempdir().unwrap();
