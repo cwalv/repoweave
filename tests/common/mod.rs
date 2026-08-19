@@ -33,6 +33,23 @@ pub fn report_skip(reason: &str) {
 ///     return;
 /// }
 /// ```
+///
+/// **This is not the question production asks, and the gap is reachable.**
+/// `which` walks PATH and applies its own notion of executability; every
+/// integration that needs a tool spawns it and lets the OS decide. A PATH entry
+/// carrying the executable bit over a file the OS will not run — a broken
+/// interpreter line, a file its owner cannot read, anything that is neither a
+/// script nor a binary — is accepted here and rejected there. A test guarded on
+/// this then does NOT skip: the spawn fails inside the integration and the
+/// failure arrives wearing the integration's own wording, so a reader debugging
+/// it starts in the wrong file.
+///
+/// `tests/skip_report_visibility_test.rs` plants those entries and pins the
+/// disagreement, so closing this gap reddens a test rather than changing what
+/// the corpus's guards mean in silence.
+///
+/// A test that mints the tool it needs onto a PATH it owns — see
+/// [`cargo_stand_in_path`] — asks neither question and is not exposed to this.
 pub fn skip_without_tool(tool: &str) -> bool {
     if which::which(tool).is_ok() {
         return false;

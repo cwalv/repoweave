@@ -60,6 +60,119 @@ fn a_tool_that_is_there_is_not_announced() {
 }
 
 // ---------------------------------------------------------------------------
+// The predicate's own limit.
+// ---------------------------------------------------------------------------
+
+/// `common::skip_without_tool` resolves with `which`, which walks PATH and
+/// applies its own notion of executability. Production spawns and lets the OS
+/// decide. Those are two predicates, and this plants the entries they disagree
+/// on.
+///
+/// WHY IT IS WORTH A TEST. On such an entry the guard reports the tool PRESENT,
+/// so a guarded test does not skip; the spawn then fails inside the integration
+/// and surfaces as that integration's own error on a host where the tool was
+/// declared available. Driving `doctor_workweave_cargo_lock_fix_test` with a
+/// broken-interpreter `cargo` on PATH produces exactly that: `cargo-workspace:
+/// activate hook failed: failed to run cargo`, from a test whose guard had just
+/// said cargo was there.
+///
+/// READ THE ASSERTION DIRECTION BEFORE CHANGING ANYTHING. This pins a KNOWN
+/// LIMIT, so it fails when the limit STOPS existing — someone who makes the
+/// guard ask what production asks reddens this test. That is the intent: the
+/// gap is currently accepted, and closing it changes what every guard in the
+/// corpus means, which is a decision that should arrive as a conversation
+/// rather than as a silent divergence.
+///
+/// The helper resolves against the process's own PATH, which no test may narrow
+/// — `set_var` is unsound under a parallel runner. So the predicate is exercised
+/// through `which_in` against a directory this test owns: the same executability
+/// question, asked of a path source the test can choose. The spawn half then
+/// runs the exact file `which_in` handed back, so what is compared is one file
+/// and not two lookups.
+///
+/// Unix only: the shapes are permission bits and interpreter lines, and what
+/// Windows accepts as executable is a different question under `PATHEXT`.
+#[cfg(unix)]
+#[test]
+fn the_guards_resolver_accepts_files_the_os_will_not_run() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let dir = tmp.path();
+
+    // The child's own diagnostics go nowhere: one of these shapes reaches a
+    // shell that reports it cannot open the file, and a gate log carrying that
+    // line beside a passing test is a reader's false alarm.
+    let run = |exe: &std::path::Path| {
+        std::process::Command::new(exe)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+    };
+
+    let plant = |name: &str, body: &str, mode: u32| {
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        path
+    };
+
+    // The control. Without it, "the OS would not run it" is equally true of a
+    // fixture directory nothing can be run out of.
+    let works = plant("probe-runnable", "#!/bin/sh\nexit 0\n", 0o755);
+    let found = which::which_in("probe-runnable", Some(dir), dir)
+        .expect("the control must resolve, or every case below is vacuous");
+    assert_eq!(
+        found, works,
+        "the walk must yield the planted file rather than something else on the machine"
+    );
+    assert!(
+        run(&found).is_ok_and(|s| s.success()),
+        "a well-formed script in this directory must run, or the disagreements \
+         below are a property of the fixture and not of the two resolvers"
+    );
+
+    let unrunnable = [
+        (
+            "probe-broken-interpreter",
+            "#!/nonexistent/interpreter\nexit 0\n",
+            0o755,
+        ),
+        (
+            "probe-write-only-to-its-interpreter",
+            "#!/bin/sh\nexit 0\n",
+            0o111,
+        ),
+        (
+            "probe-neither-script-nor-binary",
+            "this is not a program\n",
+            0o755,
+        ),
+        ("probe-empty", "", 0o755),
+    ];
+    for (name, body, mode) in unrunnable {
+        let planted = plant(name, body, mode);
+        let found = which::which_in(name, Some(dir), dir).unwrap_or_else(|e| {
+            panic!(
+                "`which` must still accept {name}: this test exists because it does, \
+                 and an `{e}` here means the predicate moved and the guard's blind \
+                 spot with it — reread common::skip_without_tool's doc comment"
+            )
+        });
+        assert_eq!(found, planted, "the walk must yield the planted file");
+
+        let ran = run(&found);
+        assert!(
+            !ran.as_ref().is_ok_and(|s| s.success()),
+            "{name}: `which` accepted this file and the OS ran it successfully, so \
+             the two resolvers now agree here. That is the gap closing, not a \
+             fixture problem: check whether common::skip_without_tool now spawns \
+             what production spawns, and retire this case if it does. Got {ran:?}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Driver — reads the subjects' output from outside their capture.
 // ---------------------------------------------------------------------------
 
