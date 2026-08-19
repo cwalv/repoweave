@@ -245,6 +245,153 @@ fn bare_write_sites(names: &[(&str, &str)]) -> Vec<String> {
     findings
 }
 
+/// One production function, found by declaration order rather than brace
+/// depth: a line belongs to the most recently declared `fn` until the next
+/// `impl` or `fn` line updates it. Good enough to say "this write's
+/// enclosing function names that accessor somewhere in its body" — not to
+/// bound a function's extent exactly.
+struct ProductionFn {
+    /// `Type::method` for an associated function, bare `name` for a free
+    /// one — qualified the way an external caller spells it, since that is
+    /// the spelling `writes_reaching_through_accessor` searches for.
+    qualified: String,
+    /// `fn`/`pub fn`/… declaration line, unparsed — checked for a `PathBuf`
+    /// return type by `path_accessor_aliases`.
+    signature: String,
+    /// Every non-comment line after the signature up to the next `impl` or
+    /// `fn` line.
+    body: String,
+}
+
+/// The `impl Type` (or `impl Trait for Type`) enclosing `trimmed`.
+fn impl_type(trimmed: &str) -> Option<&str> {
+    let rest = trimmed.strip_prefix("impl ")?;
+    let rest = match rest.split_once(" for ") {
+        Some((_, target)) => target,
+        None => rest,
+    };
+    let end = rest.find(['<', ' ', '{']).unwrap_or(rest.len());
+    let name = rest[..end].trim();
+    (!name.is_empty()).then_some(name)
+}
+
+/// The name a `fn`/`pub fn`/`pub(crate) fn`/… declaration line introduces.
+fn fn_name(trimmed: &str) -> Option<&str> {
+    if trimmed.starts_with("//") {
+        return None;
+    }
+    let idx = trimmed.find("fn ")?;
+    let before = trimmed[..idx].trim_end();
+    let before_is_modifiers = before.is_empty()
+        || before
+            .split_whitespace()
+            .all(|w| matches!(w, "pub" | "async" | "unsafe" | "const") || w.starts_with("pub("));
+    if !before_is_modifiers {
+        return None;
+    }
+    let after = &trimmed[idx + "fn ".len()..];
+    let end = after.find(['(', '<', ' ', ':']).unwrap_or(after.len());
+    let name = &after[..end];
+    (!name.is_empty()).then_some(name)
+}
+
+/// Every production function in `text`, in declaration order.
+fn scan_functions(text: &str, test_start: usize) -> Vec<ProductionFn> {
+    let mut out: Vec<ProductionFn> = Vec::new();
+    let mut cur_impl: Option<&str> = None;
+    for (n, line) in text.lines().enumerate() {
+        if n >= test_start {
+            break;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("//") {
+            continue;
+        }
+        if let Some(t) = impl_type(trimmed) {
+            cur_impl = Some(t);
+            continue;
+        }
+        if let Some(name) = fn_name(trimmed) {
+            // `cur_impl` never clears at an impl block's closing brace (no
+            // depth tracking), so a free function declared right after one
+            // would otherwise inherit it. Indentation is the signal instead:
+            // this crate's fmt puts every impl member at some indent and
+            // every free function at column 0.
+            let indented = line.starts_with(' ') || line.starts_with('\t');
+            let qualified = match (indented, cur_impl) {
+                (true, Some(ty)) => format!("{ty}::{name}"),
+                _ => name.to_string(),
+            };
+            out.push(ProductionFn {
+                qualified,
+                signature: line.to_string(),
+                body: String::new(),
+            });
+            continue;
+        }
+        if let Some(last) = out.last_mut() {
+            last.body.push_str(line);
+            last.body.push('\n');
+        }
+    }
+    out
+}
+
+/// Production functions shaped like a path accessor (`-> PathBuf`) whose own
+/// body names one of `names` — not by proximity to a call, but because the
+/// function IS the accessor. Qualified names (`LeaseRecord::path_in`) are
+/// what `writes_reaching_through_accessor` searches a candidate writer's
+/// body for, which is what lets a caller that only calls the accessor, and
+/// never spells the state file's own name, still be found: the historical
+/// shape this exists for is exactly that, a bare write beside
+/// `LeaseRecord::path_in(workspace_dir)` and nowhere near `OP_LEASE_FILE`
+/// itself.
+fn path_accessor_aliases(names: &[(&str, &str)]) -> BTreeSet<String> {
+    let mut aliases = BTreeSet::new();
+    for path in source_files() {
+        let text = std::fs::read_to_string(&path).expect("source must be readable");
+        let test_start = test_module_line(&text);
+        for f in scan_functions(&text, test_start) {
+            if !f.signature.contains("-> PathBuf") && !f.signature.contains("-> std::path::PathBuf")
+            {
+                continue;
+            }
+            for (ident, value) in names {
+                let hit = (!ident.is_empty() && f.body.contains(ident))
+                    || f.body.contains(&format!("\"{value}\""));
+                if hit {
+                    aliases.insert(f.qualified.clone());
+                }
+            }
+        }
+    }
+    aliases
+}
+
+/// Production `std::fs::write` call sites whose enclosing function's body
+/// calls one of `aliases` — reaching one of `EXCLUSIVE_CREATE`'s files
+/// through its path accessor instead of spelling the file's own name.
+fn writes_reaching_through_accessor(aliases: &BTreeSet<String>) -> Vec<String> {
+    let mut findings = Vec::new();
+    for path in source_files() {
+        let text = std::fs::read_to_string(&path).expect("source must be readable");
+        let test_start = test_module_line(&text);
+        for f in scan_functions(&text, test_start) {
+            if !f.body.contains("fs::write(") {
+                continue;
+            }
+            if let Some(alias) = aliases.iter().find(|a| f.body.contains(a.as_str())) {
+                findings.push(format!(
+                    "{}: {} writes through {alias}",
+                    path.file_name().unwrap().to_string_lossy(),
+                    f.qualified
+                ));
+            }
+        }
+    }
+    findings
+}
+
 /// A production site that both names a state file and calls `std::fs::write`
 /// is publishing that file the truncating way — the defect itself, as opposed
 /// to the census above, which catches a state file nobody classified. The
@@ -280,9 +427,12 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
 /// instead of refusing, overwriting whatever peer holds the claim.
 ///
 /// Same proximity-window and `#[cfg(test)]`-boundary limitation as the scan
-/// above: a name and a write farther apart than `PROXIMITY_LINES`, or one
-/// reached through a variable instead of a literal or a named constant, is
-/// invisible to this.
+/// above: a name and a write farther apart than `PROXIMITY_LINES` is
+/// invisible to this. A write reached through a path-accessor variable
+/// (`LeaseRecord::path_in`, `claim_path`) rather than a literal or a named
+/// constant is the population
+/// `no_production_function_reaches_an_exclusive_create_file_through_its_path_accessor`,
+/// below, covers instead.
 #[test]
 fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
     let declared = declared_state_file_names();
@@ -301,5 +451,48 @@ fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
         findings.is_empty(),
         "publish these with durable_file::create_new so a replacement can't \
          overwrite a peer op's claim: {findings:#?}"
+    );
+}
+
+/// The scan above misses a writer that reaches an `EXCLUSIVE_CREATE` file's
+/// path through a helper instead of spelling the file's own name — this is
+/// that population, keyed on the accessor's name rather than on proximity to
+/// the constant.
+///
+/// **What this still does not see**: a second hop (an accessor that calls
+/// another accessor, rather than joining the constant itself); an accessor
+/// not shaped `-> PathBuf`; and a call spelled through a `use` import
+/// (`path_in(dir)`) rather than the qualified form (`LeaseRecord::path_in(dir)`)
+/// this keys on to avoid colliding with `WorkweaveMarker::path_in`, an
+/// unrelated accessor for `.rwv-workweave` that shares the bare name.
+#[test]
+fn no_production_function_reaches_an_exclusive_create_file_through_its_path_accessor() {
+    let declared = declared_state_file_names();
+    let exclusive: BTreeSet<&str> = EXCLUSIVE_CREATE.into_iter().collect();
+    let names = keyed_names(&declared, &exclusive);
+    assert_eq!(
+        names.len(),
+        EXCLUSIVE_CREATE.len(),
+        "every EXCLUSIVE_CREATE entry must have a constant for this scan to \
+         key on; without one its accessors are invisible here and a green \
+         result overstates what was checked"
+    );
+
+    let aliases = path_accessor_aliases(&names);
+    assert!(
+        !aliases.is_empty(),
+        "found no PathBuf-returning production function naming an \
+         EXCLUSIVE_CREATE file; if the known accessors moved, were renamed, \
+         or lost their PathBuf return type, this scan has gone blind, not \
+         clean: {names:?}"
+    );
+
+    let findings = writes_reaching_through_accessor(&aliases);
+    assert!(
+        findings.is_empty(),
+        "these reach an EXCLUSIVE_CREATE file's path through the accessor \
+         named, without spelling the file's own name anywhere near the \
+         write — publish them with durable_file::create_new instead: \
+         {findings:#?}"
     );
 }
