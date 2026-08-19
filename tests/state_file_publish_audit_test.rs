@@ -234,6 +234,16 @@ fn keyed_names<'a>(declared: &'a [Declared], target: &BTreeSet<&str>) -> Vec<(&'
 /// or `select_project` to a bare write reddens it; reverting `write_lock` or
 /// `WorkweaveMarker::write` does not, because those reach their path through a
 /// parameter and through `path_in` respectively and never spell the name.
+///
+/// **One write shape only.** The candidate site is a literal `fs::write(` —
+/// a `std::fs::OpenOptions` open plus `write_all` publishes without that
+/// substring anywhere and is invisible to this, whatever else is true about
+/// the name nearby. Production has two such sites today,
+/// `durable_file::create_new` and `workweave_index::append_ignore_line`;
+/// neither is a violation (the first is the exclusive-create primitive
+/// itself, the second targets `.gitignore`/`.git/info/exclude`, not a
+/// classified state file), but the shape now exists in this tree and a
+/// future writer using it to reach a state file would not be caught here.
 fn bare_write_sites(names: &[(&str, &str)]) -> Vec<String> {
     let mut findings = Vec::new();
     for path in source_files() {
@@ -394,6 +404,10 @@ fn path_accessor_aliases(names: &[(&str, &str)]) -> BTreeSet<String> {
 /// Production `std::fs::write` call sites whose enclosing function's body
 /// calls one of `aliases` — reaching one of `EXCLUSIVE_CREATE`'s files
 /// through its path accessor instead of spelling the file's own name.
+///
+/// Same `fs::write(` literal as `bare_write_sites` keys on, and the same gap:
+/// a function reaching one of `aliases` through a `std::fs::OpenOptions` open
+/// instead is invisible here too.
 fn writes_reaching_through_accessor(aliases: &BTreeSet<String>) -> Vec<String> {
     let mut findings = Vec::new();
     for path in source_files() {
@@ -484,10 +498,13 @@ fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
 ///
 /// **What this still does not see**: a second hop (an accessor that calls
 /// another accessor, rather than joining the constant itself); an accessor
-/// not shaped `-> PathBuf`; and a call spelled through a `use` import
+/// not shaped `-> PathBuf`; a call spelled through a `use` import
 /// (`path_in(dir)`) rather than the qualified form (`LeaseRecord::path_in(dir)`)
 /// this keys on to avoid colliding with `WorkweaveMarker::path_in`, an
-/// unrelated accessor for `.rwv-workweave` that shares the bare name.
+/// unrelated accessor for `.rwv-workweave` that shares the bare name; and a
+/// write published through `std::fs::OpenOptions` plus `write_all` rather
+/// than `std::fs::write` — the shape `bare_write_sites` is also blind to,
+/// and one this tree now uses (`workweave_index::append_ignore_line`).
 #[test]
 fn no_production_function_reaches_an_exclusive_create_file_through_its_path_accessor() {
     let declared = declared_state_file_names();
