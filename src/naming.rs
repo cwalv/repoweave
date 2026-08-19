@@ -462,9 +462,9 @@ pub fn workweave_name_in(project: &ProjectName, dir_name: &str) -> Option<Workwe
 /// operator typed.
 ///
 /// More than one match is a rendering collision — two recorded pairs spelled
-/// alike. [`validate_project_name`] and [`validate_workweave_name`] make that
-/// unreachable today, which is why the caller reports it rather than choosing:
-/// picking one would be picking which of two live workweaves an operator meant.
+/// alike. [`ProjectName::new`] and [`WorkweaveName::new`] make that unreachable
+/// today, which is why the caller reports it rather than choosing: picking one
+/// would be picking which of two live workweaves an operator meant.
 pub fn resolve_flat_address(
     address: &str,
     recorded: &[(ProjectName, WorkweaveName)],
