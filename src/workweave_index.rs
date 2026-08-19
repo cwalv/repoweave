@@ -999,6 +999,13 @@ fn git_info_dir(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Append `filename` to the ignore file at `target` if it is not already present.
+///
+/// Opened in append mode deliberately: one surface serves writers holding
+/// different claims — the index's and the ledger's, both records of the same
+/// project directory — so a whole-file publish here can drop the line the
+/// other writer added between this writer's read and its write. An append
+/// cannot lose a peer's line; the worst concurrent outcome is a duplicate,
+/// which the presence check keeps from recurring.
 fn append_ignore_line(target: &Path, filename: &str) -> anyhow::Result<()> {
     let existing = std::fs::read_to_string(target).unwrap_or_default();
     let needle = filename;
@@ -1009,18 +1016,23 @@ fn append_ignore_line(target: &Path, filename: &str) -> anyhow::Result<()> {
     if already_present {
         return Ok(());
     }
-    let mut new_content = existing;
-    if !new_content.is_empty() && !new_content.ends_with('\n') {
-        new_content.push('\n');
+    let mut addition = String::new();
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        addition.push('\n');
     }
-    new_content.push_str(needle);
-    new_content.push('\n');
+    addition.push_str(needle);
+    addition.push('\n');
     // Ensure parent (for `.git/info/`) exists — best-effort; append_ignore_line
     // may be called with a `.gitignore` whose parent always exists.
     if let Some(parent) = target.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(target, new_content)
+    use std::io::Write as _;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(target)
+        .and_then(|mut file| file.write_all(addition.as_bytes()))
         .with_context(|| format!("failed to update {}", target.display()))?;
     Ok(())
 }

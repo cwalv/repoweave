@@ -42,6 +42,21 @@ exactly as git cannot stop an editor writing a file during `git add`.
 Interference with the working tree is at most a detection problem, never an
 exclusion problem.
 
+**Ignore surfaces are the working tree, written from the sound tier.** The
+`.gitignore` / `.git/info/exclude` line that keeps a machine-local record out
+of VCS is git's file, not rwv's: operators and other tools legitimately write
+it, and git takes no lock over it. So it earns no exclusion of its own — a
+claim here would bind only rwv's processes while installing the wedged-lock
+failure mode on a file rwv does not own. Instead the hygiene write is
+line-granular (`append_ignore_line` in `src/workweave_index.rs`): the two
+writers that share one surface under different claims — the workweave index's
+and the owned-digest ledger's, both records of `projects/<p>/` — cannot drop
+each other's line, because an append publishes only the missing line and never
+a stale image of the whole file. An external whole-file rewrite remains
+detect-don't-prevent: the next publish of a record re-appends its lost line,
+and doctor's tracked-index finding is the net behind a copy that reaches the
+index. Driven and pinned by `tests/ignore_surface_concurrency_test.rs`.
+
 ## The attestation invariant
 
 One rule binds both tiers: **rwv must never record a claim it did not
