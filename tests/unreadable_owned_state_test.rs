@@ -12,6 +12,7 @@
 //! envelope rather than grepping prose: an agent branching on `kind` is the
 //! consumer this exists for.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -26,10 +27,13 @@ fn git_init_with_commit(dir: &Path) {
     common::git_in(dir, &["commit", "-m", "init"]);
 }
 
-fn rwv(args: &[&str], cwd: &Path) -> (bool, String) {
+/// `path` replaces the child's whole `PATH`, so which tools the run can reach
+/// is the caller's decision rather than the machine's.
+fn rwv_on_path(args: &[&str], cwd: &Path, path: &OsStr) -> (bool, String) {
     let output = common::rwv()
         .args(args)
         .current_dir(cwd)
+        .env("PATH", path)
         .output()
         .expect("rwv should run");
     (
@@ -42,18 +46,20 @@ fn rwv(args: &[&str], cwd: &Path) -> (bool, String) {
     )
 }
 
-fn doctor_json(ws: &Path) -> serde_json::Value {
-    let output = common::rwv()
-        .args(["doctor", "--json"])
-        .current_dir(ws)
-        .output()
-        .expect("rwv should run");
+/// `Some(path)` narrows the doctor run the same way; `None` inherits.
+fn doctor_json(ws: &Path, path: Option<&OsStr>) -> serde_json::Value {
+    let mut cmd = common::rwv();
+    cmd.args(["doctor", "--json"]).current_dir(ws);
+    if let Some(path) = path {
+        cmd.env("PATH", path);
+    }
+    let output = cmd.output().expect("rwv should run");
     serde_json::from_slice(&output.stdout).expect("`--json` must emit parseable JSON")
 }
 
 /// Every finding `kind` doctor raises, across the channels it raises them on.
-fn kinds(ws: &Path) -> Vec<String> {
-    let report = doctor_json(ws);
+fn kinds_with_path(ws: &Path, path: Option<&OsStr>) -> Vec<String> {
+    let report = doctor_json(ws, path);
     let mut out = Vec::new();
     for channel in ["violations", "issues", "advisories"] {
         for finding in report[channel]
@@ -67,6 +73,10 @@ fn kinds(ws: &Path) -> Vec<String> {
     }
     out.sort();
     out
+}
+
+fn kinds(ws: &Path) -> Vec<String> {
+    kinds_with_path(ws, None)
 }
 
 /// A weave with a real owned member, so the cargo-workspace integration is
@@ -197,22 +207,30 @@ fn losing_the_record_does_not_silently_lose_a_drift_it_was_reporting() {
 
 /// The named remedy actually clears it. A finding whose fix does not work
 /// leaves the operator worse off than the silence did.
+///
+/// The claim is that materialize REBUILDS THE RECORD, which is rwv's own
+/// write; the ecosystem tool is reached only because the run regenerates the
+/// managed set on the way there. So the run gets a stand-in `cargo` and no
+/// other tool, and the test measures the same thing on a machine with no
+/// toolchain installed as on one with every toolchain.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn materialize_rebuilds_the_record_and_clears_the_finding() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
-        return;
-    }
     let tmp = common::tempdir().unwrap();
     let ws = weave(tmp.path());
+    let stand_in = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
+    let path = stand_in.as_os_str();
     std::fs::write(ws.join("projects/app").join(LEDGER), "not a ledger {{{").unwrap();
-    assert!(kinds(&ws).contains(&"unreadable-owned-state".to_owned()));
+    assert!(kinds_with_path(&ws, Some(path)).contains(&"unreadable-owned-state".to_owned()));
 
-    let (ok, out) = rwv(&["materialize"], &ws);
+    let (ok, out) = rwv_on_path(&["materialize"], &ws, path);
     assert!(ok, "{out}");
     assert!(
-        !kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        !kinds_with_path(&ws, Some(path)).contains(&"unreadable-owned-state".to_owned()),
         "`rwv materialize` is the remedy the finding names: {:?}",
-        kinds(&ws)
+        kinds_with_path(&ws, Some(path))
     );
 }

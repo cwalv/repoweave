@@ -12,6 +12,7 @@
 //! valid in which checkout, which is a property of dispatch and workspace
 //! resolution rather than of any one function.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -25,18 +26,32 @@ fn git_init_with_commit(dir: &Path) {
 }
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     ws: PathBuf,
     ww: PathBuf,
 }
 
 impl Fixture {
+    /// A path beside the weave rather than inside it, for fixture apparatus
+    /// that must not read as workspace content.
+    fn beside_the_weave(&self, name: &str) -> PathBuf {
+        self.tmp.path().join(name)
+    }
+
     fn rwv(&self, args: &[&str], cwd: &Path) -> (bool, String) {
-        let output = common::rwv()
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .expect("rwv should run");
+        self.rwv_with_path(args, cwd, None)
+    }
+
+    /// `Some(path)` replaces the child's whole `PATH`, so which tools the run
+    /// can reach is the caller's decision rather than the machine's; `None`
+    /// inherits.
+    fn rwv_with_path(&self, args: &[&str], cwd: &Path, path: Option<&OsStr>) -> (bool, String) {
+        let mut cmd = common::rwv();
+        cmd.args(args).current_dir(cwd);
+        if let Some(path) = path {
+            cmd.env("PATH", path);
+        }
+        let output = cmd.output().expect("rwv should run");
         (
             output.status.success(),
             format!(
@@ -147,7 +162,7 @@ fn fixture() -> Fixture {
     let ww = weaveroot.join("app--agent-1");
     common::write_local_crate_source(&root.join("crate-source"), &ww, &["0.1.0", "0.1.1"]);
 
-    Fixture { _tmp: tmp, ws, ww }
+    Fixture { tmp, ws, ww }
 }
 
 /// The seam, stated as one test: the verb runs exactly where the verb it was
@@ -186,17 +201,26 @@ fn materialize_runs_in_a_workweave_where_activate_is_refused() {
 /// Selection is the operation this verb does not perform. A workweave root has
 /// no `.rwv-active` at all and must not acquire one; the primary's must not
 /// change while a workweave materializes.
+///
+/// Every assertion here is over a selection pointer, which is rwv's own file;
+/// the ecosystem tool is reached only because materializing runs the install
+/// hooks on the way. So both runs get a stand-in `cargo` and no other tool,
+/// and what the pointers hold is the same on a machine with no toolchain as on
+/// one with every toolchain. The sibling tests in this file that read the
+/// resolve out of the generated lock cannot do this and keep the real tool.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn materialize_leaves_selection_state_untouched() {
-    if which::which("cargo").is_err() {
-        eprintln!("skipping: `cargo` not found on PATH");
-        return;
-    }
     let f = fixture();
+    let path = common::cargo_stand_in_path(&f.beside_the_weave("stand-in-bin"));
+    let path = Some(path.as_os_str());
     let primary_pointer = f.ws.join(".rwv-active");
     let before = std::fs::read(&primary_pointer).unwrap();
 
-    let (ok, report) = f.rwv(&["materialize"], &f.ww);
+    let (ok, report) = f.rwv_with_path(&["materialize"], &f.ww, path);
     assert!(ok, "materialize should succeed:\n{report}");
     assert!(
         !f.ww.join(".rwv-active").exists(),
@@ -208,7 +232,7 @@ fn materialize_leaves_selection_state_untouched() {
         "materializing a workweave must not touch primary's selection"
     );
 
-    let (ok, report) = f.rwv(&["materialize"], &f.ws);
+    let (ok, report) = f.rwv_with_path(&["materialize"], &f.ws, path);
     assert!(ok, "materialize should succeed at primary:\n{report}");
     assert_eq!(
         std::fs::read(&primary_pointer).unwrap(),

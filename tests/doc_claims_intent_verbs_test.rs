@@ -632,10 +632,20 @@ fn materialize_lib_subcrates(ws: &Path, subcrates: &[&str]) {
 /// The consequential form of the adopt-clobber bug: an authoring pass at
 /// adopt time rewrites `[workspace].members` from the config, dropping the
 /// member the committed file names.
+///
+/// The claim is over rwv's own authoring of the committed `Cargo.toml`, so the
+/// adopt gets a stand-in `cargo` and no other tool: the hook is reached and
+/// completes, and the manifest is compared the same way on a machine with no
+/// toolchain installed. The sibling test that reads the generated lock cannot
+/// do this and keeps the real tool.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn init_adopt_does_not_truncate_committed_cargo_members() {
-    require_cargo!();
     let tmp = common::tempdir().unwrap();
+    let path = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
 
     // Marked, committed manifest listing three members. `rwv.toml`'s
     // `include:` names only two, so authoring computes a strictly smaller
@@ -659,6 +669,7 @@ lto = true
     rwv()
         .args(["init", "--adopt", &source])
         .current_dir(&adopt_ws)
+        .env("PATH", &path)
         .assert()
         .success();
 
@@ -680,10 +691,20 @@ lto = true
 /// the marker is absent, so the members axis cannot see an authoring pass
 /// here — but it still sets the `DefaultOnly` key `resolver` (absent → write)
 /// and serializes the file back. A context verb writes neither.
+///
+/// The claim is over rwv's own authoring of the committed `Cargo.toml`, so the
+/// adopt gets a stand-in `cargo` and no other tool: the hook is reached and
+/// completes, and the manifest is compared the same way on a machine with no
+/// toolchain installed. The sibling test that reads the generated lock cannot
+/// do this and keeps the real tool.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn init_adopt_does_not_write_into_a_user_held_cargo_manifest() {
-    require_cargo!();
     let tmp = common::tempdir().unwrap();
+    let path = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
 
     // No marker, and members that already agree with the config — so the
     // only thing an authoring pass changes is the injected `resolver`.
@@ -703,6 +724,7 @@ lto = true
     rwv()
         .args(["init", "--adopt", &source])
         .current_dir(&adopt_ws)
+        .env("PATH", &path)
         .assert()
         .success();
 
@@ -816,10 +838,19 @@ resolver = \"2\"
 ///
 /// Deferring is not suppression: the test above pins that the hook still runs
 /// and still rewrites the lock once the members resolve.
+///
+/// The subject is the message rwv prints when it DEFERS the lockfile step, so
+/// the generator is never spawned on the path under test — the adopt gets a
+/// stand-in `cargo` and no other tool, which also pins that the defer happens
+/// before any spawn rather than because one failed.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn init_adopt_completes_when_workspace_members_are_not_fetched_yet() {
-    require_cargo!();
     let tmp = common::tempdir().unwrap();
+    let path = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
 
     let committed_cargo_toml = "\
 [workspace]
@@ -837,6 +868,7 @@ resolver = \"2\"
     let out = rwv()
         .args(["init", "--adopt", &source])
         .current_dir(&adopt_ws)
+        .env("PATH", &path)
         .assert()
         .success()
         .get_output()

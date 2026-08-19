@@ -22,6 +22,7 @@
 //! seam between doctor's dispatch, the surfacing step and the hook, which a
 //! unit test on either side alone cannot see.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -46,13 +47,19 @@ fn git_init_with_commit(dir: &Path) {
 
 /// The paths a fixture hands back to a test.
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     ww_dir: PathBuf,
     /// stderr+stdout of the `rwv workweave ... create` that made `ww_dir`.
     create_output: String,
 }
 
 impl Fixture {
+    /// A path beside the weave rather than inside it, for fixture apparatus
+    /// that must not read as workspace content.
+    fn beside_the_weave(&self, name: &str) -> PathBuf {
+        self.tmp.path().join(name)
+    }
+
     /// The canonical (committed-location) lock inside the workweave — where
     /// the generated file belongs and where `--fix` must write it.
     fn ww_canonical_lock(&self) -> PathBuf {
@@ -66,11 +73,19 @@ impl Fixture {
     }
 
     fn rwv(&self, args: &[&str], cwd: &Path) -> String {
-        let output = common::rwv()
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .expect("rwv should run");
+        self.rwv_with_path(args, cwd, None)
+    }
+
+    /// `Some(path)` replaces the child's whole `PATH`, so which tools the run
+    /// can reach is the caller's decision rather than the machine's; `None`
+    /// inherits.
+    fn rwv_with_path(&self, args: &[&str], cwd: &Path, path: Option<&OsStr>) -> String {
+        let mut cmd = common::rwv();
+        cmd.args(args).current_dir(cwd);
+        if let Some(path) = path {
+            cmd.env("PATH", path);
+        }
+        let output = cmd.output().expect("rwv should run");
         format!(
             "{}\n{}",
             String::from_utf8_lossy(&output.stdout),
@@ -191,7 +206,7 @@ fn fixture() -> Fixture {
     );
 
     Fixture {
-        _tmp: tmp,
+        tmp,
         ww_dir,
         create_output,
     }
@@ -270,10 +285,21 @@ fn doctor_fix_in_a_workweave_generates_the_missing_cargo_lock() {
 }
 
 /// Half 2 — one finding, one path, whichever verb reports it.
+///
+/// Both reports are rwv's own text about a file that is MISSING, so nothing
+/// here needs the generator to have run — only for `doctor` to reach the
+/// content axis, which it declines to do with no cargo reachable at all. The
+/// run therefore gets a stand-in `cargo` and no other tool, and the two paths
+/// are compared the same way on a machine with no toolchain installed.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn create_and_doctor_name_the_same_missing_lock_path() {
-    require_cargo!();
     let f = fixture();
+    let path = common::cargo_stand_in_path(&f.beside_the_weave("stand-in-bin"));
+    let path = Some(path.as_os_str());
 
     let create_path = missing_lock_path(&f.create_output).unwrap_or_else(|| {
         panic!(
@@ -282,7 +308,7 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
         )
     });
 
-    let doctor_output = f.rwv(&["doctor"], &f.ww_dir);
+    let doctor_output = f.rwv_with_path(&["doctor"], &f.ww_dir, path);
     let doctor_path = missing_lock_path(&doctor_output).unwrap_or_else(|| {
         panic!("doctor should warn that the lock is missing; got:\n{doctor_output}")
     });
@@ -315,10 +341,22 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
 /// The refusal arrives from link creation, which reaches the orphan before
 /// the generator does. What is pinned is that it arrives at all, with the
 /// path and the repair in it — not which site minted it.
+///
+/// What is pinned is rwv's refusal text and the path in it, so the generator's
+/// output is not the subject and the run gets a stand-in `cargo` and no other
+/// tool. The final arm asserts only that removing the orphan lets the
+/// generation LAND — that the write reaches the canonical path — which is
+/// rwv's half of it; what the resolve contains is the neighbouring test's
+/// subject and it keeps the real tool.
+///
+/// Unix only, since the stand-in is a script resolved off `PATH` —
+/// `common::cargo_stand_in_path` states why that does not port.
+#[cfg(unix)]
 #[test]
 fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
-    require_cargo!();
     let f = fixture();
+    let path = common::cargo_stand_in_path(&f.beside_the_weave("stand-in-bin"));
+    let path = Some(path.as_os_str());
 
     // The link create leaves is the route the generation takes, so the orphan
     // has to be built by removing it first — writing over it would write
@@ -327,7 +365,7 @@ fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
     std::fs::remove_file(f.ww_surfaced_lock()).unwrap();
     std::fs::write(f.ww_surfaced_lock(), "# not a symlink\n").unwrap();
 
-    let fix_output = f.rwv(&["doctor", "--fix"], &f.ww_dir);
+    let fix_output = f.rwv_with_path(&["doctor", "--fix"], &f.ww_dir, path);
 
     assert!(
         !f.ww_canonical_lock().exists(),
@@ -348,7 +386,7 @@ fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
 
     // The named remedy works.
     std::fs::remove_file(f.ww_surfaced_lock()).unwrap();
-    let retry = f.rwv(&["doctor", "--fix"], &f.ww_dir);
+    let retry = f.rwv_with_path(&["doctor", "--fix"], &f.ww_dir, path);
     assert!(
         f.ww_canonical_lock().is_file(),
         "removing the orphan and re-running --fix should produce the lock.\noutput:\n{retry}"

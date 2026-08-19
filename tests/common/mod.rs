@@ -681,6 +681,56 @@ pub fn rwv() -> assert_cmd::Command {
     cmd
 }
 
+/// The whole `PATH` for a child that must find `git` and a stand-in `cargo`
+/// and nothing else — so whether the child's cargo step completes is an input
+/// the caller sets rather than a property of the machine.
+///
+/// `bin` is created if absent and is the caller's to own; give it a directory
+/// inside the fixture's own temporary root, not a shared one, because the
+/// stand-in is rewritten on every call.
+///
+/// The stand-in writes a `Cargo.lock` in its working directory. That is not
+/// decoration: cargo-workspace's activate hook reads the lock back to stamp
+/// the generation it has just accepted, so a stand-in that only exits leaves
+/// the hook failing on a file that was never written. What it writes records
+/// no resolve, which is the boundary on this helper — a test that reads a
+/// version, a package name or a digest out of that lock is measuring the
+/// stand-in, and belongs on the real tool behind `skip_without_tool` instead.
+///
+/// Unix only, for the reason `tests/integrations_test.rs` states at
+/// `write_exit_code_shim`: the stand-in is a `#!/bin/sh` script the child
+/// resolves off `PATH` and spawns itself, and Windows has no executable bit
+/// and selects candidates on `PATHEXT`. A caller is therefore `#[cfg(unix)]`
+/// too.
+#[cfg(unix)]
+pub fn cargo_stand_in_path(bin: &std::path::Path) -> std::ffi::OsString {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::create_dir_all(bin).expect("the stand-in bin directory should be creatable");
+    let git = which::which("git").expect("git must be resolvable to run these tests");
+    let linked = bin.join("git");
+    if linked.symlink_metadata().is_err() {
+        std::os::unix::fs::symlink(&git, &linked).expect("git should link into the stand-in bin");
+    }
+
+    let cargo = bin.join("cargo");
+    std::fs::write(
+        &cargo,
+        r#"#!/bin/sh
+case "$1" in
+  generate-lockfile|fetch|update)
+    [ -s Cargo.lock ] || printf 'version = 4\n' > Cargo.lock ;;
+esac
+exit 0
+"#,
+    )
+    .expect("the cargo stand-in should be writable");
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755))
+        .expect("the cargo stand-in should be executable");
+
+    bin.as_os_str().to_owned()
+}
+
 /// The spelling `CreateProcess` can execute — the same fact
 /// `integrations::node_tool` states for production: npm-family tools install
 /// `.cmd` shims on Windows, and `Command` runs a script through the
