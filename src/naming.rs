@@ -225,14 +225,16 @@ impl fmt::Display for ProjectNameError {
             Self::AmbiguousDelimiter(s) => write!(
                 f,
                 "'{s}' is not a valid project name: contains `--` or starts/ends \
-                 with `-`, ambiguous against the `--` that joins project to workweave"
+                 with `-`, ambiguous against the `--` that joins project to workweave. \
+                 See docs/reference/formats.md, \"Names, and the characters they exclude\"."
             ),
             Self::EncodedSeparator(s) => write!(
                 f,
                 "'{s}' is not a valid project name: contains `+`, which rwv writes in \
                  place of `/` when it renders a project name as one path segment \
                  (a workweave directory, a `-w` address, a branch name). Choose a \
-                 name without `+`."
+                 name without `+`. See docs/reference/formats.md, \"Names, and the \
+                 characters they exclude\"."
             ),
             Self::InvalidRef(e) => write!(f, "not a valid project name: {e}"),
         }
@@ -325,7 +327,8 @@ impl fmt::Display for WorkweaveNameError {
             Self::AmbiguousDelimiter(s) => write!(
                 f,
                 "'{s}' is not a valid workweave name: contains `--` or starts/ends \
-                 with `-`, ambiguous against the `--` that joins project to workweave"
+                 with `-`, ambiguous against the `--` that joins project to workweave. \
+                 See docs/reference/formats.md, \"Names, and the characters they exclude\"."
             ),
             Self::InvalidRef(e) => write!(f, "not a valid workweave name: {e}"),
         }

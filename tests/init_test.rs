@@ -247,6 +247,124 @@ fn init_collision_does_not_modify_existing_project() {
 }
 
 // ============================================================================
+// Validate the name before minting anything
+// ============================================================================
+//
+// A refused name must not put anything on disk: `ProjectName::new` runs
+// before `init`/`init_adopt` touch the filesystem, not after. These pin that
+// ordering directly, rather than through a side effect of it.
+
+#[test]
+fn init_with_invalid_name_refuses_before_creating_anything() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    rwv()
+        .args(["init", "a+b"])
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a valid project name"));
+
+    assert!(
+        !ws.join("projects/a+b").exists(),
+        "a refused name must leave nothing at its target path"
+    );
+}
+
+/// The debris regression itself: under the pre-fix ordering, the first
+/// refused attempt minted `projects/a+b` before failing validation, so a
+/// second identical attempt hit the mint's own collision check and reported
+/// "already exists" instead of the real "not a valid project name" —
+/// masking the actual mistake behind a misleading one. With nothing minted
+/// on refusal, a repeated invalid attempt reports the same real reason every
+/// time.
+#[test]
+fn init_repeated_invalid_name_reports_the_same_refusal_not_a_stale_collision() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    for _ in 0..2 {
+        rwv()
+            .args(["init", "a+b"])
+            .current_dir(&ws)
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains("not a valid project name")
+                    .and(predicate::str::contains("already exists").not()),
+            );
+    }
+
+    assert!(!ws.join("projects/a+b").exists());
+}
+
+#[test]
+fn init_retry_with_a_corrected_name_succeeds_after_a_refused_attempt() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    rwv()
+        .args(["init", "a+b"])
+        .current_dir(&ws)
+        .assert()
+        .failure();
+
+    rwv()
+        .args(["init", "a-corrected-b"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(ws.join("projects/a-corrected-b/rwv.toml").exists());
+}
+
+#[test]
+fn adopt_with_invalid_derived_name_refuses_before_cloning() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    // The repo's own name becomes the derived project name; `a+b` is a
+    // repo name git accepts and rwv's project-name policy does not.
+    let bare = make_bare_repo(tmp.path(), "a+b");
+
+    rwv()
+        .args(["init", "--adopt", &common::file_url(&bare)])
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a valid project name"));
+
+    assert!(
+        !ws.join("projects/a+b").exists(),
+        "a refused adopt must not leave a partial clone at its target path"
+    );
+}
+
+/// The adopt half of the same debris regression: a clone before validation
+/// means a second attempt at the same (still invalid) source reports
+/// "already exists" over the leftover clone rather than the real refusal.
+#[test]
+fn adopt_repeated_invalid_source_reports_the_same_refusal_not_a_stale_collision() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_bare_repo(tmp.path(), "a+b");
+
+    for _ in 0..2 {
+        rwv()
+            .args(["init", "--adopt", &common::file_url(&bare)])
+            .current_dir(&ws)
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains("not a valid project name")
+                    .and(predicate::str::contains("already exists").not()),
+            );
+    }
+
+    assert!(!ws.join("projects/a+b").exists());
+}
+
+// ============================================================================
 // --provider flag -- `rwv init PROJECT --provider github/owner`
 // ============================================================================
 

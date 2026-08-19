@@ -85,6 +85,13 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
 /// - Activates the project (writes `.rwv-active` and generates ecosystem files).
 pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Result<()> {
+    // Validate before anything touches disk: `activate` re-validates this
+    // same name downstream, but by then `git init`, the manifest write and
+    // the `.gitattributes` write have already happened, and a refused name
+    // leaves that debris in place — including for a retry, which then trips
+    // the collision check against its own leftovers.
+    crate::manifest::ProjectName::new(name)?;
+
     // Bootstrap here rather than at dispatch — the origin dir may be empty
     // (no workspace to resolve yet), and `bootstrap_workspace_if_empty`
     // creates the minimal skeleton so the follow-on `resolve` succeeds. This
@@ -195,20 +202,25 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 ///
 /// `source` is a URL or shorthand (`owner/repo` or `registry/owner/repo`).
 /// The function:
-/// 1. Bootstraps a workspace skeleton if `cwd` is an empty directory.
-/// 2. Resolves the workspace root from `cwd`.
-/// 3. Determines the clone URL and project name from `source`.
+/// 1. Determines the clone URL and project name from `source`, and
+///    validates the name.
+/// 2. Bootstraps a workspace skeleton if `cwd` is an empty directory.
+/// 3. Resolves the workspace root from `cwd`.
 /// 4. Clones the repo to `projects/{name}/` (skips if already exists).
 /// 5. Writes an empty `rwv.toml` if the clone does not already contain one.
 /// 6. Activates the project.
 pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
+    // Resolve the source to a clone URL and project name, and validate the
+    // name, before anything touches disk. `resolve_adopt_source` is a pure
+    // string computation, so this is free; the clone below is not, and a
+    // refused name must not leave a partial clone for a retry to trip over.
+    let (clone_url, project_name) = resolve_adopt_source(source)?;
+    crate::manifest::ProjectName::new(&project_name)?;
+
     // Same bootstrap-then-first-resolve pattern as `init` above.
     bootstrap_workspace_if_empty(origin_dir)?;
     let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
     let root = ctx.primary_path();
-
-    // Resolve the source to a clone URL and project name.
-    let (clone_url, project_name) = resolve_adopt_source(source)?;
 
     let project_dir = project_dir(root, &project_name);
 
