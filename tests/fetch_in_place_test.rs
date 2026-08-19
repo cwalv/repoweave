@@ -114,20 +114,16 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
 
-    // Write a lock that pins each repo to its FIRST commit. Round-trips
-    // through the real parser + `lock::write_lock`: a hand-formatted string
-    // that differs only in whitespace from what `rwv lock` itself would
-    // emit still diffs against a real relock.
-    let mut lock_entries = Vec::new();
+    let mut lock_entries: Vec<(String, String, String)> = Vec::new();
     for (rp, bare, first, _) in &repos {
         let url = common::file_url(bare);
-        lock_entries.push(format!(
-            "{rp:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {first:?}}}"
-        ));
+        lock_entries.push((rp.clone(), url, first.clone()));
     }
-    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    let entries: Vec<(&str, &str, &str)> = lock_entries
+        .iter()
+        .map(|(p, u, s)| (p.as_str(), u.as_str(), s.as_str()))
+        .collect();
+    common::fixture_lock(&project_dir, &entries);
 
     // Activate the project.
     std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
@@ -631,11 +627,7 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Lock only covers repo_a (pinned to first_a).
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"github/acme/a\": {{\"type\": \"git\", \"url\": {url_a:?}, \"version\": {first_a:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(&project_dir, &[("github/acme/a", &url_a, &first_a)]);
 
     std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
 

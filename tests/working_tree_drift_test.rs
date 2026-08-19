@@ -64,22 +64,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-/// Write rwv.lock.
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -110,7 +94,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     let project_primary = primary_root.join("projects/web-app");
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
@@ -317,7 +301,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     let project_primary = primary_root.join("projects/web-app");
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
@@ -360,7 +344,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
 
     // Primary commits C2 and updates lock.
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
-    write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&project_primary, &["add", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
 
@@ -368,7 +352,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     // that sync's CWD-lock-freshness precondition passes once the server
     // ref is advanced below. (The workweave's freshness check reads its
     // own committed lock, not primary's.)
-    write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&project_ww, &["add", "rwv.lock"]);
     common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
 

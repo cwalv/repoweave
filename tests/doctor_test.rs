@@ -102,22 +102,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-/// Write an `rwv.lock` file into a project directory with given repo SHAs.
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(repo_path, url, sha)| {
-            format!("{repo_path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 /// Build a `Command` for the `rwv` binary.
 ///
 /// Sets `current_dir` to a temp dir so tests never accidentally pick up
@@ -240,7 +224,7 @@ fn check_stale_lock_reported() {
     );
 
     // Write a lock file with a stale (bogus) SHA
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[(
             repo_path,
@@ -278,7 +262,7 @@ fn check_incomplete_lock_reported() {
 
     // Lock file exists but covers no repos — the manifest entry has no
     // corresponding lock entry.
-    write_lock(&project_dir, &[]);
+    common::fixture_lock(&project_dir, &[]);
 
     rwv_cmd()
         .arg("doctor")
@@ -460,7 +444,7 @@ fn check_locked_tag_form_reports_ok() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
     );
@@ -487,7 +471,7 @@ fn check_locked_sha_form_reports_ok() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git", &sha)],
     );
@@ -516,7 +500,7 @@ fn check_locked_tag_form_drift_reported() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
     );
@@ -544,7 +528,7 @@ fn check_locked_unknown_tag_reported_as_drift() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     // Lock references a tag that was never created in this repo.
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[(
             repo_path,
@@ -583,7 +567,7 @@ fn check_locked_missing_on_disk_reported_as_drift() {
             (missing_repo, "https://github.com/acme/lib.git"),
         ],
     );
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[
             (present_repo, "https://github.com/acme/server.git", &sha),
@@ -627,7 +611,7 @@ fn check_flags_unresolvable_lock_revision() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     // SHA the local repo has never seen — `resolve_revision` will fail.
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[(
             repo_path,
@@ -1249,7 +1233,7 @@ mod doctor_json {
         // making a second commit and writing the OLD sha into the lock.
         let new_sha = make_commit(&root.join(repo_path));
         assert_ne!(sha, new_sha);
-        write_lock(
+        common::fixture_lock(
             &project_dir,
             &[(repo_path, "https://github.com/acme/server.git", &sha)],
         );
@@ -1294,7 +1278,7 @@ mod doctor_json {
         .unwrap();
 
         // Lock file exists but covers no repos.
-        write_lock(&project_dir, &[]);
+        common::fixture_lock(&project_dir, &[]);
 
         let (parsed, _) = run_doctor_json(&root);
         let entry = entries(&parsed)
@@ -2298,7 +2282,7 @@ fn default_scope_no_cross_project_stale_lock() {
         &alpha_dir,
         &[(repo_a, "https://github.com/acme/repo-a.git")],
     );
-    write_lock(
+    common::fixture_lock(
         &alpha_dir,
         &[(repo_a, "https://github.com/acme/repo-a.git", &sha_a)],
     );
@@ -2313,7 +2297,7 @@ fn default_scope_no_cross_project_stale_lock() {
     init_git_repo(&root.join(repo_b));
     let beta_dir = root.join("projects").join("beta");
     write_manifest(&beta_dir, &[(repo_b, "https://github.com/acme/repo-b.git")]);
-    write_lock(
+    common::fixture_lock(
         &beta_dir,
         &[(
             repo_b,
@@ -2360,7 +2344,7 @@ fn all_flag_reports_cross_project_stale_lock() {
         &alpha_dir,
         &[(repo_a, "https://github.com/acme/repo-a.git")],
     );
-    write_lock(
+    common::fixture_lock(
         &alpha_dir,
         &[(repo_a, "https://github.com/acme/repo-a.git", &sha_a)],
     );
@@ -2376,7 +2360,7 @@ fn all_flag_reports_cross_project_stale_lock() {
     make_commit(&root.join(repo_b)); // HEAD moves forward; lock stays at old_sha_b
     let beta_dir = root.join("projects").join("beta");
     write_manifest(&beta_dir, &[(repo_b, "https://github.com/acme/repo-b.git")]);
-    write_lock(
+    common::fixture_lock(
         &beta_dir,
         &[(repo_b, "https://github.com/acme/repo-b.git", &old_sha_b)],
     );

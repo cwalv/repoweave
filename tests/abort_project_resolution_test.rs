@@ -57,18 +57,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 const SERVER_URL: &str = "https://github.com/example/server.git";
 const SERVER_PATH: &str = "github/example/server";
 const SYNCED_PROJECT: &str = "web-app";
@@ -99,7 +87,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace) {
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -182,7 +170,7 @@ fn park_with_target_manifest_advanced(parent: &Path) -> Parked {
     // CWD advances the manifest repo, and its project commit writes a path
     // the target does not have.
     let landed = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
     std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
     common::git_in(&ww.project_dir, &["add", "rwv.lock", "notes.txt"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);

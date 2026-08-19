@@ -89,17 +89,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
         repo = common::url_path(&manifest_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw_lock = format!(
-        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": \"file://{repo}\", \"version\": {sha:?}}}}}}}",
-        path = MANIFEST_REPO_PATH,
-        repo = common::url_path(&manifest_repo),
-        sha = initial_sha
+    let repo_url = common::file_url(&manifest_repo);
+    common::fixture_lock(
+        &project_dir,
+        &[(MANIFEST_REPO_PATH, &repo_url, &initial_sha)],
     );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -1324,13 +1318,11 @@ fn unresolvable_source_lock_refuses_naming_unknown_revision() {
     let f = fixture();
     // Rewrite main's committed lock to pin a nonexistent tag.
     let manifest_repo = f.main.manifest_repo.clone();
-    let raw_lock = format!(
-        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": \"file://{repo}\", \"version\": \"v9.9.9-nope\"}}}}}}",
-        path = MANIFEST_REPO_PATH,
-        repo = common::url_path(&manifest_repo),
+    let repo_url = common::file_url(&manifest_repo);
+    common::fixture_lock(
+        &f.main.project_dir,
+        &[(MANIFEST_REPO_PATH, &repo_url, "v9.9.9-nope")],
     );
-    let bad_lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&bad_lock, &f.main.project_dir.join("rwv.lock")).unwrap();
     common::git_in(&f.main.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &f.main.project_dir,

@@ -47,14 +47,7 @@ fn write_manifest(project_dir: &Path) {
 }
 
 fn write_lock(project_dir: &Path, sha: &str) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw = format!(
-        "{{\"repositories\": {{{SERVER_PATH:?}: {{\"type\": \"git\", \"url\": {SERVER_URL:?}, \"version\": {sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(project_dir, &[(SERVER_PATH, SERVER_URL, sha)]);
 }
 
 fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {

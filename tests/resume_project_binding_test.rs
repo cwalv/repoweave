@@ -48,18 +48,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 const SERVER_URL: &str = "https://github.com/example/server.git";
 const SERVER_PATH: &str = "github/example/server";
 const SYNCED_PROJECT: &str = "web-app";
@@ -78,7 +66,7 @@ fn make_project(root: &Path, name: &str, repos: &[(&str, &str)], locked: &[(&str
     init_repo(&dir);
     std::fs::write(dir.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
     write_manifest(&dir, repos);
-    write_lock(&dir, locked);
+    common::fixture_lock(&dir, locked);
     common::git_in(&dir, &["add", ".gitattributes", "rwv.toml", "rwv.lock"]);
     common::git_in(&dir, &["commit", "-m", format!("{name}: initial").as_str()]);
 }
@@ -164,7 +152,7 @@ fn park_with_target_project_blocked(parent: &Path) -> Parked {
     let (primary, ww) = make_two_project_weave(parent);
 
     let landed_server_tip = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(
+    common::fixture_lock(
         &ww.project_dir,
         &[(SERVER_PATH, SERVER_URL, &landed_server_tip)],
     );

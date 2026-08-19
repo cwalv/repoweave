@@ -50,21 +50,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
@@ -122,7 +107,7 @@ fn sync_reads_committed_lock_not_working_tree() {
     common::git_in(&source_lib, &["checkout", &sha_v1]);
 
     // Write and commit the lock at V1 (the COMMITTED lock of record).
-    write_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_v1)]);
+    common::fixture_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_v1)]);
     common::git_in(&source_proj, &["add", "rwv.lock"]);
     common::git_in(&source_proj, &["commit", "-m", "lock: pin lib at v1"]);
 
@@ -134,7 +119,7 @@ fn sync_reads_committed_lock_not_working_tree() {
     // working-tree lock with V2. This is the "source mid-mutation"
     // scenario. The working tree now disagrees with the committed lock.
     // ------------------------------------------------------------------
-    write_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_v2)]);
+    common::fixture_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_v2)]);
     // Deliberately do NOT commit — the working tree has the stale V2 lock.
 
     // ---- Set up destination workspace (clone of source project) ----
@@ -226,7 +211,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     common::git_in(&source_lib, &["checkout", &sha_t0]);
 
     // Commit the lock at T0.
-    write_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_t0)]);
+    common::fixture_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_t0)]);
     common::git_in(&source_proj, &["add", "rwv.lock"]);
     common::git_in(&source_proj, &["commit", "-m", "lock: T0 snapshot"]);
 
@@ -237,7 +222,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     // Mutate: overwrite the source's working-tree lock with T1 SHA but
     // do NOT commit. This is the "mutation after T0" scenario.
     // ------------------------------------------------------------------
-    write_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_t1)]);
+    common::fixture_lock(&source_proj, &[("lib", lib_url.as_str(), &sha_t1)]);
 
     // ---- destination workspace (clone of source) ----
     let dest_ws = tmp.join("dest2");
@@ -382,7 +367,7 @@ fn branch_form_lock_workspaces(
     )
     .unwrap();
     // The lock pins the BRANCH NAME. Whoever resolves it decides what it means.
-    write_lock(&source_proj, &[("lib", lib_url.as_str(), "release")]);
+    common::fixture_lock(&source_proj, &[("lib", lib_url.as_str(), "release")]);
     common::git_in(
         &source_proj,
         &["add", "rwv.toml", ".gitattributes", "rwv.lock"],

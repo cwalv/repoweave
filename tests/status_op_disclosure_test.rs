@@ -80,13 +80,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     let repo_url = common::file_url(&repo);
-    let raw_lock = format!(
-        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
-        path = REPO_PATH,
-        sha = initial_sha
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(&project_dir, &[(REPO_PATH, &repo_url, &initial_sha)]);
 
     common::git_in(&project_dir, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);

@@ -163,12 +163,7 @@ fn weave() -> Weave {
 /// Round-tripped through the real parser and writer: a hand-formatted lock
 /// that differs only in whitespace still diffs against a real relock.
 fn write_lock(project: &Path, url: &str, sha: &str) {
-    let raw = format!(
-        "{{\"repositories\": {{{MEMBER:?}: {{\"type\": \"git\", \"url\": {url:?}, \
-         \"version\": {sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).expect("lock parses");
-    repoweave::lock::write_lock(&lock, &project.join("rwv.lock")).expect("lock writes");
+    common::fixture_lock(project, &[(MEMBER, url, sha)]);
 }
 
 /// A workweave forked from `weave`'s primary, placed explicitly so the test

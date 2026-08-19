@@ -65,14 +65,7 @@ fn init_repo_with_commit(path: &Path) -> String {
 
 /// Write a lock file pinning a single repo to the given SHA.
 fn write_lock(project_dir: &Path, repo_path: &str, url: &str, sha: &str) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw = format!(
-        "{{\"repositories\": {{{repo_path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(project_dir, &[(repo_path, url, sha)]);
 }
 
 /// Build a workspace with one real manifest repo and a committed lock.

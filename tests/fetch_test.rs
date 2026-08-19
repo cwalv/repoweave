@@ -769,15 +769,8 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
     );
     let first_sha = run(&["rev-parse", "HEAD"], &dep_clone);
 
-    // Write a lock file pinning the dep at first_sha. Round-trips through
-    // the real parser + `lock::write_lock`: a hand-formatted string that
-    // differs only in whitespace from what `rwv lock` itself would emit
-    // still diffs against a real relock.
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {first_sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
+    // Write a lock file pinning the dep at first_sha.
+    common::fixture_lock(&work, &[("local/team/dep", &dep_url, &first_sha)]);
     run_quiet(&["add", "rwv.lock"], &work);
     run_quiet(&["commit", "-m", "add lock"], &work);
 
@@ -934,12 +927,7 @@ fn fetch_frozen_errors_on_incomplete_lock() {
     );
 
     // Lock only covers ONE repo — incomplete.
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {:?}}}}}}}",
-        "a".repeat(40)
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
+    common::fixture_lock(&work, &[("local/team/dep", &dep_url, &"a".repeat(40))]);
 
     run(&["add", "."], &work);
     run(&["commit", "-m", "incomplete lock"], &work);
@@ -1017,11 +1005,7 @@ fn fetch_frozen_succeeds_with_valid_lock() {
     write_manifest(&work, &[("local/team/dep", &dep_url)]);
 
     // Write a valid lock that matches the manifest.
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {dep_sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
+    common::fixture_lock(&work, &[("local/team/dep", &dep_url, &dep_sha)]);
 
     run_quiet(&["add", "."], &work);
     run_quiet(&["commit", "-m", "manifest+lock"], &work);
@@ -1303,11 +1287,7 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     // Lock file covers ONLY the primary — reference is intentionally absent.
     // Without --no-reference this would be incomplete; with --no-reference,
     // find_incomplete_repos must skip the reference entry.
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/team/primary\": {{\"type\": \"git\", \"url\": {primary_url:?}, \"version\": {primary_sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
+    common::fixture_lock(&work, &[("local/team/primary", &primary_url, &primary_sha)]);
 
     run_quiet(&["add", "."], &work);
     run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
@@ -1382,12 +1362,10 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     );
 
     // Lock covers only primary; reference absent.
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/team/primary\": {{\"type\": \"git\", \"url\": {primary_url:?}, \"version\": {:?}}}}}}}",
-        "a".repeat(40)
+    common::fixture_lock(
+        &work,
+        &[("local/team/primary", &primary_url, &"a".repeat(40))],
     );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &work.join("rwv.lock")).unwrap();
 
     run_quiet(&["add", "."], &work);
     run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);

@@ -49,21 +49,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -93,7 +78,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     )
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -168,7 +153,7 @@ fn sync_json_emits_envelope_and_outcomes() {
         "workweave change\n",
         "ww: add change",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
@@ -221,13 +206,13 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
         "primary\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Workweave: diverge.
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
@@ -619,7 +604,7 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
         .iter()
         .map(|(p, u, s)| (*p, u.as_str(), *s))
         .collect();
-    write_lock(&primary_project_dir, &lock_refs);
+    common::fixture_lock(&primary_project_dir, &lock_refs);
     common::git_in(
         &primary_project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -682,7 +667,7 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
         .iter()
         .map(|(p, u, s)| (*p, u.as_str(), *s))
         .collect();
-    write_lock(&ww_project_dir, &ww_lock_refs);
+    common::fixture_lock(&ww_project_dir, &ww_lock_refs);
     common::git_in(&ww_project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww_project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -1061,7 +1046,7 @@ fn sync_json_discloses_the_verdict_a_converged_repo_was_behind_by() {
         "ww change\n",
         "ww: add change",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
@@ -1100,7 +1085,7 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
         "primary\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
@@ -1108,7 +1093,7 @@ fn sync_json_discloses_the_verdict_a_failed_fast_forward_ran_against() {
     // be read correctly by a disclosure that transposes them.
     make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
     let c_ww = make_commit(&ww.server_dir, "ww2.txt", "ww2\n", "ww: second");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 

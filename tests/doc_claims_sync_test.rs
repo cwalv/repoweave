@@ -56,21 +56,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 const SERVER_URL: &str = "https://github.com/example/server.git";
 const SERVER_PATH: &str = "github/example/server";
 
@@ -99,7 +84,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -174,7 +159,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
     // still exercise the envelope, but using a real advance also pins the
     // happy-path outcome shape).
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -279,7 +264,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         .iter()
         .map(|(p, u, s)| (p.as_str(), u.as_str(), s.as_str()))
         .collect();
-    write_lock(&primary_project, &lock_refs);
+    common::fixture_lock(&primary_project, &lock_refs);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -333,7 +318,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         .iter()
         .map(|(p, u, s)| (p.as_str(), u.as_str(), s.as_str()))
         .collect();
-    write_lock(&ww_project, &ww_lock_refs);
+    common::fixture_lock(&ww_project, &ww_lock_refs);
     common::git_in(&ww_project, &["add", "rwv.lock"]);
     common::git_in(&ww_project, &["commit", "-m", "lock: ww"]);
 
@@ -426,12 +411,12 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
         "primary\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverge");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
@@ -571,7 +556,7 @@ fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
         initial_sha.as_str(),
         "fake sha must differ from real"
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
     // Commit the stale lock so it is NOT a tracked-dirty file. The stale-lock
     // check (`classify_lock_relations`) reads the lock from disk, so a committed
     // stale lock (pointing at a fake SHA) still triggers the lock-freshness

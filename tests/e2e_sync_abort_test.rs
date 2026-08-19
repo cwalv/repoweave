@@ -49,25 +49,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)], integrations: Opti
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-/// Write an rwv.lock file into `project_dir`.
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock` rather than
-    // hand-formatting the on-disk JSON: a byte-level mismatch against what
-    // `rwv lock` itself would emit for equal content shows up as a phantom
-    // diff to anything that stages/commits `rwv.lock` (e.g. Phase 3's
-    // auto-relock), which is exactly what round-trip convergence tests
-    // check for.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -111,7 +92,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     )
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
-    write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -214,7 +195,7 @@ fn make_shared_workspaces_two_repos(parent: &Path) -> (Workspace, Workspace, Str
         &[(SERVER_PATH, SERVER_URL), (API_PATH, API_URL)],
         None,
     );
-    write_lock(
+    common::fixture_lock(
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, &c1), (API_PATH, API_URL, &api_c1)],
     );
@@ -370,7 +351,7 @@ fn sync_ff_primary_advances_to_workweave_lock() {
         "workweave change\n",
         "ww: add change",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww change"]);
 
@@ -402,7 +383,7 @@ fn sync_ff_is_symmetric_workweave_catches_up_to_primary() {
         "upstream change\n",
         "primary: upstream advance",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &primary.project_dir,
@@ -532,7 +513,7 @@ fn sync_allow_stale_lock_bypasses_lock_freshness_precondition() {
 /// Helper: advance primary's project repo by one commit (no-op edit) and re-lock.
 /// Leaves primary's lock fresh.
 fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
-    write_lock(
+    common::fixture_lock(
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, server_sha)],
     );
@@ -602,7 +583,7 @@ fn sync_refuses_when_destination_project_repo_has_diverged_from_source() {
     primary_advance_project_one_commit(&primary, &c1);
 
     // ww independently advances its project by a different commit (still C1 server).
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &ww.project_dir,
@@ -637,7 +618,7 @@ fn sync_allows_when_destination_project_repo_is_strict_ancestor_of_source() {
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // ww advances its project (server still at C1). primary's project stays at C1.
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &ww.project_dir,
@@ -949,7 +930,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         "primary\n",
         "primary: advance",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &primary.project_dir,
@@ -963,7 +944,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         "ww feature\n",
         "ww: local commit",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww feature"]);
 
@@ -1043,7 +1024,7 @@ fn abort_restores_repos_to_pre_op_state() {
         "primary version\n",
         "primary: conflict candidate",
     );
-    write_lock(
+    common::fixture_lock(
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, &c_primary)],
     );
@@ -1056,7 +1037,7 @@ fn abort_restores_repos_to_pre_op_state() {
         "ww version\n",
         "ww: conflict candidate",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
@@ -1236,7 +1217,7 @@ fn sync_proceeds_when_source_lock_tag_matches_head() {
 
     // Tag primary's server at its current HEAD and update the source lock to the tag name.
     git_tag(&primary.server_dir, "v1.0.0");
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &primary.project_dir,
@@ -1287,7 +1268,7 @@ fn sync_refuses_when_source_lock_tag_is_genuinely_stale() {
     );
 
     // Update source lock to the tag name — it's now genuinely stale (HEAD > tag commit).
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &primary.project_dir,
@@ -1311,7 +1292,7 @@ fn sync_refuses_with_unknown_revision_when_source_lock_tag_missing() {
     let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
 
     // Write a source lock pinned by a tag that was never created.
-    write_lock(
+    common::fixture_lock(
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, "v9.9.9-nonexistent")],
     );
@@ -1347,7 +1328,7 @@ fn sync_roundtrip_converges_without_project_repo_growth() {
         "advance\n",
         "primary: advance",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: advance"]);
 
@@ -1512,7 +1493,7 @@ fn sync_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
         "primary advance\n",
         "primary: C2",
     );
-    write_lock(&ws.primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ws.primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ws.primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &ws.primary.project_dir,
@@ -1553,7 +1534,7 @@ fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
         "ww advance\n",
         "ww: C2",
     );
-    write_lock(&ws.ww_project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ws.ww_project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ws.ww_project_dir, &["add", "rwv.lock"]);
     common::git_in(&ws.ww_project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -1637,7 +1618,7 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
         "primary\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
@@ -1649,7 +1630,7 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
         "ww extra\n",
         "ww: C3 (ahead of C2)",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c3)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c3)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C3"]);
 
@@ -1717,7 +1698,7 @@ fn mixed_per_repo_verdicts_are_reported_per_repo_with_no_single_cause_summary() 
 
     // Keep the source's lock pinning the source's own HEADs, so the op reaches
     // the replay rather than a lock-relation refusal.
-    write_lock(
+    common::fixture_lock(
         &primary.project_dir,
         &[(SERVER_PATH, SERVER_URL, &c2), (API_PATH, API_URL, &api_c1)],
     );
@@ -1774,13 +1755,13 @@ fn sync_ff_reports_failed_for_diverged_repo() {
         "primary\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     // Workweave: diverge from C1 (different file, cannot fast-forward to C2).
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
@@ -1823,12 +1804,12 @@ fn sync_ff_diverged_refusal_keeps_cause_drops_advice() {
         "primary\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
     let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: C_ww"]);
 
@@ -2004,7 +1985,7 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
         "primary version\n",
         "primary: shared.txt",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary C2"]);
     let primary_pre_sync = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
@@ -2015,7 +1996,7 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
         "ww version\n",
         "ww: shared.txt (conflicts)",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
@@ -2247,7 +2228,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
         "primary advance\n",
         "primary: advance",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &primary.project_dir,

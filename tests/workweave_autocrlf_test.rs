@@ -78,12 +78,8 @@ fn smudging_weave(tmp: &Path) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"github/org/lib\": {{\"type\": \"git\", \"url\": {:?}, \"version\": {sha:?}}}}}}}",
-        common::file_url(&lib)
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &app.join("rwv.lock")).unwrap();
+    let lib_url = common::file_url(&lib);
+    common::fixture_lock(&app, &[("github/org/lib", &lib_url, &sha)]);
     git(&home, &app, &["add", "-A"]);
     git(&home, &app, &["commit", "-qm", "lock: initial"]);
 

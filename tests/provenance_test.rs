@@ -91,14 +91,7 @@ fn write_manifest(ws: &Path, name: &str, entries: &[(&str, &str, &str)]) {
 fn write_lock(ws: &Path, name: &str, repo_path: &str, url: &str, sha: &str) {
     let project_dir = ws.join("projects").join(name);
     std::fs::create_dir_all(&project_dir).unwrap();
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw = format!(
-        "{{\"repositories\": {{{repo_path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(&project_dir, &[(repo_path, url, sha)]);
 }
 
 /// Add a remote named `remote_name` pointing at `remote_url` to the repo at

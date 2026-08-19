@@ -80,17 +80,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
-    // Round-trips through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
     let repo_url = common::file_url(&manifest_repo);
-    let raw_lock = format!(
-        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {sha:?}}}}}}}",
-        path = MANIFEST_REPO_PATH,
-        sha = initial_sha
+    common::fixture_lock(
+        &project_dir,
+        &[(MANIFEST_REPO_PATH, &repo_url, &initial_sha)],
     );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     common::git_in(
         &project_dir,

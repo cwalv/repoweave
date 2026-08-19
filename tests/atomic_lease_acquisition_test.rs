@@ -64,25 +64,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock` (same as
-    // e2e_op_state_test.rs). This file's original local copy had drifted to a
-    // TOML-ish shape the real JSON parser refuses — every sync in the fixture
-    // died at the post-acquire dirt scan ("failed to parse rwv.lock"),
-    // release-on-refusal cleared the records, and the racing test this file
-    // used to hold was green only when its loser overlapped that brief hold
-    // (rwv-g8qb).
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -113,7 +94,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     )
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -215,7 +196,7 @@ fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
         "primary version\n",
         "primary: add shared.txt",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
@@ -227,7 +208,7 @@ fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
         "ww version\n",
         "ww: add shared.txt (conflicts with primary)",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 

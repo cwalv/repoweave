@@ -148,18 +148,15 @@ fn make_primary(parent: &Path) -> Primary {
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
-    // Round-trips through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
     let owned_url = common::file_url(&owned);
     let reference_url = common::file_url(&reference);
-    let raw_lock = format!(
-        "{{\"repositories\": {{{owned_path:?}: {{\"type\": \"git\", \"url\": {owned_url:?}, \"version\": {owned_sha:?}}}, {ref_path:?}: {{\"type\": \"git\", \"url\": {reference_url:?}, \"version\": {ref_sha:?}}}}}}}",
-        owned_path = OWNED_PATH,
-        ref_path = REF_PATH,
+    common::fixture_lock(
+        &project_dir,
+        &[
+            (OWNED_PATH, owned_url.as_str(), owned_sha.as_str()),
+            (REF_PATH, reference_url.as_str(), ref_sha.as_str()),
+        ],
     );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
 
     common::git_in(
         &project_dir,

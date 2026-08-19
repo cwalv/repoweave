@@ -53,21 +53,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -105,7 +90,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     )
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -192,7 +177,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
         "primary version\n",
         "primary: shared.txt",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: primary C2"]);
 
@@ -202,7 +187,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
         "ww version\n",
         "ww: shared.txt (conflicts with primary)",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
@@ -319,7 +304,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         "primary version\n",
         "primary: add shared.txt",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
@@ -330,7 +315,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         "ww version\n",
         "ww: add shared.txt (conflicts with primary)",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 
@@ -413,7 +398,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let landed = make_commit(&ww.server_dir, "advance.txt", "advance\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
     std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
     common::git_in(&ww.project_dir, &["add", "rwv.lock", "notes.txt"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
@@ -674,7 +659,7 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let landed = make_commit(&ww.server_dir, "advance.txt", "advance\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &landed)]);
     std::fs::write(ww.project_dir.join("notes.txt"), "ww notes\n").unwrap();
     common::git_in(&ww.project_dir, &["add", "rwv.lock", "notes.txt"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
@@ -1060,7 +1045,7 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
         "primary version\n",
         "primary: add shared.txt",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&primary.project_dir, &["commit", "-m", "lock: C2"]);
 
@@ -1070,7 +1055,7 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
         "ww version\n",
         "ww: add shared.txt (conflicts with primary)",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww C_ww"]);
 

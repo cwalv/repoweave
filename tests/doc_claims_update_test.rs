@@ -142,20 +142,17 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
 
     std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
-    // Round-trips through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let mut lock_entries = Vec::new();
+    let mut lock_entries: Vec<(String, String, String)> = Vec::new();
     for (rp, sha) in &manifest_shas {
         let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
         let bare_url = common::file_url(bare);
-        lock_entries.push(format!(
-            "{rp:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}"
-        ));
+        lock_entries.push((rp.clone(), bare_url, sha.clone()));
     }
-    let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    let entries: Vec<(&str, &str, &str)> = lock_entries
+        .iter()
+        .map(|(p, u, s)| (p.as_str(), u.as_str(), s.as_str()))
+        .collect();
+    common::fixture_lock(&project_dir, &entries);
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
@@ -318,11 +315,10 @@ fn update_advances_lock_while_fetch_does_not() {
         "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{manifest_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_work.join("rwv.toml"), manifest_toml).unwrap();
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/team/dep\": {{\"type\": \"git\", \"url\": {manifest_url:?}, \"version\": {initial_sha:?}}}}}}}"
+    common::fixture_lock(
+        &project_work,
+        &[("local/team/dep", &manifest_url, &initial_sha)],
     );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_work.join("rwv.lock")).unwrap();
     common::git_in(&project_work, &["add", "."]);
     common::git_in(&project_work, &["commit", "-m", "manifest + lock"]);
     common::git_in(&project_work, &["push", "origin", "main"]);

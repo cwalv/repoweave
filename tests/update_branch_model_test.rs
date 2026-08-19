@@ -124,14 +124,7 @@ fn build_workspace() -> Fixture {
         ),
     )
     .unwrap();
-    // Round-trips through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw_lock = format!(
-        "{{\"repositories\": {{{repo_path:?}: {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {head:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(&project_dir, &[(&repo_path, &bare_url, &head)]);
     std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
 
     Fixture {

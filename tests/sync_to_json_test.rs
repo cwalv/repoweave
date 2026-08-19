@@ -60,21 +60,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 const SERVER_URL: &str = "https://github.com/example/server.git";
 const SERVER_PATH: &str = "github/example/server";
 
@@ -122,7 +107,7 @@ fn make_workweave_ahead_fixture(
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
+    common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -169,7 +154,7 @@ fn make_workweave_ahead_fixture(
 
     // Advance the workweave's server repo and relock so sync-to has work.
     let advance_sha = make_commit(&ww_server, "ww.txt", "workweave\n", "ww: advance server");
-    write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &advance_sha)]);
+    common::fixture_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &advance_sha)]);
     common::git_in(&ww_project, &["add", "rwv.lock"]);
     common::git_in(&ww_project, &["commit", "-m", "lock: ww advance"]);
 
@@ -346,7 +331,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     )
     .unwrap();
     write_manifest(&source_project, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
+    common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     common::git_in(
         &source_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -391,7 +376,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
         "source advance\n",
         "source: advance",
     );
-    write_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&source_project, &["add", "rwv.lock"]);
     common::git_in(&source_project, &["commit", "-m", "lock: source at c2"]);
 
@@ -544,7 +529,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
+    common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &initial_sha)]);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -840,7 +825,7 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
         "primary version\n",
         "primary: add shared.txt",
     );
-    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary_project, &["add", "rwv.lock"]);
     common::git_in(&primary_project, &["commit", "-m", "lock: primary advance"]);
 
@@ -851,7 +836,7 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
         "ww version\n",
         "ww: add shared.txt",
     );
-    write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    common::fixture_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     common::git_in(&ww_project, &["add", "rwv.lock"]);
     common::git_in(
         &ww_project,

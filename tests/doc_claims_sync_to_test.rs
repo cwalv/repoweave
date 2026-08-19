@@ -64,21 +64,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 const SERVER_URL: &str = "https://github.com/example/server.git";
 const SERVER_PATH: &str = "github/example/server";
 
@@ -104,7 +89,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -172,7 +157,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
 
     // Workweave advances so sync-to has actual work to do.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -223,7 +208,7 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
 
     // Workweave advances.
     let c2 = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
@@ -321,7 +306,7 @@ fn make_shared_with_stale_cwd_for_sync_to(parent: &Path) -> (Workspace, Workspac
     // Patch ww's lock to a fabricated SHA — stale destination for sync-to.
     let fake_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     assert_ne!(fake_sha, initial_sha.as_str());
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
 
     (primary, ww)
 }
@@ -354,12 +339,12 @@ fn make_shared_with_stale_target_for_sync_to(parent: &Path) -> (Workspace, Works
     common::git_in(&ww.server_dir, &["merge", "--ff-only", &c2]);
 
     // Update ww's lock to C2 and commit.
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww at C2"]);
 
     // Update primary's lock to C2 and commit.
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(
         &primary.project_dir,
@@ -526,7 +511,7 @@ fn sync_to_target_non_colliding_untracked_file_syncs_clean() {
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -570,7 +555,7 @@ fn sync_to_target_colliding_untracked_file_parks_recoverably_then_continues() {
         "ww content\n",
         "ww: add newfile",
     );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -687,7 +672,7 @@ fn sync_to_success_drops_every_pre_op_ref_on_both_sides() {
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 
@@ -730,7 +715,7 @@ fn sync_to_success_drops_target_refs_when_target_active_project_differs() {
     std::fs::write(primary.root.join(".rwv-active"), "other-app\n").unwrap();
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
 

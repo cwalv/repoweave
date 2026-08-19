@@ -93,26 +93,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock` so the on-disk
-    // shape matches what `rwv lock` itself would emit. Direct string writes
-    // drift silently: pre-v0.17 the lock was TOML and hand-rolled TOML was
-    // fine here; post-v0.17 the lock is JSON and the same string is refused
-    // by `serde_json` at line 1 column 2. Audit (see file header) confirms
-    // `rwv abort` uses `Project::from_dir_skip_lock` and does not parse
-    // this file — so the drift never masked test scope here — but the
-    // fixture's on-disk contract must still match production's.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 const SERVER_URL: &str = "https://github.com/chatly/server.git";
 const SERVER_PATH: &str = "github/chatly/server";
 
@@ -142,7 +122,7 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
     )
     .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &server_sha)]);
+    common::fixture_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &server_sha)]);
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -260,7 +240,7 @@ fn make_multi_repo_fixture(parent: &Path, name: &str, repo_paths: &[&str]) -> Mu
         .zip(shas.iter())
         .map(|((p, u), s)| (*p, u.as_str(), s.as_str()))
         .collect();
-    write_lock(&project_dir, &lock_rows);
+    common::fixture_lock(&project_dir, &lock_rows);
     common::git_in(
         &project_dir,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -729,7 +709,7 @@ fn abort_foreign_tip_options_block_printed_once() {
             ),
         ],
     );
-    write_lock(
+    common::fixture_lock(
         &project_dir,
         &[
             (

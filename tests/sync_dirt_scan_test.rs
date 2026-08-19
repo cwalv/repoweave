@@ -122,14 +122,7 @@ fn fixture() -> Fixture {
         "[repositories.\"{REPO_PATH}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(primary_project.join("rwv.toml"), manifest).unwrap();
-    // Round-trips through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw_lock = format!(
-        "{{\"repositories\": {{{REPO_PATH:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {initial_sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &primary_project.join("rwv.lock")).unwrap();
+    common::fixture_lock(&primary_project, &[(REPO_PATH, &url, &initial_sha)]);
     common::git_in(
         &primary_project,
         &["add", ".gitattributes", "rwv.toml", "rwv.lock"],
@@ -208,11 +201,7 @@ fn advance_primary(f: &Fixture) -> String {
         "primary: advance",
     );
     let url = common::file_url(&f.primary.repo_dir);
-    let raw_lock = format!(
-        "{{\"repositories\": {{{REPO_PATH:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {new_sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &f.primary.project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(&f.primary.project_dir, &[(REPO_PATH, &url, &new_sha)]);
     common::git_in(&f.primary.project_dir, &["add", "rwv.lock"]);
     common::git_in(&f.primary.project_dir, &["commit", "-m", "lock: advance"]);
     new_sha

@@ -408,14 +408,10 @@ fn build_push_fixture() -> PushFixture {
         ),
     )
     .unwrap();
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let raw = format!(
-        "{{\"repositories\": {{\"local/org/repo\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {manifest_head:?}}}}}}}"
+    common::fixture_lock(
+        &project_dir,
+        &[("local/org/repo", &bare_url, &manifest_head)],
     );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
     common::git_in(&project_dir, &["add", "."]);
     common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
@@ -432,11 +428,7 @@ fn build_push_fixture() -> PushFixture {
 
 fn write_lock_at(fixture: &PushFixture, sha: &str) {
     let bare_url = common::file_url(&fixture.manifest_bare);
-    let raw = format!(
-        "{{\"repositories\": {{\"local/org/repo\": {{\"type\": \"git\", \"url\": {bare_url:?}, \"version\": {sha:?}}}}}}}"
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &fixture.project_dir.join("rwv.lock")).unwrap();
+    common::fixture_lock(&fixture.project_dir, &[("local/org/repo", &bare_url, sha)]);
     common::git_in(&fixture.project_dir, &["add", "rwv.lock"]);
     common::git_in(&fixture.project_dir, &["commit", "-m", "relock"]);
 }

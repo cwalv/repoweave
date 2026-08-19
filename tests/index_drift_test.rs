@@ -76,22 +76,6 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
 }
 
-/// Write rwv.lock.
-fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
-    // Round-trip through the real parser + `lock::write_lock`: a
-    // hand-formatted string that differs only in whitespace from what
-    // `rwv lock` itself would emit still diffs against a real relock.
-    let entries: Vec<String> = repos
-        .iter()
-        .map(|(path, url, sha)| {
-            format!("{path:?}: {{\"type\": \"git\", \"url\": {url:?}, \"version\": {sha:?}}}")
-        })
-        .collect();
-    let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
-}
-
 fn rwv() -> AssertCommand {
     common::rwv()
 }
@@ -131,7 +115,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     let project_primary = primary_root.join("projects/web-app");
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
@@ -350,7 +334,7 @@ fn sync_post_refresh_clears_stale_index() {
     let project_primary = primary_root.join("projects/web-app");
     init_repo(&project_primary);
     write_manifest(&project_primary, &[(SERVER_PATH, SERVER_URL)]);
-    write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c1)]);
     common::git_in(&project_primary, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: initial"]);
 
@@ -396,7 +380,7 @@ fn sync_post_refresh_clears_stale_index() {
 
     // --- Primary commits C2, updates lock ---
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");
-    write_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_primary, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&project_primary, &["add", "rwv.lock"]);
     common::git_in(&project_primary, &["commit", "-m", "lock: advance"]);
 
@@ -406,7 +390,7 @@ fn sync_post_refresh_clears_stale_index() {
     // precondition (which reads the workweave's own committed lock)
     // would fail before reaching the
     // post-refresh path this test is exercising.
-    write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::fixture_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
     common::git_in(&project_ww, &["add", "rwv.lock"]);
     common::git_in(&project_ww, &["commit", "-m", "lock: ww advance"]);
 
@@ -515,7 +499,7 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
     init_repo(&project_source);
     write_manifest(&project_source, &[(SERVER_PATH, SERVER_URL)]);
     // Lock pins the TAG name, not the SHA.
-    write_lock(&project_source, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
+    common::fixture_lock(&project_source, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
     common::git_in(&project_source, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_source, &["commit", "-m", "lock: v1.0.0"]);
 
@@ -549,7 +533,7 @@ fn sync_precondition_accepts_tag_form_lock_entry() {
         ],
     );
     // CWD lock uses the SHA form.
-    write_lock(&project_cwd, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    common::fixture_lock(&project_cwd, &[(SERVER_PATH, SERVER_URL, &sha)]);
     common::git_in(&project_cwd, &["add", "rwv.lock"]);
     common::git_in(&project_cwd, &["commit", "-m", "lock: sha form"]);
 
