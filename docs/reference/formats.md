@@ -256,6 +256,35 @@ Project paths default to `projects/{name}/`. If names collide across organizatio
 
 `rwv` commands that take a project path require the path *as created* — if the project lives at `projects/chatly/web-app/`, use `chatly/web-app`, not `web-app`.
 
+### Names, and the characters they exclude
+
+Project and workweave names exclude `--` (and a leading or trailing `-`) and
+`+`. The reason is the rendering above: a workweave directory, a `-w` address,
+and an ephemeral branch name each spell a (project, workweave) pair as one
+path segment — `web-app--payments` — with `--` joining the halves and `+`
+written in place of `/` for a scoped project (`chatly/web-app` becomes
+`chatly+web-app--payments`). Keeping both tokens out of names means every
+rendered string reads unambiguously on sight: only one pair can produce it,
+so a directory listing or a branch list never needs rwv to interpret it.
+
+The exclusion applies to rwv's own labels only. A repository whose name
+contains `--` or `+` works unchanged as a member — the manifest key carries
+the name as-is. The exclusion bites only when such a name is offered as a
+project or workweave name, and the refusal suggests choosing another label,
+which renames nothing outside the weave.
+
+The alternative was considered and measured, not overlooked (2026-08): rwv
+resolves names through the workweave marker and the registry, so the machine
+no longer needs the rendered string to be decodable — the tokens could be
+legalized, with collisions refused at mint time instead of excluded by
+grammar. It was declined while no real name needs it. In the corpora
+measured, nothing required either token, and legalizing them would trade the
+on-sight readability of every shared surface — branch namespaces span
+projects in shared clones — plus new weave-wide collision machinery, for a
+freedom with no measured demand. A real name that forces the question is the
+signal to revisit; until then, this section is the record that the door was
+examined and left closed on purpose.
+
 ## Related
 
 - [reference/cli](./cli.md) — verbs that read/write these files
