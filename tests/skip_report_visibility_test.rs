@@ -402,6 +402,21 @@ fn every_skip_announcement_goes_through_the_one_reporter() {
 /// is how two earlier counts of this same population disagreed.
 ///
 /// A block that asserts is measuring, not skipping, and is not a finding.
+///
+/// **`PROBES` IS THE POPULATION, AND IT IS NARROWER THAN "ENVIRONMENTAL".** A
+/// return guarded by anything not in that list is invisible here, however
+/// plainly its test is skipping. The known case is in this repository already:
+/// the two sites in `tests/status_broken_clone_test.rs` decide on
+/// `if cat_file.success()`, the exit status of a `git cat-file` probing whether
+/// GC has collected an object. That is an environment question — those two skip
+/// on this host today — but the guard names a local variable, so neither the
+/// probe list nor the one level of helper resolution reaches the subprocess
+/// behind it, and stripping their announcement leaves this test green.
+///
+/// The list is not widened to close that, deliberately: `PROBES` is matched
+/// against the guard line, and admitting "any expression derived from a
+/// subprocess" would report every early return in the corpus. The boundary is
+/// stated instead, because a structural pin's scope IS its coverage claim.
 #[test]
 fn no_environment_guard_returns_without_announcing() {
     const PROBES: &[&str] = &[
