@@ -1,6 +1,7 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
 use crate::manifest::{LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile};
+use crate::refusal::RefusalKind;
 use crate::vcs::{project_vcs, vcs_for, HeadAttachment, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
@@ -79,7 +80,8 @@ pub fn generate_lock(
 
         // Check for uncommitted changes unless --dirty is set.
         if !dirty && vcs.has_uncommitted_changes(repo_dir)? {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::DirtyCheckout,
                 "repo {} has uncommitted changes; commit or use --dirty to override",
                 repo_path
             );
@@ -260,7 +262,8 @@ fn commit_lock_file(
         .iter()
         .any(|path| path != LockFile::FILE_NAME && !authored.contains(path.as_str()));
     if has_other_changes {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::DirtyCheckout,
             "project repo has uncommitted changes outside rwv.lock; \
              commit or stash them before using --commit"
         );

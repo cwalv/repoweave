@@ -3,6 +3,7 @@
 use crate::activate::{activate_intent, activate_workweave_intent};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
+use crate::refusal::RefusalKind;
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::{vcs_for, EphemeralRefName, HeadAttachment, RefName, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
@@ -290,7 +291,8 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         .remote_default_branch(&dest)
         .with_context(|| format!("failed to determine default branch for {}", dest.display()))?
     else {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::NoRemoteDefaultBranch,
             "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
             repo_path.as_str(),
             dest.display(),
@@ -401,7 +403,8 @@ fn run_add_from_local_path(
         )
     })?
     else {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::NoRemoteDefaultBranch,
             "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
             repo_path.as_str(),
             clone_dir.display(),
@@ -592,7 +595,8 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
     if claims.is_empty() {
         return Ok(());
     }
-    anyhow::bail!(
+    crate::refuse!(
+        RefusalKind::StoreStillClaimed,
         "refusing to delete '{}': the store is still claimed:\n  {}\n\n\
          Deleting it would take every ref and object with it at once. Delete the \
          workweaves that hold these first (`rwv workweave <project> delete <name>`), \

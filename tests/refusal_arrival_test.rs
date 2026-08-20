@@ -186,23 +186,11 @@ fn a_typed_name_error_routes_to_its_token() {
 // The resume path
 // ---------------------------------------------------------------------------
 
-/// `--continue` into a re-gate that refuses. The decorator that adds "this op
-/// is still parked" used to take the refusal as a string, which discarded
-/// whatever kind it carried; it now takes the error.
-#[test]
-fn the_resume_path_routes_to_a_token() {
-    let tmp = common::tempdir().unwrap();
+/// Park an op at replay re-entry over a source `prepare` has made refusable,
+/// and return what the operator reads.
+fn parked_resume_stderr(tmp: &tempfile::TempDir, prepare: impl FnOnce(&Path)) -> String {
     let (primary, workweave) = primary_and_workweave(tmp.path());
-
-    // Point the source's committed lock at a revision that does not resolve,
-    // which is what the replay re-entry gate refuses on.
-    let source_project = primary.join("projects/web-app");
-    common::fixture_lock(
-        &source_project,
-        &[(SERVER_PATH, SERVER_URL, &"b".repeat(40))],
-    );
-    common::git_in(&source_project, &["add", "rwv.lock"]);
-    common::git_in(&source_project, &["commit", "-m", "lock: unresolvable"]);
+    prepare(&primary);
 
     let record = format!(
         "{{\"id\": \"parked-op-1\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
@@ -220,6 +208,37 @@ fn the_resume_path_routes_to_a_token() {
         stderr.contains("still parked at its recorded phase"),
         "precondition: this is the parked-op decorator's refusal:\n{stderr}"
     );
+    stderr
+}
+
+/// `--continue` into a re-gate that refuses, routed to the token of the gate
+/// that actually fired — not to the parking that wrapped it.
+///
+/// The decorator took the refusal as a string until this design, which
+/// discarded whatever kind it carried. Asserting the INNER token is what makes
+/// that difference visible from outside the process: with the kind preserved
+/// the operator is routed to the condition, with it discarded to `op-parked`.
+///
+/// **Two arms, and the second one is not redundant.** A decorator that
+/// hard-coded one inner token instead of reading the error's would satisfy a
+/// single-arm test. Two gates whose tokens differ can only both pass if the
+/// decorator really is passing through what it was handed.
+#[test]
+fn the_resume_path_routes_to_the_gate_that_fired() {
+    let tmp = common::tempdir().unwrap();
+    let stderr = parked_resume_stderr(&tmp, |primary| {
+        let source_project = primary.join("projects/web-app");
+        common::fixture_lock(
+            &source_project,
+            &[(SERVER_PATH, SERVER_URL, &"b".repeat(40))],
+        );
+        common::git_in(&source_project, &["add", "rwv.lock"]);
+        common::git_in(&source_project, &["commit", "-m", "lock: unresolvable"]);
+    });
+    assert!(
+        stderr.contains("lock references unknown revisions"),
+        "precondition: the unresolvable-entry gate fired:\n{stderr}"
+    );
 
     // This drive is also the sample's only multi-line headline reaching a
     // route line, and a fixture that quietly became single-line would take
@@ -236,7 +255,72 @@ fn the_resume_path_routes_to_a_token() {
         "the headline must span several lines here, got:\n{headline}"
     );
 
-    assert_routes_to(&stderr, "op-parked");
+    assert_routes_to(&stderr, "unresolvable-lock-entry");
+}
+
+#[test]
+fn the_resume_path_routes_to_a_second_gates_own_token() {
+    let tmp = common::tempdir().unwrap();
+    // Lock a commit, then move HEAD off it backwards. The lock now records a
+    // commit HEAD lacks, which is `behind` — anomalous, where `ahead` is the
+    // benign case this gate deliberately lets through.
+    let stderr = parked_resume_stderr(&tmp, |primary| {
+        let server = primary.join(SERVER_PATH);
+        std::fs::write(server.join("second.txt"), "second\n").unwrap();
+        common::git_in(&server, &["add", "-A"]);
+        common::git_in(&server, &["commit", "-m", "second"]);
+        let locked = common::git_in(&server, &["rev-parse", "HEAD"]);
+
+        let source_project = primary.join("projects/web-app");
+        common::fixture_lock(&source_project, &[(SERVER_PATH, SERVER_URL, &locked)]);
+        common::git_in(&source_project, &["add", "rwv.lock"]);
+        common::git_in(&source_project, &["commit", "-m", "lock: at second"]);
+
+        common::git_in(&server, &["reset", "--hard", "HEAD~1"]);
+    });
+    assert!(
+        stderr.contains("has a stale lock"),
+        "precondition: the stale-relation gate fired:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "stale-lock");
+}
+
+// ---------------------------------------------------------------------------
+// Two more of this slice's producers, in two other files
+// ---------------------------------------------------------------------------
+
+/// `--continue` with nothing recorded. The op-state module's own refusal,
+/// reached without a sync engine in the way.
+#[test]
+fn a_resume_with_no_recorded_op_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let (_primary, workweave) = primary_and_workweave(tmp.path());
+
+    let stderr = refusal_stderr(&["sync", "--continue"], &workweave);
+    assert!(
+        stderr.contains("no sync/sync-to op in progress")
+            || stderr.contains("no operation in progress"),
+        "precondition: nothing is recorded here:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "no-op-recorded");
+}
+
+/// `rwv lock` over a manifest repo carrying uncommitted tracked changes —
+/// the lock module's own preflight, and the most-shared token in this slice.
+#[test]
+fn a_dirty_repo_at_lock_time_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, _workweave) = primary_and_workweave(tmp.path());
+
+    let server = primary.join(SERVER_PATH);
+    std::fs::write(server.join("README.md"), "edited, uncommitted\n").unwrap();
+
+    let stderr = refusal_stderr(&["lock"], &primary);
+    assert!(
+        stderr.contains("uncommitted changes"),
+        "precondition: the dirty-checkout preflight fired:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "dirty-checkout");
 }
 
 // ---------------------------------------------------------------------------

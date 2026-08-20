@@ -193,7 +193,8 @@ pub fn run_push(
         .remote_default_branch(&project_dir)
         .with_context(|| format!("failed to determine canonical branch for {project_name}"))?;
     let Some(project_remote_default) = project_remote_default else {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::NoRemoteDefaultBranch,
             "rwv push: project repo at projects/{project_name}/: {}, then re-run `rwv push`",
             project_vcs.remote_default_branch_repair_hint()
         );
@@ -205,17 +206,20 @@ pub fn run_push(
         .with_context(|| format!("failed to read current branch for {project_name}"))?;
     let project_attached = match project_attachment {
         HeadAttachment::Attached(a) => a,
-        HeadAttachment::Unborn(u) => anyhow::bail!(
+        HeadAttachment::Unborn(u) => crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
             "rwv push: project repo at projects/{project_name}/ is on branch '{u}' with no \
              commits yet; make an initial commit before pushing"
         ),
-        HeadAttachment::Detached(_) => anyhow::bail!(
+        HeadAttachment::Detached(_) => crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
             "rwv push: project repo at projects/{project_name}/ is on a detached HEAD; \
              check out the canonical branch ({project_canonical}) first"
         ),
     };
     if !project_attached.is_named(&project_canonical) {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::ProjectRepoOffCanonicalBranch,
             "rwv push: project repo at projects/{project_name}/ is on branch '{project_attached}', \
              not the canonical branch '{project_canonical}'. \
              Switch to '{project_canonical}' before pushing — publishing requires a stable primary context."
@@ -325,7 +329,10 @@ pub fn run_push(
             "Hint: run `rwv lock` to capture local state, \
              or `git checkout` in each repo to align with the lock."
         );
-        anyhow::bail!("lock-state mismatch — refusing to push before clone state and lock agree");
+        crate::refuse!(
+            RefusalKind::LockStateMismatch,
+            "lock-state mismatch — refusing to push before clone state and lock agree"
+        );
     }
 
     // 4. Per-repo branch sanity. Detached HEAD is fatal; off-version branch
@@ -435,7 +442,10 @@ pub fn run_push(
         for msg in &branch_errors {
             eprintln!("  - {msg}");
         }
-        anyhow::bail!("aborted before network — fix per-repo branch state and retry");
+        crate::refuse!(
+            RefusalKind::UnpushableRepoBranch,
+            "aborted before network — fix per-repo branch state and retry"
+        );
     }
 
     // 5. Dry-run: print the plan.
@@ -608,7 +618,8 @@ pub fn run_push(
             }
         }
 
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::ProjectPushWithheld,
             "manifest-repo push failures aborted before project-repo push; \
              manifest-side partial state may exist — inspect and retry"
         );

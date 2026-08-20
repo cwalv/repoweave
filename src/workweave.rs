@@ -30,6 +30,7 @@
 
 use crate::cli::consent::DiscardUnmergedConsent;
 use crate::manifest::{project_repo_key, LockFile, Manifest, ProjectName, Role, WorkweaveName};
+use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
@@ -1472,7 +1473,8 @@ pub fn create_workweave(
                 Ok(_) => {}
                 Err(e) => {
                     // Cannot determine dirty status — be conservative and refuse.
-                    bail!(
+                    crate::refuse!(
+                        RefusalKind::UnreadableStatus,
                         "rwv workweave create: refusing to create workweave — \
                          could not check projects/{project} for uncommitted changes: {e}\n\n\
                          To bypass this check, use --capture-dirty.",

@@ -20,6 +20,14 @@ use serde::Serialize;
 /// Fieldless: a kind identifies a condition, and the detail belongs in the
 /// message. Adding a variant here is minting operator-visible surface — the
 /// token is versioned, and a rename is a break.
+///
+/// Some variants deliberately mint a token a `rwv doctor` finding or a
+/// `VcsError` already publishes, because a token names one condition wherever
+/// it appears and a refusal that reports the state a finding reports is that
+/// same state. Those are marked below, and renaming one half of such a pair
+/// splits a condition in two under the reader's feet — the spellings move
+/// together or not at all. `docs/reference/doctor-findings.md` carries the
+/// finding side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RefusalKind {
@@ -35,6 +43,85 @@ pub enum RefusalKind {
     InvalidRefName,
     /// `version:` names a revision where it must name a branch.
     VersionIsAPin,
+
+    /// A checkout the verb must move, record or delete carries uncommitted
+    /// tracked changes.
+    DirtyCheckout,
+    /// The dirty-state read failed, so the operation fails closed.
+    UnreadableStatus,
+    /// The atomic op-state create lost to a peer whose record then vanished.
+    OpAcquisitionRaced,
+    /// `--continue` or `abort` where no op-state exists.
+    NoOpRecorded,
+    /// The remote publishes no default branch.
+    NoRemoteDefaultBranch,
+    /// HEAD is detached, unborn or unreadable where the verb must land or move.
+    HeadNotOnBranch,
+    /// The project repo is attached to a non-canonical branch.
+    ProjectRepoOffCanonicalBranch,
+    /// Manifest repos disagree with the committed lock.
+    LockStateMismatch,
+    /// Repos in the push plan are not on a pushable branch.
+    UnpushableRepoBranch,
+    /// The manifest push failed, so the lock carrier is deliberately
+    /// unpublished.
+    ProjectPushWithheld,
+    /// Preflight: tips are not in the fast-forward relation the strategy needs.
+    NotFastForwardable,
+    /// Live worktrees or standing receipts claim the store a delete would
+    /// destroy.
+    StoreStillClaimed,
+    /// The records that would prove a store unclaimed could not be read, so
+    /// the delete fails closed.
+    StoreClaimsUnreadable,
+    /// A checkout dropped from the lock carries commits nothing else reaches.
+    DroppedRepoHasUniqueCommits,
+    /// A sync-to target's committed lock is behind its HEAD.
+    ///
+    /// Separate from [`Self::StaleLock`] because `--allow-stale-lock` is
+    /// deliberately not offered here, and one page cannot name a remedy that
+    /// works at one of the two sites.
+    TargetLockBehind,
+    /// `--continue` arguments disagree with the recorded op.
+    ResumeContradictsRecord,
+    /// `--retire`'s merged-check found divergence from the target.
+    RetireNotConverged,
+    /// Abort found a tip the op does not account for.
+    ForeignTip,
+    /// At advance time the target carries commits CWD's tip does not.
+    ///
+    /// Separate from [`Self::NotFastForwardable`]: past replay the exit is
+    /// abort rather than a different strategy.
+    TargetDivergedMidOp,
+
+    /// A workweave's recorded parent is gone. Shared with the finding.
+    DanglingParent,
+    /// The replay exclusion a workweave needs is absent or legacy-spelled.
+    /// Shared with the finding.
+    MissingReplayExclusion,
+    /// The canonical clone a checkout is derived from is missing. Shared with
+    /// the finding.
+    MissingCanonicalClone,
+    /// A clone sits in a topology rwv does not maintain. Shared with the
+    /// finding.
+    CloneTopology,
+    /// The repository is mid-rebase, mid-merge or otherwise mid-operation.
+    /// Shared with the VCS error.
+    MidOperation,
+    /// A lock entry names a revision that does not resolve. Shared with the
+    /// finding.
+    UnresolvableLockEntry,
+    /// The lock↔HEAD relation is not `ok`. Shared with the finding.
+    StaleLock,
+    /// A project directory does not parse as a project. Shared with the
+    /// finding.
+    UnparseableProject,
+    /// An untracked file stands where the operation must write. Shared with
+    /// the VCS error.
+    UntrackedCollision,
+    /// An op-state lease outlived the process that took it. Shared with the
+    /// finding.
+    DeadOpLease,
 }
 
 impl RefusalKind {

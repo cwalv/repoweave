@@ -649,15 +649,18 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
         })?;
         // Follow the pointer.
         let record = read_owner(&lease.owner)?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "lease at {} points to {}, but no owner record found there; \
+            crate::refusal::refusal(
+                RefusalKind::DeadOpLease,
+                format!(
+                    "lease at {} points to {}, but no owner record found there; \
                  the owner workspace may have been moved or its op-state manually \
                  removed. Run `rwv abort` in the owner workspace to clean up, or \
                  manually remove {} and {}.",
-                workspace_dir.display(),
-                lease.owner.display(),
-                workspace_dir.join(OP_LEASE_FILE).display(),
-                lease.owner.join(OP_STATE_FILE).display(),
+                    workspace_dir.display(),
+                    lease.owner.display(),
+                    workspace_dir.join(OP_LEASE_FILE).display(),
+                    lease.owner.join(OP_STATE_FILE).display(),
+                ),
             )
         })?;
         return Ok(Some(ResolvedOwner {
@@ -998,9 +1001,12 @@ pub fn acquire_op(
             // generic refusal — the operator can retry.
             return Err(
                 in_flight_refusal_for(owner_workspace_dir)?.unwrap_or_else(|| {
-                    anyhow::anyhow!(
-                        "raced with a concurrent op at {}; retry",
-                        owner_workspace_dir.display()
+                    crate::refusal::refusal(
+                        RefusalKind::OpAcquisitionRaced,
+                        format!(
+                            "raced with a concurrent op at {}; retry",
+                            owner_workspace_dir.display()
+                        ),
                     )
                 }),
             );
@@ -1040,7 +1046,10 @@ pub fn acquire_op(
                 // matching what a plain check_no_op_in_progress would emit).
                 rollback_acquired(owner_workspace_dir, &acquired_leases);
                 return Err(in_flight_refusal_for(ws)?.unwrap_or_else(|| {
-                    anyhow::anyhow!("raced with a concurrent op at {}; retry", ws.display())
+                    crate::refusal::refusal(
+                        RefusalKind::OpAcquisitionRaced,
+                        format!("raced with a concurrent op at {}; retry", ws.display()),
+                    )
                 }));
             }
             Err(CreateNewError::Io(e)) => {
@@ -1189,7 +1198,8 @@ pub fn resume(workspace_dir: &Path) -> anyhow::Result<(OwnerRecord, PathBuf)> {
     match resolve_to_owner(workspace_dir)? {
         Some(resolved) => Ok((resolved.record, resolved.owner_workspace)),
         None => {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::NoOpRecorded,
                 "no sync/sync-to op in progress to continue at {}. \
                  If you meant to start a new op, omit `--continue`.",
                 workspace_dir.display()

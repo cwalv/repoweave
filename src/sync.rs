@@ -320,7 +320,8 @@ pub fn check_parent_not_dangling(parent: &Path, primary_root: &Path) -> anyhow::
     if parent.exists() {
         return Ok(());
     }
-    anyhow::bail!(
+    crate::refuse!(
+        RefusalKind::DanglingParent,
         "recorded parent workspace does not exist on disk:\n  {}\n\
          \n\
          The parent was retired or deleted out-of-band, leaving this workweave's \
@@ -1088,7 +1089,8 @@ fn check_phase1_ancestor(
         None => format!("not an ancestor of {other}"),
     };
 
-    anyhow::bail!(
+    crate::refuse!(
+        RefusalKind::NotFastForwardable,
         "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} is {shape}.\n\
          {blocking}\n\
          \n\
@@ -1403,7 +1405,8 @@ fn verify_replay_exclusion_invariant(
         .unwrap_or_default();
 
     if has_new && has_legacy {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::MissingReplayExclusion,
             "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
              in the project repo's committed .gitattributes, but {ga} carries \
              BOTH that line and the legacy `rwv.lock merge=ours` spelling. \
@@ -1426,15 +1429,17 @@ fn verify_replay_exclusion_invariant(
     if has_new {
         return match source_problem {
             None => Ok(()),
-            Some(problem) => anyhow::bail!(replay_exclusion_source_only_refusal(
-                source_project_dir,
-                &problem,
-            )),
+            Some(problem) => crate::refuse!(
+                RefusalKind::MissingReplayExclusion,
+                "{}",
+                replay_exclusion_source_only_refusal(source_project_dir, &problem)
+            ),
         };
     }
 
     if has_legacy {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::MissingReplayExclusion,
             "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
              in the project repo's committed .gitattributes, but {ga} still \
              carries the legacy `rwv.lock merge=ours` spelling. The rename \
@@ -1453,7 +1458,7 @@ fn verify_replay_exclusion_invariant(
         )
     }
 
-    anyhow::bail!(
+    crate::refuse!(RefusalKind::MissingReplayExclusion,
         "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
          in the project repo's committed .gitattributes, but {ga} does not contain \
          that line.\n\
@@ -1674,7 +1679,8 @@ fn materialize_missing_repo(
             // Canonical clone lives at primary.
             let canonical = ctx.primary_path().join(repo_path.as_path());
             if !canonical.exists() {
-                anyhow::bail!(
+                crate::refuse!(
+                    RefusalKind::MissingCanonicalClone,
                     "canonical clone for {repo_path} missing at {}; \
                      run `rwv sync` from primary first to materialize it there",
                     canonical.display()
@@ -1736,13 +1742,16 @@ fn check_store_unclaimed(
     project: &ProjectName,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    let registered = vcs.list_worktrees(store).with_context(|| {
-        format!(
-            "{repo_path}: cannot enumerate the worktrees registered against {}; \
-             refusing to destroy a store whose claims could not be read",
-            store.display()
-        )
-    })?;
+    let registered = vcs
+        .list_worktrees(store)
+        .with_context(|| {
+            format!(
+                "{repo_path}: cannot enumerate the worktrees registered against {}; \
+                 refusing to destroy a store whose claims could not be read",
+                store.display()
+            )
+        })
+        .map_err(|e| crate::refusal::refusing(RefusalKind::StoreClaimsUnreadable, e))?;
     // `worktree list` includes the store's own main worktree. Compare
     // canonicalized: the registration records a resolved path, and the
     // store path here is built by joining onto the workspace root, which
@@ -1754,7 +1763,8 @@ fn check_store_unclaimed(
         .map(|p| p.display().to_string())
         .collect();
     if !live.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::StoreStillClaimed,
             "{repo_path}: dropped from lock, but {} still has live worktrees registered \
              against it:\n  {}\n\
              \n\
@@ -1774,10 +1784,12 @@ fn check_store_unclaimed(
                  refusing to destroy a store whose claims could not be read",
                 store.display()
             )
-        })?;
+        })
+        .map_err(|e| crate::refusal::refusing(RefusalKind::StoreClaimsUnreadable, e))?;
     if !standing.is_empty() {
         let names: Vec<String> = standing.iter().map(|r| r.to_string()).collect();
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::StoreStillClaimed,
             "{repo_path}: dropped from lock, but rwv still holds ownership receipts for \
              refs in {}:\n  {}\n\
              \n\
@@ -1822,7 +1834,8 @@ fn prune_dropped_repo(
         return Ok(());
     }
     if vcs.has_uncommitted_changes(&dest).unwrap_or(true) {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::DirtyCheckout,
             "{repo_path}: dropped from lock but worktree has uncommitted changes; \
              commit/discard and re-run sync, or remove manually"
         );
@@ -1840,7 +1853,7 @@ fn prune_dropped_repo(
                         // Allow when w is ancestor of c (no unique commits in workweave).
                         let is_ancestor = vcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
                         if !is_ancestor {
-                            anyhow::bail!(
+                            crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
                                 "{repo_path}: dropped from lock but worktree has commits not in canonical clone; \
                                  push/merge them and re-run, or remove manually"
                             );
@@ -1870,7 +1883,8 @@ fn prune_dropped_repo(
                 let store = crate::workweave::resolved_worktree_parent(vcs, &dest, &dest);
                 let dest_canonical = dest.canonicalize().unwrap_or_else(|_| dest.clone());
                 if store == dest_canonical {
-                    anyhow::bail!(
+                    crate::refuse!(
+                        RefusalKind::CloneTopology,
                         "{repo_path}: dropped from lock, but the checkout at {} is itself a \
                          canonical store rather than a workspace linked into one — inverted \
                          clone topology (precondition: a workweave checkout is a linked \
@@ -1922,6 +1936,12 @@ fn prune_dropped_repo(
                                      to remove a clone whose unpushed work could not be \
                                      ruled out — push and re-run, or remove manually"
                                 )
+                            })
+                            .map_err(|e| {
+                                crate::refusal::refusing(
+                                    RefusalKind::DroppedRepoHasUniqueCommits,
+                                    e,
+                                )
                             })?;
                         if count > 0 {
                             any = true;
@@ -1933,7 +1953,8 @@ fn prune_dropped_repo(
                 Err(_) => true, // conservative: refuse on uncertainty
             };
             if any_local_only {
-                anyhow::bail!(
+                crate::refuse!(
+                    RefusalKind::DroppedRepoHasUniqueCommits,
                     "{repo_path}: dropped from lock but clone has local-only commits; \
                      push them and re-run, or remove manually"
                 );
@@ -2747,7 +2768,10 @@ fn run_preconditions_after_acquire(
 ) -> anyhow::Result<PreconditionOutcome> {
     // CWD project repo must not be mid-op.
     if let Some(op) = project_vcs.mid_op(cwd_project_dir) {
-        anyhow::bail!("CWD project repo is mid-{op}; resolve before running sync");
+        crate::refuse!(
+            RefusalKind::MidOperation,
+            "CWD project repo is mid-{op}; resolve before running sync"
+        );
     }
 
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
@@ -2893,7 +2917,7 @@ fn run_preconditions_after_acquire(
             source_workspace_name,
             source_project_name.as_str(),
         ) {
-            anyhow::bail!("{msg}");
+            crate::refuse!(RefusalKind::UnresolvableLockEntry, "{msg}");
         }
         if let Some(msg) = unresolvable_entry_refusal(
             &cwd_class,
@@ -2901,7 +2925,7 @@ fn run_preconditions_after_acquire(
             &cwd_workspace_name_str,
             cwd_project_name.as_str(),
         ) {
-            anyhow::bail!("{msg}");
+            crate::refuse!(RefusalKind::UnresolvableLockEntry, "{msg}");
         }
 
         if let Some(msg) = anomalous_relation_refusal(
@@ -2910,7 +2934,7 @@ fn run_preconditions_after_acquire(
             source_workspace_name,
             source_project_name.as_str(),
         ) {
-            anyhow::bail!("{msg}");
+            crate::refuse!(RefusalKind::StaleLock, "{msg}");
         }
 
         // CWD side, both verbs: same rule, same refusal. `Ahead` is the benign
@@ -2922,7 +2946,7 @@ fn run_preconditions_after_acquire(
             &cwd_workspace_name_str,
             cwd_project_name.as_str(),
         ) {
-            anyhow::bail!("{msg}");
+            crate::refuse!(RefusalKind::StaleLock, "{msg}");
         }
 
         match verb {
@@ -2954,7 +2978,7 @@ fn run_preconditions_after_acquire(
                         source_project_name.as_str(),
                         &source_lock_behind,
                     ) {
-                        anyhow::bail!("{msg}");
+                        crate::refuse!(RefusalKind::StaleLock, "{msg}");
                     }
                 }
 
@@ -2987,7 +3011,7 @@ fn run_preconditions_after_acquire(
                     source_project_name.as_str(),
                     &target_lock_behind,
                 ) {
-                    anyhow::bail!("{msg}");
+                    crate::refuse!(RefusalKind::TargetLockBehind, "{msg}");
                 }
                 cwd_lock_behind = cwd_class
                     .relations
@@ -3008,7 +3032,7 @@ fn run_preconditions_after_acquire(
             .has_uncommitted_changes(cwd_project_dir)
             .unwrap_or(true)
         {
-            anyhow::bail!(
+            crate::refuse!(RefusalKind::DirtyCheckout,
                 "--discard-local-commits precondition failed: project repo at {dir} has uncommitted \
                  changes.\n\
                  --discard-local-commits discards committed divergence (recoverable via \
@@ -3447,7 +3471,8 @@ fn load_continuing_context<'a>(
         op_state::OpVerb::SyncTo => MachineVerb::SyncTo,
     };
     if !verbs_match(verb, recorded_verb) {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::ResumeContradictsRecord,
             "in-progress op is `{recorded}` but `{invoked}` was invoked. \
              Run `{resume}` instead, or `rwv abort` to discard.",
             recorded = record.verb,
@@ -3464,7 +3489,8 @@ fn load_continuing_context<'a>(
     // found it.
     if let Some(flag) = &project_override {
         if flag != &record.project {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::ResumeContradictsRecord,
                 "op was started for project `{recorded}`; `--project {flag}` contradicts the \
                  record — a half-completed op cannot be rebound. Re-run `{resume}` without \
                  `--project`, or `rwv abort` to discard the op and start over.",
@@ -3635,6 +3661,7 @@ fn load_continuing_context<'a>(
                 &source_workspace_name,
                 source_project_name.as_str(),
             )
+            .map(|msg| crate::refusal::refusal(RefusalKind::UnresolvableLockEntry, msg))
             .or_else(|| {
                 anomalous_relation_refusal(
                     class,
@@ -3642,9 +3669,10 @@ fn load_continuing_context<'a>(
                     &source_workspace_name,
                     source_project_name.as_str(),
                 )
+                .map(|msg| crate::refusal::refusal(RefusalKind::StaleLock, msg))
             });
             if let Some(refusal) = refusal {
-                return Err(parked_op_refusal(anyhow::Error::msg(refusal), record.verb));
+                return Err(parked_op_refusal(refusal, record.verb));
             }
         }
     }
@@ -3794,7 +3822,8 @@ fn check_sync_to_ff_precondition(
         .is_ancestor(cwd_project_dir, &target_tip, &cwd_tip)
         .unwrap_or(false);
     if !cwd_ahead {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::NotFastForwardable,
             "sync-to --strategy=ff requires CWD to be strictly ahead of target, \
              but CWD's project tip ({}) is not an ancestor-or-equal of target's tip ({}).\n\
              Rerun with `--strategy=rebase` to rebase CWD's commits onto target's tip first.",
@@ -3843,7 +3872,8 @@ fn check_dirty_target_preflight(
         dirty.push(project_repo_key().to_string());
     }
     if !dirty.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::DirtyCheckout,
             "sync-to precondition failed: target workweave has uncommitted tracked changes \
              in:\n  {}\n\
              \n\
@@ -3904,7 +3934,8 @@ fn check_detached_target_preflight(
         detached.push(format!("(project) ({state})"));
     }
     if !detached.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
             "sync-to precondition failed: target workweave is not on a branch in:\n  {}\n\
              \n\
              sync-to lands by fast-forwarding the branch each target repo is on; a detached \
@@ -4112,7 +4143,15 @@ fn check_dirty_preflight_sync(
          Stale index/working-tree drift from a shared-ref advance is reconciled by sync \
          itself and does not refuse.)",
     );
-    anyhow::bail!("{msg}");
+    // Both halves can be present at once. `dirty-checkout` dominates because
+    // its remedy — commit or stash, then re-run — is the one the operator can
+    // act on; an unreadable repo is the state you get told about and inspect.
+    let kind = if user_dirt.is_empty() {
+        RefusalKind::UnreadableStatus
+    } else {
+        RefusalKind::DirtyCheckout
+    };
+    Err(crate::refusal::refusal(kind, msg))
 }
 
 /// sync-to source-side cleanliness preflight.
@@ -4180,7 +4219,7 @@ fn check_dirty_source_preflight(
     }
 
     if !dirty.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(RefusalKind::DirtyCheckout,
             "sync-to precondition failed: source workspace has uncommitted tracked changes in:\n  {}\n\
              \n\
              replay rebases these repos onto the target and regenerates the lock; committing \
@@ -4982,7 +5021,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let live_conflict = sync_tasks
             .iter()
             .find_map(|t| t.vcs.mid_op(&t.abs).map(|op| (t.vcs.as_ref(), op)));
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::OpParked,
             "{}",
             match live_conflict {
                 Some((vcs, op)) => manifest_repo_failure_message(vcs, ctx.verb, Some(op)),
@@ -5025,7 +5065,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
         // failure or a non-conflict rebase error leaves no in-flight VCS op.
         let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::OpParked,
             "{}",
             phase1_or_phase3_failure_message(
                 ctx.project_vcs.as_ref(),
@@ -5224,15 +5265,18 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // repos brought over from source).
     let cwd_project = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
         .map_err(|e| {
-            anyhow::anyhow!(
-                "failed to reload project manifest after Phase 1' ({e}).\n\
+            crate::refusal::refusal(
+                RefusalKind::UnparseableProject,
+                format!(
+                    "failed to reload project manifest after Phase 1' ({e}).\n\
              \n\
              The project repo was successfully rebased/merged, but the manifest \
              in {cwd_project_dir} could not be parsed. Proceeding would silently \
              omit newly-added repos from the regenerated lock.\n\
              \n\
              To recover: `rwv abort`",
-                cwd_project_dir = ctx.cwd_project_dir.display(),
+                    cwd_project_dir = ctx.cwd_project_dir.display(),
+                ),
             )
         })?;
 
@@ -5250,7 +5294,8 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // rebase/merge — so there is never a live ConflictOp to resume with a
         // `git … --continue` (Correction 4). Pass `None`: the message points at
         // `rwv {verb} --continue`, not a spurious `git rebase --continue`.
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::OpParked,
             "{}",
             phase1_or_phase3_failure_message(
                 ctx.project_vcs.as_ref(),
@@ -5381,7 +5426,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if emit_text {
             eprintln!("  (project): not advanced — a manifest repo did not land (see above)");
         }
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::OpParked,
             "sync-to advance-target failed for one or more manifest repos (see above).\n\
              The target's project repo was NOT advanced, so its lock still describes the \
              target's pre-op state rather than naming revisions the target does not have.\n\
@@ -5422,7 +5468,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if emit_text {
                 eprintln!("  (project): ff-advance failed: {e}");
             }
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::OpParked,
                 "sync-to advance-target could not advance the target's project repo (see \
                  above). Every manifest repo landed, so the target holds the work but its \
                  lock does not yet name those tips.\n\
@@ -5797,7 +5844,8 @@ fn retire_workweave_after_sync_to(
     }
 
     if !diverged.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::RetireNotConverged,
             "--retire: workweave's manifest repos differ from target after sync-to; \
              refusing to delete:\n  {diverged}\n\
              \n\
@@ -5813,7 +5861,7 @@ fn retire_workweave_after_sync_to(
     let dirty =
         crate::workweave::collect_dirty_paths(project_vcs, workweave_dir, project, &manifest);
     if !dirty.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(RefusalKind::DirtyCheckout,
             "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {dirty}\n\
              \n\
              Commit or discard the changes, then run:\n\
@@ -5905,7 +5953,8 @@ fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::
             .advance_detached_head(&was, to)
             .map_err(anyhow::Error::from)
             .context("project repo rewind (--discard-local-commits) failed"),
-        HeadAttachment::Unborn(u) => anyhow::bail!(
+        HeadAttachment::Unborn(u) => crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
             "project repo at {} is on unborn branch '{}' (no commits yet); there is nothing \
              for --discard-local-commits to discard, and a reset here would stamp the branch \
              into existence rather than move it.",
@@ -6006,7 +6055,8 @@ fn apply_project_strategy(
                 Ok(()) => {}
                 Err(VcsError::RebaseConflict { repo, op }) => {
                     let detail = vcs.rebase_stopped_commit_detail(&repo);
-                    anyhow::bail!(
+                    crate::refuse!(
+                        RefusalKind::OpParked,
                         "{}",
                         per_conflict_bail_message(
                             vcs,
@@ -6144,7 +6194,7 @@ pub fn run_abort(
                     extras,
                 )
             }
-            None => anyhow::bail!("no operation in progress"),
+            None => crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress"),
         };
     // The op's tip table is phase-scoped (`PhaseTips`): exactly one of the two
     // tables is populated at a time. `converged_tips` is the per-repo
@@ -6398,7 +6448,10 @@ pub fn run_abort(
     }
 
     if any_foreign {
-        anyhow::bail!("abort refused: foreign tip on at least one repo");
+        crate::refuse!(
+            RefusalKind::ForeignTip,
+            "abort refused: foreign tip on at least one repo"
+        );
     }
     if any_failure {
         anyhow::bail!("abort completed with failures");
@@ -7084,7 +7137,8 @@ fn ff_advance_repo(
         .context("failed to read target HEAD ref")?
     {
         HeadAttachment::Attached(a) => a,
-        HeadAttachment::Detached(d) => anyhow::bail!(
+        HeadAttachment::Detached(d) => crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
             "target repo at {} is not on a branch (detached HEAD at {}); refusing to \
              land onto it. Nothing would record the advance to {}. Check out the branch \
              that should receive this work (`git switch <branch>` in the target), then \
@@ -7093,7 +7147,8 @@ fn ff_advance_repo(
             d.at(),
             cwd_tip,
         ),
-        HeadAttachment::Unborn(u) => anyhow::bail!(
+        HeadAttachment::Unborn(u) => crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
             "target repo at {} is on unborn branch '{}' (no commits yet); refusing to \
              land onto it. Nothing would record the advance to {}. Commit in the target, \
              or check out the branch that should receive this work, then re-run.",
@@ -7117,7 +7172,8 @@ fn ff_advance_repo(
         .tracked_dirty_file_names(target_repo)
         .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
     if !tracked.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::DirtyCheckout,
             "target repo at {} has uncommitted tracked changes; refusing to fast-forward \
              over them. Commit or stash in the target, then re-run.",
             target_repo.display(),
@@ -7141,7 +7197,8 @@ fn ff_advance_repo(
             Some(c) => c.describe(&other),
             None => format!("not an ancestor of {other}"),
         };
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::TargetDivergedMidOp,
             "target repo at {} cannot be fast-forwarded: its tip ({}) is {shape}. The target \
              holds commits CWD's tip does not, so landing CWD onto it would drop them. Either \
              the target moved after step 1, or replay took the target's lock as its base while \
@@ -7167,7 +7224,8 @@ fn ff_advance_repo(
             // `run_advance_target`), so the resume command is fixed rather
             // than read off a `verb` this leaf has no context to carry.
             let resume = op_state::resume_command(OpVerb::SyncTo);
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::UntrackedCollision,
                 "target repo at {} has untracked file(s) that collide with paths this \
                  fast-forward would write:\n  {}\n\
                  \n\
