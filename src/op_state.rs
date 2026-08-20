@@ -81,6 +81,7 @@
 
 use crate::durable_file::CreateNewError;
 use crate::manifest::ProjectName;
+use crate::refusal::RefusalKind;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -800,12 +801,19 @@ pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
 /// file, or `Ok(None)` if the directory is clean.
 ///
 /// Split out of [`check_no_op_in_progress`] so [`acquire_op`] can emit the
-/// identical refusal shape on an atomic-create `AlreadyExists`.
+/// identical refusal shape on an atomic-create `AlreadyExists`. Every shape
+/// the sentence takes is one condition, so the kind is attached here rather
+/// than at each of them.
 fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
+    Ok(in_flight_sentence_for(dir)?
+        .map(|sentence| crate::refusal::refusal(RefusalKind::OpInProgress, sentence)))
+}
+
+fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
     // Owner record: full detail is right here.
     if let Some(record) = read_owner(dir)? {
         let elapsed = elapsed_since(&record.started_at);
-        return Ok(Some(anyhow::anyhow!(
+        return Ok(Some(format!(
             "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
              Rerun with `{resume}` from that workspace after resolving, \
              or `rwv abort` to discard.",
@@ -825,7 +833,7 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
         match read_owner(&lease.owner) {
             Ok(Some(record)) => {
                 let elapsed = elapsed_since(&record.started_at);
-                return Ok(Some(anyhow::anyhow!(
+                return Ok(Some(format!(
                     "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
                      workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
                      Rerun with `{resume}` from the owner workspace after \
@@ -838,7 +846,7 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
                 )));
             }
             _ => {
-                return Ok(Some(anyhow::anyhow!(
+                return Ok(Some(format!(
                     "op {id} in progress (lease at {dir}; owner workspace: {owner}).\n\
                      Rerun the owning verb with `--continue` from the owner workspace, or \
                      `rwv abort` to discard.",

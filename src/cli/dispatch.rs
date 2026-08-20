@@ -368,6 +368,22 @@ pub fn workweave_delete(
     )
 }
 
+/// Run the requested verb and render whatever it declined with.
+///
+/// The single funnel every refusal leaves through, which is what lets a
+/// refusal's route line be printed once and in one shape. Verbs that exit
+/// through `std::process::exit` bypass it deliberately and own their own
+/// stdout; nothing else may print an error and return one.
+pub fn run_and_report() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) => {
+            crate::refusal::report(&err);
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
 /// Parse `argv` and run the requested verb. The whole of `rwv`'s behaviour
 /// hangs off this call; `main.rs` does nothing but forward to it.
 pub fn run() -> anyhow::Result<()> {

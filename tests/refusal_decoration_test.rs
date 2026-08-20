@@ -144,7 +144,12 @@ fn fetch_occupied_project_refuses_once() {
     );
 }
 
-/// No message literal in `src/` opens with the `Error: ` decoration.
+/// One place in `src/` spells the `Error: ` decoration, and it is the funnel.
+///
+/// A message that spells its own decoration renders it twice, because the
+/// funnel adds one to everything it prints. Keyed on the producing file rather
+/// than a count: a second literal is a defect wherever it lands, and the file
+/// that owns the decoration is the one that renders it.
 ///
 /// Structural because the population is a prohibition over every operator
 /// message the crate can mint, and the behavioural pins above reach only the
@@ -156,7 +161,7 @@ fn fetch_occupied_project_refuses_once() {
 /// `"Error: `. A message that acquires the decoration by concatenation, by
 /// interpolation, or through a raw-string literal is outside what this reads.
 #[test]
-fn no_message_literal_spells_the_error_decoration() {
+fn only_the_funnel_spells_the_error_decoration() {
     let lines = src_scan::production_lines();
     assert!(
         lines.len() > 1000,
@@ -164,15 +169,29 @@ fn no_message_literal_spells_the_error_decoration() {
         lines.len()
     );
 
-    let sites: Vec<String> = lines
+    let sites: Vec<&src_scan::SourceLine> = lines
         .iter()
         .filter(|l| l.text.contains("\"Error: "))
-        .map(|l| format!("{}: {}", l.site(), l.text.trim()))
         .collect();
 
-    assert!(
-        sites.is_empty(),
-        "the terminal reporter prints `Error: `; these literals print a second one:\n{}",
-        sites.join("\n")
+    let report = || {
+        sites
+            .iter()
+            .map(|l| format!("{}: {}", l.site(), l.text.trim()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    assert_eq!(
+        sites.len(),
+        1,
+        "the decoration has one producer; these spell it:\n{}",
+        report()
+    );
+    assert_eq!(
+        sites[0].file,
+        "refusal.rs",
+        "the producer is the funnel's rendering, not:\n{}",
+        report()
     );
 }

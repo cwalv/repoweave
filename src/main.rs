@@ -8,6 +8,6 @@
 //! module of the library — `vcs.rs` included — could call. Keeping this file
 //! empty of logic is what lets that constructor stay `pub(in crate::cli)`.
 
-fn main() -> anyhow::Result<()> {
-    repoweave::cli::dispatch::run()
+fn main() -> std::process::ExitCode {
+    repoweave::cli::dispatch::run_and_report()
 }

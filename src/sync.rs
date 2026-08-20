@@ -13,6 +13,7 @@ use crate::manifest::{
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
+use crate::refusal::RefusalKind;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
@@ -3643,7 +3644,7 @@ fn load_continuing_context<'a>(
                 )
             });
             if let Some(refusal) = refusal {
-                anyhow::bail!("{}", parked_op_refusal(&refusal, record.verb));
+                return Err(parked_op_refusal(anyhow::Error::msg(refusal), record.verb));
             }
         }
     }
@@ -3679,7 +3680,7 @@ fn load_continuing_context<'a>(
             &dest_project_dir,
             &cli_path,
         ) {
-            anyhow::bail!("{}", parked_op_refusal(&format!("{e:#}"), record.verb));
+            return Err(parked_op_refusal(e, record.verb));
         }
     }
 
@@ -4365,12 +4366,20 @@ fn classify_for(
 /// A resume-time refusal: the gate's own text, plus what is true of a refused
 /// resume and of no fresh refusal — the op is still recorded, and both ways
 /// out of it are still open.
-fn parked_op_refusal(refusal: &str, verb: op_state::OpVerb) -> String {
-    format!(
-        "{refusal}\n\
-         This op is still parked at its recorded phase; the refusal changed nothing. \
-         Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",
-        resume = op_state::resume_command(verb),
+///
+/// Takes the gate's error rather than its text. Flattening it to a string
+/// first discards the kind the gate attached, and the operator would then be
+/// routed to the parking rather than to the condition that did the refusing.
+fn parked_op_refusal(refusal: anyhow::Error, verb: op_state::OpVerb) -> anyhow::Error {
+    let kind = crate::refusal::kind_of(&refusal).unwrap_or(RefusalKind::OpParked);
+    crate::refusal::refusal(
+        kind,
+        format!(
+            "{refusal:#}\n\
+             This op is still parked at its recorded phase; the refusal changed nothing. \
+             Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",
+            resume = op_state::resume_command(verb),
+        ),
     )
 }
 
@@ -7180,6 +7189,47 @@ fn ff_advance_repo(
 mod tests {
     use super::*;
     use crate::git::git_vcs;
+
+    // -----------------------------------------------------------------------
+    // The parked-op decorator
+    //
+    // Its whole reason for taking an error rather than a string is that a
+    // string cannot carry the gate's kind. The `--continue` drive in
+    // `tests/refusal_arrival_test.rs` reaches this through a gate that has no
+    // kind of its own, so the preservation half is asserted here, where a
+    // kinded gate can be handed in directly.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn the_parked_decorator_keeps_the_kind_the_gate_attached() {
+        let gate = crate::refusal::refusal(RefusalKind::OpInProgress, "the gate's own sentence");
+        let decorated = parked_op_refusal(gate, op_state::OpVerb::SyncTo);
+
+        assert_eq!(
+            crate::refusal::kind_of(&decorated),
+            Some(RefusalKind::OpInProgress)
+        );
+        assert!(
+            decorated
+                .to_string()
+                .starts_with("the gate's own sentence\n"),
+            "the gate's text still leads the message: {decorated}"
+        );
+        assert!(decorated
+            .to_string()
+            .contains("still parked at its recorded phase"));
+    }
+
+    #[test]
+    fn the_parked_decorator_names_the_parking_when_the_gate_did_not() {
+        let gate = anyhow::Error::msg("a gate with no kind of its own");
+        let decorated = parked_op_refusal(gate, op_state::OpVerb::Sync);
+
+        assert_eq!(
+            crate::refusal::kind_of(&decorated),
+            Some(RefusalKind::OpParked)
+        );
+    }
 
     // -----------------------------------------------------------------------
     // Fixtures for the branch-model tests below

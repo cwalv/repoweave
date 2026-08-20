@@ -7,6 +7,7 @@
 
 use crate::manifest::{LockFile, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use crate::parallel::{run_in_parallel, Reporter};
+use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
 use crate::vcs::{
     project_vcs, vcs_for, HeadAttachment, PublishRef, RawRefName, RawRevisionId, TrackingRef, Vcs,
@@ -161,7 +162,8 @@ pub fn run_push(
             Some(name) => format!("'{name}'"),
             None => format!("at {}", crate::path_spelling::operator_path(dir)),
         };
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::PushFromWorkweave,
             "rwv push: refusing to push from workweave {addressed}; \
              workweave branches shouldn't leak to shared remotes. \
              Run `rwv sync-to` from the workweave to land changes on the parent first."
