@@ -77,11 +77,14 @@ fn a_tool_that_is_there_is_not_announced() {
 /// said cargo was there.
 ///
 /// READ THE ASSERTION DIRECTION BEFORE CHANGING ANYTHING. This pins a KNOWN
-/// LIMIT, so it fails when the limit STOPS existing — someone who makes the
-/// guard ask what production asks reddens this test. That is the intent: the
-/// gap is currently accepted, and closing it changes what every guard in the
-/// corpus means, which is a decision that should arrive as a conversation
-/// rather than as a silent divergence.
+/// LIMIT, so it fails when the limit STOPS existing. Both halves are asserted
+/// against the same planted file, and it takes both: that the OS will not run
+/// it, and that `common::skip_without_tool` nonetheless reports it PRESENT.
+/// Comparing `which` against the OS alone would say nothing about the guard —
+/// the guard is a different function, and a change to it could not redden a
+/// test that never calls it. The gap is currently accepted, and closing it
+/// changes what every guard in the corpus means, which is a decision that
+/// should arrive as a conversation rather than as a silent divergence.
 ///
 /// The helper resolves against the process's own PATH, which no test may narrow
 /// — `set_var` is unsound under a parallel runner. So the predicate is exercised
@@ -136,6 +139,12 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
         path
     };
 
+    // The guard takes a name, and a name carrying a separator is the one way to
+    // ask it about a file this test owns rather than about the machine's PATH.
+    fn spelled(p: &std::path::Path) -> &str {
+        p.to_str().expect("a fixture path this suite can spell")
+    }
+
     // The control. Without it, "the OS would not run it" is equally true of a
     // fixture directory nothing can be run out of.
     let works = plant("probe-runnable", "#!/bin/sh\nexit 0\n", 0o755);
@@ -151,6 +160,11 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
         "a well-formed script in this directory must run, or the disagreements \
          below are a property of the fixture and not of the two resolvers. \
          The control said {control:?}"
+    );
+    assert!(
+        !common::skip_without_tool(spelled(&found)),
+        "the guard must report a runnable file present, or its answer below \
+         says nothing about what it accepts"
     );
 
     let unrunnable = [
@@ -181,6 +195,14 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
             )
         });
         assert_eq!(found, planted, "the walk must yield the planted file");
+
+        assert!(
+            !common::skip_without_tool(spelled(&found)),
+            "{name}: the guard reported this file ABSENT, so it is no longer \
+             resolving the way `which` does. That is the gap closing, not a \
+             fixture problem: the guard now asks something closer to what \
+             production asks, and this case should be retired"
+        );
 
         let ran = run(&found);
         assert!(

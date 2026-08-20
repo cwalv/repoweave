@@ -44,9 +44,21 @@ pub fn report_skip(reason: &str) {
 /// failure arrives wearing the integration's own wording, so a reader debugging
 /// it starts in the wrong file.
 ///
-/// `tests/skip_report_visibility_test.rs` plants those entries and pins the
-/// disagreement, so closing this gap reddens a test rather than changing what
-/// the corpus's guards mean in silence.
+/// The gap needs that entry to be the ONLY candidate. A spawn by name reaches
+/// `execvp`, which reads a missing interpreter as ENOENT and keeps walking
+/// PATH, so a malformed shim standing in front of a working toolchain is
+/// invisible to production and visible only to a resolver that hands back the
+/// first match rather than the first runnable one.
+///
+/// Spawning `<tool> --version` and requiring the status to succeed does not
+/// close it. `go` exits 2 there — its spelling is `go version` — and so does a
+/// file whose owner cannot read it, so no single status separates a healthy
+/// tool that does not speak `--version` from an install the OS will not run.
+///
+/// `tests/skip_report_visibility_test.rs` plants those entries and asserts both
+/// halves against the same file — that this reports it present, and that the OS
+/// will not run it — so closing this gap reddens a test rather than changing
+/// what the corpus's guards mean in silence.
 ///
 /// A test that mints the tool it needs onto a PATH it owns — see
 /// [`cargo_stand_in_path`] — asks neither question and is not exposed to this.
