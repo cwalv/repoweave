@@ -191,10 +191,12 @@ impl FromStr for SyncStrategy {
             "rebase" => Ok(Self::Rebase),
             // `merge` was removed (state-space shrink). A pre-removal in-flight
             // op recorded with strategy=merge resolves here as an invalid
-            // op-state strategy; per the alpha no-back-compat convention the
-            // operator aborts (`rwv abort`) and re-invokes. No migration path.
+            // op-state strategy. No migration path.
             other => {
-                anyhow::bail!("unknown sync strategy `{other}` in op-state; expected ff or rebase")
+                anyhow::bail!(
+                    "unknown sync strategy `{other}` in op-state; expected ff or rebase — \
+                     run `rwv abort` and re-invoke"
+                )
             }
         }
     }
@@ -1298,6 +1300,32 @@ mod tests {
     fn resume_command_derives_from_op_verb() {
         assert_eq!(resume_command(OpVerb::Sync), "rwv sync --continue");
         assert_eq!(resume_command(OpVerb::SyncTo), "rwv sync-to --continue");
+    }
+
+    // -----------------------------------------------------------------------
+    // SyncStrategy — FromStr
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_strategy_from_str_roundtrips_known_values() {
+        assert_eq!("ff".parse::<SyncStrategy>().unwrap(), SyncStrategy::Ff);
+        assert_eq!(
+            "rebase".parse::<SyncStrategy>().unwrap(),
+            SyncStrategy::Rebase
+        );
+    }
+
+    /// A pre-removal in-flight op with strategy=merge fails here on resume;
+    /// this message is the only surface the operator reads, so it must name
+    /// the exit rather than leaving it in a comment nothing surfaces.
+    #[test]
+    fn sync_strategy_from_str_names_the_remedy_for_removed_merge() {
+        let err = "merge".parse::<SyncStrategy>().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "unknown sync strategy `merge` in op-state; expected ff or rebase — \
+             run `rwv abort` and re-invoke"
+        );
     }
 
     #[test]
