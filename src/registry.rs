@@ -82,7 +82,11 @@ pub trait Registry {
     fn matches(&self, raw: &str) -> Option<RepoUrl>;
 
     /// Construct a clone URL from an owner/repo pair.
-    /// Returns `None` if this registry can't generate URLs (e.g., directory-based).
+    ///
+    /// `None` is reserved for a registry that cannot generate URLs, a
+    /// directory-based one being the case in mind. No implementation returns it
+    /// and every caller asserts `Some`; introducing one means revisiting those
+    /// assertions, not adding a branch.
     fn clone_url(&self, id: &RepoId) -> Option<RepoUrl>;
 }
 
