@@ -159,7 +159,27 @@ fn a_shared_token_is_served_from_the_page_that_already_had_it() {
 /// never reached the entry.
 #[test]
 fn explain_serves_the_page_section_verbatim() {
-    for token in ["push-from-workweave", "stale-lock", "dangling-parent"] {
+    // The last entry on a page is the one case with no following heading to
+    // stop at, so it takes a different branch of the slicer. Derived rather
+    // than named: an entry appended after it would otherwise silently take
+    // that coverage away.
+    let refusals_page = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/refusals.md"),
+    )
+    .expect("the refusals page is published");
+    let last_entry = refusals_page
+        .lines()
+        .filter_map(|l| l.strip_prefix("### `")?.strip_suffix('`'))
+        .next_back()
+        .expect("the page has entries")
+        .to_owned();
+
+    for token in [
+        "push-from-workweave",
+        "stale-lock",
+        "dangling-parent",
+        &last_entry,
+    ] {
         let out = common::rwv()
             .args(["explain", token])
             .output()
