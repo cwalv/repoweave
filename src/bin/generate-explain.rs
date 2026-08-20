@@ -46,9 +46,9 @@
 //!   rwv happens to be used from.
 //! - `check_no_foreign_vocabulary` — `docs/` describes rwv, not one
 //!   deployment of it.
-//! - `check_no_internals_on_operator_surfaces` — nothing lifted onto an
-//!   assembled page or schema points at `docs/internals/`, which mdBook does
-//!   not render.
+//! - `check_no_internals_on_operator_surfaces` — nothing on an assembled
+//!   page, a generated schema, or a page `docs/SUMMARY.md` lists points at
+//!   `docs/internals/`, which mdBook does not render.
 //! - `check_explanation_joints_index_agreement` — `docs/SUMMARY.md` and
 //!   `docs/explanation/index.md` list the same joints pages.
 //!
@@ -2868,7 +2868,7 @@ fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
     errors
 }
 
-/// Scan generated operator surfaces for `docs/internals/` paths.
+/// Scan operator surfaces for `docs/internals/` paths.
 ///
 /// The reader-axis rule is that operator-facing text references only pages
 /// mdBook renders. `docs/internals/` is not in `docs/SUMMARY.md`, so a
@@ -2877,10 +2877,19 @@ fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
 /// legal in a clone becomes an operator surface once it is lifted onto one,
 /// and the check makes that boundary executable.
 ///
-/// Scope is the two directories the generator writes: assembled
-/// `rwv explain` pages and their embedded schemas. Templates under
-/// `docs/reference/explain/templates/` are excluded — the assembled output
-/// is what a user reads, and it is what this gate reports on.
+/// Scope is the union of two populations: the two directories the generator
+/// writes (assembled `rwv explain` pages and their embedded schemas —
+/// templates under `docs/reference/explain/templates/` are excluded, since
+/// the assembled output is what a user reads and what this gate reports on),
+/// and every page `docs/SUMMARY.md` links to, derived by parsing that file's
+/// markdown links rather than hand-enumerated, so a page added to the
+/// sidebar enters the scan without a matching edit here.
+///
+/// Root `README.md` and `ARCHITECTURE.md` are out of scope even though they
+/// are operator-facing: they are not listed in `docs/SUMMARY.md`, are read
+/// on GitHub directly rather than through mdBook, and `docs/internals/`
+/// links resolve there the same as any other repo-relative link — both
+/// already do this deliberately.
 fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
     let explain_dir = root.join("docs/reference/explain");
@@ -2897,6 +2906,17 @@ fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
             }
         }
     }
+
+    let summary_pages = collect_summary_listed_pages(root);
+    if summary_pages.is_empty() {
+        errors.push(format!(
+            "operator-surface scan: {} yielded zero pages — the scan population \
+             must not be empty",
+            root.join("docs/SUMMARY.md").display()
+        ));
+    }
+    files.extend(summary_pages);
+
     for path in files {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
@@ -2913,6 +2933,40 @@ fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
         }
     }
     errors
+}
+
+/// Every page `docs/SUMMARY.md` links to, resolved against `docs/`.
+///
+/// Parses markdown links `[text](target)` anywhere in the file; a target
+/// that is an anchor only, an absolute URL, or does not end in `.md` is not
+/// a page and is skipped. Paths are resolved relative to `docs/` — the
+/// directory `SUMMARY.md` lives in and the base mdBook resolves its own
+/// links against — and are not checked for existence: a listed page that is
+/// missing on disk is a defect `check_assembled_docs`' link-cleanliness scan
+/// reports, not one this walk silently drops by skipping it. Returns an
+/// empty vec if `docs/SUMMARY.md` cannot be read.
+fn collect_summary_listed_pages(root: &Path) -> Vec<PathBuf> {
+    let docs_dir = root.join("docs");
+    let Ok(content) = fs::read_to_string(docs_dir.join("SUMMARY.md")) else {
+        return Vec::new();
+    };
+    let link_re = Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap();
+    let mut pages: HashSet<PathBuf> = HashSet::new();
+    for cap in link_re.captures_iter(&content) {
+        let target = &cap[2];
+        if target.starts_with('#') || target.contains("://") {
+            continue;
+        }
+        let path_part = target.split('#').next().unwrap_or(target);
+        if !path_part.ends_with(".md") {
+            continue;
+        }
+        let path_part = path_part.strip_prefix("./").unwrap_or(path_part);
+        pages.insert(docs_dir.join(path_part));
+    }
+    let mut pages: Vec<PathBuf> = pages.into_iter().collect();
+    pages.sort();
+    pages
 }
 
 /// Check that `docs/SUMMARY.md` and `docs/explanation/index.md` list the same
@@ -3391,8 +3445,9 @@ fn main() -> anyhow::Result<()> {
 
     // --- operator-surface internals gate ---------------------------------
     // The generator is an audience boundary: comment text landing on
-    // docs/reference/explain/** or docs/reference/schemas/*.json must not
-    // point at docs/internals/, which mdBook does not render.
+    // docs/reference/explain/** or docs/reference/schemas/*.json, or prose
+    // on any page docs/SUMMARY.md lists, must not point at docs/internals/,
+    // which mdBook does not render.
     let internals_errors = check_no_internals_on_operator_surfaces(&root);
     if !internals_errors.is_empty() {
         let msg = internals_errors.join("\n");
@@ -5853,6 +5908,23 @@ mod tests {
 
     // ── operator-surface internals check unit tests ─────────────────────────
 
+    /// Write a `docs/SUMMARY.md` linking to one clean page, plus the page
+    /// itself, so the summary-derived slice of the scan is non-empty and
+    /// contributes no finding of its own. Tests that seed a finding
+    /// elsewhere call this first, so the non-vacuity guard does not add an
+    /// unrelated entry to `errors` and the assertion stays about the one
+    /// finding under test.
+    fn write_minimal_clean_summary(root: &Path) {
+        let docs = root.join("docs");
+        fs::create_dir_all(&docs).unwrap();
+        fs::write(
+            docs.join("SUMMARY.md"),
+            "# Summary\n\n- [Intro](./intro.md)\n",
+        )
+        .unwrap();
+        fs::write(docs.join("intro.md"), "# intro\n\nNothing to see here.\n").unwrap();
+    }
+
     /// A `docs/internals/` reference on an assembled explain page is caught.
     /// This is the seeded-failure test: the gate must report a fixture whose
     /// content it is meant to reject, not merely stay quiet on a clean tree.
@@ -5860,6 +5932,7 @@ mod tests {
     fn internals_path_on_assembled_explain_page_is_reported() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
+        write_minimal_clean_summary(root);
         let explain = root.join("docs/reference/explain");
         fs::create_dir_all(&explain).unwrap();
         fs::write(
@@ -5880,6 +5953,7 @@ mod tests {
     fn internals_path_in_generated_schema_is_reported() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
+        write_minimal_clean_summary(root);
         let schemas = root.join("docs/reference/schemas");
         fs::create_dir_all(&schemas).unwrap();
         fs::write(
@@ -5902,6 +5976,7 @@ mod tests {
     fn internals_path_in_template_is_out_of_scope() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
+        write_minimal_clean_summary(root);
         let templates = root.join("docs/reference/explain/templates");
         fs::create_dir_all(&templates).unwrap();
         fs::write(
@@ -5917,11 +5992,14 @@ mod tests {
         );
     }
 
-    /// A clean assembled tree passes.
+    /// A clean tree — assembled explain page, generated schema, and a
+    /// summary-listed hand-authored page — passes across the whole widened
+    /// scope.
     #[test]
     fn clean_operator_surfaces_are_allowed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
+        write_minimal_clean_summary(root);
         let explain = root.join("docs/reference/explain");
         let schemas = root.join("docs/reference/schemas");
         fs::create_dir_all(&explain).unwrap();
@@ -5941,6 +6019,128 @@ mod tests {
             errors.is_empty(),
             "a clean tree must pass, got:\n{}",
             errors.join("\n")
+        );
+    }
+
+    /// A `docs/internals/` reference on a hand-authored page `docs/SUMMARY.md`
+    /// lists is caught — the widened half of the scan this bead adds. The
+    /// anchor assertion checks the specific page name, not merely that the
+    /// scan produced *a* finding, so a scan that matched the wrong file
+    /// would not pass vacuously.
+    #[test]
+    fn internals_path_on_summary_listed_page_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs = root.join("docs");
+        fs::create_dir_all(docs.join("how-to")).unwrap();
+        fs::write(
+            docs.join("SUMMARY.md"),
+            "# Summary\n\n- [Guide](./how-to/guide.md)\n",
+        )
+        .unwrap();
+        fs::write(
+            docs.join("how-to/guide.md"),
+            "# guide\n\nSee docs/internals/branch-model.md for the rule set.\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        let combined = errors.join("\n");
+        assert!(
+            slashed(&combined).contains("how-to/guide.md") && combined.contains("docs/internals/"),
+            "an internals reference on a summary-listed page must be reported \
+             against that page, got:\n{combined}"
+        );
+
+        // Remove the violation: the same page, now clean, must pass. This is
+        // the anchor's other half — the finding tracks the content, not the
+        // fact that a file with this name exists.
+        fs::write(
+            docs.join("how-to/guide.md"),
+            "# guide\n\nNothing to see here.\n",
+        )
+        .unwrap();
+        let errors_after_fix = check_no_internals_on_operator_surfaces(root);
+        assert!(
+            errors_after_fix.is_empty(),
+            "removing the internals reference must clear the finding, got:\n{}",
+            errors_after_fix.join("\n")
+        );
+    }
+
+    /// Root `README.md` and `ARCHITECTURE.md` are not `docs/SUMMARY.md`-listed
+    /// pages and are read on GitHub directly, where `docs/internals/` links
+    /// resolve — both already reference it deliberately. The scan must not
+    /// reach them even when they carry the same text a SUMMARY-listed page
+    /// would be reported for.
+    #[test]
+    fn readme_and_architecture_internals_mentions_are_out_of_scope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_minimal_clean_summary(root);
+        fs::write(
+            root.join("README.md"),
+            "# repoweave\n\nSee docs/internals/branch-model.md.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("ARCHITECTURE.md"),
+            "# architecture\n\nSee docs/internals/concurrency.md.\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        assert!(
+            errors.is_empty(),
+            "README.md and ARCHITECTURE.md must stay out of scope, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Non-vacuity floor: a `docs/SUMMARY.md` that resolves to zero pages —
+    /// here, missing entirely — must fail the gate rather than silently
+    /// scanning nothing.
+    #[test]
+    fn zero_summary_pages_is_a_reported_failure() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        fs::create_dir_all(root.join("docs/reference/explain")).unwrap();
+        // No docs/SUMMARY.md at all.
+        let errors = check_no_internals_on_operator_surfaces(root);
+        assert!(
+            errors.iter().any(|e| e.contains("yielded zero pages")),
+            "a missing docs/SUMMARY.md must fail the non-vacuity floor, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `docs/SUMMARY.md` links are parsed, not hand-enumerated: nested
+    /// (indented) entries are found, a `#`-anchor-only target and an
+    /// absolute URL are skipped as not being pages, and a leading `./` does
+    /// not survive into the resolved path.
+    #[test]
+    fn collect_summary_listed_pages_parses_nested_and_skips_non_pages() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let docs = root.join("docs");
+        fs::create_dir_all(docs.join("reference/integrations")).unwrap();
+        fs::write(
+            docs.join("SUMMARY.md"),
+            "# Summary\n\n\
+             - [Intro](./introduction.md)\n\
+             - [Integrations](./reference/integrations/index.md)\n  \
+               - [npm](./reference/integrations/npm-workspaces.md)\n\
+             - [Anchor only](#not-a-page)\n\
+             - [External](https://example.com/not-a-page.md)\n",
+        )
+        .unwrap();
+        let pages = collect_summary_listed_pages(root);
+        assert_eq!(
+            pages,
+            vec![
+                docs.join("introduction.md"),
+                docs.join("reference/integrations/index.md"),
+                docs.join("reference/integrations/npm-workspaces.md"),
+            ],
+            "expected exactly the three .md targets, sorted, got:\n{pages:?}"
         );
     }
 

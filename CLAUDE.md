@@ -170,9 +170,14 @@ Three gates in `src/bin/generate-explain.rs`:
   So **a green gate means no unfollowable citation outside that one file**,
   and the sixteen fixtures behind that boundary are read by nothing.
 - `check_no_internals_on_operator_surfaces` scans generated operator surfaces
-  — `docs/reference/explain/**` and `docs/reference/schemas/*.json` — for
-  `docs/internals/` paths. The generator is an audience boundary; what it
-  lifts onto an operator page must be operator-clean.
+  — `docs/reference/explain/**` and `docs/reference/schemas/*.json` — plus
+  every page `docs/SUMMARY.md` links to, for `docs/internals/` paths. The
+  generator is an audience boundary; what it lifts onto an operator page must
+  be operator-clean, and the same holds for hand-authored pages a reader
+  reaches through the sidebar. Root `README.md` and `ARCHITECTURE.md` are
+  out of scope: neither is `docs/SUMMARY.md`-listed, both are read on GitHub
+  directly rather than through mdBook, and both already point at
+  `docs/internals/` deliberately.
 
 **The section-pointer shape (`plan §7.1 arm 7`, `Finding 1 of …`) is not
 mechanised as such.** Written against a bare filename it is caught, but only

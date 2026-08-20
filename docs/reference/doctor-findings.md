@@ -73,8 +73,7 @@ exact store, saying rwv created that ref. rwv destroys a ref only against a
 receipt. A branch that merely *looks* like one of rwv's — a hand-made
 `<project>--<workweave>` — is yours, is reported so you can see it, and is
 never deleted. Ownership is by record, never by name shape. The normative rule
-set is in the repo at `docs/internals/branch-model.md`; that file documents
-the implementation and is not part of this published book.
+set is implementation detail and is not part of this published book.
 
 ---
 
