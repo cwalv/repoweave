@@ -345,6 +345,78 @@ fn a_dirty_destination_at_sync_time_routes_to_its_token() {
     assert_routes_to(&stderr, "dirty-checkout");
 }
 
+/// Both halves of that same body at once: one repo whose dirt cannot be read,
+/// and one carrying changes the operator can act on.
+///
+/// The ratified rule is that the actionable half wins — an operator told
+/// "commit or stash" has something to do, where "a repo could not be read" is
+/// something to go and look at. Nothing distinguishes the two orderings unless
+/// a fixture makes both halves non-empty at once, which is what this one is
+/// for: with only one half present, either ordering yields the same token.
+///
+/// UNIX ONLY, and for the same reason `tests/doctor_unreadable_projects_dir_test.rs`
+/// is: mode `0o000` denies the read on Unix, where the Windows read-only
+/// attribute does not deny one at all and the repo would simply scan clean.
+#[test]
+#[cfg(unix)]
+fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let (primary, workweave) = primary_and_workweave(tmp.path());
+
+    // Under root every permission check is a no-op, so the unreadable half of
+    // the precondition cannot be built and the test would assert against a
+    // fixture it did not get.
+    let probe = tmp.path().join(".rwv-permission-probe");
+    std::fs::create_dir(&probe).unwrap();
+    let probe_perms = std::fs::metadata(&probe).unwrap().permissions();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let enforced = std::fs::read_dir(&probe).is_err();
+    std::fs::set_permissions(&probe, probe_perms).unwrap();
+    std::fs::remove_dir(&probe).unwrap();
+    if !enforced {
+        common::report_skip("permission bits are not enforced for this user (root?)");
+        return;
+    }
+
+    // Dirty a tracked file that is NOT the manifest: rewriting `rwv.toml`
+    // would empty the repository table the scan iterates, and the unreadable
+    // half would then have nothing to be unreadable about.
+    std::fs::write(
+        workweave.join("projects/web-app/.gitattributes"),
+        "rwv.lock merge=rwv-ours\n# edited, uncommitted\n",
+    )
+    .unwrap();
+
+    // Restored before any assertion runs, so a red does not leave the fixture
+    // locked against whatever cleans the temp dir up.
+    let server = workweave.join(SERVER_PATH);
+    let original = std::fs::metadata(&server).unwrap().permissions();
+    std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let output = common::rwv()
+        .args(["sync", &primary.to_string_lossy()])
+        .current_dir(&workweave)
+        .output()
+        .expect("rwv should run");
+    std::fs::set_permissions(&server, original).unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        !output.status.success(),
+        "sync was expected to refuse:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("uncommitted tracked changes"),
+        "precondition: the actionable half is present:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("git status could not be read"),
+        "precondition: the unreadable half is present too:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "dirty-checkout");
+}
+
 // ---------------------------------------------------------------------------
 // The silence
 // ---------------------------------------------------------------------------
