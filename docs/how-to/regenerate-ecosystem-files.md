@@ -88,7 +88,7 @@ rwv doctor
 
 `rwv activate` re-derives the managed region of each hybrid file (the `workspaces` array in `package.json`, the `use` entries in `go.work`, etc.) but preserves any user-authored content in those files. It does not touch:
 
-- Ecosystem lock files (`package-lock.json`, `uv.lock`, `go.work.sum`, `Cargo.lock`) — those are updated by the ecosystem tool's install step, which activation runs automatically.
+- Ecosystem lock files (`package-lock.json`, `uv.lock`, `go.work.sum`, `Cargo.lock`) — those are updated by the ecosystem tool. Where the integration has an install hook, activation runs that step automatically; go-work has none, so `go.work.sum` is written only when the Go tooling itself runs (`go mod download` and friends), through the weave-root link.
 - Files the integration was not configured to manage.
 
 If you need to regenerate a file that is fully rwv-owned (like a `gita/` CSV), `rwv activate` handles that too; these files are re-derived from scratch on each activation.

@@ -57,17 +57,22 @@ rwv -w myproj--hotfix status
   primary); `-w` selects the checkout within it. Use `-C` when your process
   is outside the ecosystem entirely.
 - **Full form only.** The argument must be `<project>--<name>`. Both
-  components must be non-empty; no path separators. The split follows the
-  first `--` (consistent with the directory-name convention).
+  components must be non-empty; no path separators. The address is never
+  parsed apart: each recorded (project, name) pair is rendered and matched
+  against the argument, so the address means whatever the registry records.
 - **Repetition is an error.** Passing `-w` twice is rejected for the same
   reason as `-C`: two addresses is a confused invocation.
 - **Path-shaped argument.** If the argument contains a path separator or
   exists on disk as a path, `rwv` emits a corrective error pointing at `-C`.
 
-Resolution: find the workspace root (from `-C` or cwd walk), then look up
-`<name>` in the registry for `<project>` with `.rwv-workweave` marker
-round-trip validation. A stale or unregistered name produces an actionable
-error listing the project's known workweaves.
+Resolution: find the workspace root (from `-C` or cwd walk), then match the
+address against every recorded workweave, validating the match by
+`.rwv-workweave` marker round-trip. An unknown address produces an
+actionable error listing the recorded workweaves across the weave. Two
+further refusals are possible: an address that more than one recorded pair
+renders to is refused as ambiguous, and an address whose registry entry
+fails the marker round-trip is refused with the mismatch named —
+`rwv doctor --fix` repairs the registry side.
 
 ## Verbs
 

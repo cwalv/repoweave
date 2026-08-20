@@ -258,20 +258,24 @@ Project paths default to `projects/{name}/`. If names collide across organizatio
 
 ### Names, and the characters they exclude
 
-Project and workweave names exclude `--` (and a leading or trailing `-`) and
-`+`. The reason is the rendering above: a workweave directory, a `-w` address,
-and an ephemeral branch name each spell a (project, workweave) pair as one
-path segment — `web-app--payments` — with `--` joining the halves and `+`
-written in place of `/` for a scoped project (`chatly/web-app` becomes
-`chatly+web-app--payments`). Keeping both tokens out of names means every
-rendered string reads unambiguously on sight: only one pair can produce it,
-so a directory listing or a branch list never needs rwv to interpret it.
+Project names exclude `--` (and a leading or trailing `-`) and `+`. Workweave
+names exclude `--` (and a leading or trailing `-`) and `/`, but not `+`: only
+a project name is rendered with `/` rewritten to `+`; a workweave name is
+used verbatim as the second half. The reason is the rendering above: a
+workweave directory, a `-w` address, and an ephemeral branch name each spell
+a (project, workweave) pair as one path segment — `web-app--payments` — with
+`--` joining the halves and `+` written in place of `/` for a scoped project
+(`chatly/web-app` becomes `chatly+web-app--payments`). Keeping the joining
+token out of both halves, and the `/`-stand-in out of the half that encodes
+it, means every rendered string reads unambiguously on sight: only one pair
+can produce it, so a directory listing or a branch list never needs rwv to
+interpret it.
 
-The exclusion applies to rwv's own labels only. A repository whose name
+The exclusions apply to rwv's own labels only. A repository whose name
 contains `--` or `+` works unchanged as a member — the manifest key carries
-the name as-is. The exclusion bites only when such a name is offered as a
-project or workweave name, and the refusal suggests choosing another label,
-which renames nothing outside the weave.
+the name as-is. They bite only when such a name is offered as a project or
+workweave name, and the refusal suggests choosing another label, which
+renames nothing outside the weave.
 
 The alternative was considered and measured, not overlooked (2026-08): rwv
 resolves names through the workweave marker and the registry, so the machine
@@ -285,8 +289,11 @@ freedom with no measured demand. A real name that forces the question is the
 signal to revisit; until then, this section is the record that the door was
 examined and left closed on purpose.
 
-`rwv doctor` reports a directory whose name these rules refuse as
-[`unnameable-project`](doctor-findings.md#unnameable-project).
+`rwv doctor` reports a project directory whose name these rules refuse as
+[`unnameable-project`](doctor-findings.md#unnameable-project); a workweave
+directory with an unusable basename reports under
+[`workweave-tree-integrity`](doctor-findings.md#workweave-tree-integrity) as
+a misnamed dir.
 
 ## Related
 

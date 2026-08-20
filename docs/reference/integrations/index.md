@@ -42,7 +42,7 @@ Ecosystem files live in the project directory (symlinked to the weave or workwea
   would destroy user content on re-activate. rwv merges its managed keys into the existing file;
   it never whole-writes or whole-deletes it.
 
-Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.work.sum`, `Cargo.lock`) are produced by the ecosystem tools during the install step and pin exact external-dependency versions. Like other fully rwv-owned files, rwv does not mandate either policy: commit them for a checkout that's reproducible straight from the project repo, or gitignore them to regenerate on the next `rwv activate`.
+Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.work.sum`, `Cargo.lock`) are produced by the ecosystem tools and pin exact external-dependency versions — at activation's install step where the integration has an install hook, or whenever the tool itself runs where it has none (go-work has no hook; `go.work.sum` appears when Go tooling runs). Like other fully rwv-owned files, rwv does not mandate either policy: commit them for a checkout that's reproducible straight from the project repo, or gitignore them to regenerate on the next `rwv activate`.
 
 Tool state directories (`node_modules/`, `.venv/`, `target/`) are gitignored and managed by the ecosystem tool, not by `rwv`.
 

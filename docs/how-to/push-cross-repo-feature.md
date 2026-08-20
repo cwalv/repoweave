@@ -36,7 +36,7 @@ Patterns accept `Exact` (no prefix), `re:` (regex), and `glob:` (glob). Repeated
 If `rwv push` refuses because the lock SHA doesn't match HEAD in some repo:
 
 ```text
-rwv push: 1 repo(s) disagree with projects/web-app/rwv.lock:
+rwv push: 1 repo(s) disagree with /home/user/work/projects/web-app/rwv.lock:
   - github/chatly/server: HEAD abc1234 differs from lock e1f2a3b
 Hint: run `rwv lock` to capture local state, or `git checkout` in each repo to align with the lock.
 Error: lock-state mismatch — refusing to push before clone state and lock agree

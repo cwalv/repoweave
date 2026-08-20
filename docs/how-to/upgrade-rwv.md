@@ -81,6 +81,21 @@ rwv lock
 
 `rwv doctor` (or `rwv status`) should now report the workweave clean.
 
+## Step 4 — a leftover `go.sum` link on a Go weave
+
+Earlier versions declared `go.sum` at the weave root of a Go weave. A Go
+workspace root never carries that file — the checksum file Go writes there is
+`go.work.sum`, which rwv now declares instead. After upgrading, the first
+`rwv doctor` on a Go weave therefore reports the old `go.sum` symlink as a
+weave-root link at a name the project no longer declares.
+
+```bash
+rwv materialize --remove-undeclared-links
+```
+
+That removes the link only — it is rwv's own artifact, and no file it
+resolves to is touched.
+
 ## `.rwv-op` / `.rwv-op-lease` — nothing to do
 
 These two carry in-flight sync state, and there is no old-format arm at all:
