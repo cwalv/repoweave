@@ -196,15 +196,13 @@ fn the_resume_path_routes_to_a_token() {
 
     // Point the source's committed lock at a revision that does not resolve,
     // which is what the replay re-entry gate refuses on.
+    let source_project = primary.join("projects/web-app");
     common::fixture_lock(
-        &primary.join("projects/web-app"),
+        &source_project,
         &[(SERVER_PATH, SERVER_URL, &"b".repeat(40))],
     );
-    common::git_in(&primary.join("projects/web-app"), &["add", "rwv.lock"]);
-    common::git_in(
-        &primary.join("projects/web-app"),
-        &["commit", "-m", "lock: unresolvable"],
-    );
+    common::git_in(&source_project, &["add", "rwv.lock"]);
+    common::git_in(&source_project, &["commit", "-m", "lock: unresolvable"]);
 
     let record = format!(
         "{{\"id\": \"parked-op-1\", \"verb\": \"sync\", \"strategy\": \"rebase\", \
