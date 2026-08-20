@@ -50,6 +50,16 @@ pub trait Integration {
 - **`check`** — read-only inspection. Return `Vec<Issue>` for problems detected.
   Called during `rwv doctor`.
 
+**A hook's `Err` carries no kind.** `for_each_enabled` captures it as
+`Issue { kind: IssueKind::IntegrationFailed, .. }`, which is the only kind the
+runner can mint, so a condition that has a published kind must be *returned* as
+an `Issue` rather than bailed. The published set is
+`docs/reference/doctor-findings.md`, and the vaguest row on that page is what an
+operator gets for anything raised the other way. `activate` and `activate_hook`
+have no `Issue` channel at all, so a condition either of them detects that an
+operator needs to look up has to be reported by `check` or `verify` too — the
+bail there is a second line of defence, never the only report.
+
 ### Provided methods
 
 - **`activate_hook`** — run install commands (`npm install`, `uv sync`,
