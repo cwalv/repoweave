@@ -24,13 +24,13 @@ use crate::lock;
 use crate::plugins;
 use crate::prime;
 use crate::push;
-use crate::refusal::RefusalKind;
 use crate::setup;
 use crate::status;
 use crate::sync;
 use crate::update;
 
 use crate::manifest::{ProjectName, WorkweaveName};
+use crate::refusal::{refusal, RefusalKind};
 use crate::workspace::{acquire_origin_dir, WorkspaceContext};
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
@@ -51,7 +51,8 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
     // That is the most common mistake: passing a workweave identity to
     // -C instead of -w/--workweave.
     if !p.exists() && crate::naming::has_flat_address_shape(raw) {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::WrongAddressFlag,
             "'-C {raw}' looks like a workweave name rather than a path, \
              and no path exists at '{raw}'.\n\
              \n\
@@ -113,7 +114,8 @@ fn resolve_workweave_flag(
     // "not found" message.
     if raw.contains('/') || raw.contains('\\') {
         if let Some(flat) = flat_spelling_of(raw) {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::WrongAddressFlag,
                 "'-w {raw}' contains a path separator. A workweave address renders a \
                  multi-segment project name's `/` as `+`:\n\
                  \n  rwv -w {flat} <verb>\n\
@@ -122,7 +124,8 @@ fn resolve_workweave_flag(
                  workweave's directory — the address is not one."
             );
         }
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::WrongAddressFlag,
             "'-w {raw}' contains a path separator — it looks like a path, not a workweave name.\n\
              \n\
              To address a workweave by path, use -C with the full path to its directory:\n\
@@ -133,7 +136,8 @@ fn resolve_workweave_flag(
     }
     // If the argument exists on disk as a path, the operator probably meant -C.
     if Path::new(raw).exists() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::WrongAddressFlag,
             "'-w {raw}' exists on disk as a path.\n\
              \n\
              To address a workweave by path, use -C:\n\
@@ -145,18 +149,22 @@ fn resolve_workweave_flag(
 
     let (project_str, name_str) =
         crate::naming::split_at_weave_separator(raw).ok_or_else(|| {
-            anyhow::anyhow!(
-                "'-w {raw}' is not in the required <project>--<name> form.\n\
-             \n\
-             Provide both the project and the workweave name separated by `--`:\n\
-             \n  rwv -w <project>--<name> <verb>\n\
-             \n\
-             Example:  rwv -w myproj--hotfix sync-to"
+            refusal(
+                RefusalKind::MalformedWorkweaveAddress,
+                format!(
+                    "'-w {raw}' is not in the required <project>--<name> form.\n\
+                     \n\
+                     Provide both the project and the workweave name separated by `--`:\n\
+                     \n  rwv -w <project>--<name> <verb>\n\
+                     \n\
+                     Example:  rwv -w myproj--hotfix sync-to"
+                ),
             )
         })?;
 
     if project_str.is_empty() || name_str.is_empty() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::MalformedWorkweaveAddress,
             "'-w {raw}' is not in the required <project>--<name> form: \
              both the project and name must be non-empty.\n\
              \n\
@@ -187,7 +195,8 @@ fn resolve_workweave_flag(
                 .map(|(project, name)| format!("  project `{}`, workweave `{}`", project, name))
                 .collect::<Vec<_>>()
                 .join("\n");
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::AmbiguousWorkweaveAddress,
                 "'-w {raw}' is ambiguous — {} registered workweaves render that \
                  address:\n{spelled}\n\
                  \n\
@@ -776,7 +785,8 @@ pub fn run() -> anyhow::Result<()> {
                     // has no meaning in-place, so reject it to keep the UX
                     // honest.
                     if allow_non_empty_dir {
-                        anyhow::bail!(
+                        crate::refuse!(
+                            RefusalKind::InapplicableFlag,
                             "rwv fetch: --allow-non-empty-dir has no effect without SOURCE; \
                              pass a SOURCE to bootstrap into a non-empty directory, \
                              or drop --allow-non-empty-dir to re-materialize missing members \

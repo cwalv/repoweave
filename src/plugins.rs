@@ -294,9 +294,12 @@ pub fn build_command(
 /// checked, point at `rwv --help`. Agents parse the shape; humans read the
 /// prose.
 fn unknown_verb_error(verb: &str) -> anyhow::Error {
-    anyhow::anyhow!(
-        "unknown verb `{verb}`: no core verb and no `rwv-{verb}` on `$PATH`. \
-         Try `rwv --help` for the list of core verbs."
+    crate::refusal::refusal(
+        crate::refusal::RefusalKind::UnknownVerb,
+        format!(
+            "unknown verb `{verb}`: no core verb and no `rwv-{verb}` on `$PATH`. \
+             Try `rwv --help` for the list of core verbs."
+        ),
     )
 }
 

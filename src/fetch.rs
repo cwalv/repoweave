@@ -7,6 +7,7 @@ use crate::cli::consent::DetachConsent;
 use crate::lock;
 use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
+use crate::refusal::{refusal, RefusalKind};
 use crate::registry;
 use crate::selector::RepoFilter;
 use crate::vcs::{
@@ -14,7 +15,7 @@ use crate::vcs::{
     VcsError,
 };
 use crate::workspace::{project_dir, projects_dir, Resolution, WorkspaceContext};
-use anyhow::{bail, Context};
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -209,7 +210,8 @@ pub fn run_fetch(
         } else {
             format!("projects/{owner}/{name}/")
         };
-        bail!(
+        crate::refuse!(
+            RefusalKind::ProjectDirOccupied,
             "cannot fetch project '{name}': {}\n\
              Hint: try a scoped path: {scoped}",
             crate::workspace::describe_existing(&project_dir)
@@ -359,15 +361,19 @@ fn fetch_project_repos(
     match mode {
         FetchMode::Frozen => {
             let lock = existing_lock.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "rwv fetch --frozen: lock file does not exist at {}",
-                    lock_path.display()
+                refusal(
+                    RefusalKind::MissingLock,
+                    format!(
+                        "rwv fetch --frozen: lock file does not exist at {}",
+                        lock_path.display()
+                    ),
                 )
             })?;
             let missing = find_incomplete_repos(&manifest, lock, no_reference);
             if !missing.is_empty() {
                 let names: Vec<&str> = missing.iter().map(|rp| rp.as_str()).collect();
-                bail!(
+                crate::refuse!(
+                    RefusalKind::IncompleteLock,
                     "rwv fetch --frozen: lock file is incomplete; repos not covered by lock: {}",
                     names.join(", ")
                 );
@@ -546,7 +552,8 @@ fn fetch_project_repos(
                 }
             }
             // NDJSON records were already streamed; nothing extra to emit.
-            bail!(
+            crate::refuse!(
+                RefusalKind::PartialRunAborted,
                 "fetch completed with {} clone failure(s) out of {total} repo(s)",
                 errors.len()
             )
@@ -558,7 +565,8 @@ fn fetch_project_repos(
         for msg in &errors {
             eprintln!("  - {msg}");
         }
-        bail!(
+        crate::refuse!(
+            RefusalKind::PartialRunAborted,
             "fetch completed with {} clone failure(s) out of {total} repo(s)",
             errors.len()
         )

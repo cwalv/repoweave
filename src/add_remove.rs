@@ -3,12 +3,12 @@
 use crate::activate::{activate_intent, activate_workweave_intent};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
-use crate::refusal::RefusalKind;
+use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::{vcs_for, EphemeralRefName, HeadAttachment, RefName, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
-use anyhow::{bail, Context};
+use anyhow::Context;
 use std::path::{Path, PathBuf};
 
 /// Resolve the project directory for an action verb.
@@ -239,9 +239,12 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                 .map(|r| r.name().as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            anyhow::anyhow!(
-                "unrecognized URL '{url}' — could not derive a local path \
-                 (supported registries: {names})"
+            refusal(
+                RefusalKind::NoMatchingRegistry,
+                format!(
+                    "unrecognized URL '{url}' — could not derive a local path \
+                     (supported registries: {names})"
+                ),
             )
         })?;
 
@@ -362,10 +365,13 @@ fn run_add_from_local_path(
             )
         })?
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "'{}' has no {} remote to read a URL from",
-                clone_dir.display(),
-                vcs.conventional_remote_name()
+            refusal(
+                RefusalKind::NoRemoteUrl,
+                format!(
+                    "'{}' has no {} remote to read a URL from",
+                    clone_dir.display(),
+                    vcs.conventional_remote_name()
+                ),
             )
         })?;
 
@@ -453,7 +459,11 @@ pub fn run_remove(
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     let Some(removed) = manifest.remove_repo(&repo_path) else {
-        bail!("path '{}' not found in manifest", repo_path.as_str());
+        crate::refuse!(
+            RefusalKind::RepoNotInManifest,
+            "path '{}' not found in manifest",
+            repo_path.as_str()
+        );
     };
 
     // Before writing anything, check for cross-project references when --delete
@@ -476,7 +486,8 @@ pub fn run_remove(
                     eprintln!("warning: repo also referenced by project '{proj}'");
                 }
                 if !delete_shared_clone {
-                    anyhow::bail!(
+                    crate::refuse!(
+                        RefusalKind::SharedCloneReferenced,
                         "refusing to delete '{}': referenced by other projects. Remove the entry from those projects first, or use `--delete-shared-clone` if you intend to delete the shared clone anyway.",
                         repo_path.as_str()
                     );
@@ -563,7 +574,8 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
         // interrogated is not one this verb may assume is unclaimed.
         Err(e) => {
             if vcs.is_repo(repo_dir) {
-                anyhow::bail!(
+                crate::refuse!(
+                    RefusalKind::StoreClaimsUnreadable,
                     "refusing to delete '{}': it is a repo whose worktree registrations \
                      could not be read ({e}), so rwv cannot establish that no live \
                      worktree is using it.",
@@ -582,7 +594,8 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
                     project.as_str()
                 )
             })),
-            Err(e) => anyhow::bail!(
+            Err(e) => crate::refuse!(
+                RefusalKind::StoreClaimsUnreadable,
                 "refusing to delete '{}': the ownership receipts for project `{}` could \
                  not be read ({e}), so rwv cannot establish that no ref it created still \
                  lives in this store.",
@@ -627,7 +640,8 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // Validate that the argument looks like a path (registry/owner/repo).
     let segments: Vec<&str> = path_arg.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 3 {
-        bail!(
+        crate::refuse!(
+            RefusalKind::MalformedRepoPath,
             "'{}' does not look like a valid repo path (expected registry/owner/repo)",
             path_arg
         );
@@ -638,9 +652,9 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     let registry_refs: Vec<&dyn Registry> = owned_registries.iter().map(|r| r.as_ref()).collect();
 
     let url = infer_url_from_path(path_arg, &registry_refs).ok_or_else(|| {
-        anyhow::anyhow!(
-            "could not infer a URL from path '{}' — no matching registry",
-            path_arg
+        refusal(
+            RefusalKind::NoMatchingRegistry,
+            format!("could not infer a URL from path '{path_arg}' — no matching registry"),
         )
     })?;
 

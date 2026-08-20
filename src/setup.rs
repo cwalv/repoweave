@@ -6,7 +6,7 @@
 //!   WorktreeCreate/WorktreeRemove hook scripts to `~/.claude/hooks/` and
 //!   registers them. Idempotent.
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -133,7 +133,8 @@ pub fn claude_at(settings_path: &Path) -> anyhow::Result<()> {
 
 fn claude_inner(settings_path: &Path) -> anyhow::Result<()> {
     if !settings_path.exists() {
-        bail!(
+        crate::refuse!(
+            crate::refusal::RefusalKind::ClaudeSettingsMissing,
             "{} does not exist. Please run Claude Code at least once to create it.",
             settings_path.display()
         );

@@ -13,6 +13,7 @@
 //! silently failed to appear is a workspace that misreports what it contains.
 //! The argument is in `docs/explanation/joints/symlinks-as-structure.md`.
 
+use crate::refusal::RefusalKind;
 use std::path::Path;
 
 /// Which of Windows' two symlink constructors a link needs.
@@ -73,17 +74,32 @@ pub const WINDOWS_PERMISSION_REMEDY: &str =
 
 /// Create a symbolic link at `link` pointing at `target`.
 pub fn create(target: &Path, link: &Path, kind: LinkTarget) -> anyhow::Result<()> {
-    platform_symlink(target, link, kind)
-        .map_err(|e| anyhow::Error::msg(refusal(&e, target, link, cfg!(windows))))
+    platform_symlink(target, link, kind).map_err(|e| {
+        let (kind, message) = refusal(&e, target, link, cfg!(windows));
+        let err = anyhow::Error::msg(message);
+        match kind {
+            Some(kind) => crate::refusal::refusing(kind, err),
+            None => err,
+        }
+    })
 }
 
-/// The sentence an operator reads when a link could not be created.
+/// The sentence an operator reads when a link could not be created, and the
+/// condition it names where rwv declined rather than the platform.
+///
+/// One classification decides both: an occupied path is what rwv refuses to
+/// overwrite, and everything else here is the platform saying no.
 ///
 /// `on_windows` names the platform the refusal is *for*, not the one this is
 /// compiled on. A permission failure only happens where these tests never run,
 /// so taking the platform as an argument is what lets a Linux run read the
 /// text a Windows operator would get.
-fn refusal(error: &std::io::Error, target: &Path, link: &Path, on_windows: bool) -> String {
+fn refusal(
+    error: &std::io::Error,
+    target: &Path,
+    link: &Path,
+    on_windows: bool,
+) -> (Option<RefusalKind>, String) {
     let mut message = format!(
         "failed to create symlink {} -> {}: {error}",
         link.display(),
@@ -92,11 +108,13 @@ fn refusal(error: &std::io::Error, target: &Path, link: &Path, on_windows: bool)
     if error.kind() == std::io::ErrorKind::AlreadyExists {
         message.push_str("; ");
         message.push_str(&occupied_path_remedy(link));
-    } else if on_windows {
+        return (Some(RefusalKind::SurfacingPathOccupied), message);
+    }
+    if on_windows {
         message.push_str("; ");
         message.push_str(WINDOWS_PERMISSION_REMEDY);
     }
-    message
+    (None, message)
 }
 
 /// What an operator does when something already sits where a link belongs.
@@ -220,7 +238,11 @@ mod tests {
 
     #[test]
     fn a_windows_permission_failure_carries_the_remedy() {
-        let message = refusal(&denied(), Path::new("t"), Path::new("l"), true);
+        let (kind, message) = refusal(&denied(), Path::new("t"), Path::new("l"), true);
+        assert_eq!(
+            kind, None,
+            "a platform refusal is not rwv declining: {message}"
+        );
         assert!(
             message.contains(WINDOWS_PERMISSION_REMEDY),
             "a Windows operator must be told what to do: {message}"
@@ -229,7 +251,11 @@ mod tests {
 
     #[test]
     fn a_unix_permission_failure_carries_no_windows_remedy() {
-        let message = refusal(&denied(), Path::new("t"), Path::new("l"), false);
+        let (kind, message) = refusal(&denied(), Path::new("t"), Path::new("l"), false);
+        assert_eq!(
+            kind, None,
+            "a platform refusal is not rwv declining: {message}"
+        );
         assert!(
             !message.contains("Developer Mode"),
             "without this the test above passes on a remedy pasted onto every \
@@ -240,7 +266,8 @@ mod tests {
     #[test]
     fn an_occupied_path_reads_the_same_on_either_platform() {
         for on_windows in [true, false] {
-            let message = refusal(&exists(), Path::new("t"), Path::new("l"), on_windows);
+            let (kind, message) = refusal(&exists(), Path::new("t"), Path::new("l"), on_windows);
+            assert_eq!(kind, Some(RefusalKind::SurfacingPathOccupied));
             assert!(
                 message.contains(&occupied_path_remedy(Path::new("l"))),
                 "on_windows={on_windows}: {message}"
@@ -267,7 +294,10 @@ mod tests {
         let raw = platform_symlink(target, &link, LinkTarget::File).unwrap_err();
         let err = create(target, &link, LinkTarget::File).unwrap_err();
 
-        assert_eq!(err.to_string(), refusal(&raw, target, &link, cfg!(windows)));
+        assert_eq!(
+            err.to_string(),
+            refusal(&raw, target, &link, cfg!(windows)).1
+        );
     }
 
     #[test]

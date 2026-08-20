@@ -123,12 +123,16 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
             // document.
             None => {
                 if let Some(candidate) = suggest(verb) {
-                    anyhow::bail!(
+                    crate::refuse!(
+                        crate::refusal::RefusalKind::NoExplainEntry,
                         "no explain entry for '{verb}'; did you mean: {candidate}? \
                          Try `rwv explain` for the full index."
                     );
                 } else {
-                    anyhow::bail!("external command; try `rwv {verb} --help`");
+                    crate::refuse!(
+                        crate::refusal::RefusalKind::NoExplainEntry,
+                        "external command; try `rwv {verb} --help`"
+                    );
                 }
             }
         },

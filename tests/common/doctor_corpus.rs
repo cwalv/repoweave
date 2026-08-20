@@ -312,8 +312,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             dir: path("/ws/projects/bad--name"),
             derived: "bad--name".into(),
             error: "'bad--name' is not a valid project name: contains `--` or starts/ends \
-                    with `-`, ambiguous against the `--` that joins project to workweave. \
-                    See docs/reference/formats.md, \"Names, and the characters they exclude\"."
+                    with `-`, ambiguous against the `--` that joins project to workweave."
                 .into(),
         },
         CheckViolation::UnresolvableLockEntry {

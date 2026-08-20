@@ -167,7 +167,8 @@ pub fn enforce_with(floor: Option<&HealthFloor>, req: &FloorRequirement) -> anyh
                 Some(f) => format!("records version {}", f.version),
                 None => "records no clean run".to_string(),
             };
-            anyhow::bail!(
+            crate::refuse!(
+                crate::refusal::RefusalKind::HealthFloorTooLow,
                 "this weave's health floor {state}, below the {min} this rwv \
                  requires: migratory repair arms for older states were removed \
                  in this release. Step through version {bridge}: install rwv \

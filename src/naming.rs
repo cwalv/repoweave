@@ -245,16 +245,14 @@ impl fmt::Display for ProjectNameError {
             Self::AmbiguousDelimiter(s) => write!(
                 f,
                 "'{s}' is not a valid project name: contains `--` or starts/ends \
-                 with `-`, ambiguous against the `--` that joins project to workweave. \
-                 See docs/reference/formats.md, \"Names, and the characters they exclude\"."
+                 with `-`, ambiguous against the `--` that joins project to workweave."
             ),
             Self::EncodedSeparator(s) => write!(
                 f,
                 "'{s}' is not a valid project name: contains `+`, which rwv writes in \
                  place of `/` when it renders a project name as one path segment \
                  (a workweave directory, a `-w` address, a branch name). Choose a \
-                 name without `+`. See docs/reference/formats.md, \"Names, and the \
-                 characters they exclude\"."
+                 name without `+`."
             ),
             Self::InvalidRef(e) => write!(f, "not a valid project name: {e}"),
         }
@@ -347,8 +345,7 @@ impl fmt::Display for WorkweaveNameError {
             Self::AmbiguousDelimiter(s) => write!(
                 f,
                 "'{s}' is not a valid workweave name: contains `--` or starts/ends \
-                 with `-`, ambiguous against the `--` that joins project to workweave. \
-                 See docs/reference/formats.md, \"Names, and the characters they exclude\"."
+                 with `-`, ambiguous against the `--` that joins project to workweave."
             ),
             Self::InvalidRef(e) => write!(f, "not a valid workweave name: {e}"),
         }
@@ -522,6 +519,48 @@ mod tests {
             WorkweaveName::new("a--b"),
             Err(WorkweaveNameError::AmbiguousDelimiter(_))
         ));
+    }
+
+    /// A rejected name is told which rule it broke and nothing else. The
+    /// character policy lives on a published page an operator reaches by the
+    /// route line, and a message that also spells the page out puts a second
+    /// copy of that address in a string literal nothing checks.
+    ///
+    /// Scope: the `Display` of these three error types, over one value per
+    /// variant. The closure is the exhaustive matches in `src/refusal.rs`,
+    /// which stop compiling when a variant is added; a document reference in
+    /// any other message is invisible here.
+    #[test]
+    fn a_rejected_name_is_not_sent_to_a_document() {
+        let rendered: Vec<String> = [
+            ProjectNameError::AmbiguousDelimiter("a--b".into()).to_string(),
+            ProjectNameError::EncodedSeparator("a+b".into()).to_string(),
+            ProjectNameError::InvalidRef(RefNameError::Empty).to_string(),
+            WorkweaveNameError::Slash("a/b".into()).to_string(),
+            WorkweaveNameError::AmbiguousDelimiter("a--b".into()).to_string(),
+            WorkweaveNameError::InvalidRef(RefNameError::Empty).to_string(),
+            RefNameError::Empty.to_string(),
+            RefNameError::ShaShaped("0".repeat(40)).to_string(),
+            RefNameError::TagShaped("v1.2.3".into()).to_string(),
+            RefNameError::Malformed {
+                name: "a..b".into(),
+                reason: "contains `..`",
+            }
+            .to_string(),
+        ]
+        .into();
+
+        for message in &rendered {
+            assert!(
+                !message.is_empty(),
+                "a variant that renders nothing would pass every assertion below"
+            );
+            assert!(
+                !message.contains(".md") && !message.contains("docs/"),
+                "a naming refusal must carry the rule, not the address of a page \
+                 stating it: {message}"
+            );
+        }
     }
 
     #[test]

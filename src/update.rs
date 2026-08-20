@@ -340,7 +340,8 @@ fn update_for_project(
         for msg in &errors {
             eprintln!("  - {msg}");
         }
-        anyhow::bail!(
+        crate::refuse!(
+            crate::refusal::RefusalKind::PartialRunAborted,
             "update aborted with {} failure(s); lock not written",
             errors.len()
         );
@@ -365,7 +366,8 @@ fn update_for_project(
                 .context("failed to serialize update output")?;
             println!("{out}");
         }
-        anyhow::bail!(
+        crate::refuse!(
+            crate::refusal::RefusalKind::PartialRunAborted,
             "update aborted with {} failure(s); lock not written",
             errors.len()
         );

@@ -6,9 +6,11 @@
 //! prints before it returns. So the sample here spans the ways a kind gets
 //! attached, and each drive runs the shipped binary and reads what came back:
 //! an inline refusal, one minted inside a shared helper, that same helper's
-//! error under a `.context()` wrap, a typed error arriving through `?`, and
-//! the `--continue` resume path, which is in the sample because it is the one
-//! that used to destroy the kind before it could be read.
+//! error under a `.context()` wrap, typed errors arriving through `?` — one
+//! per carrying type, because a type's arm is classified on its own variants
+//! and a sibling's arm proves nothing about it — and the `--continue` resume
+//! path, which is in the sample because it is the one that used to destroy the
+//! kind before it could be read.
 //!
 //! Two silences are pinned here too, and they are the assertions most likely
 //! to be weakened by someone making a failure go away: an error with no kind
@@ -180,6 +182,56 @@ fn a_typed_name_error_routes_to_its_token() {
         "precondition: this is the typed name error:\n{stderr}"
     );
     assert_routes_to(&stderr, "unrenderable-name");
+}
+
+/// The other name type reaching the terminal the same way, and the reason it
+/// is drilled separately: one type's arm being right says nothing about the
+/// next, because each carries its own variants and its own classification.
+#[test]
+fn a_project_name_error_routes_to_the_same_condition() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    for name in ["bad--name", "a+b"] {
+        let stderr = refusal_stderr(&["init", name], &ws);
+        assert!(
+            stderr.contains("not a valid project name"),
+            "precondition: this is the typed name error:\n{stderr}"
+        );
+        assert_routes_to(&stderr, "unrenderable-name");
+    }
+}
+
+/// A repo path rejected by its own newtype, which is neither a name nor a
+/// `bail!`.
+#[test]
+fn a_typed_repo_path_error_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    let stderr = refusal_stderr(&["add", "github/owner/re\\po"], &ws);
+    assert!(
+        stderr.contains("backslash not allowed"),
+        "precondition: this is the typed path error:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "backslash-in-repo-path");
+}
+
+/// The selector errors, which are three conditions under one type. A single
+/// drive would pass on an arm that answered the same kind for all three.
+#[test]
+fn each_selector_condition_routes_to_its_own_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    for (args, token) in [
+        (["update", "--role", "bogus"], "unknown-role"),
+        (["update", "--repo", "re:"], "empty-selector-pattern"),
+        (["update", "--repo", "re:["], "uncompilable-selector"),
+    ] {
+        let stderr = refusal_stderr(&args, &ws);
+        assert_routes_to(&stderr, token);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -418,20 +470,138 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
 }
 
 // ---------------------------------------------------------------------------
+// The verbs that refuse on their arguments
+// ---------------------------------------------------------------------------
+
+/// One drive per condition an operator reaches by typing something the verb
+/// will not take. Each gets its own weave: several of these refuse partway
+/// through a verb that has already written to the one it ran in, and a shared
+/// fixture would let an earlier row decide a later row's answer.
+///
+/// The table is the assertion. A site that loses its kind stops routing and
+/// its row reddens by name, where a suite that drove only one of them would
+/// report a single failure whatever went wrong.
+#[test]
+fn each_argument_refusal_routes_to_its_own_token() {
+    let tmp = common::tempdir().unwrap();
+
+    let cases: [(&[&str], &str); 14] = [
+        (&["add", "foo"], "no-matching-registry"),
+        (&["add", "--new", "github/owner"], "malformed-repo-path"),
+        (
+            &["init", "elsewhere", "--provider", "nosuch/owner"],
+            "unknown-registry",
+        ),
+        (
+            &["init", "elsewhere", "--provider", "noslash"],
+            "malformed-provider",
+        ),
+        (&["remove", "nonexistent/path/repo"], "repo-not-in-manifest"),
+        (&["init", "web-app"], "project-dir-occupied"),
+        (&["init", "web-app/sub"], "nested-project-name"),
+        (&["-w", "a/b", "status"], "wrong-address-flag"),
+        (
+            &["-w", "noseparator", "status"],
+            "malformed-workweave-address",
+        ),
+        (&["fetch", "--allow-non-empty-dir"], "inapplicable-flag"),
+        (&["nosuchverb"], "unknown-verb"),
+        (&["explain", "nosuchverb"], "no-explain-entry"),
+        (&["doctor", "--kind", "nosuchkind"], "unknown-finding-kind"),
+        (&["update", "--repo", "glob:"], "empty-selector-pattern"),
+    ];
+
+    for (index, (args, token)) in cases.into_iter().enumerate() {
+        let ws = plain_weave(&tmp.path().join(format!("case{index}")));
+        let stderr = refusal_stderr(args, &ws);
+        assert!(
+            routed_tokens(&stderr) == vec![token],
+            "rwv {args:?} must route to `{token}`, stderr was:\n{stderr}"
+        );
+    }
+}
+
+/// The lock preconditions, which need a weave shaped against them rather than
+/// an argument the verb rejects.
+#[test]
+fn the_frozen_lock_gates_route_to_their_tokens() {
+    let tmp = common::tempdir().unwrap();
+
+    let absent = plain_weave(&tmp.path().join("absent"));
+    std::fs::remove_file(absent.join("projects/web-app/rwv.lock")).unwrap();
+    assert_routes_to(
+        &refusal_stderr(&["fetch", "--frozen"], &absent),
+        "missing-lock",
+    );
+
+    let partial = plain_weave(&tmp.path().join("partial"));
+    std::fs::write(
+        partial.join("projects/web-app/rwv.toml"),
+        format!(
+            "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\n\
+             version = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    assert_routes_to(
+        &refusal_stderr(&["fetch", "--frozen"], &partial),
+        "incomplete-lock",
+    );
+}
+
+/// A pre-TOML manifest, whose refusal reaches the operator under the load
+/// step's own `.context()` — so the route line has to survive a wrap the
+/// refusing code never sees.
+#[test]
+fn the_legacy_manifest_refusal_routes_from_under_its_wrap() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let project = ws.join("projects/web-app");
+    std::fs::remove_file(project.join("rwv.toml")).unwrap();
+    std::fs::write(project.join("rwv.yaml"), "repositories: {}\n").unwrap();
+
+    let stderr = refusal_stderr(&["remove", "nonexistent/path/repo"], &ws);
+    assert!(
+        stderr.contains("failed to load manifest"),
+        "precondition: the wrapping context is the headline:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "legacy-manifest-format");
+}
+
+/// A run that got partway and withheld the artifact it would have written.
+/// The tally itself is not what earns the token — the unwritten lock is.
+#[test]
+fn a_run_that_withheld_its_artifact_routes_to_a_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    std::fs::write(
+        ws.join("projects/web-app/rwv.toml"),
+        "[repositories.\"github/example/absent\"]\ntype = \"git\"\n\
+         url = \"file:///nonexistent/absent\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+
+    let stderr = refusal_stderr(&["fetch"], &ws);
+    assert_routes_to(&stderr, "partial-run-aborted");
+}
+
+// ---------------------------------------------------------------------------
 // The silence
 // ---------------------------------------------------------------------------
 
 /// An error that is not a refusal gains nothing. Nothing was declined on
-/// purpose here, so there is no condition to route to and no line to print.
+/// purpose here: the manifest parser said no, and its answer reaches the
+/// operator relabelled rather than classified.
 #[test]
 fn an_error_with_no_kind_prints_no_route_line() {
     let tmp = common::tempdir().unwrap();
     let ws = plain_weave(tmp.path());
+    std::fs::write(ws.join("projects/web-app/rwv.toml"), "not = = toml\n").unwrap();
 
     let stderr = refusal_stderr(&["remove", "nonexistent/path/repo"], &ws);
     assert!(
-        stderr.contains("not found in manifest"),
-        "precondition: the verb refused:\n{stderr}"
+        stderr.contains("TOML parse error"),
+        "precondition: the failure is the parser's, not a refusal:\n{stderr}"
     );
     assert!(
         routed_tokens(&stderr).is_empty(),

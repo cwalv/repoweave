@@ -206,6 +206,63 @@ pub enum RefusalKind {
     /// A checkout inside a workweave is a canonical store other worktrees link
     /// into. Shared with the finding.
     StandaloneInWorkweave,
+    /// No registry recognises the argument, in either direction.
+    NoMatchingRegistry,
+    /// A repo path is not `registry/owner/repo`.
+    MalformedRepoPath,
+    /// A repo path spells `\`.
+    BackslashInRepoPath,
+    /// `--provider` names a registry rwv does not have.
+    UnknownRegistry,
+    /// `--provider` is not `registry/owner`.
+    MalformedProvider,
+    /// `rwv remove` names a path the manifest does not carry.
+    RepoNotInManifest,
+    /// `--frozen` and no lock file.
+    MissingLock,
+    /// The lock covers fewer repos than the manifest lists.
+    IncompleteLock,
+    /// The clone `--delete` would destroy is referenced by other projects.
+    SharedCloneReferenced,
+    /// The local clone has no conventional remote to read a URL from.
+    NoRemoteUrl,
+    /// The project directory name is taken.
+    ProjectDirOccupied,
+    /// The name would nest a project inside a project.
+    NestedProjectName,
+    /// A project directory holds the pre-TOML manifest and nothing rwv reads.
+    LegacyManifestFormat,
+    /// An addressing flag was given the other flag's argument shape.
+    WrongAddressFlag,
+    /// `-w` is not `<project>--<name>` with both halves non-empty.
+    MalformedWorkweaveAddress,
+    /// Two recorded pairs render one `-w` address.
+    AmbiguousWorkweaveAddress,
+    /// A flag has no meaning in the mode it was passed in.
+    InapplicableFlag,
+    /// No core verb and no `rwv-<verb>` on `$PATH`.
+    UnknownVerb,
+    /// `rwv explain` has no page for the name.
+    NoExplainEntry,
+    /// `--kind` names nothing in the doctor wire vocabulary.
+    UnknownFindingKind,
+    /// A role value names no role rwv accepts.
+    UnknownRole,
+    /// `--repo re:` or `--repo glob:` with nothing after the prefix.
+    EmptySelectorPattern,
+    /// A `--repo` pattern does not compile.
+    UncompilableSelector,
+    /// The object `--fix` re-observed before acting is gone or moved.
+    RepairTargetChanged,
+    /// The weave's recorded health floor is below this binary's requirement.
+    HealthFloorTooLow,
+    /// The settings file `rwv setup claude` edits is absent.
+    ClaudeSettingsMissing,
+    /// Something rwv did not create sits where a link belongs.
+    SurfacingPathOccupied,
+    /// Per-item failures stopped a run, and the artifact it would have
+    /// written is withheld.
+    PartialRunAborted,
 }
 
 impl RefusalKind {
@@ -288,8 +345,17 @@ fn kind_of_link(link: &(dyn std::error::Error + 'static)) -> Option<RefusalKind>
     if let Some(e) = link.downcast_ref::<crate::naming::WorkweaveNameError>() {
         return Some(workweave_name_kind(e));
     }
+    if let Some(e) = link.downcast_ref::<crate::naming::ProjectNameError>() {
+        return Some(project_name_kind(e));
+    }
     if let Some(e) = link.downcast_ref::<crate::naming::RefNameError>() {
         return Some(ref_name_kind(e));
+    }
+    if let Some(e) = link.downcast_ref::<crate::manifest::RepoPathError>() {
+        return Some(repo_path_kind(e));
+    }
+    if let Some(e) = link.downcast_ref::<crate::selector::FilterError>() {
+        return Some(filter_kind(e));
     }
     None
 }
@@ -299,6 +365,34 @@ fn workweave_name_kind(e: &crate::naming::WorkweaveNameError) -> RefusalKind {
     match e {
         E::Slash(_) | E::AmbiguousDelimiter(_) => RefusalKind::UnrenderableName,
         E::InvalidRef(inner) => ref_name_kind(inner),
+    }
+}
+
+fn project_name_kind(e: &crate::naming::ProjectNameError) -> RefusalKind {
+    use crate::naming::ProjectNameError as E;
+    match e {
+        E::AmbiguousDelimiter(_) | E::EncodedSeparator(_) => RefusalKind::UnrenderableName,
+        E::InvalidRef(inner) => ref_name_kind(inner),
+    }
+}
+
+fn repo_path_kind(e: &crate::manifest::RepoPathError) -> RefusalKind {
+    use crate::manifest::RepoPathError as E;
+    match e {
+        E::Backslash(_) => RefusalKind::BackslashInRepoPath,
+    }
+}
+
+/// A `--role` value reaches the operator only through here: the one production
+/// producer of a bare [`crate::manifest::RoleParseError`] wraps it in
+/// [`crate::selector::FilterError::UnknownRole`] on the spot, and a manifest's
+/// own role value is a serde string by the time it surfaces.
+fn filter_kind(e: &crate::selector::FilterError) -> RefusalKind {
+    use crate::selector::FilterError as E;
+    match e {
+        E::UnknownRole(_) => RefusalKind::UnknownRole,
+        E::EmptyPattern { .. } => RefusalKind::EmptySelectorPattern,
+        E::InvalidRegex { .. } | E::InvalidGlob { .. } => RefusalKind::UncompilableSelector,
     }
 }
 
@@ -343,6 +437,40 @@ mod tests {
             "push-from-workweave"
         );
         assert_eq!(RefusalKind::VersionIsAPin.token(), "version-is-a-pin");
+    }
+
+    /// Where a refusal names a state doctor already names, the two spell it
+    /// the same. Compared against `wire_kind` rather than a literal: a literal
+    /// agrees with whatever it was typed as, and the pair drifting apart is
+    /// exactly the failure this exists to catch.
+    #[test]
+    fn a_shared_condition_spells_one_token_in_both_registers() {
+        use crate::check::CheckViolation;
+        use crate::manifest::{ProjectName, RepoPath};
+
+        let project = ProjectName::new("proj").expect("fixture name must validate");
+        let repo = RepoPath::new("github/acme/server").expect("fixture path must validate");
+
+        let pairs: [(RefusalKind, CheckViolation); 2] = [
+            (
+                RefusalKind::LegacyManifestFormat,
+                CheckViolation::LegacyManifestFormat {
+                    project: project.clone(),
+                    legacy_path: std::path::PathBuf::from("/ws/projects/proj/rwv.yaml"),
+                },
+            ),
+            (
+                RefusalKind::IncompleteLock,
+                CheckViolation::IncompleteLock {
+                    project,
+                    repo: repo.clone(),
+                },
+            ),
+        ];
+
+        for (kind, finding) in pairs {
+            assert_eq!(kind.token(), finding.wire_kind());
+        }
     }
 
     #[test]
@@ -459,7 +587,7 @@ mod tests {
 
     #[test]
     fn a_typed_name_error_names_its_own_condition() {
-        use crate::naming::{RefNameError, WorkweaveNameError};
+        use crate::naming::{ProjectNameError, RefNameError, WorkweaveNameError};
 
         let slash = anyhow::Error::new(WorkweaveNameError::Slash("a/b".into()));
         assert_eq!(kind_of(&slash), Some(RefusalKind::UnrenderableName));
@@ -471,5 +599,56 @@ mod tests {
 
         let empty = anyhow::Error::new(RefNameError::Empty);
         assert_eq!(kind_of(&empty), Some(RefusalKind::InvalidRefName));
+
+        let plus = anyhow::Error::new(ProjectNameError::EncodedSeparator("a+b".into()));
+        assert_eq!(kind_of(&plus), Some(RefusalKind::UnrenderableName));
+
+        let malformed = anyhow::Error::new(ProjectNameError::InvalidRef(RefNameError::Malformed {
+            name: "a..b".into(),
+            reason: "contains `..`",
+        }));
+        assert_eq!(kind_of(&malformed), Some(RefusalKind::InvalidRefName));
+    }
+
+    /// A selector error carries its own condition, and it carries it from the
+    /// outermost link: the role arm holds the parse error it wraps, so a walk
+    /// that read the innermost link instead would answer from a type the
+    /// operator never sees named.
+    ///
+    /// Each value comes back from the parser rather than being assembled here,
+    /// so a variant this stops constructing is a variant the parser stopped
+    /// producing.
+    #[test]
+    fn a_selector_error_names_the_condition_of_its_own_variant() {
+        use crate::selector::RepoFilter;
+
+        let refused = |roles: &[&str], selectors: &[&str]| {
+            let roles: Vec<String> = roles.iter().map(|s| (*s).to_owned()).collect();
+            let selectors: Vec<String> = selectors.iter().map(|s| (*s).to_owned()).collect();
+            anyhow::Error::new(
+                RepoFilter::parse(&roles, &selectors).expect_err("the fixture must be refused"),
+            )
+        };
+
+        let role = refused(&["bogus"], &[]);
+        assert_eq!(role.chain().count(), 2, "the wrapped error is in the chain");
+        assert_eq!(kind_of(&role), Some(RefusalKind::UnknownRole));
+
+        let empty = refused(&[], &["re:"]);
+        assert_eq!(kind_of(&empty), Some(RefusalKind::EmptySelectorPattern));
+
+        let bad = refused(&[], &["re:["]);
+        assert_eq!(kind_of(&bad), Some(RefusalKind::UncompilableSelector));
+
+        let glob = refused(&[], &["glob:{"]);
+        assert_eq!(kind_of(&glob), Some(RefusalKind::UncompilableSelector));
+    }
+
+    #[test]
+    fn a_typed_repo_path_error_names_its_own_condition() {
+        use crate::manifest::RepoPathError;
+
+        let back = anyhow::Error::new(RepoPathError::Backslash("a\\b".into()));
+        assert_eq!(kind_of(&back), Some(RefusalKind::BackslashInRepoPath));
     }
 }

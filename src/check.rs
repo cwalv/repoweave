@@ -6,6 +6,7 @@
 use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
+use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
     project_dir, project_rel_path, projects_dir, strip_projects_prefix, Resolution,
@@ -2697,9 +2698,12 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
             )
         })?
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{}/.rwv-workweave vanished before --fix could re-point it",
-                marker_dir.display()
+            refusal(
+                RefusalKind::RepairTargetChanged,
+                format!(
+                    "{}/.rwv-workweave vanished before --fix could re-point it",
+                    marker_dir.display()
+                ),
             )
         })?;
 
@@ -5908,9 +5912,12 @@ fn migrate_legacy_ref(
 
     let label = legacy.to_string();
     let raw = legacy.to_raw();
-    let tip = vcs
-        .resolve_local_branch_tip(store, &raw)?
-        .ok_or_else(|| anyhow::anyhow!("branch `{label}` vanished before it could be migrated"))?;
+    let tip = vcs.resolve_local_branch_tip(store, &raw)?.ok_or_else(|| {
+        refusal(
+            RefusalKind::RepairTargetChanged,
+            format!("branch `{label}` vanished before it could be migrated"),
+        )
+    })?;
 
     // A receipt for the pre-flat name can only have come from a previous,
     // crashed run of this arm — nothing else in the tree adopts an observed
@@ -5940,10 +5947,13 @@ fn migrate_legacy_ref(
         registry.record_created(store, flat.clone(), owned_legacy.created_at().clone())?;
 
     let warrant = DeletionWarrant::unmoved(vcs, &owned_legacy).ok_or_else(|| {
-        anyhow::anyhow!(
-            "branch `{label}` moved while it was being migrated (recorded at {}); \
-             re-run `rwv doctor --fix`",
-            owned_legacy.created_at().display_str()
+        refusal(
+            RefusalKind::RepairTargetChanged,
+            format!(
+                "branch `{label}` moved while it was being migrated (recorded at {}); \
+                 re-run `rwv doctor --fix`",
+                owned_legacy.created_at().display_str()
+            ),
         )
     })?;
     vcs.rename_owned_ref(&owned_legacy, &owned_flat, warrant)?;
@@ -5981,7 +5991,12 @@ fn adopt_flat_ref(
 ) -> anyhow::Result<String> {
     let tip = vcs
         .resolve_local_branch_tip(store, &flat.to_raw())?
-        .ok_or_else(|| anyhow::anyhow!("branch `{flat}` vanished before it could be adopted"))?;
+        .ok_or_else(|| {
+            refusal(
+                RefusalKind::RepairTargetChanged,
+                format!("branch `{flat}` vanished before it could be adopted"),
+            )
+        })?;
     registry.record_created(store, flat.clone(), tip.clone())?;
     Ok(format!(
         "adopted `{flat}` in {} at {} (rwv now holds an ownership receipt for it)",
@@ -6023,7 +6038,10 @@ fn adopt_detached_workweave_checkout(
         let label = legacy.to_string();
         let raw = legacy.to_raw();
         let tip = vcs.resolve_local_branch_tip(store, &raw)?.ok_or_else(|| {
-            anyhow::anyhow!("branch `{label}` vanished before it could be given up")
+            refusal(
+                RefusalKind::RepairTargetChanged,
+                format!("branch `{label}` vanished before it could be given up"),
+            )
         })?;
         let owned = registry.adopt_legacy(store, legacy.clone(), tip.clone())?;
         let (warrant, note) = match DeletionWarrant::merged(vcs, &owned, &head) {
@@ -8979,7 +8997,8 @@ impl KindFilter {
         let mut kinds = std::collections::BTreeSet::new();
         for name in names {
             if !valid.contains(name) {
-                anyhow::bail!(
+                crate::refuse!(
+                    RefusalKind::UnknownFindingKind,
                     "`--kind={name}` names no doctor finding kind. Valid kinds:\n  {}",
                     valid.iter().cloned().collect::<Vec<_>>().join("\n  ")
                 );

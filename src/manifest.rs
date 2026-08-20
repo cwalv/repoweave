@@ -1228,7 +1228,11 @@ impl Manifest {
             Ok(content) => content,
             Err(err) => {
                 if let Some(legacy) = Self::legacy_beside(path) {
-                    anyhow::bail!("{}", Self::legacy_format_refusal(&legacy));
+                    crate::refuse!(
+                        crate::refusal::RefusalKind::LegacyManifestFormat,
+                        "{}",
+                        Self::legacy_format_refusal(&legacy)
+                    );
                 }
                 return Err(anyhow::Error::new(err))
                     .with_context(|| format!("failed to read {}", path.display()));
