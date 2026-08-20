@@ -323,6 +323,28 @@ fn a_dirty_repo_at_lock_time_routes_to_its_token() {
     assert_routes_to(&stderr, "dirty-checkout");
 }
 
+/// `rwv sync` over a destination carrying uncommitted tracked changes. A
+/// different producer from the lock preflight above and the same token: this
+/// one assembles its body from two conditions and picks the kind itself.
+#[test]
+fn a_dirty_destination_at_sync_time_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, workweave) = primary_and_workweave(tmp.path());
+
+    std::fs::write(
+        workweave.join("projects/web-app/rwv.toml"),
+        "[repositories]\n# edited, uncommitted\n",
+    )
+    .unwrap();
+
+    let stderr = refusal_stderr(&["sync", &primary.to_string_lossy()], &workweave);
+    assert!(
+        stderr.contains("uncommitted tracked changes"),
+        "precondition: the sync dirt preflight fired:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "dirty-checkout");
+}
+
 // ---------------------------------------------------------------------------
 // The silence
 // ---------------------------------------------------------------------------
