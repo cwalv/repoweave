@@ -911,6 +911,56 @@ fn clean_workspace_reports_no_conflict() {
     );
 }
 
+/// The wire tag of an externally-tagged enum value — the one key its object
+/// carries, which is the spelling `rwv doctor --json` publishes for it.
+fn wire_tag<T: serde::Serialize>(value: &T) -> String {
+    let json = serde_json::to_value(value).expect("the wire shape is an object");
+    let object = json.as_object().expect("externally tagged");
+    assert_eq!(object.len(), 1, "one tag per value, got {json}");
+    object.keys().next().unwrap().clone()
+}
+
+/// A refusal over a defective marker carries the token doctor already
+/// publishes for that same defect — per defect, not per family.
+///
+/// Both spellings are read out of the code that owns them rather than typed
+/// here, so a rename on either side reddens this as surely as a mis-mapped arm
+/// does — the two spellings move together or the pair stops agreeing. Spelling
+/// the tokens as literals here would catch the mapping and not the rename, and
+/// asserting merely that some kind is attached catches neither: that is what
+/// the suite did before this test, where swapping the `Legacy` and
+/// `Unreadable` arms was invisible to all 229 binaries.
+#[test]
+fn each_marker_defect_refuses_under_the_token_doctor_publishes_for_it() {
+    use repoweave::check::{CheckViolation, WorkweaveTreeIntegrityKind};
+    use repoweave::workspace::MarkerDefect;
+
+    let dangling = MarkerDefect::DanglingPrimary {
+        primary: PathBuf::from("/nowhere"),
+    };
+    assert_eq!(dangling.kind().token(), wire_tag(&dangling));
+
+    assert_eq!(
+        MarkerDefect::Legacy.kind().token(),
+        CheckViolation::LegacyWorkweaveMarker {
+            marker_path: PathBuf::from("/ws/.rwv-workweave"),
+            primary: PathBuf::from("/ws"),
+        }
+        .wire_kind()
+    );
+
+    assert_eq!(
+        MarkerDefect::Unreadable {
+            detail: "unparseable".into(),
+        }
+        .kind()
+        .token(),
+        wire_tag(&WorkweaveTreeIntegrityKind::UnreadableMarker {
+            detail: "unparseable".into(),
+        })
+    );
+}
+
 fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for entry in std::fs::read_dir(from).unwrap().flatten() {
