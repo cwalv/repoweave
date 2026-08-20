@@ -793,7 +793,7 @@
       }
     },
     "MarkerDefect": {
-      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can repair: `primary:` present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker with no `primary:` of its own has nothing to backfill from, so it is `Unreadable` instead — `migrate_legacy` requires the field unconditionally, and a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
+      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a [`crate::manifest::ProjectName`] from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
       "oneOf": [
         {
           "type": "string",
@@ -2543,7 +2543,7 @@
           "additionalProperties": false
         },
         {
-          "description": "A `.rwv-workweave` marker that parses as neither current JSON nor a `migrate_legacy`-repairable legacy shape — most often YAML with no `primary:` for `migrate_legacy` to backfill from. Every marker rwv has ever written carries all three fields, so this is hand-corruption or a truncated write rather than a shape upgrading produces. Report-only: there is no value here to guess a repair from.",
+          "description": "A `.rwv-workweave` marker that parses as neither current JSON nor a `migrate_legacy`-repairable legacy shape — YAML with no `primary:` for `migrate_legacy` to backfill from, or no valid `project:` for it to construct from. Every marker rwv has ever written carries all three fields, so this is hand-corruption or a truncated write rather than a shape upgrading produces. Report-only: there is no value here to guess a repair from.",
           "type": "object",
           "required": [
             "unreadable-marker"
