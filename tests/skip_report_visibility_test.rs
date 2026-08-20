@@ -205,6 +205,14 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
         );
 
         let ran = run(&found);
+        if cfg!(target_os = "macos") && ran.as_ref().is_ok_and(|s| s.success()) {
+            common::report_skip(&format!(
+                "skip-pin case {name}: this host's execvp retries ENOEXEC \
+                 through sh, which runs the planted file, so the which-vs-OS \
+                 divergence this case pins does not exist here"
+            ));
+            continue;
+        }
         assert!(
             !ran.as_ref().is_ok_and(|s| s.success()),
             "{name}: `which` accepted this file and the OS ran it successfully, so \
