@@ -30,6 +30,93 @@ const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.
 const MATERIALIZE_EXPLAIN: &str = include_str!("../docs/reference/explain/materialize.md");
 const INIT_EXPLAIN: &str = include_str!("../docs/reference/explain/init.md");
 
+// Hand-written entry pages. Unlike the bundles above these are not generated:
+// an entry says why a rule exists and which exit applies when, which is not
+// derivable from the code it describes.
+const REFUSALS_PAGE: &str = include_str!("../docs/reference/refusals.md");
+const DOCTOR_FINDINGS_PAGE: &str = include_str!("../docs/reference/doctor-findings.md");
+
+/// The published pages an entry can live on, in resolution order.
+///
+/// A token names one condition, so it has one entry wherever that entry
+/// already lives — a refusal reporting a state `rwv doctor` also reports is
+/// served from the findings page rather than given a second entry here. That
+/// is why this is a list of pages and not a page: nothing about serving an
+/// entry may depend on which page carries it.
+const ENTRY_PAGES: &[&str] = &[REFUSALS_PAGE, DOCTOR_FINDINGS_PAGE];
+
+/// The heading level of `line` when it is a heading titled exactly `` `token` ``.
+fn entry_heading_level(line: &str, token: &str) -> Option<usize> {
+    let hashes = line.len() - line.trim_start_matches('#').len();
+    (hashes >= 2 && line[hashes..].trim() == format!("`{token}`")).then_some(hashes)
+}
+
+/// The entry for `token` on `page`: its heading, and everything under it up to
+/// the next heading at the same level or above.
+///
+/// Sliced rather than copied, so what `rwv explain` prints and what the page
+/// publishes cannot drift into two spellings — they are the same bytes.
+fn entry_on_page(page: &'static str, token: &str) -> Option<&'static str> {
+    let mut start = None;
+    let mut level = 0;
+    for (offset, line) in line_offsets(page) {
+        match start {
+            None => {
+                if let Some(l) = entry_heading_level(line, token) {
+                    start = Some(offset);
+                    level = l;
+                }
+            }
+            Some(from) => {
+                let hashes = line.len() - line.trim_start_matches('#').len();
+                if hashes > 0 && hashes <= level && line[hashes..].starts_with(' ') {
+                    return Some(page[from..offset].trim_end_matches('\n'));
+                }
+            }
+        }
+    }
+    start.map(|from| page[from..].trim_end_matches('\n'))
+}
+
+fn line_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut offset = 0;
+    text.split_inclusive('\n').map(move |raw| {
+        let at = offset;
+        offset += raw.len();
+        (at, raw.trim_end_matches('\n'))
+    })
+}
+
+/// The entry for `token`, from whichever published page documents it.
+pub fn entry_for_token(token: &str) -> Option<&'static str> {
+    ENTRY_PAGES
+        .iter()
+        .find_map(|page| entry_on_page(page, token))
+}
+
+/// Every token the published entry pages document, derived by reading them.
+///
+/// The register is not restated here: a hand-written copy of it is a second
+/// list to keep in step with the enum, and this one is read from the pages an
+/// operator is actually served.
+pub fn documented_tokens() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = ENTRY_PAGES
+        .iter()
+        .flat_map(|page| {
+            line_offsets(page).filter_map(|(_, line)| {
+                let hashes = line.len() - line.trim_start_matches('#').len();
+                let rest = line.get(hashes..)?.trim();
+                (hashes >= 2 && rest.starts_with('`') && rest.ends_with('`') && rest.len() > 2)
+                    .then(|| rest.trim_matches('`'))
+            })
+        })
+        .filter(|t| !t.contains(' '))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// Every verb `rwv explain` recognizes, paired with its embedded bundle, in
 /// index order. The one registry: dispatch and [`known_verbs`] both read it,
 /// so a verb added or removed here changes both at once.
@@ -52,6 +139,11 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("materialize", MATERIALIZE_EXPLAIN),
     ("init", INIT_EXPLAIN),
 ];
+
+/// Whether `name` is a core verb `rwv explain` serves a bundle for.
+fn is_known_verb(name: &str) -> bool {
+    VERB_BUNDLES.iter().any(|&(v, _)| v == name)
+}
 
 /// The complete set of verbs recognized by `rwv explain`, in index order.
 pub fn known_verbs() -> impl Iterator<Item = &'static str> {
@@ -92,9 +184,12 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// Threshold: distance ≤ 2. This accepts single-character typos up to
 /// two-character transpositions while excluding completely unrelated words
 /// like "frobnicate".
+/// The nearest thing `rwv explain` could have served, over both the verbs and
+/// the documented tokens — the two vocabularies a reader types into it.
 fn suggest(input: &str) -> Option<&'static str> {
     const THRESHOLD: usize = 2;
     known_verbs()
+        .chain(documented_tokens())
         .map(|v| (v, levenshtein(input, v)))
         .filter(|&(_, d)| d <= THRESHOLD)
         .min_by_key(|&(_, d)| d)
@@ -109,6 +204,11 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
     match cmd {
         None => {
             print!("{INDEX_EXPLAIN}");
+        }
+        // A verb first, then a token. Verbs win a collision because that is
+        // the name the reader typed a command with a moment ago.
+        Some(verb) if entry_for_token(verb).is_some() && !is_known_verb(verb) => {
+            println!("{}", entry_for_token(verb).expect("just matched"));
         }
         Some(verb) => match VERB_BUNDLES.iter().find(|&&(name, _)| name == verb) {
             Some(&(_, bundle)) => print!("{bundle}"),

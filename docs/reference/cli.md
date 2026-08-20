@@ -477,7 +477,12 @@ Stderr, not stdout, so the line never contaminates a `--json` verb's output. The
 
 ### Corrective errors
 
-- **No active project** — CWD is at a workspace primary with neither `--project` nor `.rwv-active` set. The error names the fix commands and, if projects exist under `projects/`, lists them as a menu:
+Each of these is a refusal and carries a token; the message ends with `rwv
+explain <token>`, which serves that token's entry. [Refusals](./refusals.md)
+lists every token, and a condition `rwv doctor` also reports keeps its entry on
+[Doctor findings](./doctor-findings.md).
+
+- **No active project** (`no-active-project`) — CWD is at a workspace primary with neither `--project` nor `.rwv-active` set. The error names the fix commands and, if projects exist under `projects/`, lists them as a menu:
 
   ```
   Error: no active project; run `rwv activate <name>` or pass `--project <name>`. Existing projects: foundations, tmuxcc
@@ -485,13 +490,13 @@ Stderr, not stdout, so the line never contaminates a `--json` verb's output. The
 
   In a workspace with no projects yet, the error suggests `rwv init` instead.
 
-- **Stale pointer** — `.rwv-active` names a project whose `projects/<name>/` directory does not exist:
+- **Stale pointer** (`dangling-active-project`) — `.rwv-active` names a project whose `projects/<name>/` directory does not exist:
 
   ```
   Error: active project `ghost` is set in `.rwv-active` but `projects/ghost/` does not exist; run `rwv activate <existing-project>` or remove `.rwv-active`.
   ```
 
-  `rwv doctor` also reports the stale pointer as a `dangling-active-project` finding and, under `--fix`, clears the file.
+  `rwv doctor` reports the same condition under that same token and, under `--fix`, clears the file — one token, one entry, whichever surface you met it on.
 
 ### Which verbs are project-scoped
 
