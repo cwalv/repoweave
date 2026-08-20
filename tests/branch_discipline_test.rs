@@ -3571,7 +3571,7 @@ fn divergent_marker_fixture(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
     (ws, canonical, ww_checkout)
 }
 
-/// The divergence this area was audited for, one level below rwv-rsf7's
+/// The divergence this area was audited for, one level below the audited
 /// guard table: the report's project-scope filter used to read the directory
 /// basename while the repair's read the marker, so the same finding was
 /// shown under one project and repaired under another.

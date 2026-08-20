@@ -70,7 +70,7 @@ positions:
 
 **static-files is not a third regime.** It is the empty-managed-set corner of hybrid: an
 integration whose managed key set is empty. It rides 100% on the universal surfacing substrate.
-The destruction risk for it is an Axis-1 surfacing-ownership collision (rwv-c5h), not content
+The destruction risk for it is an Axis-1 surfacing-ownership collision, not content
 loss.
 
 ## The hybrid-merge contract

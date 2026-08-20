@@ -17,11 +17,11 @@
 //! use) so the unit under test is the abort path itself, not whatever
 //! the surrounding phase machine happened to produce.
 //!
-//! ## Lock-fixture audit (rwv-fo3x, 2026-08-12)
+//! ## Lock-fixture audit (2026-08-12)
 //!
 //! Pre-fix, `write_lock` here wrote a TOML shape into `rwv.lock`, which is
 //! JSON post-v0.17 and refused by the production parser at line 1 col 2.
-//! rwv-g8qb's earlier fix flagged this class in `atomic_lease_acquisition_test`
+//! An earlier fix flagged this class in `atomic_lease_acquisition_test`
 //! (where an unparseable lock made every sync-under-test refuse at the
 //! lock-read, letting refusal-shaped assertions pass by coincidence).
 //!

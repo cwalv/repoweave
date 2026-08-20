@@ -177,7 +177,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // overlap was merely hoped for — under host load the trial collapsed
 // (observed both ways: the winner completing and RELEASING before the loser
 // arrived, and both racers failing on a torn read) and the assertion went red
-// with no defect present (rwv-g8qb). The concurrent half of the property —
+// with no defect present. The concurrent half of the property —
 // two racers, exactly one winner — is pinned by in-process unit tests whose
 // verdicts are load-invariant because the winner's artifact persists (no
 // release), so the loser refuses under EVERY interleaving:
