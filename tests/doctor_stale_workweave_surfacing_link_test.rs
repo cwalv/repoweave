@@ -6,9 +6,9 @@
 //! file's source — a manual delete, or history the workweave has not pulled
 //! yet — the symlink `create` left behind now resolves to nothing. `--fix`
 //! removes it (it is in the owned set and points into `projects/`), but
-//! plain `rwv doctor` said nothing: `verify_surfacing`'s workweave arm
-//! (`skip_missing_sources`) skipped the file entirely whenever its source was
-//! absent, without checking whether a symlink was already sitting there.
+//! plain `rwv doctor` said nothing: the workweave surfacing arm skipped any
+//! file whose source was absent, without checking whether a symlink was
+//! already sitting there.
 
 mod common;
 

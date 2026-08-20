@@ -285,13 +285,44 @@ fn minted_branches(repo: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Every `(store, name)` pair the index records — the receipt's full key.
+/// One create mints N receipts sharing one name, distinguished only by
+/// store, so a name-keyed read lets a surviving peer answer for a lost one.
+fn recorded_receipts(root: &Path) -> Vec<(std::path::PathBuf, String)> {
+    let text = std::fs::read_to_string(
+        root.join("projects")
+            .join(PROJECT)
+            .join(".rwv-workweave-index"),
+    )
+    .expect("index readable");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("index parses");
+    value["receipts"]
+        .as_array()
+        .expect("a current-shape index has a receipts array")
+        .iter()
+        .map(|r| {
+            (
+                std::path::PathBuf::from(r["store"].as_str().expect("receipt store")),
+                r["name"].as_str().expect("receipt name").to_string(),
+            )
+        })
+        .collect()
+}
+
 /// Every minted branch that no receipt covers — the state R2 disowns for good.
 fn unreceipted(root: &Path) -> Vec<String> {
-    let held = receipt_names(root);
+    let held = recorded_receipts(root);
     let mut orphans = Vec::new();
     for repo in [MEMBER, &format!("projects/{PROJECT}")] {
+        let store = root
+            .join(repo)
+            .canonicalize()
+            .expect("minted repo store exists");
         for branch in minted_branches(&root.join(repo)) {
-            if !held.contains(&branch) {
+            let covered = held
+                .iter()
+                .any(|(s, n)| *n == branch && s.canonicalize().is_ok_and(|c| c == store));
+            if !covered {
                 orphans.push(format!("{repo}:{branch}"));
             }
         }

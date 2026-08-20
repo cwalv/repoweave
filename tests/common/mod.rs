@@ -358,9 +358,17 @@ pub struct PushWorkspace {
 /// `rwv lock` itself emits for equal content, so nothing that stages or
 /// commits the lock sees a phantom diff.
 ///
-/// Only for a lock whose content is incidental to the test. A test whose
-/// subject IS the bytes — an empty lock, a stale one, one that must not parse
-/// — builds them locally and says why.
+/// What this builder holds constant for every consumer, stated here because
+/// a silence stated only at a consuming site is invisible from the
+/// instrument (`docs/internals/testing.md`, shared fixtures): every entry is
+/// `type: "git"` — the only `VcsType` today, so the constant is temporary by
+/// that enum's own admission; the file is always `rwv.lock` directly under
+/// `project_dir`; and the bytes are always well-formed and current-shaped.
+/// No consumer of this builder samples the malformed, legacy, or
+/// non-canonical-bytes plane — a test whose subject IS those bytes (an empty
+/// lock, a stale-format one, one that must not parse) builds them locally
+/// and says why at the site; `advisory_op_check_test.rs`'s hand-spelled
+/// `EMPTY_LOCK` is the worked example of that boundary.
 pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)]) {
     let entries: Vec<String> = repos
         .iter()

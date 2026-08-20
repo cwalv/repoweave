@@ -473,6 +473,10 @@ fn go_work_activate_hook_is_noop() {
     let result = integration.activate_hook(&ctx);
     assert!(result.is_ok(), "go-work activate hook should be a no-op");
     assert!(
+        !root.join("go.work.sum").exists(),
+        "go-work runs no install hook; a real hook's `go mod download` would write go.work.sum"
+    );
+    assert!(
         !root.join("go.sum").exists(),
         "go-work activate hook should not create go.sum"
     );
