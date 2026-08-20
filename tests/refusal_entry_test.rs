@@ -75,6 +75,10 @@ fn kebab(variant: &str) -> String {
 /// transform is checked against tokens serde actually produced. `VersionIsAPin`
 /// is the shape that breaks a naive splitter — a one-letter word between two
 /// longer ones.
+///
+/// Residue: no variant carries two adjacent capitals, so the transform's
+/// behaviour on that shape is unexercised here and cannot be pinned without a
+/// variant that has it. serde would split between them; so does this.
 #[test]
 fn the_case_transform_matches_serde() {
     let ground_truth = [
@@ -231,10 +235,17 @@ fn a_mistyped_token_is_suggested() {
     );
 }
 
-/// A verb and a token could collide; the verb wins, because that is the name
-/// the reader just ran a command with.
+/// A verb still serves its bundle now that tokens resolve too, and — the half
+/// that would otherwise make this vacuous — no token currently collides with a
+/// verb name, so the precedence rule is unexercised rather than proven.
+///
+/// Both assertions are here on purpose. Dropping the precedence guard leaves
+/// the first one green, because there is no colliding token for a token-first
+/// order to prefer. The second says so out loud, and fires on the day someone
+/// mints a token named for a verb — which is when the order stops being
+/// theoretical and someone has to choose deliberately.
 #[test]
-fn a_verb_outranks_a_token_of_the_same_name() {
+fn a_verb_serves_its_bundle_and_no_token_contests_one() {
     let out = common::rwv()
         .args(["explain", "lock"])
         .output()
@@ -244,5 +255,16 @@ fn a_verb_outranks_a_token_of_the_same_name() {
         printed.starts_with("# rwv lock"),
         "the verb bundle must win, got:\n{}",
         &printed[..printed.len().min(120)]
+    );
+
+    let verbs: std::collections::BTreeSet<&str> = repoweave::explain::known_verbs().collect();
+    let contested: Vec<&str> = repoweave::explain::documented_tokens()
+        .into_iter()
+        .filter(|t| verbs.contains(t))
+        .collect();
+    assert!(
+        contested.is_empty(),
+        "these tokens are spelled like verbs, so `rwv explain` now has a real \
+         precedence decision to make rather than a hypothetical one: {contested:?}"
     );
 }
