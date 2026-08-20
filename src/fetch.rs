@@ -204,19 +204,14 @@ pub fn run_fetch(
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
     if project_dir.exists() {
-        // Project name already taken — surface a helpful scoped-path hint.
         let scoped = if owner.is_empty() {
             format!("projects/{{owner}}/{name}/")
         } else {
             format!("projects/{owner}/{name}/")
         };
-        eprintln!(
-            "Error: cannot fetch project '{name}': {}",
-            crate::workspace::describe_existing(&project_dir)
-        );
-        eprintln!("Hint: try a scoped path: {scoped}");
         bail!(
-            "cannot fetch project '{name}': {}",
+            "cannot fetch project '{name}': {}\n\
+             Hint: try a scoped path: {scoped}",
             crate::workspace::describe_existing(&project_dir)
         );
     } else {

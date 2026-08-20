@@ -239,7 +239,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                 .collect::<Vec<_>>()
                 .join(", ");
             anyhow::anyhow!(
-                "Error: unrecognized URL '{url}' — could not derive a local path \
+                "unrecognized URL '{url}' — could not derive a local path \
                  (supported registries: {names})"
             )
         })?;
@@ -450,7 +450,7 @@ pub fn run_remove(
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     let Some(removed) = manifest.remove_repo(&repo_path) else {
-        bail!("Error: path '{}' not found in manifest", repo_path.as_str());
+        bail!("path '{}' not found in manifest", repo_path.as_str());
     };
 
     // Before writing anything, check for cross-project references when --delete
@@ -624,7 +624,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     let segments: Vec<&str> = path_arg.split('/').filter(|s| !s.is_empty()).collect();
     if segments.len() < 3 {
         bail!(
-            "Error: '{}' does not look like a valid repo path (expected registry/owner/repo)",
+            "'{}' does not look like a valid repo path (expected registry/owner/repo)",
             path_arg
         );
     }
@@ -635,7 +635,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
 
     let url = infer_url_from_path(path_arg, &registry_refs).ok_or_else(|| {
         anyhow::anyhow!(
-            "Error: could not infer a URL from path '{}' — no matching registry",
+            "could not infer a URL from path '{}' — no matching registry",
             path_arg
         )
     })?;
