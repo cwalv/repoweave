@@ -178,9 +178,9 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 
         let repo_id = RepoId::new(owner, name);
 
-        let url = registry.clone_url(&repo_id).ok_or_else(|| {
-            anyhow::anyhow!("registry '{}' does not support clone URLs", registry_name)
-        })?;
+        let url = registry
+            .clone_url(&repo_id)
+            .expect("the only Registry impl always supports clone URLs");
 
         vcs.add_remote(&project_dir, &url.to_string())
             .with_context(|| format!("failed to add the remote in {}", project_dir.display()))?;

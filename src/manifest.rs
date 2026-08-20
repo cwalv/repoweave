@@ -180,23 +180,8 @@ pub enum RepoUrl {
     Unknown(String),
 }
 
-/// Error returned by [`RepoUrl::from_str`].
-///
-/// Currently a placeholder — `FromStr` falls back to [`RepoUrl::Unknown`]
-/// rather than failing, so this type is reserved for future stricter parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepoUrlParseError(pub String);
-
-impl fmt::Display for RepoUrlParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "could not parse '{}' as a repo URL or shorthand", self.0)
-    }
-}
-
-impl std::error::Error for RepoUrlParseError {}
-
 impl FromStr for RepoUrl {
-    type Err = RepoUrlParseError;
+    type Err = std::convert::Infallible;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Walk built-in registries; first match wins.

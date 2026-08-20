@@ -241,17 +241,18 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
                 Some(name) => name.clone(),
                 None => registries
                     .first()
-                    .map(|r| r.name().clone())
-                    .ok_or_else(|| anyhow::anyhow!("no registries available for shorthand"))?,
+                    .expect("builtin_registries is never empty")
+                    .name()
+                    .clone(),
             };
             let reg = registries
                 .iter()
                 .find(|r| r.name() == &target_name)
-                .ok_or_else(|| anyhow::anyhow!("registry '{}' not found", target_name))?;
+                .expect("Shorthand registry names only ever come from a builtin registry");
             let id = RepoId::new(owner.as_str(), repo.as_str());
-            let url = reg.clone_url(&id).ok_or_else(|| {
-                anyhow::anyhow!("registry '{}' does not support clone URLs", target_name)
-            })?;
+            let url = reg
+                .clone_url(&id)
+                .expect("the only Registry impl always supports clone URLs");
             Ok(CloneInfo {
                 url,
                 registry: target_name,
