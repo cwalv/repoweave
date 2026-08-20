@@ -2018,6 +2018,71 @@ fn doctor_does_not_report_a_legacy_marker_with_no_primary() {
     );
 }
 
+/// A legacy marker with `primary:` but no `project:` is not reported as
+/// `legacy-workweave-marker` — `--fix` has nothing to construct a
+/// `ProjectName` from. Mirrors `doctor_does_not_report_a_legacy_marker_with_no_primary`
+/// for the other required field.
+#[test]
+fn doctor_does_not_report_a_legacy_marker_with_no_project() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let ww_dir_container = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    // Legacy shape (no `parent:`), with `primary:` but no `project:`.
+    let legacy_marker = format!("primary: {}\n", root.canonicalize().unwrap().display());
+    std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
+
+    let stdout = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout_str = String::from_utf8_lossy(&stdout);
+    assert!(
+        !stdout_str.contains("run `rwv doctor --fix` to migrate"),
+        "a legacy marker with no project: has nothing for --fix to \
+         construct and must not be reported as legacy-workweave-marker \
+         (auto-fixable); got:\n{stdout_str}"
+    );
+    assert!(
+        stdout_str.contains("cannot be migrated automatically"),
+        "it must instead be reported unreadable, naming the truth; got:\n{stdout_str}"
+    );
+}
+
+/// The bug `doctor --fix` used to have on this shape: `legacy-workweave-marker`
+/// was reported auto-fixable on `primary:` alone, and `--fix` errored because
+/// `migrate_legacy` separately required `project:`. Now that classification
+/// requires both, `--fix` runs clean (nothing here for it to fix).
+#[test]
+fn doctor_fix_does_not_error_on_legacy_marker_with_no_project() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let ww_dir_container = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    let legacy_marker = format!("primary: {}\n", root.canonicalize().unwrap().display());
+    std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
+
+    rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .assert()
+        .success();
+
+    // The marker itself is untouched — nothing performed a repair on it.
+    let unchanged = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+    assert_eq!(unchanged, legacy_marker);
+}
+
 /// `rwv doctor` does NOT warn when the project carries the replay-exclusion entry.
 #[test]
 fn check_silent_when_project_has_replay_exclusion() {

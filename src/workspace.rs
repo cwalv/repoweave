@@ -1981,14 +1981,18 @@ impl WorkweaveMarker {
     }
 
     /// Migrate a legacy marker in `dir` — one `observe_marker` classifies
-    /// [`MarkerDefect::Legacy`], i.e. YAML with a `primary:` to migrate from
-    /// — by backfilling `parent` to `primary` where `parent:` is missing,
-    /// then rewriting through [`Self::write`] (which produces JSON).
+    /// [`MarkerDefect::Legacy`], i.e. YAML with a `primary:` and a valid
+    /// `project:` to migrate from — by backfilling `parent` to `primary`
+    /// where `parent:` is missing, then rewriting through [`Self::write`]
+    /// (which produces JSON).
     ///
     /// Returns `Ok(false)` if `dir` already holds a JSON marker — idempotent,
     /// so callers can retry across a race without double-writing. `Err` on
     /// I/O failure or if the file is not readable as a legacy (YAML) marker
-    /// with at least the `primary:` and `project:` fields it requires.
+    /// with at least the `primary:` field it requires. Panics if `project:`
+    /// is missing or invalid: `observe_marker`'s `Legacy` classification
+    /// already requires both, so a caller reaching here without them broke
+    /// that precondition rather than handed us a data problem.
     ///
     /// MIGRATORY arm: repairs markers written by rwv <= v0.16.0 (YAML
     /// shape) and < v0.10.0 (missing `parent:`). Removable once every
@@ -2013,17 +2017,16 @@ impl WorkweaveMarker {
                 path.display()
             )
         })?;
-        let project = field("project").ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} is missing the required `project:` field",
-                path.display()
-            )
-        })?;
+        let project = field("project")
+            .and_then(|p| ProjectName::new(p).ok())
+            .expect(
+                "migrate_legacy is only called on a marker observe_marker classified \
+                 Legacy, which requires a valid `project:`",
+            );
         let parent = field("parent").unwrap_or(primary);
         let marker = Self {
             primary: PathBuf::from(primary),
-            project: ProjectName::new(project)
-                .with_context(|| format!("{} has an invalid `project:` value", path.display()))?,
+            project,
             parent: CanonicalPath::of(Path::new(parent)),
         };
         marker.write(dir)?;
@@ -2038,12 +2041,12 @@ impl WorkweaveMarker {
 /// Why a `.rwv-workweave` file cannot witness the identity it claims.
 ///
 /// `Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can
-/// repair: `primary:` present, with or without the `parent:` field that
-/// became required before the format changed (it backfills from `primary`).
-/// A YAML marker with no `primary:` of its own has nothing to backfill from,
-/// so it is `Unreadable` instead — `migrate_legacy` requires the field
-/// unconditionally, and a defect naming a repair nothing performs is worse
-/// than one that names none.
+/// repair: `primary:` and a valid `project:` both present, with or without
+/// the `parent:` field that became required before the format changed (it
+/// backfills from `primary`). A YAML marker missing either — no `primary:`
+/// to backfill from, or no `project:` `migrate_legacy` can construct a
+/// [`crate::manifest::ProjectName`] from — is `Unreadable` instead: a defect
+/// naming a repair nothing performs is worse than one that names none.
 ///
 /// `Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can
 /// carry a defect straight into a doctor finding's wire shape — the same
@@ -2162,9 +2165,8 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
             None,
         );
     };
-    let project_hint = raw
-        .as_mapping_get("project")
-        .and_then(|v| v.as_str())
+    let project_raw = raw.as_mapping_get("project").and_then(|v| v.as_str());
+    let project_hint = project_raw
         .map(str::trim)
         .filter(|project| !project.is_empty())
         .and_then(|project| ProjectName::new(project).ok());
@@ -2184,6 +2186,22 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
             None,
         );
     };
+    if project_hint.is_none() {
+        let reason = match project_raw.map(str::trim) {
+            None | Some("") => "no `project:` field",
+            Some(_) => "an invalid `project:` value",
+        };
+        return unreadable(
+            format!(
+                "{} is a legacy (YAML) workweave marker with {reason}, so it \
+                 cannot be migrated automatically. Write it by hand as JSON with the three \
+                 required fields: `primary`, `project`, and `parent`",
+                marker_path.display()
+            ),
+            None,
+            Some(primary_hint),
+        );
+    }
     MarkerPresence::Defective {
         defect: MarkerDefect::Legacy,
         project_hint,
@@ -5009,6 +5027,93 @@ mod tests {
                  by hand: {detail}"
             );
         }
+    }
+
+    /// A legacy marker with `primary:` but no `project:` is not `Legacy` —
+    /// `migrate_legacy` has nothing to construct a `ProjectName` from, so
+    /// reporting it auto-fixable would advertise a repair `--fix` cannot
+    /// perform. Mirrors
+    /// `observe_root_reads_a_legacy_marker_with_no_primary_as_unreadable`
+    /// for the other required field.
+    #[test]
+    fn observe_root_reads_a_legacy_marker_with_no_project_as_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        std::fs::write(
+            weave_dir.join(WORKWEAVE_MARKER_FILE),
+            format!("primary: {}\n", primary.display()),
+        )
+        .unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable {
+                defect,
+                project_hint,
+                ..
+            } => {
+                assert!(
+                    matches!(defect, MarkerDefect::Unreadable { .. }),
+                    "expected Unreadable, got {defect:?}"
+                );
+                assert_eq!(project_hint, None);
+            }
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+
+        assert!(
+            legacy_marker_primary(&weave_dir).is_none(),
+            "a marker with no project: is not migrate_legacy's to report"
+        );
+        let detail =
+            unmigratable_marker_detail(&weave_dir).expect("an unreadable marker has a detail");
+        assert!(
+            detail.contains("project"),
+            "the detail must name `project` as the missing field: {detail}"
+        );
+    }
+
+    /// Same asymmetry as above, for a `project:` value `ProjectName::new`
+    /// rejects rather than one that is absent — the pre-fix code silently
+    /// dropped this into a `None` hint while still classifying `Legacy`.
+    #[test]
+    fn observe_root_reads_a_legacy_marker_with_invalid_project_as_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        std::fs::write(
+            weave_dir.join(WORKWEAVE_MARKER_FILE),
+            format!("primary: {}\nproject: my--project\n", primary.display()),
+        )
+        .unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable {
+                defect,
+                project_hint,
+                ..
+            } => {
+                assert!(
+                    matches!(defect, MarkerDefect::Unreadable { .. }),
+                    "expected Unreadable, got {defect:?}"
+                );
+                assert_eq!(project_hint, None);
+            }
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+
+        assert!(
+            legacy_marker_primary(&weave_dir).is_none(),
+            "a marker with an invalid project: is not migrate_legacy's to report"
+        );
+        let detail =
+            unmigratable_marker_detail(&weave_dir).expect("an unreadable marker has a detail");
+        assert!(
+            detail.contains("project"),
+            "the detail must name `project` as the invalid field: {detail}"
+        );
     }
 
     #[test]

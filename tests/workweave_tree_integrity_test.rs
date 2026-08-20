@@ -507,6 +507,119 @@ fn legacy_marker_with_no_primary_fix_neither_claims_nor_performs_a_repair() {
 }
 
 // ===========================================================================
+// 6c. Legacy marker with no `project:` — unmigratable, must not go silent
+// ===========================================================================
+
+/// Write a legacy (YAML) `.rwv-workweave` marker with no `project:` field —
+/// the shape `migrate_legacy` cannot repair, since it has no `ProjectName` to
+/// construct.
+fn write_marker_with_no_project(ww_dir: &Path, primary: &Path) {
+    std::fs::create_dir_all(ww_dir).unwrap();
+    let primary_str = primary
+        .canonicalize()
+        .unwrap_or_else(|_| primary.to_path_buf());
+    std::fs::write(
+        ww_dir.join(".rwv-workweave"),
+        format!("primary: {}\n", primary_str.display()),
+    )
+    .unwrap();
+}
+
+#[test]
+fn legacy_marker_with_no_project_is_reported() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let ww_dir = workweaves_dir(&ws).join("my-project--corrupt");
+    write_marker_with_no_project(&ww_dir, &ws);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("cannot be migrated automatically"),
+        "doctor must not go silent on a legacy marker with no project:; got:\n{stdout}"
+    );
+    for field in ["primary", "project", "parent"] {
+        assert!(
+            stdout.contains(field),
+            "the report must name `{field}` as one of the three fields to write \
+             by hand; got:\n{stdout}"
+        );
+    }
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+    let violations = json["violations"].as_array().expect("violations is array");
+
+    assert!(
+        !violations.iter().any(|v| v["kind"] == "legacy-workweave-marker"),
+        "a marker with no project: has nothing for --fix to construct and must \
+         not be reported auto-fixable; violations: {violations:?}"
+    );
+    let finding = violations
+        .iter()
+        .find(|v| {
+            v["kind"] == "workweave-tree-integrity" && v["sub_kind"].get("unreadable-marker").is_some()
+        })
+        .unwrap_or_else(|| panic!("expected an unreadable-marker finding; got: {violations:?}"));
+    assert!(
+        finding["sub_kind"]["unreadable-marker"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("project"),
+        "the detail must name `project` as the unconstructable field: {finding:?}"
+    );
+}
+
+/// The bug this pins: `legacy-workweave-marker` used to be reported
+/// auto-fixable on `primary:` alone, and `--fix` errored (non-zero exit)
+/// because `migrate_legacy` separately required `project:` — an advertised
+/// repair nothing performed. Classification now requires both fields, so
+/// this shape is `unreadable-marker` (report-only) instead, and `--fix`
+/// exits clean with the marker untouched.
+#[test]
+fn legacy_marker_with_no_project_fix_does_not_error() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let ww_dir = workweaves_dir(&ws).join("my-project--corrupt");
+    write_marker_with_no_project(&ww_dir, &ws);
+    let marker_path = ww_dir.join(".rwv-workweave");
+    let before = std::fs::read(&marker_path).unwrap();
+
+    let stdout = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8_lossy(&stdout);
+
+    assert!(
+        stdout.contains("cannot be migrated automatically"),
+        "`--fix` must report the truth about a marker it cannot repair, not \
+         stay silent; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[fixed]"),
+        "nothing here is fixed, so `--fix` must not claim it; got:\n{stdout}"
+    );
+
+    let after = std::fs::read(&marker_path).unwrap();
+    assert_eq!(
+        before, after,
+        "`--fix` must leave a marker it cannot repair byte-for-byte untouched"
+    );
+}
+
+// ===========================================================================
 // 6. Empty workspace (no .workweaves/ directory at all) stays clean
 // ===========================================================================
 

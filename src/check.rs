@@ -1106,11 +1106,12 @@ pub enum WorkweaveTreeIntegrityKind {
         index_path: PathBuf,
     },
     /// A `.rwv-workweave` marker that parses as neither current JSON nor a
-    /// `migrate_legacy`-repairable legacy shape — most often YAML with no
-    /// `primary:` for `migrate_legacy` to backfill from. Every marker rwv
-    /// has ever written carries all three fields, so this is hand-corruption
-    /// or a truncated write rather than a shape upgrading produces.
-    /// Report-only: there is no value here to guess a repair from.
+    /// `migrate_legacy`-repairable legacy shape — YAML with no `primary:`
+    /// for `migrate_legacy` to backfill from, or no valid `project:` for it
+    /// to construct from. Every marker rwv has ever written carries all
+    /// three fields, so this is hand-corruption or a truncated write rather
+    /// than a shape upgrading produces. Report-only: there is no value here
+    /// to guess a repair from.
     UnreadableMarker {
         /// Why the marker cannot be read, and what to write in its place.
         detail: String,
