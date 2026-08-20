@@ -7,6 +7,7 @@
 //! to have different URL parsing, authentication, and discovery behavior.
 
 use crate::manifest::RepoUrl;
+use crate::refusal::RefusalKind;
 
 /// A short name for a code host or directory that serves as the first path
 /// segment in the canonical layout: `{registry}/{owner}/{repo}/`.
@@ -272,7 +273,8 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
                     id: RepoId::new("", project_name),
                 })
             } else {
-                anyhow::bail!(
+                crate::refuse!(
+                    RefusalKind::UnresolvableRepoSource,
                     "cannot resolve '{}': expected a URL (https://... or git@...) or shorthand (owner/repo)",
                     s
                 )

@@ -279,7 +279,8 @@ pub fn ensure_registered_workweave(
 ) -> anyhow::Result<PathBuf> {
     let raw = match workweave_index::lookup_raw(primary_root, project, name.as_str())? {
         Some(p) => p,
-        None => bail!(
+        None => crate::refuse!(
+            RefusalKind::NoSuchWorkweave,
             "no workweave named `{}` is recorded for project `{}` — either it \
              was never created, was already deleted, or exists on disk without \
              a registry entry (run `rwv doctor` to detect and adopt orphans)",
@@ -289,20 +290,23 @@ pub fn ensure_registered_workweave(
     };
     match validate_registry_entry(primary_root, project, &raw) {
         RegistryEntryValidation::Valid => Ok(raw),
-        RegistryEntryValidation::MissingDirectory => bail!(
+        RegistryEntryValidation::MissingDirectory => crate::refuse!(
+            RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but that directory no longer \
              exists; run `rwv doctor --fix` to prune the stale entry",
             name.as_str(),
             raw.display()
         ),
-        RegistryEntryValidation::MissingMarker => bail!(
+        RegistryEntryValidation::MissingMarker => crate::refuse!(
+            RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the directory has no \
              `.rwv-workweave` marker — refusing to touch it; run `rwv doctor` \
              for guidance",
             name.as_str(),
             raw.display()
         ),
-        RegistryEntryValidation::ForeignPrimary => bail!(
+        RegistryEntryValidation::ForeignPrimary => crate::refuse!(
+            RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the marker's `primary` \
              does not match this workspace — refusing to touch a foreign \
              workweave. This can arise from a committed / hand-edited \
@@ -310,7 +314,8 @@ pub fn ensure_registered_workweave(
             name.as_str(),
             raw.display()
         ),
-        RegistryEntryValidation::ProjectMismatch { actual } => bail!(
+        RegistryEntryValidation::ProjectMismatch { actual } => crate::refuse!(
+            RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the marker records project \
              `{}`, not `{}` — refusing to touch it; run `rwv doctor` to \
              investigate the registry / marker disagreement",
@@ -319,7 +324,8 @@ pub fn ensure_registered_workweave(
             actual.as_str(),
             project.as_str()
         ),
-        RegistryEntryValidation::MarkerUnreadable { detail } => bail!(
+        RegistryEntryValidation::MarkerUnreadable { detail } => crate::refuse!(
+            RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but its marker could not be \
              read ({detail}); refusing to touch it. Run `rwv doctor` for \
              remediation.",
@@ -927,7 +933,8 @@ pub fn preflight_check_heads(
         return Ok(());
     }
 
-    bail!(
+    crate::refuse!(
+        RefusalKind::RepoWithoutCommits,
         "rwv workweave create: cannot create workweave — the following repos \
          have no commits yet:\n  {}",
         missing.join("\n  ")
@@ -1037,7 +1044,8 @@ impl BirthOutcome {
             RefBirth::Adopted => {
                 let store = self.owned.store().to_path_buf();
                 registry.retract(&store, self.owned.name())?;
-                bail!(
+                crate::refuse!(
+                    RefusalKind::UnownedBranchInNamespace,
                     "branch `{owned}` already existed in {store}, so materializing it \
                      adopted a ref rwv did not create. The ownership receipt has been \
                      retracted — rwv does not claim a branch it did not author.\n\n\
@@ -1134,7 +1142,8 @@ pub(crate) fn birth_ephemeral_worktree(
         .filter(|b| is_this_workweaves_namespace(b, ephemeral) && b != &raw)
         .collect();
     if !occupied.is_empty() {
-        bail!(
+        crate::refuse!(
+            RefusalKind::UnmigratedEphemeralBranch,
             "cannot create branch `{ephemeral}` in {store}: {n} branch(es) already occupy \
              its namespace, and git cannot hold both `refs/heads/{ephemeral}` and \
              `refs/heads/{ephemeral}/...`:\n  {list}\n\n\
@@ -1153,7 +1162,8 @@ pub(crate) fn birth_ephemeral_worktree(
 
     let existing_tip = vcs.resolve_local_branch_tip(&store, &raw)?;
     match (registry.lookup(&store, &raw)?, &existing_tip) {
-        (None, Some(tip)) => bail!(
+        (None, Some(tip)) => crate::refuse!(
+            RefusalKind::UnownedBranchInNamespace,
             "branch `{ephemeral}` already exists in {store} at {tip} and rwv holds no \
              ownership receipt for it, so it is not rwv's to reuse or delete. This \
              create would have started it at {start}.\n\n\
@@ -1170,7 +1180,8 @@ pub(crate) fn birth_ephemeral_worktree(
                 vcs.delete_owned_ref(&recorded, warrant)?;
                 registry.retract(&store, &raw)?;
             }
-            None => bail!(
+            None => crate::refuse!(
+                RefusalKind::OwnedBranchMoved,
                 "branch `{ephemeral}` in {store} is recorded as rwv's but has moved since \
                  rwv created it: recorded at {recorded_tip}, now at {tip}. Refusing to \
                  destroy it to make room for a new workweave.\n\n\
@@ -1314,7 +1325,8 @@ pub fn create_workweave(
         if workweave_index::canonical_recorded_path(&recorded)
             != workweave_index::canonical_recorded_path(&workweave_dir)
         {
-            bail!(
+            crate::refuse!(
+                RefusalKind::WorkweaveNameTaken,
                 "project `{project}` already records a workweave named `{name}` at {recorded}; \
                  refusing to create a second one at {requested}.\n\n\
                  Both would mint the ephemeral branch `{branch}` in the same store. Pick \
@@ -1335,7 +1347,8 @@ pub fn create_workweave(
         // way, and both arms below would then act on someone else's seat —
         // reuse would adopt it, replace would destroy it.
         if crate::workspace::diverged_occupant(&workweave_dir).is_some() {
-            bail!(
+            crate::refuse!(
+                RefusalKind::ForeignWorkweaveInTargetDir,
                 "cannot create workweave `{name}` for project `{project}`: {}. That is \
                  a different workweave, not this one. Address it by its own name, or \
                  choose a name whose directory does not collide.",
@@ -1382,7 +1395,8 @@ pub fn create_workweave(
                 collect_dirty_repos_by_walk(project_vcs.as_ref(), &workweave_dir)
             };
             if !at_risk.is_empty() {
-                bail!(
+                crate::refuse!(
+                    RefusalKind::ReplaceTargetHoldsWork,
                     "workweave {} already exists and holds unsaved or unmerged work; \
                      refusing to replace it:\n  {}\n\
                      Commit/merge that work, or delete it explicitly with \
@@ -1458,7 +1472,8 @@ pub fn create_workweave(
         if project_vcs.is_repo(&project_dir) {
             match project_vcs.dirty_file_names(&project_dir) {
                 Ok(dirty) if !dirty.is_empty() => {
-                    bail!(
+                    crate::refuse!(
+                        RefusalKind::DirtyProjectDir,
                         "rwv workweave create: refusing to create workweave — \
                          projects/{project} has uncommitted changes:\n  {files}\n\n\
                          To proceed, do one of:\n  \
@@ -1539,7 +1554,8 @@ pub fn create_workweave(
     if let crate::workspace::MintedDir::Occupied(occupant) =
         crate::workspace::create_identity_dir(&workweave_dir)?
     {
-        bail!(
+        crate::refuse!(
+            RefusalKind::TargetDirOccupied,
             "cannot create workweave `{}` for project `{}`: {}.",
             name.as_str(),
             project.as_str(),
@@ -1952,16 +1968,20 @@ fn reuse_existing_workweave(
     manifest: &Manifest,
 ) -> anyhow::Result<PathBuf> {
     let marker = WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
-        anyhow!(
-            "workweave directory {} exists but has no .rwv-workweave marker — \
-             likely a partially created workweave from a previous failed attempt; \
-             safe to recreate with --replace-existing",
-            workweave_dir.display()
+        crate::refusal::refusal(
+            RefusalKind::TargetDirOccupied,
+            format!(
+                "workweave directory {} exists but has no .rwv-workweave marker — \
+                 likely a partially created workweave from a previous failed attempt; \
+                 safe to recreate with --replace-existing",
+                workweave_dir.display()
+            ),
         )
     })?;
 
     if marker.project() != project {
-        bail!(
+        crate::refuse!(
+            RefusalKind::ForeignWorkweaveInTargetDir,
             "workweave at {} is for project '{}', refusing to recreate for project '{}'; \
              rerun with --replace-existing to overwrite",
             workweave_dir.display(),
@@ -1971,7 +1991,8 @@ fn reuse_existing_workweave(
     }
 
     if !marker.names_primary(primary_root) {
-        bail!(
+        crate::refuse!(
+            RefusalKind::ForeignWorkweaveInTargetDir,
             "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
              rerun with --replace-existing to overwrite",
             workweave_dir.display(),
@@ -2017,7 +2038,8 @@ fn reuse_existing_workweave(
     }
 
     if !modified.is_empty() {
-        bail!(
+        crate::refuse!(
+            RefusalKind::ReplaceTargetHoldsWork,
             "workweave at {} has local modifications; refusing to recreate without \
              --replace-existing:\n  {}",
             workweave_dir.display(),
@@ -2296,12 +2318,12 @@ pub(crate) fn resolved_worktree_parent(vcs: &dyn Vcs, checkout: &Path, fallback:
 /// holds the canonical store that OTHER worktrees link into — the
 /// catastrophic case the clone-topology joint flags as inverted topology.
 ///
-/// **Named precondition**: each per-repo workweave checkout MUST be a linked
+/// The precondition: each per-repo workweave checkout MUST be a linked
 /// workspace, not a canonical store with foreign dependents. Deleting a
 /// canonical store while other worktrees still link into it would orphan
 /// every dependent worktree on disk.
 ///
-/// Returns `Err` with a named-precondition message pointing the operator at
+/// Returns `Err` pointing the operator at
 /// `rwv doctor` (where the topology check lives, per the joint). This refusal
 /// is NOT bypassable by the discard flags — they consent to losing this
 /// workweave's work, not to corrupting other workweaves whose object DAG we
@@ -2394,9 +2416,9 @@ fn refuse_if_checkouts_host_foreign_worktrees(
         return Ok(());
     }
 
-    bail!(
-        "rwv workweave delete: refusing — inverted clone topology detected (precondition: \
-         no-canonical-store-with-foreign-dependents).\n\
+    crate::refuse!(
+        RefusalKind::StandaloneInWorkweave,
+        "rwv workweave delete: refusing — inverted clone topology detected.\n\
          The following checkout(s) inside workweave {} are themselves canonical \
          stores that other worktrees link into; deleting this workweave would orphan \
          those dependents:\n  {}\n\n\
@@ -2645,8 +2667,7 @@ fn retire_recorded_refs(
 ///
 /// Independently of both waivers, refuses when any per-repo checkout in the
 /// workweave is itself a canonical store with foreign worktrees linked into
-/// it (named precondition: `no-canonical-store-with-foreign-dependents`).
-/// This is the tier-0 invariant the clone-topology joint defines; delete
+/// it. This is the tier-0 invariant the clone-topology joint defines; delete
 /// cannot safely proceed because the destructive worktree-remove + dir
 /// removal would orphan the dependents. The operator must repair topology
 /// via `rwv doctor` first.
@@ -2752,7 +2773,8 @@ fn delete_workweave_inner(
     if let Some(expected) = expected_dir {
         let expected = CanonicalPath::of(expected);
         if CanonicalPath::of(&workweave_dir) != expected {
-            bail!(
+            crate::refuse!(
+                RefusalKind::RegistryPathDisagreement,
                 "workweave `{name}` of project `{project}` is registered at {registered}, \
                  but the caller reached it through {expected} — refusing to delete either.\n\n\
                  Two directories cannot both be this workweave. Run `rwv doctor` to find \
@@ -2838,7 +2860,8 @@ fn delete_workweave_inner_at(
     if !discard_uncommitted && workweave_dir.exists() {
         let dirty = collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
         if !dirty.is_empty() {
-            bail!(
+            crate::refuse!(
+                RefusalKind::UncommittedWork,
                 "workweave {} has uncommitted changes; refusing to delete without \
                  --discard-uncommitted:\n  {}",
                 name.as_str(),
@@ -2865,7 +2888,8 @@ fn delete_workweave_inner_at(
             &baselines,
         );
         if !diverged.is_empty() {
-            bail!(
+            crate::refuse!(
+                RefusalKind::UnmergedCommits,
                 "workweave {} has commits not merged into {}; \
                  refusing to delete without --discard-unmerged-commits:\n  {}",
                 name.as_str(),
@@ -3355,7 +3379,8 @@ pub fn workweave_log(
             parent.clone(),
         ),
         Checkout::Primary { .. } => {
-            bail!(
+            crate::refuse!(
+                RefusalKind::WrongCheckoutKind,
                 "`rwv workweave log` reports a workweave's history relative to its \
                  recorded parent, but CWD ({}) is in the primary weave, not a workweave.",
                 ctx.active_path().display()
@@ -3639,7 +3664,12 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
 
             let project = ws_ctx
                 .active_project()
-                .ok_or_else(|| anyhow!("no .rwv-active found in {}", primary_root.display()))?
+                .ok_or_else(|| {
+                    crate::refusal::refusal(
+                        RefusalKind::NoActiveProject,
+                        format!("no .rwv-active found in {}", primary_root.display()),
+                    )
+                })?
                 .clone();
 
             let name =
@@ -3671,11 +3701,14 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 )
                 .and_then(|found| {
                     found.ok_or_else(|| {
-                        anyhow!(
-                            "{worktree_path} carries a workweave marker but is not \
-                             registered for project `{}` — refusing to delete rather \
-                             than guess its name",
-                            marker.project()
+                        crate::refusal::refusal(
+                            RefusalKind::UnregisteredWorkweave,
+                            format!(
+                                "{worktree_path} carries a workweave marker but is not \
+                                 registered for project `{}` — refusing to delete rather \
+                                 than guess its name",
+                                marker.project()
+                            ),
                         )
                     })
                 })

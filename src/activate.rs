@@ -47,6 +47,7 @@ use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::owned_state::{
     attested_owned_files, drifted_attested_owned_files, forget_owned_digest, stamp_owned_digest,
 };
+use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
 use crate::workspace::{
     observe_root, project_dir, project_rel_dir, strip_projects_prefix, workspace_marker_names,
@@ -210,7 +211,8 @@ pub fn materialize(
         .and_then(RootObservation::presented_project)
         .cloned()
     else {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::NoActiveProject,
             "nothing is materialized at {}: no project is active here. \
              Run `rwv activate <name>` to select one first.",
             root.display()
@@ -487,7 +489,8 @@ fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> any
                     )
                 })
                 .collect::<String>();
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::UnacceptedGeneratedContent,
                 "materialize stopped: content rwv never accepted is on disk for \
                  {} generated file(s) it attests:{listed}\n\
                  Re-run with `--adopt-drifted` to record the current content as \
@@ -552,7 +555,8 @@ pub fn activate_with_options(
 
     let primary = match ctx.primary_identity() {
         Some(identity) => identity,
-        None => anyhow::bail!(
+        None => crate::refuse!(
+            RefusalKind::WrongCheckoutKind,
             "rwv activate has no effect in a workweave (project is fixed at creation). \
              cd to primary ({}) and rerun.",
             crate::path_spelling::operator_path(ctx.primary_path())
@@ -1180,7 +1184,8 @@ pub fn surface_symlinks(
                 .as_ref()
                 .map(ProjectName::as_str)
                 .unwrap_or("<none>");
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::SharedNameContested,
                 "surfacing `{collision}` for project `{project}` would take a weave-root name \
                  project `{presented}` also claims; a per-project name cannot be a shared name, \
                  so one of the two projects has to be renamed"

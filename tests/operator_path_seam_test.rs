@@ -350,6 +350,7 @@ const ROUTED: &[Routed] = &[
 const RENDER_MACROS: &[&str] = &[
     "format!(",
     "bail!(",
+    "refuse!(",
     "anyhow!(",
     "eprintln!(",
     "println!(",

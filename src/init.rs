@@ -49,12 +49,16 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
     // Map the error to an init-specific message (the generic message mentions
     // --allow-non-empty-dir, which `init` does not expose).
     require_workspace_or_empty(cwd, false).map_err(|_| {
-        anyhow::anyhow!(
-            "`rwv init` requires either an existing workspace or an empty directory; \
-             {} is not a workspace and is not empty. \
-             `rwv init` would create a workspace skeleton (projects/) and initialise a project. \
-             To proceed: run `rwv init` in an empty directory, or `cd` into an existing workspace.",
-            cwd.display()
+        crate::refusal::refusal(
+            crate::refusal::RefusalKind::OccupiedBootstrapDir,
+            format!(
+                "`rwv init` requires either an existing workspace or an empty directory; \
+                 {} is not a workspace and is not empty. \
+                 `rwv init` would create a workspace skeleton (projects/) and initialise a \
+                 project. To proceed: run `rwv init` in an empty directory, or `cd` into an \
+                 existing workspace.",
+                cwd.display()
+            ),
         )
     })?;
 

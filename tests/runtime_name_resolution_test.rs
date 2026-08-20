@@ -9,8 +9,8 @@
 //!      the registry records. Runtime works, on the recorded name — including
 //!      the ephemeral ref a later `rwv add` mints from inside it.
 //!   2. **Unregistered directory.** A marker-bearing directory no entry names
-//!      has no name at all. Verbs that act on the identity refuse and name the
-//!      repair; verbs that only report proceed and say what they found.
+//!      has no name at all. Verbs that act on the identity refuse and route to
+//!      the condition; verbs that only report proceed and say what they found.
 //!
 //! Restore the basename parse in `by_marker` and arm 1 fails on the name it
 //! reports and on the ref it mints. Let the absence fall back to the basename
@@ -264,8 +264,10 @@ fn unregistered_workweave_is_addressed_by_directory_in_push_refusal() {
     );
 }
 
-/// A verb that acts on the workweave's identity refuses, and the refusal
-/// carries the repair rather than a description of the problem.
+/// A verb that acts on the workweave's identity refuses, naming the state and
+/// routing to the condition. The repairs are the entry's to carry: which one
+/// applies turns on where the directory sits, and a message that cannot
+/// evaluate that can only recite both.
 #[test]
 fn unregistered_workweave_refuses_an_identity_consuming_verb() {
     let tmp = common::tempdir().unwrap();
@@ -295,8 +297,8 @@ fn unregistered_workweave_refuses_an_identity_consuming_verb() {
             verb.join(" ")
         );
         assert!(
-            stderr.contains("rwv doctor --fix"),
-            "`rwv {}` must name the repair: {stderr}",
+            stderr.ends_with("\n\nrwv explain unregistered-workweave\n"),
+            "`rwv {}` must route to the condition: {stderr}",
             verb.join(" ")
         );
     }
@@ -387,17 +389,17 @@ fn doctor_fix_restores_the_recorded_name_the_refusals_named() {
     assert_eq!(identity, "web-app--feat");
 }
 
-/// The other half of that loop, which does not close — and which the refusal
-/// therefore has to stop promising.
+/// The other half of that loop, which does not close.
 ///
 /// Adoption enumerates recorded containers. A workweave placed outside them
 /// all is not a candidate for it, so `--fix` reports nothing and repairs
 /// nothing here. Byte-for-byte the fixture above except for the placement:
 /// the basename still spells `web-app--drifted`, so what fails is the
-/// placement and nothing else. The refusal names the condition and names the
-/// remedy that does not depend on it.
+/// placement and nothing else. The verb refuses either way and routes to the
+/// same condition — which repair applies is what differs, and that is why the
+/// message does not attempt to say.
 #[test]
-fn a_dir_placed_workweave_gets_the_refusals_placement_independent_remedy() {
+fn a_dir_placed_workweave_still_refuses_and_routes_to_the_condition() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let outside = tmp.path().join("elsewhere");
@@ -424,17 +426,12 @@ fn a_dir_placed_workweave_gets_the_refusals_placement_independent_remedy() {
         "the verb must still refuse: {stderr}"
     );
     assert!(
-        stderr.contains(
-            "adopts an unrecorded workweave only out of a container recorded in \
-             `projects/web-app/.rwv-workweave-index`"
-        ),
-        "the refusal must qualify the remedy that no-ops here: {stderr}"
+        stderr.contains("no entry in that project's workweave index records this directory"),
+        "the refusal must name the state: {stderr}"
     );
     assert!(
-        stderr.contains(
-            "Retiring this directory and creating the workweave again works wherever it sits"
-        ),
-        "and must mark the one that does not depend on placement: {stderr}"
+        stderr.ends_with("\n\nrwv explain unregistered-workweave\n"),
+        "and must route to it from a placement `--fix` cannot reach: {stderr}"
     );
 }
 

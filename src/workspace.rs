@@ -27,6 +27,7 @@
 
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
+use crate::refusal::RefusalKind;
 use crate::registry::{builtin_registries, builtin_registry_names, Registry};
 use crate::vcs::Vcs;
 use anyhow::Context;
@@ -236,37 +237,21 @@ impl WorkweaveNameRecord {
     /// The recorded name for an operation that acts on the workweave's
     /// identity and has nothing to act on without one.
     ///
-    /// The refusal names two repairs, and states the condition that decides
-    /// between them rather than leaving the operator to try both: adoption
-    /// enumerates the recorded containers, so a directory placed outside them
-    /// is never a candidate and `--fix` reports nothing for it. The condition
-    /// is stated, not evaluated here — deciding it needs the container walk
-    /// *and* the basename parse that `doctor_scan_container` pairs it with,
-    /// and a second copy of that conjunction is a thing that can disagree with
-    /// the one doctor runs.
+    /// The refusal states the condition and stops there. Which repair applies
+    /// turns on where this directory sits, and deciding that needs the
+    /// container walk *and* the basename parse that `doctor_scan_container`
+    /// pairs it with — a second copy of that conjunction is a thing that can
+    /// disagree with the one doctor runs.
     pub fn require(&self, dir: &Path, project: &ProjectName) -> anyhow::Result<&WorkweaveName> {
         match self {
             Self::Recorded(name) => Ok(name),
-            Self::Unregistered => anyhow::bail!(
+            Self::Unregistered => crate::refuse!(
+                RefusalKind::UnregisteredWorkweave,
                 "the workweave at {} carries a `.rwv-workweave` marker for project `{}`, \
                  but no entry in that project's workweave index records this directory, \
                  so rwv has no recorded name for it and will not take one from the \
-                 directory name. This operation acts on that name. Two repairs, and \
-                 where this directory sits decides which one applies. \
-                 `rwv doctor --fix` adopts an unrecorded workweave only out of a \
-                 container recorded in `{}`, and only when the directory is spelled \
-                 `{}--<name>`; one placed anywhere else — `rwv workweave {} create \
-                 <name> --dir <path>` does that — is not a candidate, and `--fix` will \
-                 find nothing to adopt here. Retiring this directory and creating the \
-                 workweave again works wherever it sits.",
+                 directory name. This operation acts on that name.",
                 crate::path_spelling::operator_path(dir),
-                project.as_str(),
-                format_args!(
-                    "{}/{}",
-                    project_rel_path(project.as_str()),
-                    crate::workweave_index::INDEX_FILENAME
-                ),
-                project.as_str(),
                 project.as_str(),
             ),
         }
@@ -1053,7 +1038,8 @@ pub fn require_workspace_or_empty(cwd: &Path, allow_non_empty_dir: bool) -> anyh
     if is_empty {
         Ok(())
     } else {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::OccupiedBootstrapDir,
             "no repoweave workspace found and {} is not empty; \
              use --allow-non-empty-dir to bootstrap here anyway",
             cwd.display()
@@ -1136,7 +1122,11 @@ fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)>
         }
     }
 
-    anyhow::bail!("no repoweave workspace found above {}", cwd.display())
+    crate::refuse!(
+        RefusalKind::NoWeaveRoot,
+        "no repoweave workspace found above {}",
+        cwd.display()
+    )
 }
 
 /// How one resolution learns which project it is for.
@@ -1208,7 +1198,8 @@ impl RootSite {
             ProjectBinding::Flag(p) => (p, ProjectProvenance::Flag),
             ProjectBinding::Bound(p) => {
                 if p != marker.project {
-                    anyhow::bail!(
+                    crate::refuse!(
+                        RefusalKind::MarkerBindingDisagreement,
                         "workspace {} belongs to project `{}` per its `.rwv-workweave` \
                          marker, but the operation asking for it is bound to `{}`. Two \
                          structural records disagree; nothing here can pick between \
@@ -1389,7 +1380,8 @@ impl WorkspaceContext {
         } else {
             format!(" Existing projects: {}.", existing.join(", "))
         };
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::ProjectDirMissing,
             "workspace {} does not hold project `{}`: `projects/{}/` does not exist there.{}",
             self.primary_path().display(),
             project.as_str(),
@@ -1538,7 +1530,8 @@ impl WorkspaceContext {
         // the error into a menu the operator can act on without a
         // separate discovery step.
         if let Some(hint) = self.cwd_project_hint() {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::NoActiveProject,
                 "no active project set, but CWD is inside projects/{}/. \
                  Run `rwv activate {}` to make it active, or pass `--project {}` \
                  for a one-shot operation.",
@@ -1549,12 +1542,14 @@ impl WorkspaceContext {
         }
         let existing = spelled_project_names(self.primary_path());
         if existing.is_empty() {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::NoActiveProject,
                 "no active project; run `rwv activate <name>` or pass `--project <name>` \
                  (no projects exist under this workspace yet — `rwv init <name>` to create one)"
             );
         }
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::NoActiveProject,
             "no active project; run `rwv activate <name>` or pass `--project <name>`. \
              Existing projects: {}",
             existing.join(", "),
@@ -1591,7 +1586,8 @@ impl WorkspaceContext {
         } else {
             format!(" Existing projects: {}.", existing.join(", "))
         };
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::DanglingActiveProject,
             "active project `{}` is set in `.rwv-active` but `projects/{}/` does not exist; \
              run `rwv activate <existing-project>` or remove `.rwv-active`.{}",
             name.as_str(),
@@ -1966,7 +1962,10 @@ impl WorkweaveMarker {
         match observe_marker(&path) {
             MarkerPresence::Absent => Ok(None),
             MarkerPresence::Usable(marker) => Ok(Some(marker)),
-            MarkerPresence::Defective { defect, .. } => Err(anyhow::anyhow!(defect.refusal(&path))),
+            MarkerPresence::Defective { defect, .. } => Err(crate::refusal::refusal(
+                defect.kind(),
+                defect.refusal(&path),
+            )),
         }
     }
 
@@ -2065,6 +2064,19 @@ pub enum MarkerDefect {
 }
 
 impl MarkerDefect {
+    /// The condition each arm names, for the refusals built from
+    /// [`Self::refusal`].
+    ///
+    /// Two of the three are conditions `rwv doctor` already reports, and they
+    /// carry doctor's own token rather than a refusal-side twin.
+    pub fn kind(&self) -> RefusalKind {
+        match self {
+            MarkerDefect::DanglingPrimary { .. } => RefusalKind::DanglingPrimary,
+            MarkerDefect::Legacy => RefusalKind::LegacyWorkweaveMarker,
+            MarkerDefect::Unreadable { .. } => RefusalKind::UnreadableMarker,
+        }
+    }
+
     /// The operator-facing refusal for a marker carrying this defect: what is
     /// wrong, the value that is wrong, and every exit that does not require
     /// the reader to guess an identity on the tree's behalf.
@@ -2365,7 +2377,8 @@ impl RootObservation {
                     selection,
                 }))
             }
-            RootObservation::Disputed { root, .. } => anyhow::bail!(
+            RootObservation::Disputed { root, .. } => crate::refuse!(
+                RefusalKind::WeaveRootIdentityConflict,
                 "{} and {} both exist: a weave root carries the workweave marker \
                  or the active-project pointer, never both. Run `rwv doctor --fix`; \
                  it removes the redundant file where the primary-side workweave \
@@ -2378,7 +2391,10 @@ impl RootObservation {
                 marker_path,
                 defect,
                 ..
-            } => Err(anyhow::anyhow!(defect.refusal(&marker_path))),
+            } => Err(crate::refusal::refusal(
+                defect.kind(),
+                defect.refusal(&marker_path),
+            )),
         }
     }
 

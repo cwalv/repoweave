@@ -122,6 +122,90 @@ pub enum RefusalKind {
     /// An op-state lease outlived the process that took it. Shared with the
     /// finding.
     DeadOpLease,
+
+    /// No project is selected and none was supplied.
+    NoActiveProject,
+    /// The containment walk found no weave above CWD.
+    NoWeaveRoot,
+    /// The bootstrap target is neither a workspace nor empty, without consent.
+    OccupiedBootstrapDir,
+    /// The named project has no `projects/<name>/` here.
+    ProjectDirMissing,
+    /// The operation's bound project and the marker's disagree.
+    MarkerBindingDisagreement,
+    /// A peer process holds the state-file claim past the wait budget.
+    StateClaimHeld,
+    /// An attested input changed while the file was being generated.
+    DerivationInputsMoved,
+    /// An ownership receipt's recorded revision is not a commit id.
+    ReceiptRevisionUncanonical,
+    /// Attested generated files hold content rwv never accepted, no consent
+    /// given.
+    UnacceptedGeneratedContent,
+    /// The verb is defined for the other checkout kind.
+    WrongCheckoutKind,
+    /// Two projects claim one weave-root surfacing name.
+    SharedNameContested,
+    /// A repo source parses as neither URL nor shorthand.
+    UnresolvableRepoSource,
+    /// The address names no recorded workweave.
+    NoSuchWorkweave,
+    /// A repo the create would fork has no resolvable HEAD.
+    RepoWithoutCommits,
+    /// The ephemeral name is held by a ref rwv holds no receipt for.
+    UnownedBranchInNamespace,
+    /// The receipted ref is off its recorded tip.
+    OwnedBranchMoved,
+    /// The index records this workweave name at another path.
+    WorkweaveNameTaken,
+    /// The target directory is another workweave's.
+    ForeignWorkweaveInTargetDir,
+    /// The directory slot is taken by a non-addressable occupant.
+    TargetDirOccupied,
+    /// The reuse/replace target holds work no flag here can consent to lose.
+    ReplaceTargetHoldsWork,
+    /// The source project directory is dirty and `--capture-dirty` was not
+    /// given.
+    DirtyProjectDir,
+    /// A workweave holds uncommitted changes and `--discard-uncommitted` was
+    /// not given.
+    UncommittedWork,
+    /// A workweave holds unlanded commits and `--discard-unmerged-commits` was
+    /// not given.
+    UnmergedCommits,
+    /// Two paths both claim to be this workweave.
+    RegistryPathDisagreement,
+
+    /// A marker-bearing workweave no registry entry records. Shared with the
+    /// finding.
+    UnregisteredWorkweave,
+    /// A recorded name → path that no longer round-trips. Shared with the
+    /// finding.
+    StaleRegistryEntry,
+    /// `.rwv-active` names a project directory that is not on disk. Shared
+    /// with the finding.
+    DanglingActiveProject,
+    /// A `.rwv-workweave-index` written before ownership receipts existed.
+    /// Shared with the finding.
+    LegacyWorkweaveIndex,
+    /// A `.rwv-workweave` marker in the YAML shape `--fix` migrates. Shared
+    /// with the finding.
+    LegacyWorkweaveMarker,
+    /// A `.rwv-workweave` marker that parses as neither current nor
+    /// migratable. Shared with the finding.
+    UnreadableMarker,
+    /// A marker's `primary:` names no workspace root. Shared with the finding,
+    /// which carries this same defect value on its wire.
+    DanglingPrimary,
+    /// A weave root carries both the marker and the active-project pointer.
+    /// Shared with the finding.
+    WeaveRootIdentityConflict,
+    /// A branch in this workweave's namespace carries the pre-flat shape.
+    /// Shared with the finding.
+    UnmigratedEphemeralBranch,
+    /// A checkout inside a workweave is a canonical store other worktrees link
+    /// into. Shared with the finding.
+    StandaloneInWorkweave,
 }
 
 impl RefusalKind {

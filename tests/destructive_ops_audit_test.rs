@@ -239,10 +239,9 @@ const ALLOWLIST: &[Allowed] = &[
             unmerged refusal unless DiscardUnmergedConsent (see the \
             workweave.rs/remove_dir_all entry). It also resolves each \
             worktree's actual canonical-store parent \
-            (Vcs::resolve_canonical_store) and refuses on \
-            no-canonical-store-with-foreign-dependents — the tier-0 \
-            topology precondition (joints/clone-topology.md), not \
-            bypassable by any waiver. \
+            (Vcs::resolve_canonical_store) and refuses when that checkout is \
+            itself a canonical store with dependents outside the workweave — \
+            the tier-0 topology precondition, not bypassable by any waiver. \
             (2) prune_dropped_repo: behind the uncommitted-changes refusal, \
             and on the only arm that reaches remove_worktree also behind the \
             divergence refusal (that arm is the `canonical.exists()` one). \

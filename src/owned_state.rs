@@ -35,6 +35,7 @@
 //! identical story and can port by calling the same three helpers.
 
 use crate::integration::{Issue, IssueKind, Severity};
+use crate::refusal::RefusalKind;
 use crate::workweave_index;
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -209,7 +210,8 @@ impl LedgerClaim {
                         let held_by = std::fs::read_to_string(&path)
                             .map(|s| s.trim().to_string())
                             .unwrap_or_else(|_| "an unreadable holder".to_string());
-                        anyhow::bail!(
+                        crate::refuse!(
+                            RefusalKind::StateClaimHeld,
                             "another rwv still holds the owned-digest ledger of {dir} \
                              ({held_by}). If no rwv is running, delete {claim} and rerun.",
                             dir = crate::path_spelling::operator_path(dir),
@@ -329,7 +331,8 @@ pub fn stamp_owned_generation(
             .iter()
             .map(|path| format!("\n  {path}"))
             .collect::<String>();
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::DerivationInputsMoved,
             "refusing to record {} as generated: {} input(s) it was derived \
              from changed while it was being generated, so the record would \
              attest a derivation that did not happen:{listed}\n\

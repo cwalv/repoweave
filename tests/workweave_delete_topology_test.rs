@@ -6,8 +6,8 @@
 //! rather than assuming `<ws_root>/<repo_path>` is the parent. When the
 //! resolved parent reveals a topology violation that delete cannot
 //! safely handle (the checkout IS a canonical store with foreign
-//! dependents), the verb refuses with a named precondition pointing at
-//! `rwv doctor`.
+//! dependents), the verb refuses, naming the condition it carries and
+//! pointing at `rwv doctor`.
 //!
 //! All fixtures here are SYNTHETIC — the verb is destructive and we
 //! never exercise it against the live weave.
@@ -209,9 +209,10 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
 
 /// When a workweave checkout is itself a canonical store that OTHER
 /// worktrees link into (the catastrophic case the joint flags as
-/// hazard 2), delete must refuse with a named precondition
-/// pointing at `rwv doctor`. The refusal is NOT bypassable with the discard
-/// waivers.
+/// hazard 2), delete must refuse, pointing at `rwv doctor`. The condition it
+/// carries is the one doctor reports for this topology, so the operator meets
+/// one name for it rather than two. The refusal is NOT bypassable with the
+/// discard waivers.
 #[test]
 fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     let tmp = common::tempdir().unwrap();
@@ -268,10 +269,13 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     let err = result.expect_err("delete should refuse when a checkout hosts foreign worktrees");
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("inverted clone topology")
-            && msg.contains("no-canonical-store-with-foreign-dependents")
-            && msg.contains("rwv doctor"),
-        "refusal must name the precondition and point at `rwv doctor`. got:\n{msg}"
+        msg.contains("inverted clone topology") && msg.contains("rwv doctor"),
+        "refusal must name what it found and point at `rwv doctor`. got:\n{msg}"
+    );
+    assert_eq!(
+        repoweave::refusal::kind_of(&err),
+        Some(repoweave::refusal::RefusalKind::StandaloneInWorkweave),
+        "the refusal must carry doctor's own name for this topology. got:\n{msg}"
     );
     // Workweave dir must STILL EXIST — the refusal must not have
     // partially destroyed it.

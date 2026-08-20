@@ -83,6 +83,7 @@
 //! doctor's container scan re-adopts it.
 
 use crate::manifest::ProjectName;
+use crate::refusal::RefusalKind;
 use crate::vcs::{
     EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
 };
@@ -289,7 +290,8 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
         .parent()
         .expect("index_path always has a parent (projects/<name>/)");
     if !parent.exists() {
-        anyhow::bail!(
+        crate::refuse!(
+            RefusalKind::ProjectDirMissing,
             "cannot write workweave index: project directory {} does not exist",
             parent.display()
         );
@@ -341,7 +343,8 @@ impl IndexClaim {
             .parent()
             .expect("claim_path always has a parent (projects/<name>/)");
         if !parent.exists() {
-            anyhow::bail!(
+            crate::refuse!(
+                RefusalKind::ProjectDirMissing,
                 "cannot claim workweave index: project directory {} does not exist",
                 parent.display()
             );
@@ -361,7 +364,8 @@ impl IndexClaim {
                         let held_by = std::fs::read_to_string(&path)
                             .map(|s| s.trim().to_string())
                             .unwrap_or_else(|_| "an unreadable holder".to_string());
-                        anyhow::bail!(
+                        crate::refuse!(
+                            RefusalKind::StateClaimHeld,
                             "another rwv still holds the workweave index of project \
                              {project} at {root} ({held_by}). If no rwv is running, \
                              delete {claim} and rerun.",
@@ -867,11 +871,14 @@ impl RefRegistry {
 /// detection side lives at [`crate::workspace::pending_index_migration`],
 /// next to the marker check it mirrors.
 fn legacy_index_error(path: &Path) -> anyhow::Error {
-    anyhow::anyhow!(
-        "{} is a legacy workweave index written before ref-ownership receipts \
-         existed (no `receipts` field). Run `rwv doctor --fix` to migrate it \
-         before creating or destroying refs in this project.",
-        path.display()
+    crate::refusal::refusal(
+        RefusalKind::LegacyWorkweaveIndex,
+        format!(
+            "{} is a legacy workweave index written before ref-ownership receipts \
+             existed (no `receipts` field). Run `rwv doctor --fix` to migrate it \
+             before creating or destroying refs in this project.",
+            path.display()
+        ),
     )
 }
 
@@ -885,12 +892,15 @@ impl RefReceipt {
     fn to_owned_ref(&self, path: &Path) -> anyhow::Result<OwnedRef> {
         let created_at =
             ResolvedRevisionId::from_rev_parse_output(&self.created_at).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{}: ownership receipt for '{}' records '{}' as its created-at \
-                     revision, which is not a canonical commit id",
-                    path.display(),
-                    self.name,
-                    self.created_at
+                crate::refusal::refusal(
+                    RefusalKind::ReceiptRevisionUncanonical,
+                    format!(
+                        "{}: ownership receipt for '{}' records '{}' as its created-at \
+                         revision, which is not a canonical commit id",
+                        path.display(),
+                        self.name,
+                        self.created_at
+                    ),
                 )
             })?;
         Ok(OwnedRef::from_receipt(

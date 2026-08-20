@@ -24,6 +24,7 @@ use crate::lock;
 use crate::plugins;
 use crate::prime;
 use crate::push;
+use crate::refusal::RefusalKind;
 use crate::setup;
 use crate::status;
 use crate::sync;
@@ -208,7 +209,8 @@ fn resolve_workweave_flag(
         Some(path) => Ok((path, project.clone())),
         // Listing `raw` back to the operator as a candidate is what a plain
         // "no such workweave" would do here, since the entry is recorded.
-        None => anyhow::bail!(
+        None => crate::refuse!(
+            RefusalKind::StaleRegistryEntry,
             "'-w {raw}' is recorded for project `{project}` as workweave `{name}`, but that \
              registry entry does not round-trip through a `.rwv-workweave` marker — the \
              directory is gone, or is another workspace's.\n\
@@ -226,10 +228,13 @@ fn resolve_workweave_flag(
 /// string could only report that the typo was not a valid project name.
 fn no_such_workweave(raw: &str, recorded: &[(ProjectName, WorkweaveName)]) -> anyhow::Error {
     if recorded.is_empty() {
-        return anyhow::anyhow!(
-            "no workweave is addressable as `{raw}` (this weave's registries \
-             record no workweaves at all; create one with \
-             `rwv workweave <project> create <name>`)"
+        return crate::refusal::refusal(
+            RefusalKind::NoSuchWorkweave,
+            format!(
+                "no workweave is addressable as `{raw}` (this weave's registries \
+                 record no workweaves at all; create one with \
+                 `rwv workweave <project> create <name>`)"
+            ),
         );
     }
     let known = recorded
@@ -237,12 +242,15 @@ fn no_such_workweave(raw: &str, recorded: &[(ProjectName, WorkweaveName)]) -> an
         .map(|(project, name)| crate::workspace::weave_dir_name(project, name))
         .collect::<Vec<_>>()
         .join("\n  ");
-    anyhow::anyhow!(
-        "no workweave is addressable as `{raw}`.\n\
-         \n\
-         Registered workweaves:\n  {known}\n\
-         \n\
-         Run `rwv doctor` if a workweave exists on disk but is missing from the registry."
+    crate::refusal::refusal(
+        RefusalKind::NoSuchWorkweave,
+        format!(
+            "no workweave is addressable as `{raw}`.\n\
+             \n\
+             Registered workweaves:\n  {known}\n\
+             \n\
+             Run `rwv doctor` if a workweave exists on disk but is missing from the registry."
+        ),
     )
 }
 
@@ -1083,7 +1091,8 @@ pub fn run() -> anyhow::Result<()> {
                                 sync::SyncSource::Path(parent.clone())
                             }
                             crate::workspace::Checkout::Primary { .. } => {
-                                anyhow::bail!(
+                                crate::refuse!(
+                                    RefusalKind::WrongCheckoutKind,
                                     "bare `rwv sync-to` targets the workweave's recorded \
                                      parent, but CWD ({}) is in the primary weave, not a \
                                      workweave. Provide a target explicitly.",
