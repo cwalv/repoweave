@@ -227,24 +227,42 @@ mod tests {
         );
     }
 
+    /// A chain really carrying two kinds. A tag placed directly on a tagged
+    /// error is not one: the wrapper's `source` reaches past the error it
+    /// holds, so the lower tag never appears in the chain at all and nothing
+    /// downstream could tell one kind from two. A `.context()` between the two
+    /// is what puts both in reach — and it is the shape the resume path
+    /// produces, where a decorator tags a gate error its caller already
+    /// wrapped.
+    fn two_kinds_in_one_chain() -> anyhow::Error {
+        let wrapped = Err::<(), _>(refusal(RefusalKind::OpInProgress, "an op is in flight"))
+            .context("the resumed phase re-gated its source")
+            .unwrap_err();
+        let doubled = refusing(RefusalKind::OpParked, wrapped);
+        assert_eq!(
+            doubled.chain().filter_map(kind_of_link).count(),
+            2,
+            "the fixture must really carry two kinds, or what follows proves nothing"
+        );
+        doubled
+    }
+
     /// Two kinds in one chain still route once. A rendering that walked the
     /// chain and printed what it found would put two commands in front of a
     /// reader who can only run one.
     #[test]
-    fn two_nested_kinds_render_one_route_line() {
-        let inner = refusal(RefusalKind::OpInProgress, "an op is in flight");
-        let outer = refusing(RefusalKind::OpParked, inner);
-
-        let rendered = render(&outer);
+    fn two_kinds_render_one_route_line() {
+        let rendered = render(&two_kinds_in_one_chain());
         assert_eq!(rendered.matches("rwv explain").count(), 1);
         assert!(rendered.ends_with("\nrwv explain op-parked\n"));
     }
 
     #[test]
     fn the_outer_tag_wins_over_a_tag_beneath_it() {
-        let inner = refusal(RefusalKind::OpInProgress, "an op is in flight");
-        let outer = refusing(RefusalKind::OpParked, inner);
-        assert_eq!(kind_of(&outer), Some(RefusalKind::OpParked));
+        assert_eq!(
+            kind_of(&two_kinds_in_one_chain()),
+            Some(RefusalKind::OpParked)
+        );
     }
 
     #[test]
