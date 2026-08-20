@@ -558,14 +558,17 @@ fn legacy_marker_with_no_project_is_reported() {
     let violations = json["violations"].as_array().expect("violations is array");
 
     assert!(
-        !violations.iter().any(|v| v["kind"] == "legacy-workweave-marker"),
+        !violations
+            .iter()
+            .any(|v| v["kind"] == "legacy-workweave-marker"),
         "a marker with no project: has nothing for --fix to construct and must \
          not be reported auto-fixable; violations: {violations:?}"
     );
     let finding = violations
         .iter()
         .find(|v| {
-            v["kind"] == "workweave-tree-integrity" && v["sub_kind"].get("unreadable-marker").is_some()
+            v["kind"] == "workweave-tree-integrity"
+                && v["sub_kind"].get("unreadable-marker").is_some()
         })
         .unwrap_or_else(|| panic!("expected an unreadable-marker finding; got: {violations:?}"));
     assert!(
