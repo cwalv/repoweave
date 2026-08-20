@@ -45,6 +45,16 @@ fn minted_tokens() -> Vec<String> {
         .collect()
 }
 
+/// The published entry pages, read from disk rather than through the module
+/// that serves them.
+fn pages_text() -> String {
+    let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference");
+    let refusals = std::fs::read_to_string(docs.join("refusals.md")).expect("refusals published");
+    let findings =
+        std::fs::read_to_string(docs.join("doctor-findings.md")).expect("findings published");
+    format!("{refusals}\n{findings}")
+}
+
 /// serde's `rename_all = "kebab-case"`, reproduced outside serde.
 fn kebab(variant: &str) -> String {
     let mut out = String::new();
@@ -186,11 +196,21 @@ fn explain_serves_the_page_section_verbatim() {
             .expect("rwv should run");
         assert!(out.status.success(), "rwv explain {token} failed");
         let printed = String::from_utf8_lossy(&out.stdout).into_owned();
-        let entry = repoweave::explain::entry_for_token(token).expect("entry exists");
-        assert_eq!(
-            printed.trim_end_matches('\n'),
-            entry,
-            "`rwv explain {token}` printed something other than the page section"
+        let printed = printed.trim_end_matches('\n');
+
+        // Compared against the PAGE, not against `entry_for_token` — that is
+        // the function under test, and asserting it against itself passes
+        // whatever it becomes. What must hold is that the bytes an operator
+        // reads occur verbatim in what the site publishes.
+        let published = pages_text();
+        assert!(
+            !printed.is_empty() && published.contains(printed),
+            "`rwv explain {token}` printed text that is not in any published page:\n{printed}"
+        );
+        assert!(
+            printed.starts_with(&format!("### `{token}`"))
+                || printed.starts_with(&format!("#### `{token}`")),
+            "`rwv explain {token}` opened with something other than that token's heading:\n{printed}"
         );
     }
 }
