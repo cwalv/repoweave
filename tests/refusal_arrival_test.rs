@@ -220,6 +220,22 @@ fn the_resume_path_routes_to_a_token() {
         stderr.contains("still parked at its recorded phase"),
         "precondition: this is the parked-op decorator's refusal:\n{stderr}"
     );
+
+    // This drive is also the sample's only multi-line headline reaching a
+    // route line, and a fixture that quietly became single-line would take
+    // that coverage with it while still passing everything below.
+    let headline = stderr
+        .split_once("Error: ")
+        .expect("the refusal is decorated")
+        .1
+        .rsplit_once("\n\nrwv explain")
+        .expect("the route line is last")
+        .0;
+    assert!(
+        headline.contains('\n'),
+        "the headline must span several lines here, got:\n{headline}"
+    );
+
     assert_routes_to(&stderr, "op-parked");
 }
 

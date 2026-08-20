@@ -204,6 +204,27 @@ mod tests {
         );
     }
 
+    /// A headline of several lines, which is the shape a refusal takes when it
+    /// carries its own advice. Nothing indents it and nothing separates its
+    /// lines, where a cause's continuation lines are indented to match the
+    /// first — so the blank line before `Caused by:` is the only structural
+    /// break in the output, and it is what a route line would later sit after.
+    #[test]
+    fn a_multi_line_headline_renders_unindented_and_unbroken() {
+        let err = anyhow::Error::msg("the deepest cause\nwith a second line")
+            .context("the headline\nHint: try a scoped path: projects/{owner}/web-app/");
+
+        assert_eq!(
+            render(&err),
+            "Error: the headline\n\
+             Hint: try a scoped path: projects/{owner}/web-app/\n\
+             \n\
+             Caused by:\n    \
+             the deepest cause\n    \
+             with a second line\n"
+        );
+    }
+
     #[test]
     fn an_untagged_error_gets_no_route_line() {
         let err = anyhow::Error::msg("nothing was declined here").context("wrapped");
