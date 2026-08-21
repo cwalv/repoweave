@@ -127,7 +127,14 @@ fn arm_tokens(body: &str) -> BTreeSet<String> {
     out
 }
 
-/// serde's `rename_all = "kebab-case"` over `RefusalKind`'s variant names.
+/// The tokens `RefusalKind` publishes: `rename_all = "kebab-case"` over each
+/// variant name, **except** where an explicit `#[serde(rename = "…")]`
+/// overrides it.
+///
+/// Honouring the override is not a nicety. A variant attribute is how a token
+/// is renamed without touching Rust code, so a parser that reads only variant
+/// names is blind to the exact edit this file exists to catch — three
+/// mutations proved it by slipping past an earlier version of this function.
 fn refusal_tokens() -> BTreeSet<String> {
     let src = source("refusal.rs");
     let body = src
@@ -135,28 +142,43 @@ fn refusal_tokens() -> BTreeSet<String> {
         .expect("the enum is declared")
         .1;
     let body = body.split_once("\n}").expect("the enum closes").0;
-    body.lines()
-        .filter_map(|l| {
-            let name = l.strip_prefix("    ")?.strip_suffix(',')?;
-            (!name.is_empty()
-                && name.starts_with(char::is_uppercase)
-                && name.chars().all(|c| c.is_ascii_alphanumeric()))
-            .then(|| {
-                let mut out = String::new();
-                for (i, c) in name.char_indices() {
-                    if c.is_ascii_uppercase() {
-                        if i != 0 {
-                            out.push('-');
-                        }
-                        out.push(c.to_ascii_lowercase());
-                    } else {
-                        out.push(c);
-                    }
-                }
-                out
-            })
-        })
-        .collect()
+    let mut out = BTreeSet::new();
+    let mut override_token: Option<String> = None;
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("#[serde(rename = \"") {
+            if let Some(end) = rest.find('"') {
+                override_token = Some(rest[..end].to_owned());
+            }
+            continue;
+        }
+        let Some(name) = line.strip_prefix("    ").and_then(|l| l.strip_suffix(',')) else {
+            continue;
+        };
+        if name.is_empty()
+            || !name.starts_with(char::is_uppercase)
+            || !name.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        out.insert(override_token.take().unwrap_or_else(|| kebab(name)));
+    }
+    out
+}
+
+fn kebab(name: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in name.char_indices() {
+        if c.is_ascii_uppercase() {
+            if i != 0 {
+                out.push('-');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
