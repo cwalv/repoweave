@@ -146,7 +146,7 @@ rwv sync primary --strategy rebase
 rwv sync-to --retire
 ```
 
-`rwv.lock` is never merged — it is recomputed in Phase 3 each time. Lock-file conflicts are prevented by the `rwv.lock merge=rwv-ours` invariant that `rwv doctor --fix` installs in each project repo's committed `.gitattributes`; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry it. See [sync-semantics — N-way merge](../explanation/joints/sync-semantics.md#n-way-merge-two-workweaves-serial-landing) for the worked example.
+`rwv.lock` is never merged — it is recomputed in Phase 3 each time. Lock-file conflicts are prevented by the `rwv.lock merge=rwv-ours` invariant that `rwv doctor --fix` installs in each project repo's committed `.gitattributes`; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry it. See [sync-semantics](../explanation/joints/sync-semantics.md) for the worked example.
 
 ## Choosing a strategy
 
