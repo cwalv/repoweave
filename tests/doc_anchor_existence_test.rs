@@ -6,7 +6,7 @@
 //! invisible in the repository and visible only to a reader who followed the
 //! link and landed nowhere.
 //!
-//! Structural, under testing.md's licence 2 — a prohibition over an enumerable
+//! Structural, under docs/internals/testing.md's licence 2 — a prohibition over an enumerable
 //! population. There is no behavioural surface here: an anchor is resolved by
 //! the reader's browser, not by anything this suite can drive.
 //!
@@ -22,7 +22,7 @@
 //! Widening was not free and the cost is recorded rather than hidden: it found
 //! three broken anchors that had been shipping, all repaired in the commit that
 //! widened it. Two were fragments naming a heading that exists under a
-//! different id; the third cited a section of `sync-semantics.md` that does not
+//! different id; the third cited a section of `docs/explanation/joints/sync-semantics.md` that does not
 //! exist and never did, so the anchor was dropped and the page link kept.
 //!
 //! What remains invisible: anchors written in `src/` comments, and links in the

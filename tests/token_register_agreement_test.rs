@@ -10,11 +10,12 @@
 //! **This is the direction that was missing.** Each register's own tests assert
 //! its own spellings. A shared token could be renamed on the *doctor* side with
 //! nothing red anywhere, because no assertion compared the registers to each
-//! other. That is not a hypothetical: it is what a mutation on a sibling bead
-//! demonstrated, and it is why the reuse set is asserted here as a set rather
-//! than checked pair by pair inside one register's tests.
+//! other. That is not a hypothetical: renaming a shared token on the doctor
+//! side was green across the whole suite before this file existed, which is why
+//! the reuse set is asserted here as a set rather than checked pair by pair
+//! inside one register's own tests.
 //!
-//! Structural, under testing.md's licence 2 — a prohibition over an enumerable
+//! Structural, under docs/internals/testing.md's licence 2 — a prohibition over an enumerable
 //! population. The populations are read out of the source that declares them,
 //! never listed here; the one thing this file states is *intent*, which is the
 //! one thing source cannot tell you (see [`INTENDED_REUSE`]).
