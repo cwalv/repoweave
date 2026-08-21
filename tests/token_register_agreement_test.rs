@@ -316,11 +316,21 @@ fn edit_distance(a: &str, b: &str) -> usize {
 ///    because the page plainly documents it.
 /// 2. **Documented in prose, with no heading.** The nine integration issue
 ///    kinds live in table rows and paragraphs on the findings page.
-/// 3. **Not documented anywhere under `docs/`.** The VCS wire kinds that are
-///    not shared with the refusal register. These are published on a machine
-///    surface with no operator page at all, which is a gap in documentation
-///    before it is a gap in `rwv explain`. `uncommitted-changes` is in this
-///    group and carries a second, separate problem: no code path can emit it.
+/// 3. **No entry anywhere, though a bare grep says otherwise.** The VCS wire
+///    kinds not shared with the refusal register. A plain `git grep` for one of
+///    these finds six or more files and reads like documentation; every hit is
+///    a generated JSON schema — standalone under `docs/reference/schemas/`, or
+///    inlined into a `docs/reference/explain/*.md` bundle inside an
+///    `"enum": [...]` block — plus one `docs/internals/` page, which is not
+///    operator-facing. None is an entry. The query that decides it asks for the
+///    heading rather than the string:
+///
+///    ```sh
+///    git grep '^#\+ `<token>`' -- docs/
+///    ```
+///
+///    which returns nothing for all ten. `uncommitted-changes` is in this group
+///    and carries a second, separate problem: no code path can emit it.
 ///
 /// Recorded rather than fixed — closing any of the three is a change to pages
 /// this file does not own. The set is asserted exactly, so a vocabulary gaining
@@ -339,7 +349,7 @@ const NOT_EXPLAIN_SERVABLE: &[&str] = &[
     "managed-file-missing",
     "managed-file-user-held",
     "tool-missing",
-    // 3. VCS wire kinds — absent from docs/ entirely
+    // 3. VCS wire kinds — no entry heading; a bare grep finds only schemas
     "branch-already-exists",
     "cherry-pick",
     "command-failed",
