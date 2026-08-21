@@ -57,6 +57,16 @@ What `--regenerate-drifted` discards is not recoverable through rwv — copy any
 
 The install hooks are what settles this: they re-run each generator and record what it produces as accepted. So the verbs that run them without carrying a flag to answer with — `rwv activate`, `rwv add`, `rwv remove`, `rwv update`, `rwv doctor --fix` — withhold the hooks while it stands, name both flags on stderr, and go through once you have chosen. The rest of what each verb does still happens: `rwv add` still writes the manifest entry.
 
+## Weave-root links at undeclared names
+
+Dropping a name from `rwv.toml` — removing it from an integration's file list, or disabling the integration outright — does not remove the weave-root symlink that name's earlier declaration created. Regeneration only ever recreates what the project currently declares, so the orphaned link survives both `rwv activate` and `rwv materialize`, and `rwv doctor` reports it: a `surfacing` warning naming the link, what it resolves to, and the command that clears it. `doctor --fix` will not touch it — on disk it is indistinguishable from a link you made by hand at the same shape, so removal needs your consent:
+
+```bash
+rwv materialize --remove-undeclared-links
+```
+
+This removes exactly the links doctor named and nothing else: the still-declared links at the weave root are untouched, and so is the file each removed link pointed at — only the symlink goes. Re-run `rwv doctor` afterward to confirm the warning is gone.
+
 ## Verify the result
 
 After activation, the weave directory should have symlinks to the project's generated files:
