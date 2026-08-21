@@ -300,3 +300,101 @@ fn edit_distance(a: &str, b: &str) -> usize {
     }
     prev[b.len()]
 }
+
+/// Tokens that reach an operator but that `rwv explain` cannot serve.
+///
+/// An entry is served by slicing a heading titled *exactly* `` `token` ``, so a
+/// vocabulary documented some other way — or not at all — is printed at people
+/// without being reachable by the command the tooling tells them to run.
+///
+/// **Three distinct shapes, with three distinct fixes.** Grouped rather than
+/// flattened, because a single list would suggest a single remedy:
+///
+/// 1. **Documented, but not under a bare-token heading.** `branch-discipline`
+///    has three `###` entries and is unservable anyway: each is titled
+///    `` `branch-discipline` — <suffix> ``. The most surprising of the three,
+///    because the page plainly documents it.
+/// 2. **Documented in prose, with no heading.** The nine integration issue
+///    kinds live in table rows and paragraphs on the findings page.
+/// 3. **Not documented anywhere under `docs/`.** The VCS wire kinds that are
+///    not shared with the refusal register. These are published on a machine
+///    surface with no operator page at all, which is a gap in documentation
+///    before it is a gap in `rwv explain`. `uncommitted-changes` is in this
+///    group and carries a second, separate problem: no code path can emit it.
+///
+/// Recorded rather than fixed — closing any of the three is a change to pages
+/// this file does not own. The set is asserted exactly, so a vocabulary gaining
+/// an entry, or a new one arriving unservable, reds here and is re-decided
+/// rather than absorbed.
+const NOT_EXPLAIN_SERVABLE: &[&str] = &[
+    // 1. documented, heading carries a suffix
+    "branch-discipline",
+    // 2. integration issue kinds — prose and table rows, no heading
+    "config-rejected",
+    "core-finding",
+    "derived-state-stale",
+    "disabled-integration-artifact",
+    "integration-failed",
+    "managed-file-drift",
+    "managed-file-missing",
+    "managed-file-user-held",
+    "tool-missing",
+    // 3. VCS wire kinds — absent from docs/ entirely
+    "branch-already-exists",
+    "cherry-pick",
+    "command-failed",
+    "hook-rejected",
+    "not-a-repo",
+    "rebase-conflict",
+    "revision-not-found",
+    "stale-ref-witness",
+    "uncommitted-changes",
+    "worktree-exists",
+];
+
+/// Every token any register publishes is served by `rwv explain`, except the
+/// recorded set above — and that set is exactly the unservable ones.
+#[test]
+fn every_published_token_is_servable_or_a_recorded_exception() {
+    let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference");
+    let pages = format!(
+        "{}\n{}",
+        std::fs::read_to_string(docs.join("refusals.md")).expect("refusals published"),
+        std::fs::read_to_string(docs.join("doctor-findings.md")).expect("findings published"),
+    );
+    let served: BTreeSet<&str> = pages
+        .lines()
+        .filter_map(|line| {
+            let hashes = line.len() - line.trim_start_matches('#').len();
+            let rest = line.get(hashes..)?.trim();
+            (hashes >= 2 && rest.starts_with('`') && rest.ends_with('`') && rest.len() > 2)
+                .then(|| rest.trim_matches('`'))
+        })
+        .filter(|t| !t.contains(' '))
+        .collect();
+    assert!(
+        served.len() >= 90,
+        "the entry walk yielded {} headings; it has stopped reading the pages",
+        served.len()
+    );
+
+    let published: BTreeSet<String> = registers().values().flatten().cloned().collect();
+    let recorded: BTreeSet<&str> = NOT_EXPLAIN_SERVABLE.iter().copied().collect();
+
+    let unservable: BTreeSet<&str> = published
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|t| !served.contains(t))
+        .collect();
+
+    let newly_unservable: Vec<&&str> = unservable.difference(&recorded).collect();
+    assert!(
+        newly_unservable.is_empty(),
+        "these tokens are printed to operators but `rwv explain` cannot serve them:\n{newly_unservable:#?}"
+    );
+    let now_servable: Vec<&&str> = recorded.difference(&unservable).collect();
+    assert!(
+        now_servable.is_empty(),
+        "these are recorded as unservable but now have an entry — drop them from the record:\n{now_servable:#?}"
+    );
+}
