@@ -88,7 +88,7 @@ fn heading_ids(markdown: &str) -> BTreeSet<String> {
         .lines()
         .filter_map(|line| {
             let hashes = line.len() - line.trim_start_matches('#').len();
-            (1..=6).contains(&hashes).then(|| ())?;
+            (1..=6).contains(&hashes).then_some(())?;
             let rest = line.get(hashes..)?;
             rest.starts_with(' ').then(|| heading_id(rest))
         })
