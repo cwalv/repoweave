@@ -1106,13 +1106,30 @@ a file region you hold the pen on, which `--fix` reports and never overwrites.
 | `managed-file-missing` | A file the integration owns is not in the project directory. |
 | `managed-file-drift` | Owned content on disk differs from what `rwv activate` would write, or the owning tool can no longer read it. |
 | `managed-file-user-held` | The owned key or region is present without rwv's ownership marker. You hold the pen; `--fix` will not touch it. |
-| `surfacing` | A weave-root symlink onto an owned file is absent, occupied by real content, or resolves into a different project. |
+| `surfacing` | A weave-root symlink's on-disk state does not match what `rwv activate`'s surfacing step would put there. Reported only in part — see below. |
 | `config-rejected` | `rwv.toml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
 | `member-incompatibility` | A value you hold is incompatible with what the members require. Carries the observation as fields, below. |
 | `derived-state-stale` | Generated ecosystem state no longer follows from the inputs it was derived from. Reported only — see below. |
 | `disabled-integration-artifact` | An integration is disabled for this project, but content it authored is still on disk. Reported only — see below. |
 | `integration-failed` | An integration's hook returned an error; the runner captured it so the remaining integrations could still run. |
 | `core-finding` | Raised by doctor itself while driving the integrations. On the wire this appears only under `--fix`, which `--json` has no form of — see the disjointness rule above. |
+
+`surfacing` reports a weave-root symlink out of step with what `rwv activate`'s
+surfacing step would put there — the finding and `--fix` read the same
+predicate, so they agree on what "in step" means. Most of what it reports
+`--fix` (or `rwv activate` / `rwv materialize`, which run the same step)
+resolves outright, because the divergence is exactly what a fresh pass already
+corrects.
+
+Real content occupying a link's path stays report-only, and so does a link
+surfaced at a name the active project no longer declares — for the same
+reason in each case: on disk, either is indistinguishable from something you
+made yourself at that path, so `--fix` will not guess and overwrite it.
+
+**What to do:** `rwv doctor --fix` resolves anything it reports as fixable.
+For a link at a name the project no longer declares, run `rwv materialize
+--remove-undeclared-links`, which unlinks exactly the names the finding
+named — the files they pointed at are untouched either way.
 
 `derived-state-stale` is the standing form of the note `rwv sync` prints once.
 rwv records the digests of the inputs each generation read — the project
