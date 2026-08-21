@@ -65,8 +65,9 @@ project workspace, `docs/internals/` counts as landing. When operator text
 wants to reference something not yet published, **publish it** — a page under
 `docs/reference/`, listed in `SUMMARY.md`, keyed by whatever token the machine
 surface already uses (`docs/reference/doctor-findings.md` is keyed by the
-`rwv doctor --json` `kind`; a second namespace is a thing to keep in sync,
-not a feature).
+`rwv doctor --json` `kind`; `docs/reference/refusals.md` is keyed by the token
+a refusal prints; a second namespace is a thing to keep in sync, not a
+feature).
 
 Two shapes stay banned, string literals and generated surfaces included,
 because they encode no route a reader can take:
