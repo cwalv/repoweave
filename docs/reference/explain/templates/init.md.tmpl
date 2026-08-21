@@ -33,17 +33,19 @@ project directory inside the existing workspace.
 
 ### New-project form (`rwv init <name>`)
 
-1. Bootstraps the workspace skeleton if CWD is empty.
-2. Resolves the workspace root from CWD.
-3. Creates `projects/<name>/`.
-4. Runs `git init` in the new directory.
-5. Writes a skeletal `rwv.toml` (a bare `[repositories]` table).
-6. Configures replay-exclusion for `rwv.lock` (`.gitattributes`) and
+1. Validates `<name>` against rwv's naming rules, before anything touches
+   disk.
+2. Bootstraps the workspace skeleton if CWD is empty.
+3. Resolves the workspace root from CWD.
+4. Creates `projects/<name>/`.
+5. Runs `git init` in the new directory.
+6. Writes a skeletal `rwv.toml` (a bare `[repositories]` table).
+7. Configures replay-exclusion for `rwv.lock` (`.gitattributes`) and
    plants the durable `merge.rwv-ours.*` git config so `rwv sync` rebases
    correctly from the first commit.
-7. If `--provider` is given, adds a git remote named `origin` using the
+8. If `--provider` is given, adds a git remote named `origin` using the
    registry's clone URL pattern.
-8. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).
+9. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).
 
 ### Adopt form (`rwv init <source> --adopt`)
 
@@ -129,6 +131,10 @@ rwv init myorg/my-service --adopt
 
 ## Common errors
 
+- *invalid project name* — `<name>` fails rwv's naming rules: an ambiguous
+  `--` delimiter or an embedded `+` are `unrenderable-name`; anything else git
+  won't accept as a ref component is `invalid-ref-name`. Refused before
+  anything touches disk — see the token `rwv explain` prints for the exit.
 - *`rwv init` requires either an existing workspace or an empty directory* —
   CWD contains files but is not a repoweave workspace. Run `rwv init` in a
   fresh empty directory, or `cd` into an existing workspace.

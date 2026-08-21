@@ -160,6 +160,8 @@ Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace f
 
 The install hooks are withheld while a generated file rwv attests holds content it never accepted — see `rwv materialize` below, which is where that is settled.
 
+Refuses if an operation elsewhere holds op-state covering this workspace (`op-in-progress`).
+
 Anchored by `tests/doc_claims_activate_test.rs`.
 
 ### `rwv materialize [--regenerate-drifted | --adopt-drifted] [--remove-undeclared-links]`
@@ -171,6 +173,8 @@ Activation is two operations: **selection** (`.rwv-active`, the weave root's sha
 Hooks materialize; they never move a pin. A lock file gains what a new member requires and a version it already pins stays put. Advancing a dependency is `cargo update` / `npm update` / `uv lock --upgrade`, never a repoweave verb.
 
 It takes no project name, because naming one would be a selection. At a primary with no active project it refuses and names `rwv activate`.
+
+Refuses if an operation elsewhere holds op-state covering this workspace (`op-in-progress`).
 
 Generated state whose recorded inputs have moved is re-derived, and an attestation for a file nothing enabled here generates any more is dropped (the file is left alone). `rwv doctor` reports the first as `derived-state-stale`.
 

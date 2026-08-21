@@ -186,6 +186,9 @@ rwv materialize
 
 ## Common errors
 
+- *materialize does not start while an operation is in flight in this
+  workspace* — another sync or sync-to already holds op-state covering this
+  workspace. See `rwv explain op-in-progress` for what unblocks it.
 - *nothing is materialized at `<path>`: no project is active here* — a primary
   weave with no `.rwv-active`. There is no project to materialize until one is
   selected; run `rwv activate <name>`.
