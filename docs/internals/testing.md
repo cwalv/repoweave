@@ -43,22 +43,21 @@ by how large the module has grown:
 - **A sibling file declared `#[cfg(test)] mod tests;`** — the option that
   looks free. It is not, and the next section is why.
 
-**Size is not a reason to move.** `src/sync.rs` carries some 1,950 lines of
-tests inside a 9,100-line file and they stay there: 45 of its 58 tests name
-an item the module does not export — 19 module-level items and three
-associated functions, each the subject of the test that names it. Relocating
-them means exporting `prune_dropped_repo`, `check_store_unclaimed`,
-`materialize_missing_repo`, `ff_advance_repo`, `apply_strategy` and the rest
-so that a test can watch. This crate spends visibility deliberately —
-`src/main.rs` is a logic-free shim exactly so a consent-token constructor can
-stay `pub(in crate::cli)` — and a test is not what it is spent on.
+**Size is not a reason to move.** `src/sync.rs` carries a large block of
+tests inside a large file, and they stay there: most of its tests name an
+item the module does not export — private module-level items and associated
+functions, each the subject of the test that names it. Relocating them means
+exporting every one of those private items so that a test can watch. This
+crate spends visibility deliberately — `src/main.rs` is a logic-free shim
+exactly so a consent-token constructor can stay `pub(in crate::cli)` — and a
+test is not what it is spent on.
 
 **The integration-shaped tests are the ones that cannot move.** Every test
 in that module which builds a real git topology reaches a private subject;
-the thirteen that compile from `tests/` are string and enum round-trips and
-one rendered line. "Move the integration-shaped half out" inverts under
-measurement — what it would leave inline is the unit-shaped half. Even those
-thirteen are not a byte-for-byte relocation: a test written inside the crate
+the minority that compile from `tests/` are string and enum round-trips and
+a rendered-line check. "Move the integration-shaped half out" inverts under
+measurement — what it would leave inline is the unit-shaped half. Even that
+minority is not a byte-for-byte relocation: a test written inside the crate
 spells its own modules `crate::`, which no external target resolves.
 
 ### Moving a module out of its host file changes what the gates read
@@ -70,12 +69,12 @@ production by every gate that calls it:
 
 - `check_vcs_seam_bypasses` reddens. A test may spawn git and mint a
   backend; production may not. `src/sync.rs`'s module moved to
-  `src/sync/tests.rs` reports 62 lines, measured — and the gate bails
-  there, so the checks behind it go unmeasured.
+  `src/sync/tests.rs` trips it — and the gate bails there, so the checks
+  behind it go unmeasured.
 - `src_code_identifiers` and `src_code_doc_filenames` widen *silently*,
   which is worse than reddening. They are the evidence and exemption sets
-  `check_doc_symbol_refs` and `check_doc_citations` consult, and 112
-  identifiers spelled only by that module's tests would begin counting as
+  `check_doc_symbol_refs` and `check_doc_citations` consult, and an
+  identifier spelled only by that module's tests would begin counting as
   proof that a name a comment cites still exists. `src_code_identifiers`
   records that this exclusion held a live mutation.
 - `check_env_input_reads` wants an allowlist entry for every `std::env`
