@@ -707,6 +707,31 @@ fn add_new_sets_role_to_primary() {
 }
 
 #[test]
+fn add_new_with_role_flag_records_that_role() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", "github/myorg/newrepo", "--new", "--role", "reference"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add --new");
+
+    assert!(
+        manifest_content.contains(r#"role = "reference""#),
+        "new repo should have role reference, got:\n{manifest_content}"
+    );
+    assert!(
+        !manifest_content.contains(r#"role = "owned""#),
+        "new repo should not fall back to role owned, got:\n{manifest_content}"
+    );
+}
+
+#[test]
 fn add_new_infers_url_for_github_path() {
     let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);

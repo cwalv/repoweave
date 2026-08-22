@@ -624,11 +624,10 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
 /// Instead of cloning from a URL, this creates a new repo at the canonical
 /// path by running `git init`. The URL is inferred from the path convention
 /// via registries (e.g., `github/owner/repo` → `https://github.com/owner/repo.git`).
-/// The repo is added to the manifest with role `primary`.
 ///
 /// `ctx` is the already-resolved invocation context. Handlers must not
 /// re-resolve.
-pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn run_add_new(path_arg: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
     // `rwv add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
     // operates through and the `vcs_type` it records.
@@ -680,7 +679,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // a potentially different role. The physical init'd repo is shared; the
     // operator should know. This is not a refusal.
     {
-        warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, Role::Owned);
+        warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
     }
     if dest.exists() {
         eprintln!(
@@ -708,12 +707,11 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
         ),
     };
 
-    // Add entry to manifest with role primary.
     let entry = RepoEntry {
         vcs_type,
         url,
         version: default_branch,
-        role: Role::Owned,
+        role,
     };
     manifest.insert_repo(repo_path.clone(), entry);
 

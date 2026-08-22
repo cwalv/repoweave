@@ -727,7 +727,7 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             if new {
-                add_remove::run_add_new(&url, &ctx)?;
+                add_remove::run_add_new(&url, role, &ctx)?;
             } else {
                 add_remove::run_add(&url, role, &ctx)?;
             }
