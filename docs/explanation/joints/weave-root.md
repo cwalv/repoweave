@@ -33,6 +33,30 @@ than activating the primary. What switching at the primary retains is the
 ambient default: which project the root presents to a person or tool working
 at the weave itself.
 
+## How a root is recognised
+
+The containment walk that finds a weave root from some directory inside it
+tests one thing: **a weave root is a directory containing `projects/`.**
+Nothing else — no registry-segment directory (`github/`, `local/`, …) counts
+towards the test, and none is required for it either. A directory holding
+only `projects/`, empty, is a weave root; this is not a special case carved
+out for it — it is what lets `rwv init` bootstrap into an empty directory at
+all, since the first thing it does is create `projects/` and then resolve
+its own invocation before anything else exists.
+
+A workweave is identified separately, by the `.rwv-workweave` marker file at
+its root, not by the shape test above — a workweave directory also contains
+`projects/` (its own worktree of the project repo), so shape alone cannot
+tell a workweave from a primary weave.
+
+This is the contract, not an approximation of one: a directory meeting the
+shape is a weave root by definition. One consequence worth stating rather
+than leaving implicit — first-ancestor-wins means a member checkout that
+happens to contain its own top-level `projects/` directory (an unusual
+tree, but not one the shape test can rule out) resolves as the weave from
+inside it, and the real weave above it is never reached. That is the shape
+test doing exactly what it is defined to do, not a bug in the walk.
+
 ## Why the root is not a repository
 
 **Everything at the root already has an owner.**

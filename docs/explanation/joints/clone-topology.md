@@ -52,6 +52,12 @@ Each manifest repo named in any project's `rwv.toml` has exactly one
 the repo. Nothing under `<weave>/.workweaves/` is a standalone clone of
 any manifest repo.
 
+`repo_path` here is a given, not a choice this joint makes: it is derived
+from a clone source's identity — the registry set on
+[formats](../../reference/formats.md) maps a URL's host, or a matched
+registry's own name, to the first path segment — never asserted by a verb
+from an operator-typed path.
+
 Operationally: when `rwv add` materializes a new manifest repo, the
 canonical store always lands at primary's `<weave>/<repo_path>`, even
 when the verb runs from inside a workweave. Workweaves do not host

@@ -4,7 +4,7 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 
 | Term | Meaning |
 |---|---|
-| **Weave** | A repoweave workspace — a directory containing repos, project directories, and ecosystem wiring generated from the active project. |
+| **Weave** | A repoweave workspace: a directory containing `projects/` — that is the whole detection rule, not shorthand for a fuller description. It typically also holds cloned repos and ecosystem wiring generated from the active project, but neither is required for the directory to be recognised as one. |
 | **Primary weave** | The "main" weave at the workspace root (as opposed to a workweave under `.workweaves/`). Target of `rwv sync primary`. |
 | **Workweave** | A worktree-based derivative of a weave, created on demand for isolation (agents, features, PR review). Lives at `<parent>/.workweaves/<project>--<name>/`. Created, duplicated, and destroyed with `rwv workweave <project> create` (`--from <source>` forks from an existing workweave) and `rwv workweave <project> delete` — not by copying or removing the directory. |
 | **Project** | A directory under `projects/` containing `rwv.toml`, `rwv.lock`, and project-scoped docs. Itself a git repo with normal history. |
@@ -19,7 +19,7 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Role** | A repo's relationship to a project: `owned`, `fork`, `dependency`, `reference`. Encodes change resistance. See [roles](./roles.md). |
 | **Integration** | A built-in unit, shipped with rwv, that translates between repoweave's multi-repo model and one ecosystem's workspace format. Bound by a file-ownership contract (surfacing + content ownership). See [integrations](./integrations/index.md) and [file-ownership](../explanation/joints/file-ownership.md). |
 | **Plugin** | An external `rwv-<verb>` executable on `$PATH`, dispatched when a verb isn't built into rwv itself — the low-friction, self-serve extension point for adding a verb without a PR against core. Must not write rwv-owned files; unlike an integration's enforced file-ownership contract, this is a documented rule, not a dispatch-time guard — `rwv doctor` can only flag a violation after the fact. Contrast with **Integration**. See [plugin-protocol](./plugin-protocol.md) for the contract, [plugin-boundary](../explanation/joints/plugin-boundary.md) for the rationale. |
-| **Registry** | The first segment of a repo's canonical path; a short name for where the repo lives. Built-in: `github`, `gitlab`, `bitbucket`. |
+| **Registry** | The first segment of a repo's canonical path; a short name for where the repo lives. Built-in: `github`, `gitlab`, `bitbucket`, plus `local`, reachable only as an `rwv add --new` creation address rather than by matching a URL. See [formats — Directory layout](./formats.md#directory-layout). |
 | **Pyramid of stability** | Cross-repo canonical-tip concept: a project's branches each carry their own lock, defining "stable" / "rc" / "main" channels for the whole system. See [joint](../explanation/joints/pyramid-of-stability.md). |
 | **Canonical tip** | The vetted cross-repo state of a project on a given branch (encoded by that branch's `rwv.lock`). |
 | **Lens** | A motivational way of looking at rwv targeted at one audience. Three lenses: [workspace](../explanation/lenses/workspace.md), [monorepo](../explanation/lenses/monorepo.md), [agent](../explanation/lenses/agent.md). |

@@ -529,3 +529,12 @@ The push codepath (example (d)) is covered by:
   VCS-neutral by design (canonical store, linked workspace, branch
   ownership); the git mapping there is the worked example, in the same
   shape as the examples in this joint.
+- A registry (`src/registry.rs`) is a seam of its own, adjacent to this one
+  rather than inside it: a registry decides a repo's identity, its
+  canonical path, and — for `rwv add --new` — what parameters creating one
+  needs; `Vcs` decides how the backend that registry named actually creates,
+  clones, or brands it. `CreationPlan.vcs` is the one field a registry
+  writes and a verb reads across that line — the registry constrains which
+  backend a creation could use, the verb still chooses (currently there is
+  only one choice, `git`), and the plan is what records the choice made
+  rather than leaving it implicit.
