@@ -5409,7 +5409,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             Err(e) => {
                 if emit_text {
-                    eprintln!("  {}: ff-advance failed: {e}", repo_path);
+                    eprintln!("  {}: ff-advance failed: {e:#}", repo_path);
                 }
                 any_ff_failure = true;
             }
@@ -5466,7 +5466,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
         Err(e) => {
             if emit_text {
-                eprintln!("  (project): ff-advance failed: {e}");
+                eprintln!("  (project): ff-advance failed: {e:#}");
             }
             crate::refuse!(
                 RefusalKind::OpParked,
