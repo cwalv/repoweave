@@ -12,7 +12,13 @@
 //!
 //! The reverse direction has no other home. `every_entry_names_a_minted_token`
 //! guards refusals.md against entries that outlived their tokens; nothing
-//! guarded this page, because until now there was no page.
+//! guards this page but the test below.
+//!
+//! The page carries two registers, and the reverse direction has to read both
+//! or it reports one register's entries as the other's orphans. Sync's failure
+//! kinds are documented here because they arrive in one JSON object with the
+//! VCS kinds — sync's as the outer tag, the VCS one as the `cause` beneath it
+//! — so a reader holding a failed repo outcome looks both up in one place.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -47,12 +53,13 @@ fn entries() -> BTreeSet<String> {
 /// because that walk also required a hyphen and only one of the three has one.
 /// Reading the minting function is what makes the population the register
 /// rather than an artifact of the spelling.
-fn published() -> BTreeSet<String> {
-    let src = std::fs::read_to_string(manifest_dir().join("src/vcs.rs")).expect("src/vcs.rs reads");
+fn minted(file: &str) -> BTreeSet<String> {
+    let src = std::fs::read_to_string(manifest_dir().join("src").join(file))
+        .unwrap_or_else(|e| panic!("src/{file} reads: {e}"));
     const MINT: &str = "pub fn kind(&self) -> &'static str {";
     let body = src
         .split_once(MINT)
-        .unwrap_or_else(|| panic!("src/vcs.rs still declares {MINT:?}"))
+        .unwrap_or_else(|| panic!("src/{file} still declares {MINT:?}"))
         .1
         .split_once("\n    }")
         .expect("the minting function still closes")
@@ -66,6 +73,19 @@ fn published() -> BTreeSet<String> {
         rest = &after[end..];
     }
     out
+}
+
+fn published() -> BTreeSet<String> {
+    minted("vcs.rs")
+}
+
+/// The tokens `SyncFailure::kind` mints — the page's second register.
+///
+/// Not the wire producer: `rwv sync --json` serialises `SyncFailureOutput`.
+/// `sync_failure_kind_matches_wire_tag` pins the two over every variant, which
+/// is what makes reading the match arms a faithful read of the wire.
+fn sync_failure_kinds() -> BTreeSet<String> {
+    minted("sync.rs")
 }
 
 /// Published kinds with no entry, and why each is recorded rather than written.
@@ -169,11 +189,34 @@ fn explain_serves_every_entry_on_the_page() {
     }
 }
 
-/// The reverse: an entry naming a token the register does not publish is a
-/// section nothing routes to, and it outlives the code silently.
+/// Sync's failure kinds resolve too, and `head-unreadable` is the one that
+/// proves the page is not the unit: `rwv doctor` names that condition as well,
+/// so its single entry stays on the findings page and this still passes.
 #[test]
-fn every_entry_names_a_published_vcs_kind() {
-    let published = published();
+fn every_sync_failure_kind_has_an_entry() {
+    let kinds = sync_failure_kinds();
+    assert!(
+        kinds.len() >= 3,
+        "the sync register walk yielded {} tokens; it has stopped matching the \
+         arms it reads:\n{kinds:#?}",
+        kinds.len()
+    );
+    let undocumented: Vec<String> = kinds
+        .into_iter()
+        .filter(|t| repoweave::explain::entry_for_token(t).is_none())
+        .collect();
+    assert!(
+        undocumented.is_empty(),
+        "these sync failure kinds reach an operator with no entry:\n{undocumented:#?}"
+    );
+}
+
+/// The reverse: an entry naming a token neither register publishes is a section
+/// nothing routes to, and it outlives the code silently.
+#[test]
+fn every_entry_names_a_published_kind() {
+    let mut published = published();
+    published.extend(sync_failure_kinds());
     let orphaned: Vec<String> = entries()
         .into_iter()
         .filter(|t| !published.contains(t))
