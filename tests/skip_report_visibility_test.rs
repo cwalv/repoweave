@@ -781,6 +781,15 @@ fn the_return_scan_reads_the_return_and_not_the_arm_that_measures() {
 /// every `Command` status check in the corpus, most of which are measuring
 /// rather than skipping. The boundary is stated instead, because a structural
 /// pin's scope IS its coverage claim.
+///
+/// A second known exclusion holds a different shape than either case above:
+/// `tool_only_bin` in `tests/common/mod.rs`, and the `git`-resolving lines in
+/// `tests/doctor_perf_test.rs` and `tests/integrations_test.rs`, hand
+/// `which::which`'s answer to `.unwrap()` or `.expect(...)` and panic rather
+/// than returning when the tool is absent. There is no `return;` there for
+/// this scan to key on — a hard precondition is not a guarded return — so
+/// reading `resolve_tool_or_skip` callers alone as this shape's full extent
+/// undercounts it.
 #[test]
 fn no_environment_guard_returns_without_announcing() {
     let mut silent = Vec::new();
