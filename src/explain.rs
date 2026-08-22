@@ -35,6 +35,7 @@ const INIT_EXPLAIN: &str = include_str!("../docs/reference/explain/init.md");
 // derivable from the code it describes.
 const REFUSALS_PAGE: &str = include_str!("../docs/reference/refusals.md");
 const DOCTOR_FINDINGS_PAGE: &str = include_str!("../docs/reference/doctor-findings.md");
+const VCS_ERRORS_PAGE: &str = include_str!("../docs/reference/vcs-errors.md");
 
 /// The published pages an entry can live on, in resolution order.
 ///
@@ -57,7 +58,14 @@ const DOCTOR_FINDINGS_PAGE: &str = include_str!("../docs/reference/doctor-findin
 /// states a disposition for a whole kind, and on that channel what `--fix` may
 /// touch is settled per finding and carried on it — so a mark keyed to the
 /// kind would be false for some of the findings that kind covers.
-const ENTRY_PAGES: &[&str] = &[REFUSALS_PAGE, DOCTOR_FINDINGS_PAGE];
+///
+/// The VCS wire kinds are the fourth such register and the one that reads
+/// least like the others: rwv did not decline, it was stopped, so those kinds
+/// are outside the refusal class and carry their own page rather than
+/// borrowing a refusal token. Nothing about serving an entry depends on which
+/// page holds it, which is what makes a third page a listing rather than a
+/// special case.
+const ENTRY_PAGES: &[&str] = &[REFUSALS_PAGE, DOCTOR_FINDINGS_PAGE, VCS_ERRORS_PAGE];
 
 /// The heading level of `line` when it is a heading titled exactly `` `token` ``.
 fn entry_heading_level(line: &str, token: &str) -> Option<usize> {

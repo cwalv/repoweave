@@ -433,36 +433,39 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// vocabulary documented some other way — or not at all — is printed at people
 /// without being reachable by the command the tooling tells them to run.
 ///
-/// **No entry anywhere, though a bare grep says otherwise.** The VCS wire
-/// kinds not shared with the refusal register. A plain `git grep` for one of
-/// these finds six or more files and reads like documentation; every hit is
-/// a generated JSON schema — standalone under `docs/reference/schemas/`, or
-/// inlined into a `docs/reference/explain/*.md` bundle inside an
-/// `"enum": [...]` block — plus one `docs/internals/` page, which is not
-/// operator-facing. None is an entry. The query that decides it asks for the
-/// heading rather than the string:
+/// **The VCS wire kinds, which had no entry anywhere though a bare grep said
+/// otherwise.** A plain `git grep` for one of these finds six or more files and
+/// reads like documentation; every hit is a generated JSON schema — standalone
+/// under `docs/reference/schemas/`, or inlined into a
+/// `docs/reference/explain/*.md` bundle inside an `"enum": [...]` block — plus
+/// one `docs/internals/` page, which is not operator-facing. None was an entry.
+/// The query that decides it asks for the heading rather than the string:
 ///
 /// ```sh
 /// git grep '^#\+ `<token>`' -- docs/
 /// ```
 ///
-/// which returns nothing for any of them. `uncommitted-changes` is in this
-/// group and carries a second, separate problem: no code path can emit it.
+/// Run it against a control, because a query that answers nothing everywhere
+/// proves nothing: it returns one for `mid-operation`, which is served.
+///
+/// The reachable kinds now have entries on `docs/reference/vcs-errors.md`. What
+/// is left is a different condition wearing the same symptom, and the reason it
+/// stays is the opposite of the reason the others were here. These three are
+/// not missing an entry — an entry would describe a state no operator can
+/// reach, because no production path constructs the variant. Each has the same
+/// footprint: five definitional sites in `src/vcs.rs`, three test-only sites,
+/// and nothing else. `branch-already-exists` is the sharpest of them:
+/// `birth_ref_at_head` detects that exact collision and routes past the variant
+/// on stated grounds, so it is superseded rather than merely unused.
 ///
 /// Recorded rather than fixed — closing it is a change to pages this file does
-/// not own. The set is asserted exactly, so a vocabulary gaining an entry, or a
-/// new one arriving unservable, reds here and is re-decided rather than
+/// not own, and for these three the change is to the wire surface rather than
+/// to a page. The set is asserted exactly, so a vocabulary gaining an entry, or
+/// a new one arriving unservable, reds here and is re-decided rather than
 /// absorbed.
 const NOT_EXPLAIN_SERVABLE: &[&str] = &[
-    // VCS wire kinds — no entry heading; a bare grep finds only schemas
+    // VCS wire kinds no production path constructs
     "branch-already-exists",
-    "command-failed",
-    "hook-rejected",
-    "io",
-    "not-a-repo",
-    "rebase-conflict",
-    "revision-not-found",
-    "stale-ref-witness",
     "uncommitted-changes",
     "worktree-exists",
 ];
@@ -473,9 +476,10 @@ const NOT_EXPLAIN_SERVABLE: &[&str] = &[
 fn every_published_token_is_servable_or_a_recorded_exception() {
     let docs = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference");
     let pages = format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         std::fs::read_to_string(docs.join("refusals.md")).expect("refusals published"),
         std::fs::read_to_string(docs.join("doctor-findings.md")).expect("findings published"),
+        std::fs::read_to_string(docs.join("vcs-errors.md")).expect("vcs errors published"),
     );
     let served: BTreeSet<&str> = pages
         .lines()
