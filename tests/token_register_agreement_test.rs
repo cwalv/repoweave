@@ -38,6 +38,15 @@
 //! written down here and held nowhere is worth about as much as it costs to
 //! type: `cherry-pick` was carried in the VCS register by an earlier walk, and
 //! no prose was going to notice.
+//!
+//! **Residue.** More kebab vocabularies reach `--json` than this file reads —
+//! outcome tags, drift classifications, lock and containment relations. None
+//! of them names a condition, so none is owed an entry, and that part of the
+//! boundary costs nothing. The disjointness property is the part that does:
+//! every one of them owes it and only `ConflictOp` is held to it, because
+//! `ConflictOp` is the one this file already had a reason to read. Widening
+//! wants its own record of deliberate reuse first — those vocabularies share
+//! tokens with each other, and a walk that reds on all of it says nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
