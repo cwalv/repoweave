@@ -89,7 +89,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
   gate_dir=$(mktemp -d "${TMPDIR:-/tmp}/repoweave-pre-push.XXXXXX")
   git worktree add --detach --quiet "$gate_dir" "$commit"
-  echo "pre-push: running scripts/ci-local.sh against $commit..."
+  echo "pre-push: gating $commit with the full scripts/ci-local.sh."
+  echo "pre-push: cold build in a clean worktree — expect MINUTES of silence."
+  echo "pre-push: this is the gate running, not a hang. Do not interrupt."
   (cd "$gate_dir" && CARGO_INCREMENTAL=0 RUSTC_WRAPPER="$rustc_wrapper" ./scripts/ci-local.sh)
   rm -rf "$gate_dir"
   git worktree prune
