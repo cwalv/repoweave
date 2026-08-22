@@ -39,17 +39,26 @@ while read -r local_ref local_sha remote_ref remote_sha; do
         echo "pre-push: gh is required to verify CI before pushing a version tag"
         exit 1
       fi
+      # git names the pushed ref's own object, which for an annotated tag is
+      # the tag rather than the commit under it. Workflow runs are keyed on
+      # commits, so querying the tag's sha matches nothing and reads as a
+      # repo whose CI never ran. The `<rev>:<path>` lookup above peels of its
+      # own accord; an API query has no such courtesy.
+      tagged_commit=$(git rev-parse --verify --quiet "$local_sha^{commit}") || {
+        echo "pre-push: $tag does not name a commit"
+        exit 1
+      }
       slug=$(gh repo view --json nameWithOwner -q .nameWithOwner)
       conclusion=$(gh api \
-        "repos/$slug/actions/workflows/ci.yml/runs?head_sha=$local_sha&per_page=1" \
+        "repos/$slug/actions/workflows/ci.yml/runs?head_sha=$tagged_commit&per_page=1" \
         -q '.workflow_runs[0].conclusion // "none"')
       if [ "$conclusion" != "success" ]; then
-        echo "pre-push: refusing to push $tag — CI on $local_sha concluded '$conclusion', not 'success'."
+        echo "pre-push: refusing to push $tag — CI on $tagged_commit concluded '$conclusion', not 'success'."
         echo "pre-push: a tag published from a red commit is what shipped v0.15.0 and v0.16.0 with macOS red."
         echo "pre-push: push the commit, wait for CI, then push the tag."
         exit 1
       fi
-      echo "pre-push: CI is green on $local_sha"
+      echo "pre-push: CI is green on $tagged_commit"
       ;;
   esac
 done <<EOF
