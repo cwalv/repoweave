@@ -232,6 +232,11 @@ pub struct UniqueDiff {
 /// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
 /// messages embed VCS-appropriate "how do I resume this?" text without
 /// hardcoding git vocabulary.
+///
+/// The type admits all three variants — [`Vcs::mid_op`] constructs any of
+/// them from a repo's on-disk state — but a given field can be narrower than
+/// the type: every [`VcsError::RebaseConflict`] raised carries `Rebase`, so
+/// `Rebase` is the only value that field will actually carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConflictOp {
