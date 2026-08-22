@@ -28,7 +28,11 @@ fn minted_tokens() -> Vec<String> {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/refusal.rs"),
     )
     .expect("the refusal module is readable");
-    let body = src
+    variant_tokens(&src)
+}
+
+fn variant_tokens(enum_src: &str) -> Vec<String> {
+    let body = enum_src
         .split_once("pub enum RefusalKind {")
         .expect("the enum is declared")
         .1;
@@ -36,6 +40,7 @@ fn minted_tokens() -> Vec<String> {
 
     body.lines()
         .filter_map(|l| {
+            let l = l.strip_suffix('\r').unwrap_or(l);
             let name = l.strip_prefix("    ")?.strip_suffix(',')?;
             (!name.starts_with(char::is_lowercase)
                 && !name.starts_with('#')
@@ -43,6 +48,16 @@ fn minted_tokens() -> Vec<String> {
             .then(|| kebab(name))
         })
         .collect()
+}
+
+/// A CRLF checkout leaves the block's final line ending in a bare `\r` once
+/// the closing brace is sliced off at `\n}`, and `lines()` keeps that `\r`
+/// on an unterminated final line — so the last variant, and only the last,
+/// fell out of the walk on Windows.
+#[test]
+fn the_last_variant_survives_a_crlf_checkout() {
+    let src = "pub enum RefusalKind {\r\n    FirstThing,\r\n    LastThing,\r\n}\r\n";
+    assert_eq!(variant_tokens(src), ["first-thing", "last-thing"]);
 }
 
 /// The published entry pages, read from disk rather than through the module

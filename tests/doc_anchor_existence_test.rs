@@ -174,7 +174,7 @@ fn every_published_anchor_resolves() {
             .strip_prefix(Path::new(env!("CARGO_MANIFEST_DIR")))
             .unwrap_or(page)
             .to_string_lossy()
-            .into_owned();
+            .replace('\\', "/");
         scanned += anchor_links(&body).len();
         findings.extend(unresolved_anchors(&rel, &body));
     }

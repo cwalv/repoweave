@@ -110,7 +110,7 @@ fn site_read_tokens() -> BTreeMap<String, String> {
             .strip_prefix(member())
             .unwrap_or(&file)
             .to_string_lossy()
-            .into_owned();
+            .replace('\\', "/");
         let mut rest = body.as_str();
         while let Some(at) = rest.find("assert_routes_to(&stderr, \"") {
             let after = &rest[at + 27..];
