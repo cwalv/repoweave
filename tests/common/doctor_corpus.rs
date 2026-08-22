@@ -362,6 +362,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             project: project(),
             state_path: path("/ws/projects/proj/.rwv-owned-digests"),
             error: "parse failed: expected value at line 1 column 1".into(),
+            active: true,
         },
         CheckViolation::UnreadableWorkweaveIndex {
             project: project(),

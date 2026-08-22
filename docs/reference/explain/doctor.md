@@ -1853,12 +1853,16 @@ Schema:
         {
           "type": "object",
           "required": [
+            "active",
             "error",
             "kind",
             "project",
             "state_path"
           ],
           "properties": {
+            "active": {
+              "type": "boolean"
+            },
             "error": {
               "type": "string"
             },

@@ -442,7 +442,10 @@ has no entry. Both stay silent, which is what makes a fresh or upgraded weave
 quiet rather than noisy.
 
 **What to do:** run `rwv materialize` to re-derive the project's generated
-files and record them afresh.
+files and record them afresh. `rwv materialize` takes no project argument — it
+acts on whichever project the checkout presents — so this only reaches the
+finding for the active project. For any other project, run `rwv activate
+<project>` first; the repair runs there once it is the active one.
 
 Where the project generates none — no cargo workspace, and no other
 integration that owns a whole file — there is nothing to re-derive, and the

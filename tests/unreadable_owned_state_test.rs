@@ -410,3 +410,145 @@ fn the_record_outlives_the_member_whose_generation_it_attests() {
         kinds(&ws)
     );
 }
+
+/// A weave with two projects — `app`, selected by `.rwv-active`, and `other`,
+/// present but not selected — so the advice can be pinned against a project
+/// `rwv materialize` reaches and one it does not, in the same run. Neither
+/// project generates anything: [`weave_with_nothing_to_generate`]'s
+/// population, so the fixture needs no stand-in `cargo` and the two-project
+/// shape is the only thing under test.
+fn two_project_weave(root: &Path) -> PathBuf {
+    let ws = root.join("ws");
+    for name in ["app", "other"] {
+        let project_dir = ws.join("projects").join(name);
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
+        common::fixture_lock(&project_dir, &[]);
+        git_init_with_commit(&project_dir);
+    }
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        "app",
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author the workspace manifest");
+    ws
+}
+
+/// The `active` field for the sole `unreadable-owned-state` finding naming
+/// `project`, off `--json`'s `violations`.
+fn unreadable_owned_state_active(ws: &Path, project: &str) -> bool {
+    let report = doctor_json(ws, None);
+    report["violations"]
+        .as_array()
+        .expect("violations array present")
+        .iter()
+        .find(|v| {
+            v["kind"].as_str() == Some("unreadable-owned-state")
+                && v["project"].as_str() == Some(project)
+        })
+        .unwrap_or_else(|| panic!("no unreadable-owned-state violation for `{project}`: {report}"))
+        ["active"]
+        .as_bool()
+        .expect("active is a bool")
+}
+
+/// Rendered advice text does not reach `--json` at all: its `issues` channel
+/// is integration hook output only, and the core-finding prose is rendered
+/// text-mode-only. So the plain `rwv doctor` text an operator actually reads
+/// is what these tests read too.
+fn doctor_text(ws: &Path) -> String {
+    let (_, out) = rwv_here(&["doctor"], ws);
+    out
+}
+
+/// The defect this fixes: `other`'s record is corrupt, `app` is active,
+/// and the advice for `other` must name the route that actually clears it —
+/// `rwv materialize` takes no project argument, so it cannot.
+///
+/// Driven end to end, matching the bug's own repro: `rwv materialize` at
+/// `app` leaves the `other` finding standing, and the named route
+/// (`rwv activate other` then `rwv materialize`) is what clears it.
+#[test]
+fn inactive_project_advice_names_the_activation_route() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    std::fs::write(ws.join("projects/other").join(LEDGER), "not a ledger {{{").unwrap();
+
+    let message = doctor_text(&ws);
+    assert!(
+        !unreadable_owned_state_active(&ws, "other"),
+        "`other` is not `.rwv-active`'s selection: {message}"
+    );
+    assert!(
+        message.contains("`other` is not the active project here"),
+        "the advice must say `other` is not what `rwv materialize` would reach: {message}"
+    );
+    assert!(
+        message.contains("rwv activate other"),
+        "and must name the activation route the adjudication settled on: {message}"
+    );
+    assert!(
+        !message.contains("Run `rwv materialize` to rebuild it: it re-derives"),
+        "must not still hand out the remedy that cannot reach `other`: {message}"
+    );
+
+    // The bug's own repro: materialize at the active project leaves the
+    // inactive one's finding standing.
+    let (ok, out) = rwv_here(&["materialize"], &ws);
+    assert!(ok, "{out}");
+    assert!(
+        kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        "materialize at `app` must not have touched `other`'s record: {:?}",
+        kinds(&ws)
+    );
+
+    // The route the advice names, driven end to end.
+    let (ok, out) = rwv_here(&["activate", "other"], &ws);
+    assert!(ok, "{out}");
+    let (ok, out) = rwv_here(&["materialize"], &ws);
+    assert!(ok, "{out}");
+    assert!(
+        !kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        "once `other` is active, `rwv materialize` must reach it: {:?}",
+        kinds(&ws)
+    );
+}
+
+/// The half of the split that must not move: in the same multi-project weave,
+/// the active project's advice is exactly what a single-project weave already
+/// got — [`materialize_rebuilds_the_record_and_clears_the_finding`] and
+/// [`materialize_clears_the_finding_where_no_generator_can_rebuild_the_record`]
+/// pin that it is live; this pins that the wording survives a sibling project
+/// existing at all.
+#[test]
+fn active_project_advice_is_unchanged_in_a_multi_project_weave() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    std::fs::write(ws.join("projects/app").join(LEDGER), "not a ledger {{{").unwrap();
+
+    let message = doctor_text(&ws);
+    assert!(
+        unreadable_owned_state_active(&ws, "app"),
+        "`app` is `.rwv-active`'s selection: {message}"
+    );
+    assert!(
+        message.contains(
+            "Run `rwv materialize` to rebuild it: it \
+             re-derives the generated files this project has and \
+             records them afresh, and leaves an empty record where it \
+             has none"
+        ),
+        "the active-project advice must be byte-for-byte what it was before \
+         `other` existed: {message}"
+    );
+    assert!(
+        !message.contains("is not the active project here"),
+        "the active project must not be told to activate itself: {message}"
+    );
+}

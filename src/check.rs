@@ -276,6 +276,10 @@ pub enum CheckViolation {
         state_path: PathBuf,
         /// Rendered read/parse error.
         error: String,
+        /// Whether `project` is the project the scanned root presents.
+        /// `rwv materialize` takes no project argument — it acts on
+        /// whichever project that is — so the remedy differs when it is not.
+        active: bool,
     },
 
     UnreadableWorkweaveIndex {
@@ -1762,6 +1766,7 @@ pub enum ViolationOutput {
         project: String,
         state_path: String,
         error: String,
+        active: bool,
     },
     UnreadableWorkweaveIndex {
         project: String,
@@ -2154,10 +2159,12 @@ impl ViolationOutput {
                 project,
                 state_path,
                 error,
+                active,
             } => Self::UnreadableOwnedState {
                 project: project.to_string(),
                 state_path: crate::path_spelling::wire_path(&state_path),
                 error,
+                active,
             },
             CheckViolation::UnreadableWorkweaveIndex {
                 project,
@@ -2845,15 +2852,19 @@ pub(crate) fn commit_replay_exclusion_migration(
 /// Per project rather than per generated file: the record that would name the
 /// attested files is the one that cannot be read.
 fn scan_unreadable_owned_state(ws_root: &Path) -> Vec<CheckViolation> {
+    let presented = crate::workspace::observe_root(ws_root)
+        .and_then(|observation| observation.presented_project().cloned());
     crate::workspace::discover_projects(ws_root)
         .into_iter()
         .filter_map(|project| {
             let project_dir = crate::workspace::project_dir(ws_root, project.as_str());
             crate::owned_state::unreadable_ledger(&project_dir).map(|error| {
+                let active = presented.as_ref() == Some(&project);
                 CheckViolation::UnreadableOwnedState {
                     state_path: crate::owned_state::ledger_path(&project_dir),
                     project,
                     error,
+                    active,
                 }
             })
         })
@@ -6958,19 +6969,34 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     project,
                     state_path,
                     error,
+                    active,
                 } => (
                     crate::integration::Severity::Warning,
-                    format!(
-                        "{}: rwv's record of the generations it accepted does not \
-                         parse ({error}); until it is rebuilt, the managed-file \
-                         drift and derived-state staleness checks report nothing \
-                         for project `{project}` — including for files that had \
-                         already drifted. Run `rwv materialize` to rebuild it: it \
-                         re-derives the generated files this project has and \
-                         records them afresh, and leaves an empty record where it \
-                         has none",
-                        state_path.display()
-                    ),
+                    if active {
+                        format!(
+                            "{}: rwv's record of the generations it accepted does not \
+                             parse ({error}); until it is rebuilt, the managed-file \
+                             drift and derived-state staleness checks report nothing \
+                             for project `{project}` — including for files that had \
+                             already drifted. Run `rwv materialize` to rebuild it: it \
+                             re-derives the generated files this project has and \
+                             records them afresh, and leaves an empty record where it \
+                             has none",
+                            state_path.display()
+                        )
+                    } else {
+                        format!(
+                            "{}: rwv's record of the generations it accepted does not \
+                             parse ({error}); until it is rebuilt, the managed-file \
+                             drift and derived-state staleness checks report nothing \
+                             for project `{project}` — including for files that had \
+                             already drifted. `{project}` is not the active project \
+                             here, and `rwv materialize` takes no project argument — \
+                             it acts only on the active one. Run `rwv activate \
+                             {project}`; the repair runs there",
+                            state_path.display()
+                        )
+                    },
                 ),
                 CheckViolation::UnreadableWorkweaveIndex {
                     project,
