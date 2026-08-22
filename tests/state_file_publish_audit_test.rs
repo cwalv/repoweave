@@ -281,7 +281,10 @@ fn bare_write_sites(corpus: &Corpus, names: &[(&str, &str)]) -> Vec<String> {
                 let names_it = (!ident.is_empty() && window.contains(ident))
                     || window.contains(&format!("\"{value}\""));
                 if names_it {
-                    findings.push(format!("{path}:{} writes {value} with a bare fs::write", n + 1));
+                    findings.push(format!(
+                        "{path}:{} writes {value} with a bare fs::write",
+                        n + 1
+                    ));
                     break;
                 }
             }
