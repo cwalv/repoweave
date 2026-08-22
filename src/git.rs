@@ -902,6 +902,18 @@ impl GitVcs {
     /// back to the raw [`VcsError::CommandFailed`] instead of misreading an
     /// unrelated ff-only failure (real divergence, an unknown ref) as a file list.
     ///
+    /// **Both halves of the match are load-bearing, and the near-miss is a
+    /// different refusal with the same tail.** git says
+    /// `Your local changes to the following files would be overwritten by
+    /// merge:` when the obstruction is *tracked* and modified — a different
+    /// condition, remedied by committing or stashing rather than by moving a
+    /// file. It shares the `would be overwritten by merge:` fragment, so the
+    /// header must be matched whole; and it ends `Please commit your changes
+    /// or stash them`, so the trailer must be *required* rather than used as a
+    /// split that yields everything when it is absent. Matching loosely on
+    /// either side reports that refusal as this one and lifts git's own prose
+    /// into `paths` as though the sentences were filenames.
+    ///
     /// **English-only.** [`git_command`] pins no `LC_ALL`/`LANG`, so a
     /// translated git prints different wording and this returns `None` —
     /// the caller falls back to the raw error, which still refuses (the
@@ -911,8 +923,11 @@ impl GitVcs {
     /// this codebase inherits, not just this one call site; that is a
     /// wider change than this refusal justifies on its own.
     fn untracked_collision_paths(stderr: &str) -> Option<Vec<String>> {
-        let after_header = stderr.split("would be overwritten by merge:").nth(1)?;
-        let before_trailer = after_header.split("Please move or remove them").next()?;
+        const HEADER: &str =
+            "The following untracked working tree files would be overwritten by merge:";
+        const TRAILER: &str = "Please move or remove them";
+        let (_, after_header) = stderr.split_once(HEADER)?;
+        let (before_trailer, _) = after_header.split_once(TRAILER)?;
         let paths: Vec<String> = before_trailer
             .lines()
             .map(str::trim)
