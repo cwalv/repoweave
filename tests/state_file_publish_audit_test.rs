@@ -34,8 +34,13 @@
 //! this scan's.
 
 use repoweave::state_file::{StateFile, EXCLUSIVE_CREATE, OPERATOR_AUTHORED};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+/// Every scanned file's path (relative to the crate root) mapped to its full
+/// text — the shared representation the scans below read, so a fixture can
+/// drive them without touching disk.
+type Corpus = BTreeMap<String, String>;
 
 /// Every `.rs` file under `src/`.
 fn source_files() -> Vec<PathBuf> {
@@ -56,6 +61,22 @@ fn source_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk(&root, &mut out);
     out.sort();
+    out
+}
+
+/// The real `src/` tree, read from disk.
+fn real_src_corpus() -> Corpus {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Corpus::new();
+    for path in source_files() {
+        let text = std::fs::read_to_string(&path).expect("source must be readable");
+        let key = path
+            .strip_prefix(manifest_dir)
+            .expect("source_files() yields paths under CARGO_MANIFEST_DIR")
+            .to_string_lossy()
+            .into_owned();
+        out.insert(key, text);
+    }
     out
 }
 
@@ -100,11 +121,10 @@ fn test_module_line(text: &str) -> usize {
     usize::MAX
 }
 
-fn declared_state_file_names() -> Vec<Declared> {
+fn declared_state_file_names(corpus: &Corpus) -> Vec<Declared> {
     let mut found = Vec::new();
-    for path in source_files() {
-        let text = std::fs::read_to_string(&path).expect("source must be readable");
-        let test_start = test_module_line(&text);
+    for (path, text) in corpus {
+        let test_start = test_module_line(text);
         for (lineno, line) in text
             .lines()
             .enumerate()
@@ -135,11 +155,7 @@ fn declared_state_file_names() -> Vec<Declared> {
                 found.push(Declared {
                     value: value.to_string(),
                     ident,
-                    site: format!(
-                        "{}:{}",
-                        path.file_name().unwrap().to_string_lossy(),
-                        lineno + 1
-                    ),
+                    site: format!("{path}:{}", lineno + 1),
                 });
             }
         }
@@ -149,7 +165,8 @@ fn declared_state_file_names() -> Vec<Declared> {
 
 #[test]
 fn every_declared_state_file_is_classified() {
-    let declared = declared_state_file_names();
+    let corpus = real_src_corpus();
+    let declared = declared_state_file_names(&corpus);
     assert!(
         declared.len() >= StateFile::ALL.len(),
         "the scan found {} state-file constants, fewer than the {} StateFile \
@@ -244,11 +261,10 @@ fn keyed_names<'a>(declared: &'a [Declared], target: &BTreeSet<&str>) -> Vec<(&'
 /// itself, the second targets `.gitignore`/`.git/info/exclude`, not a
 /// classified state file), but the shape now exists in this tree and a
 /// future writer using it to reach a state file would not be caught here.
-fn bare_write_sites(names: &[(&str, &str)]) -> Vec<String> {
+fn bare_write_sites(corpus: &Corpus, names: &[(&str, &str)]) -> Vec<String> {
     let mut findings = Vec::new();
-    for path in source_files() {
-        let text = std::fs::read_to_string(&path).expect("source must be readable");
-        let test_start = test_module_line(&text);
+    for (path, text) in corpus {
+        let test_start = test_module_line(text);
         let lines: Vec<&str> = text.lines().collect();
         for (n, line) in lines.iter().enumerate() {
             if n >= test_start {
@@ -265,11 +281,7 @@ fn bare_write_sites(names: &[(&str, &str)]) -> Vec<String> {
                 let names_it = (!ident.is_empty() && window.contains(ident))
                     || window.contains(&format!("\"{value}\""));
                 if names_it {
-                    findings.push(format!(
-                        "{}:{} writes {value} with a bare fs::write",
-                        path.file_name().unwrap().to_string_lossy(),
-                        n + 1
-                    ));
+                    findings.push(format!("{path}:{} writes {value} with a bare fs::write", n + 1));
                     break;
                 }
             }
@@ -379,12 +391,11 @@ fn scan_functions(text: &str, test_start: usize) -> Vec<ProductionFn> {
 /// shape this exists for is exactly that, a bare write beside
 /// `LeaseRecord::path_in(workspace_dir)` and nowhere near `OP_LEASE_FILE`
 /// itself.
-fn path_accessor_aliases(names: &[(&str, &str)]) -> BTreeSet<String> {
+fn path_accessor_aliases(corpus: &Corpus, names: &[(&str, &str)]) -> BTreeSet<String> {
     let mut aliases = BTreeSet::new();
-    for path in source_files() {
-        let text = std::fs::read_to_string(&path).expect("source must be readable");
-        let test_start = test_module_line(&text);
-        for f in scan_functions(&text, test_start) {
+    for text in corpus.values() {
+        let test_start = test_module_line(text);
+        for f in scan_functions(text, test_start) {
             if !f.signature.contains("-> PathBuf") && !f.signature.contains("-> std::path::PathBuf")
             {
                 continue;
@@ -408,21 +419,16 @@ fn path_accessor_aliases(names: &[(&str, &str)]) -> BTreeSet<String> {
 /// Same `fs::write(` literal as `bare_write_sites` keys on, and the same gap:
 /// a function reaching one of `aliases` through a `std::fs::OpenOptions` open
 /// instead is invisible here too.
-fn writes_reaching_through_accessor(aliases: &BTreeSet<String>) -> Vec<String> {
+fn writes_reaching_through_accessor(corpus: &Corpus, aliases: &BTreeSet<String>) -> Vec<String> {
     let mut findings = Vec::new();
-    for path in source_files() {
-        let text = std::fs::read_to_string(&path).expect("source must be readable");
-        let test_start = test_module_line(&text);
-        for f in scan_functions(&text, test_start) {
+    for (path, text) in corpus {
+        let test_start = test_module_line(text);
+        for f in scan_functions(text, test_start) {
             if !f.body.contains("fs::write(") {
                 continue;
             }
             if let Some(alias) = aliases.iter().find(|a| f.body.contains(a.as_str())) {
-                findings.push(format!(
-                    "{}: {} writes through {alias}",
-                    path.file_name().unwrap().to_string_lossy(),
-                    f.qualified
-                ));
+                findings.push(format!("{path}: {} writes through {alias}", f.qualified));
             }
         }
     }
@@ -437,7 +443,8 @@ fn writes_reaching_through_accessor(aliases: &BTreeSet<String>) -> Vec<String> {
 /// spelling it, and it publishes durably.
 #[test]
 fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
-    let declared = declared_state_file_names();
+    let corpus = real_src_corpus();
+    let declared = declared_state_file_names(&corpus);
     let durable: BTreeSet<&str> = StateFile::ALL.iter().map(|f| f.file_name()).collect();
     let names = keyed_names(&declared, &durable);
     assert_eq!(
@@ -446,7 +453,7 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
         "every StateFile variant must have a constant for this scan to key on;          without one its site is invisible here and a green result overstates          what was checked"
     );
 
-    let findings = bare_write_sites(&names);
+    let findings = bare_write_sites(&corpus, &names);
     assert!(
         findings.is_empty(),
         "publish these through StateFile::publish_in so a crash cannot leave \
@@ -472,7 +479,8 @@ fn no_production_site_writes_a_named_state_file_with_a_bare_write() {
 /// below, covers instead.
 #[test]
 fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
-    let declared = declared_state_file_names();
+    let corpus = real_src_corpus();
+    let declared = declared_state_file_names(&corpus);
     let exclusive: BTreeSet<&str> = EXCLUSIVE_CREATE.into_iter().collect();
     let names = keyed_names(&declared, &exclusive);
     assert_eq!(
@@ -483,7 +491,7 @@ fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
          overstates what was checked"
     );
 
-    let findings = bare_write_sites(&names);
+    let findings = bare_write_sites(&corpus, &names);
     assert!(
         findings.is_empty(),
         "publish these with durable_file::create_new so a replacement can't \
@@ -507,7 +515,8 @@ fn no_production_site_writes_an_exclusive_create_file_with_a_bare_write() {
 /// and one this tree now uses (`workweave_index::append_ignore_line`).
 #[test]
 fn no_production_function_reaches_an_exclusive_create_file_through_its_path_accessor() {
-    let declared = declared_state_file_names();
+    let corpus = real_src_corpus();
+    let declared = declared_state_file_names(&corpus);
     let exclusive: BTreeSet<&str> = EXCLUSIVE_CREATE.into_iter().collect();
     let names = keyed_names(&declared, &exclusive);
     assert_eq!(
@@ -518,7 +527,7 @@ fn no_production_function_reaches_an_exclusive_create_file_through_its_path_acce
          result overstates what was checked"
     );
 
-    let aliases = path_accessor_aliases(&names);
+    let aliases = path_accessor_aliases(&corpus, &names);
     assert!(
         !aliases.is_empty(),
         "found no PathBuf-returning production function naming an \
@@ -527,12 +536,88 @@ fn no_production_function_reaches_an_exclusive_create_file_through_its_path_acce
          clean: {names:?}"
     );
 
-    let findings = writes_reaching_through_accessor(&aliases);
+    let findings = writes_reaching_through_accessor(&corpus, &aliases);
     assert!(
         findings.is_empty(),
         "these reach an EXCLUSIVE_CREATE file's path through the accessor \
          named, without spelling the file's own name anywhere near the \
          write — publish them with durable_file::create_new instead: \
          {findings:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The instrument, driven as its own subject. The two tests above scan the
+// real (currently compliant) src/ tree, so a green result there is
+// indistinguishable from a scan that finds nothing because it is broken. The
+// synthetic corpus below is the shape `write_owned_digests` regressed to when
+// this audit last caught it — a declared state-file constant beside a bare
+// `fs::write` — so the catch is demonstrated rather than only asserted in
+// prose.
+// ---------------------------------------------------------------------------
+
+/// A declared state-file constant beside a bare `fs::write` naming it — the
+/// exact shape reverting `write_owned_digests` regressed to — must be
+/// reported.
+#[test]
+fn a_bare_write_of_a_named_state_file_is_caught() {
+    let mut corpus = Corpus::new();
+    corpus.insert(
+        "src/synthetic_state.rs".to_string(),
+        r#"pub(crate) const WIDGET_FILE: &str = ".rwv-widget";
+
+fn publish(dir: &std::path::Path) {
+    let path = dir.join(WIDGET_FILE);
+    std::fs::write(path, b"data").unwrap();
+}
+"#
+        .to_string(),
+    );
+
+    let declared = declared_state_file_names(&corpus);
+    let target: BTreeSet<&str> = [".rwv-widget"].into_iter().collect();
+    let names = keyed_names(&declared, &target);
+    let findings = bare_write_sites(&corpus, &names);
+
+    assert_eq!(
+        findings.len(),
+        1,
+        "a bare fs::write beside a declared state-file constant must be \
+         reported: {findings:?}"
+    );
+    assert!(
+        findings[0].contains(".rwv-widget"),
+        "the finding must name the file it caught: {:?}",
+        findings[0]
+    );
+}
+
+/// The same declared constant, published through `StateFile::publish_in`
+/// instead of a bare write, must stay quiet — proving the scan discriminates
+/// on the write shape rather than merely on proximity to the constant.
+#[test]
+fn a_publish_in_call_for_the_same_state_file_is_not_reported() {
+    let mut corpus = Corpus::new();
+    corpus.insert(
+        "src/synthetic_state.rs".to_string(),
+        r#"pub(crate) const WIDGET_FILE: &str = ".rwv-widget";
+
+fn publish(dir: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let path = dir.join(WIDGET_FILE);
+    StateFile::Widget.publish_in(dir, bytes)
+}
+"#
+        .to_string(),
+    );
+
+    let declared = declared_state_file_names(&corpus);
+    let target: BTreeSet<&str> = [".rwv-widget"].into_iter().collect();
+    let names = keyed_names(&declared, &target);
+    let findings = bare_write_sites(&corpus, &names);
+
+    assert!(
+        findings.is_empty(),
+        "a publish_in call beside the same declared constant carries no \
+         fs::write and must not be reported: {findings:?}"
     );
 }
