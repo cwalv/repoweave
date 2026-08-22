@@ -915,25 +915,25 @@ fn sync_one_repo(
 // ---------------------------------------------------------------------------
 
 /// Failure from [`apply_strategy`] carrying both the human-formatted error
-/// string and (when available) the underlying typed [`VcsError`] so callers
-/// can plumb structured cause info into `--json` output.
+/// string and the underlying typed [`VcsError`] so callers can plumb
+/// structured cause info into `--json` output.
 struct StrategyError {
     message: String,
     cause: Option<VcsError>,
 }
 
 impl StrategyError {
-    fn from_message(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            cause: None,
-        }
-    }
-
     fn from_vcs(err: VcsError) -> Self {
         Self {
             message: err.to_string(),
             cause: Some(err),
+        }
+    }
+
+    fn with_message(message: impl Into<String>, cause: VcsError) -> Self {
+        Self {
+            message: message.into(),
+            cause: Some(cause),
         }
     }
 }
@@ -956,9 +956,9 @@ fn apply_strategy(
                     Some(c) => format!(" (HEAD is {})", c.describe(baseline.label())),
                     None => String::new(),
                 };
-                return Err(StrategyError::from_message(format!(
-                    "cannot fast-forward{shape}; rerun with --strategy rebase. {e}"
-                )));
+                let message =
+                    format!("cannot fast-forward{shape}; rerun with --strategy rebase. {e}");
+                return Err(StrategyError::with_message(message, e));
             }
         }
         SyncStrategy::Rebase => {
