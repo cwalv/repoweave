@@ -282,6 +282,7 @@ fn serde_enum_tokens(src: &str, decl: &str) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let mut override_token: Option<String> = None;
     for line in body.lines() {
+        let line = line.strip_suffix('\r').unwrap_or(line);
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("#[serde(rename = \"") {
             if let Some(end) = rest.find('"') {
@@ -318,6 +319,18 @@ fn refusal_tokens() -> BTreeSet<String> {
 fn conflict_op_tokens() -> BTreeSet<String> {
     serde_enum_tokens(&source("vcs.rs"), "pub enum ConflictOp {")
 }
+
+/// The declarations [`serde_enum_tokens`] is pointed at, as the file each sits
+/// in and the line that opens it.
+///
+/// A call site outside this list is not covered by
+/// [`the_declaration_walk_reads_the_same_tokens_on_a_crlf_checkout`]. An entry
+/// that goes stale cannot pass quietly — `serde_enum_tokens` panics on a
+/// declaration it cannot find.
+const SERDE_ENUM_DECLARATIONS: &[(&str, &str)] = &[
+    ("refusal.rs", "pub enum RefusalKind {"),
+    ("vcs.rs", "pub enum ConflictOp {"),
+];
 
 fn kebab(name: &str) -> String {
     let mut out = String::new();
@@ -428,6 +441,43 @@ fn the_register_walk_is_not_vacuous() {
             found >= floor,
             "the {name} register walk yielded {found} tokens, below the floor of {floor}; \
              it has stopped reading that register"
+        );
+    }
+}
+
+/// [`serde_enum_tokens`] reads a declaration the same way whatever a checkout
+/// spells its line endings, which is what keeps the last variant of every
+/// register it walks from vanishing.
+///
+/// `str::lines()` drops a trailing `\r` only from a segment that ends in `\n`.
+/// Slicing the body at `"\n}"` leaves the final variant as a segment with no
+/// terminator, so on a CRLF checkout that one alone arrives wearing a bare
+/// `\r` and falls out of every prefix and suffix match — one variant short, in
+/// silence, under floors that sit well below either register's size.
+///
+/// Driven from the declarations themselves rather than a hand-written enum, so
+/// a register spelled in a way a fixture never anticipated is still covered.
+#[test]
+fn the_declaration_walk_reads_the_same_tokens_on_a_crlf_checkout() {
+    for (file, decl) in SERDE_ENUM_DECLARATIONS {
+        let lf = source(file).replace("\r\n", "\n");
+        let crlf = lf.replace('\n', "\r\n");
+        let native = serde_enum_tokens(&lf, decl);
+        assert!(
+            !native.is_empty(),
+            "src/{file}'s `{decl}` walk yielded nothing on an LF checkout, so the comparison \
+             below would hold over two empty sets"
+        );
+        let converted = serde_enum_tokens(&crlf, decl);
+        assert_eq!(
+            converted,
+            native,
+            "src/{file}'s `{decl}` walk recovers {} tokens on a CRLF checkout against {} on an \
+             LF one — a line-ending assumption is dropping variants, the declaration's last \
+             one first:\n{:#?}",
+            converted.len(),
+            native.len(),
+            native.difference(&converted).collect::<Vec<_>>()
         );
     }
 }
