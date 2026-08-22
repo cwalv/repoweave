@@ -166,7 +166,7 @@ case surfaces `NotARepo` rather than "detached HEAD" (§4.5).
 The asymmetry this section used to name — **the one repo whose branch identity
 gates publishing is the one repo whose branch identity nothing verifies** — is
 **closed**. `scan_repos_on_disk` still walks registry directories only
-(`workspace.rs:335-383`) `[V]`, but doctor's branch-discipline pass no longer
+(`workspace.rs`) `[V]`, but doctor's branch-discipline pass no longer
 uses it as its walker: `workweave_checkouts` explicitly appends
 `<workweave>/projects/<project>/` (`check.rs:3280`) and the canonical pass
 iterates `workspace::discover_projects` alongside the manifest members,
