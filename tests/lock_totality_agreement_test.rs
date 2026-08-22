@@ -79,10 +79,14 @@ fn seal_project_repo(project_dir: &Path) {
 }
 
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
+    // Every `repo` here is `github/acme/<name>` — mint a URL `placement`
+    // derives back to that exact path, or the placement-disagreement scan
+    // (unrelated to what this file measures) reports on every fixture entry.
     let mut toml = String::from("[repositories]\n");
     for (repo, role) in repos {
+        let name = repo.rsplit('/').next().expect("repo has a final segment");
         toml.push_str(&format!(
-            "[repositories.{repo:?}]\ntype = \"git\"\nurl = \"https://example.invalid/{repo}.git\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.{repo:?}]\ntype = \"git\"\nurl = \"https://github.com/acme/{name}.git\"\nversion = \"main\"\nrole = \"{role}\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), toml).unwrap();

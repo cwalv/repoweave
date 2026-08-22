@@ -146,6 +146,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             let tail = match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. } => "origin-url-mismatch",
                 ProvenanceKind::LockShaUnreachable { .. } => "lock-sha-unreachable",
+                ProvenanceKind::PlacementDisagreement { .. } => "placement-disagreement",
             };
             format!("provenance/{tail}")
         }
@@ -471,6 +472,13 @@ pub fn corpus() -> Vec<CheckViolation> {
             project: project(),
             repo: repo(),
             sub_kind: ProvenanceKind::LockShaUnreachable { sha: sha() },
+        },
+        CheckViolation::Provenance {
+            project: project(),
+            repo: repo(),
+            sub_kind: ProvenanceKind::PlacementDisagreement {
+                expected_path: "github/other/repo".into(),
+            },
         },
         CheckViolation::CloneTopology {
             workspace_path: path("/ws"),

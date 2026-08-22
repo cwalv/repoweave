@@ -1001,6 +1001,28 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "description": "The manifest key disagrees with `placement(entry.url)` — the path the entry's own URL derives to under the canonical layout. Warning severity; report-only.\n\nExempt by role rather than by survey: `reference` entries may point at a mirror on purpose (the same exemption `OriginUrlMismatch` already carries), and `fork` entries may key on the upstream's coordinates while the URL names the fork (`docs/reference/roles.md` §`fork`, \"The path may name either\"). Neither role reaches this variant at all — the scan skips them before deriving `expected_path`.",
+          "type": "object",
+          "required": [
+            "placement-disagreement"
+          ],
+          "properties": {
+            "placement-disagreement": {
+              "type": "object",
+              "required": [
+                "expected_path"
+              ],
+              "properties": {
+                "expected_path": {
+                  "description": "The path `placement(entry.url)` derives — where the manifest key would need to be for the two to agree.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },

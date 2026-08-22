@@ -738,7 +738,8 @@ impl CheckViolation {
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
-                | ProvenanceKind::LockShaUnreachable { .. } => ReportOnly,
+                | ProvenanceKind::LockShaUnreachable { .. }
+                | ProvenanceKind::PlacementDisagreement { .. } => ReportOnly,
             },
             CheckViolation::CloneTopology { sub_kind, .. } => match sub_kind {
                 CloneTopologyKind::StandaloneInWorkweave { .. }
@@ -1206,6 +1207,21 @@ pub enum ProvenanceKind {
     LockShaUnreachable {
         /// The SHA pinned in `rwv.lock` that cannot be found locally.
         sha: String,
+    },
+    /// The manifest key disagrees with `placement(entry.url)` — the path the
+    /// entry's own URL derives to under the canonical layout. Warning
+    /// severity; report-only.
+    ///
+    /// Exempt by role rather than by survey: `reference` entries may point at
+    /// a mirror on purpose (the same exemption `OriginUrlMismatch` already
+    /// carries), and `fork` entries may key on the upstream's coordinates
+    /// while the URL names the fork (`docs/reference/roles.md` §`fork`, "The
+    /// path may name either"). Neither role reaches this variant at all —
+    /// the scan skips them before deriving `expected_path`.
+    PlacementDisagreement {
+        /// The path `placement(entry.url)` derives — where the manifest key
+        /// would need to be for the two to agree.
+        expected_path: String,
     },
 }
 
@@ -3627,30 +3643,54 @@ pub fn scan_cargo_ecosystem(
 
 /// Scan all repos in `projects` for provenance violations.
 ///
-/// Checks performed per repo on disk:
+/// Checks performed:
 ///
 /// 1. **`origin-url-mismatch`** — the clone's `origin` remote URL differs
 ///    from the URL recorded in the manifest. Warning severity; report-only.
 ///    Reference-role repos may intentionally diverge (see note in violation
-///    message).
+///    message). Only repos that exist on disk are checked.
 ///
 /// 2. **`lock-sha-unreachable`** — a SHA pinned in `rwv.lock` is absent
 ///    from the local object store (`git cat-file -e <sha>^{commit}`). Error
 ///    severity; report-only. Remediation is a fetch from the remote, not a
-///    sync.
+///    sync. Only repos that exist on disk are checked. The raw lock file is
+///    used (before `resolve_versions`) so that SHAs that fail to resolve are
+///    the ones we test for reachability — if the lock SHA is a tag or branch
+///    name it is resolved first; if that fails, the SHA is tested verbatim.
 ///
-/// Only repos that exist on disk are checked. For `lock-sha-unreachable`
-/// the raw lock file is used (before `resolve_versions`) so that SHAs that
-/// fail to resolve are the ones we test for reachability — if the lock SHA
-/// is a tag or branch name it is resolved first; if that fails, the SHA is
-/// tested verbatim.
+/// 3. **`placement-disagreement`** — the manifest key disagrees with
+///    `placement(entry.url)`. Warning severity; report-only. A pure manifest
+///    comparison, so unlike the two checks above it does not require the
+///    repo to exist on disk. `reference` and `fork` entries are exempt by
+///    role (see [`ProvenanceKind::PlacementDisagreement`]) and never reach
+///    the comparison; an entry whose URL derives no path at all (`placement`
+///    returns `None`) has nothing to compare against and is skipped too.
 pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckViolation> {
-    use crate::manifest::clone_urls_equivalent;
+    use crate::manifest::{clone_urls_equivalent, Role};
     use crate::vcs::vcs_for;
 
     let mut violations = Vec::new();
 
     for project in projects {
+        // --- placement-disagreement ---
+        for (repo_path, entry) in project.manifest.iter_entries() {
+            if matches!(entry.role, Role::Reference | Role::Fork) {
+                continue;
+            }
+            let Some(expected) = crate::registry::placement(&entry.url) else {
+                continue;
+            };
+            if &expected != repo_path {
+                violations.push(CheckViolation::Provenance {
+                    project: project.name.clone(),
+                    repo: repo_path.clone(),
+                    sub_kind: ProvenanceKind::PlacementDisagreement {
+                        expected_path: expected.as_str().to_string(),
+                    },
+                });
+            }
+        }
+
         // --- origin-url-mismatch ---
         for (repo_path, entry) in project.manifest.iter_entries() {
             let vcs = vcs_for(entry.vcs_type);
@@ -7235,6 +7275,16 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             "{project}: {repo}: lock pins SHA {sha} which is absent from \
                              the local object store; the canonical store is missing the pinned \
                              revision — refresh it from its remote (fetch, not sync)",
+                        ),
+                    ),
+                    ProvenanceKind::PlacementDisagreement { expected_path } => (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "{project}: {repo}: recorded at `{repo}`, but its URL places at \
+                             `{expected_path}` under the canonical layout (report-only; move the \
+                             checkout to `{expected_path}` to converge, or re-key the manifest \
+                             entry at `{expected_path}` if that is where it belongs — a \
+                             `reference` or `fork` role exempts this comparison)",
                         ),
                     ),
                 },

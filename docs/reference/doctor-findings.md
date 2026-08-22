@@ -742,6 +742,32 @@ object store.
 **What to do:** `rwv fetch`. A sync will not recover it — the object has to
 come from the remote.
 
+#### `placement-disagreement`
+
+**Warning. Report-only.** The manifest key disagrees with `placement(url)` —
+the path the entry's own URL derives to under the canonical
+`{registry}/{owner}/{repo}` layout. `--fix` has no arm here for the same
+reason `origin-url-mismatch` has none: the repair is either moving the
+checkout or re-keying the manifest entry, and which one is right is the
+operator's call. This is a different comparison from `origin-url-mismatch` —
+that one compares the manifest URL against the clone's `origin` URL; this one
+compares the manifest *path* against `placement` of the manifest URL — so an
+entry can trip either, both, or neither independently.
+
+`reference`-role entries are exempt: the arrangement `origin-url-mismatch`
+already documents — a mirror URL under a path named for what it mirrors —
+would otherwise report both findings for the same intentional divergence.
+`fork`-role entries are exempt too, per [Roles](./roles.md) §`fork`: the
+manifest key may name either the fork or the upstream it forked, so a
+disagreement between the two is not a defect.
+
+**What to do:** the message names both paths — move the checkout (and the
+manifest key) to the derived path to converge, or re-key the manifest entry
+at the derived path if that is where it belongs. If the divergence is
+deliberate — a fork keyed on its upstream's coordinates, a mirror under the
+path it mirrors — the entry's existing `role` is what the scan already reads
+to exempt it; nothing further to do.
+
 ---
 
 ## Branches and ownership receipts

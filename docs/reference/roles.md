@@ -23,6 +23,8 @@ Role label for a fork relationship. Changes ideally flow back upstream via PR, b
 
 **URL is your writable fork.** The manifest `url:` field must point at your personal or team fork — the repo you have push access to. `rwv` clones that URL to `origin` and treats `fork` identically to `owned` for clone, push, and fetch.
 
+**The path may name either.** The manifest key is a placement, not a claim about ownership. `rwv add https://github.com/me/my-fork.git --role fork` places at `github/me/my-fork`; an entry keyed on the upstream's coordinates against a fork URL — the arrangement the [formats](./formats.md) example shows — is equally valid. `rwv doctor` does not report the difference for a `fork`-role entry.
+
 If you also want to track the upstream-of-record, add it yourself:
 
 ```bash
