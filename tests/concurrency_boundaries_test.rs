@@ -212,8 +212,7 @@ fn the_advisory_checks_callers_are_enumerated_where_a_new_one_reddens_it() {
 fn a_write_into_a_member_while_a_verb_runs_is_not_prevented() {
     use std::os::unix::fs::PermissionsExt;
 
-    let Ok(real_cargo) = which::which("cargo") else {
-        common::report_skip("`cargo` not found on PATH");
+    let Some(real_cargo) = common::resolve_tool_or_skip("cargo") else {
         return;
     };
     let tmp = common::tempdir().unwrap();

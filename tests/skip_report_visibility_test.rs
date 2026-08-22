@@ -118,7 +118,7 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
                 .status();
             if done
                 .as_ref()
-                .is_err_and(|e| e.raw_os_error() == Some(libc_etxtbsy()))
+                .is_err_and(|e| e.raw_os_error() == Some(common::etxtbsy()))
             {
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 continue;
@@ -219,6 +219,77 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
     }
 }
 
+/// The location guard refuses a resolved path the OS will not start, and says
+/// where it stops.
+///
+/// The opposite direction to the test above, which pins the gap staying OPEN
+/// for the bool guard. A caller that pins the first PATH match into a shim of
+/// its own cannot live with it: production spawns by name and `execvp` walks
+/// past a stale shim to the working toolchain behind it, so a shim merely
+/// standing in front is invisible everywhere except at the site holding the
+/// resolved path.
+///
+/// The third case is the residue, asserted rather than described, so it fails
+/// if the boundary moves. A script the OS begins and the interpreter cannot
+/// open comes back PRESENT. That is not an oversight: it exits 2, which is what
+/// a healthy `go` exits on `--version`, so the reading that would catch it also
+/// rejects a working install.
+///
+/// Unix only: the shapes are permission bits and interpreter lines, and what
+/// Windows accepts as executable is a different question under `PATHEXT`.
+#[cfg(unix)]
+#[test]
+fn the_location_guard_refuses_what_the_os_will_not_start() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let plant = |name: &str, body: &str, mode: u32| {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        path
+    };
+    fn spelled(p: &std::path::Path) -> &str {
+        p.to_str().expect("a fixture path this suite can spell")
+    }
+
+    // The control. Without it "the guard refused" is equally true of a fixture
+    // directory nothing can be run out of.
+    let works = plant("probe-location-runnable", "#!/bin/sh\nexit 0\n", 0o755);
+    assert_eq!(
+        common::resolve_tool_or_skip(spelled(&works)).as_deref(),
+        Some(works.as_path()),
+        "a runnable stand-in must come back, and come back as the file that was \
+         asked about rather than as something else on the machine"
+    );
+
+    let broken = plant(
+        "probe-location-broken-interpreter",
+        "#!/nonexistent/interpreter\nexit 0\n",
+        0o755,
+    );
+    assert!(
+        which::which(&broken).is_ok(),
+        "the resolver must still accept it: this guard exists because it does, \
+         and a refusal here means the two predicates converged and this case \
+         should be retired"
+    );
+    assert!(
+        common::resolve_tool_or_skip(spelled(&broken)).is_none(),
+        "a resolved path the OS will not start must announce and skip, not be \
+         handed to a caller that is about to write it into an `exec` line"
+    );
+
+    let unreadable = plant("probe-location-unreadable", "#!/bin/sh\nexit 0\n", 0o111);
+    assert!(
+        common::resolve_tool_or_skip(spelled(&unreadable)).is_some(),
+        "the residue, asserted so it fails if the boundary moves: the OS BEGINS \
+         this one — the interpreter runs and then cannot open the script — so a \
+         start check reports it present. If one ever catches it, the guard's \
+         predicate moved and its doc comment is what needs rewriting"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Driver — reads the subjects' output from outside their capture.
 // ---------------------------------------------------------------------------
@@ -302,13 +373,6 @@ fn a_test_that_did_not_skip_prints_no_notice() {
 //   sites announce where they stand instead;
 //   `the_return_scan_reads_the_return_and_not_the_arm_that_measures` pins the
 //   boundary so a widening reddens rather than arriving in silence.
-
-/// `ETXTBSY`. Not worth a dependency for one number, and it is the same on
-/// every unix this suite builds for.
-#[cfg(unix)]
-fn libc_etxtbsy() -> i32 {
-    26
-}
 
 /// One file's source, and where its test region starts.
 struct Scanned {
@@ -440,12 +504,13 @@ fn scan_environment_returns(file: &Scanned) -> ReturnScan {
     const PROBES: &[&str] = &[
         "which::which",
         "skip_without_tool(",
+        "resolve_tool_or_skip(",
         "go_on_path(",
         "cfg!(windows)",
         "cfg!(target_os",
         "Command::new(",
     ];
-    const ANNOUNCEMENTS: &[&str] = &["report_skip", "skip_without_tool"];
+    const ANNOUNCEMENTS: &[&str] = &["report_skip", "skip_without_tool", "resolve_tool_or_skip"];
 
     // One level of local helper, resolved per file: the names of `fn`s in this
     // file whose body carries a primitive, and the names of those that
@@ -593,6 +658,31 @@ fn the_return_scan_reads_the_return_and_not_the_arm_that_measures() {
         announced.silent.is_empty(),
         "a guard that announces is not a finding: {:?}",
         announced.silent
+    );
+
+    let located = scan_environment_returns(&scanned_fixture(
+        "tests/fixture_located.rs",
+        &[
+            "#[test]",
+            "fn t() {",
+            "    let Some(real_cargo) = common::resolve_tool_or_skip(\"cargo\") else {",
+            "        return;",
+            "    };",
+            "    drive_the_subject(&real_cargo);",
+            "}",
+        ],
+    ));
+    assert_eq!(
+        located.guarded, 1,
+        "the guard that hands back a location must stay inside the population it \
+         was in when it spelled the probe inline, or moving to the helper drops \
+         three sites out of this scan and the count absorbs it"
+    );
+    assert!(
+        located.silent.is_empty(),
+        "the helper announces on both of its refusals, so its callers are not \
+         findings: {:?}",
+        located.silent
     );
 
     let vacated_branch = scan_environment_returns(&scanned_fixture(

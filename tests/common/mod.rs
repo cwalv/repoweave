@@ -77,12 +77,85 @@ pub fn rerun_one_test(name: &str) -> std::process::Output {
 ///
 /// A test that mints the tool it needs onto a PATH it owns — see
 /// [`cargo_stand_in_path`] — asks neither question and is not exposed to this.
+/// A test that needs the tool's LOCATION cannot take a bool at all and uses
+/// [`resolve_tool_or_skip`], which spawns what it resolved and so does not
+/// carry this gap.
 pub fn skip_without_tool(tool: &str) -> bool {
     if which::which(tool).is_ok() {
         return false;
     }
     report_skip(&format!("`{tool}` not found on PATH"));
     true
+}
+
+/// `ETXTBSY`. Not worth a dependency for one number, and it is the same on
+/// every unix this suite builds for.
+#[cfg(unix)]
+pub fn etxtbsy() -> i32 {
+    26
+}
+
+/// Where `tool` is, confirmed to start, or `None` with the skip announced.
+///
+/// For the caller that needs the tool's LOCATION rather than whether it is
+/// there: a fixture writing `exec '<resolved>' "$@"` into a shim of its own
+/// spawns that exact path, so the resolver's answer is the thing that has to
+/// run and [`skip_without_tool`]'s bool cannot serve it.
+///
+/// The extra spawn is what separates the two. `which` hands back the first
+/// PATH entry it considers executable; a spawn by NAME reaches `execvp`, which
+/// reads a missing interpreter as ENOENT and keeps walking. So a stale shim in
+/// front of a working toolchain is invisible to everything that spawns by name
+/// and fatal only to a caller holding the first match — and that caller is the
+/// one here. Spawning the resolved path does not walk, so the disagreement
+/// arrives as a skip instead of as the integration's own error on a host where
+/// the tool was declared present.
+///
+/// THE PREDICATE IS WHETHER THE PROCESS STARTS, never what it exits with. No
+/// exit code separates a healthy tool from a broken one: `go --version` exits 2
+/// on a working install, its spelling being `go version`, and so does a script
+/// whose interpreter cannot open it. That second shape is the residue — the OS
+/// begins it and it fails — and this reports it present, because the reading
+/// that would catch it also rejects Go.
+///
+/// `ETXTBSY` is retried rather than believed. It says the file could not be
+/// TRIED, which is not an answer about whether the OS would run it, and a
+/// sibling test forking while a freshly written fixture is still open provokes
+/// it.
+pub fn resolve_tool_or_skip(tool: &str) -> Option<PathBuf> {
+    let Ok(resolved) = which::which(tool) else {
+        report_skip(&format!("`{tool}` not found on PATH"));
+        return None;
+    };
+
+    for _ in 0..50 {
+        let started = Command::new(&resolved)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        #[cfg(unix)]
+        if started
+            .as_ref()
+            .is_err_and(|e| e.raw_os_error() == Some(etxtbsy()))
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            continue;
+        }
+        if let Err(e) = started {
+            report_skip(&format!(
+                "`{tool}` resolves to {}, which this host will not start: {e}",
+                resolved.display()
+            ));
+            return None;
+        }
+        return Some(resolved);
+    }
+    report_skip(&format!(
+        "`{tool}` resolves to {}, which stayed unrunnable for a second",
+        resolved.display()
+    ));
+    None
 }
 
 /// A temporary directory whose path is already canonical. Drop-in for

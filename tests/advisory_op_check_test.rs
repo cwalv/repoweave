@@ -142,8 +142,7 @@ fn owner_record_json(ws: &Path) -> String {
 fn an_op_landing_after_the_check_does_not_stop_the_verb() {
     use std::os::unix::fs::PermissionsExt;
 
-    let Ok(real_cargo) = which::which("cargo") else {
-        common::report_skip("`cargo` not found on PATH");
+    let Some(real_cargo) = common::resolve_tool_or_skip("cargo") else {
         return;
     };
     let tmp = common::tempdir().unwrap();
