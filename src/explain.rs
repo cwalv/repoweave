@@ -206,6 +206,15 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// Threshold: distance ≤ 2. This accepts single-character typos up to
 /// two-character transpositions while excluding completely unrelated words
 /// like "frobnicate".
+///
+/// The distance must also be shorter than the candidate itself, or the
+/// "typo" rewrites the whole candidate rather than corrupting part of it. A
+/// flat threshold is a statement about typos only while every candidate is
+/// longer than the threshold; a two-character token like `io` is within
+/// distance 2 of every string of length four or less, so without this guard
+/// it answers for inputs it has nothing to do with — and it answers *first*,
+/// because a spurious match here suppresses the external-command pointer that
+/// an unrecognised name is owed.
 /// The nearest thing `rwv explain` could have served, over both the verbs and
 /// the documented tokens — the two vocabularies a reader types into it.
 fn suggest(input: &str) -> Option<&'static str> {
@@ -213,7 +222,7 @@ fn suggest(input: &str) -> Option<&'static str> {
     known_verbs()
         .chain(documented_tokens())
         .map(|v| (v, levenshtein(input, v)))
-        .filter(|&(_, d)| d <= THRESHOLD)
+        .filter(|&(v, d)| d <= THRESHOLD && d < v.chars().count())
         .min_by_key(|&(_, d)| d)
         .map(|(v, _)| v)
 }

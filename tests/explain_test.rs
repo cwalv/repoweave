@@ -166,6 +166,24 @@ fn explain_close_typo_suggests_sync_to() {
         .stderr(predicate::str::contains("did you mean: sync-to"));
 }
 
+/// A short token must not answer for an unrelated short input.
+///
+/// The suggestion threshold is a flat edit distance, which reads as "a typo"
+/// only while every candidate is longer than the threshold. `io` is two
+/// characters, so a distance-2 rule puts it within reach of every string of
+/// length four or less. The failure is not a merely unhelpful hint: a
+/// suggestion suppresses the external-command pointer, so an operator running
+/// a real plugin verb is told about `io` instead of being pointed at their
+/// own tool.
+#[test]
+fn a_short_token_does_not_answer_for_an_unrelated_input() {
+    rwv().args(["explain", "foo"]).assert().failure().stderr(
+        predicate::str::contains("external command")
+            .and(predicate::str::contains("rwv foo --help"))
+            .and(predicate::str::contains("did you mean").not()),
+    );
+}
+
 #[test]
 fn explain_far_typo_no_spurious_suggestion() {
     // "frobnicate" is unrelated to any known verb — the "did you mean" hint
