@@ -454,3 +454,109 @@ fn a_declared_name_is_never_swept() {
         "and still resolve where it did"
     );
 }
+
+/// The name `vscode-workspace` declares for `alpha` while the fixture's
+/// manifest carries it disabled.
+const DISABLED_INTEGRATION_NAME: &str = "alpha.code-workspace";
+
+/// The disabled-integration hold-out: a name a disabled integration declares
+/// is exempt from this sweep even though nothing here ever authored the file
+/// it would point at.
+///
+/// Minted by hand, at rwv's own surfacing shape, the way `DROPPED_DANGLING`
+/// is above: the pass that actually retires a disabled integration's links
+/// runs only inside `rwv materialize`, which this fixture never calls, so the
+/// link stands the way an earlier `rwv materialize` — back when
+/// vscode-workspace was still enabled — would have left it once the
+/// integration was turned off afterward.
+#[test]
+fn a_disabled_integrations_declared_name_is_exempt() {
+    let (_tmp, ws) = weave_with_dropped_links();
+    repoweave::symlink::create(
+        Path::new(&format!("projects/alpha/{DISABLED_INTEGRATION_NAME}")),
+        &ws.join(DISABLED_INTEGRATION_NAME),
+        repoweave::symlink::LinkTarget::File,
+    )
+    .unwrap();
+
+    let doctor = rwv_output(&ws, &["doctor"]);
+
+    assert!(
+        !doctor.contains(DISABLED_INTEGRATION_NAME),
+        "a name a disabled integration declares is not this sweep's business; \
+         reporting it here would duplicate the disabled-integration pass's \
+         own remedy under this one's different wording:\n{doctor}"
+    );
+    assert!(
+        link_exists(&ws, DISABLED_INTEGRATION_NAME),
+        "doctor must not have acted on it either way"
+    );
+}
+
+/// Declared one directory down, then dropped the same way `DROPPED` is.
+const NESTED_DROPPED: &str = "notes/NESTED.md";
+
+/// Same shape as `weave_with_dropped_links`, except the dropped name sits a
+/// directory down — the recursion into a subdirectory and the pruning of the
+/// directory a removal empties are otherwise never driven, since every other
+/// fixture in this file sits at the weave root.
+fn weave_with_nested_dropped_link() -> (tempfile::TempDir, PathBuf) {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let project_dir = ws.join("projects/alpha");
+    std::fs::create_dir_all(project_dir.join("notes")).unwrap();
+
+    write_manifest(&project_dir, &[DECLARED, NESTED_DROPPED]);
+    std::fs::write(project_dir.join(DECLARED), "shared\n").unwrap();
+    std::fs::write(project_dir.join(NESTED_DROPPED), "nested\n").unwrap();
+    git_init_with_commit(&project_dir);
+
+    std::fs::write(ws.join(".rwv-active"), "alpha\n").unwrap();
+    let out = rwv_output(&ws, &["activate", "alpha", "--no-materialize"]);
+    for name in [DECLARED, NESTED_DROPPED] {
+        assert!(
+            ws.join(name).symlink_metadata().is_ok(),
+            "fixture: activate should have surfaced `{name}`; output:\n{out}"
+        );
+    }
+
+    write_manifest(&project_dir, &[DECLARED]);
+    (tmp, ws)
+}
+
+/// One directory down: the walk must recurse to find the orphan, and
+/// removing it must leave no empty directory behind.
+///
+/// The doctor half is a clean pin on recursion: `doctor` never repairs, so
+/// nothing but the walk under test can be why the nested orphan is found.
+/// The directory-survives half is not as sharp a pin on `unsurface_undeclared`
+/// specifically: `rwv materialize` always runs its own surfacing repair right
+/// after removing undeclared links, and that repair's directory walk prunes
+/// any directory an activation left empty, on its own, regardless of this
+/// sweep. Measured — reverting `unsurface_undeclared`'s own prune alone still
+/// leaves this assertion green, because that repair's independent pruning
+/// (`remove_activation_symlinks_in`) satisfies it. So this half pins the
+/// end-to-end promise an operator sees ("removing the orphan leaves no
+/// litter"), not a mutation exclusive to this file's own removal path.
+#[test]
+fn a_nested_dropped_link_is_found_and_its_emptied_directory_is_pruned() {
+    let (_tmp, ws) = weave_with_nested_dropped_link();
+    let nested_dir = ws.join("notes");
+
+    let doctor = rwv_output(&ws, &["doctor"]);
+    assert!(
+        doctor.contains(NESTED_DROPPED),
+        "doctor must find the orphan one directory down:\n{doctor}"
+    );
+
+    let out = rwv_output(&ws, &["materialize", "--remove-undeclared-links"]);
+    assert!(
+        !link_exists(&ws, NESTED_DROPPED),
+        "the nested link should have been removed:\n{out}"
+    );
+    assert!(
+        !nested_dir.exists(),
+        "removing the only link `notes/` held should have pruned the \
+         now-empty directory:\n{out}"
+    );
+}
