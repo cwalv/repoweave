@@ -318,6 +318,19 @@ operations.
 **Exits.** Finish or abort the in-flight VCS operation in the named repo, then
 re-run.
 
+### `missing-creation-param`
+
+**Condition.** An `rwv add --new` creation address's registry declares a
+required parameter the supplied map has no entry for.
+
+**Why.** `plan_creation` cannot mint a URL or an upstream from an incomplete
+parameter set, and guessing a value would place or create something the
+operator did not ask for.
+
+**Exits.** Add `--param <name>=<value>` for each parameter the refusal names
+— the same declared surface `rwv explain add`'s creation-parameter table
+renders, so the two cannot disagree.
+
 ### `missing-lock`
 
 **Condition.** `--frozen` was passed and there is no lock file.
@@ -431,6 +444,20 @@ there is no frame to interpret the command in.
 **Exits.** `cd` into a weave, or `rwv init` to create one here.
 
 **Where this sits.** [Weave root](../explanation/joints/weave-root.md).
+
+### `occupied-placement`
+
+**Condition.** An `rwv add --new` creation address places at a path the
+manifest already maps to a different URL.
+
+**Why.** Placement is a function of the identity a registry mints, not of a
+creation parameter like `--param root=<dir>`. Two different roots naming the
+same owner and repo would both place at the same path if this proceeded
+silently, and the second creation would overwrite the first's meaning in the
+manifest without saying so.
+
+**Exits.** Use a different owner or repo so the two do not collide, or remove
+the existing entry first if replacing it is what's intended.
 
 ### `not-fast-forwardable`
 
@@ -573,6 +600,19 @@ branch would publish a lock nobody's canonical history reaches.
 
 **Exits.** Check out the canonical branch the message names and re-run. If the
 work belongs on it, land it there first.
+
+### `provider-cannot-mint-url`
+
+**Condition.** `rwv init --provider <registry>/<owner>` names a registry that
+cannot construct a clone URL from an owner and a project name alone.
+
+**Why.** `init --provider` mints a URL and adds it as the project repo's
+remote; it carries no creation surface of its own — no `--root`, no
+parameters — so a registry whose `clone_url` needs more than that, `local`
+being the case that exists, has nothing to mint from.
+
+**Exits.** Create the project without `--provider` (`rwv init <name>`), then
+set the remote once the repository exists elsewhere.
 
 ### `push-from-workweave`
 
@@ -971,6 +1011,27 @@ exception: these specific paths are ones the operation would overwrite, and
 they are not in any commit to recover from.
 
 **Exits.** Move or delete the named files, then re-run.
+
+### `unusable-creation-param`
+
+**Condition.** An `rwv add --new` creation parameter's value cannot be used
+as given: a name the registry does not declare, a `--params-json` entry that
+is not a JSON string, a `root` directory that does not exist, a `root` inside
+the weave it would create a member of, or a name supplied through more than
+one spelling (the address's own three-segment shorthand, `--param`, and
+`--params-json` all write into the same map, and a name given twice is a
+disagreement about intent rather than a precedence question a default could
+answer silently).
+
+**Why.** Each of these would silently create something other than what the
+operator asked for — a directory materialised from a typo, a parameter no
+registry reads, an upstream the weave itself would walk, delete, and report
+on as one of its own members, or a value picked by unstated precedence
+between two the operator gave.
+
+**Exits.** Correct the named parameter and re-run. For a `root` that does not
+exist, create it first; for one inside the weave, choose a directory outside
+it; for a name given twice, supply it in only one spelling.
 
 ### `version-is-a-pin`
 

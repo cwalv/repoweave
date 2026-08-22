@@ -190,9 +190,16 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 
         let repo_id = RepoId::new(owner, name);
 
-        let url = registry
-            .clone_url(&repo_id)
-            .expect("the only Registry impl always supports clone URLs");
+        let url = registry.clone_url(&repo_id).ok_or_else(|| {
+            refusal(
+                RefusalKind::ProviderCannotMintUrl,
+                format!(
+                    "'{registry_name}' cannot name a repository from an owner and a project \
+                     name alone. Create the project without --provider (`rwv init {name}`), \
+                     then set the remote once the repo exists."
+                ),
+            )
+        })?;
 
         vcs.add_remote(&project_dir, &url.to_string())
             .with_context(|| format!("failed to add the remote in {}", project_dir.display()))?;

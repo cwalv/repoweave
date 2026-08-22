@@ -290,6 +290,10 @@ impl Vcs for FakeVcs {
         unsupported("init_repo")
     }
 
+    fn init_bare_repo(&self, _dest: &Path) -> Result<(), VcsError> {
+        unsupported("init_bare_repo")
+    }
+
     fn clone_repo(&self, _url: &str, _dest: &Path) -> Result<(), VcsError> {
         unsupported("clone_repo")
     }

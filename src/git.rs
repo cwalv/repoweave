@@ -1297,6 +1297,15 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn init_bare_repo(&self, dest: &Path) -> Result<(), VcsError> {
+        std::fs::create_dir_all(dest).map_err(|e| VcsError::Io {
+            ctx: format!("failed to create directory {}", dest.display()),
+            source: e,
+        })?;
+        Self::run(&["init", "--bare", "--initial-branch=main"], dest)?;
+        Ok(())
+    }
+
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
         let dest_str = path_as_git_arg(dest, "destination path")?;
         Self::run(

@@ -263,6 +263,20 @@ pub enum RefusalKind {
     /// Per-item failures stopped a run, and the artifact it would have
     /// written is withheld.
     PartialRunAborted,
+
+    /// A creation address's registry declares a required parameter the
+    /// supplied map has no entry for.
+    MissingCreationParam,
+    /// A creation parameter's value cannot be used as given — a `root` that
+    /// does not exist, one inside the weave, a name the registry does not
+    /// declare, or one supplied through more than one spelling (the address
+    /// shorthand, `--param`, `--params-json`).
+    UnusableCreationParam,
+    /// A creation address's placement already holds a different URL.
+    OccupiedPlacement,
+    /// `--provider` names a registry that cannot mint a clone URL from an
+    /// owner and a project name alone.
+    ProviderCannotMintUrl,
 }
 
 impl RefusalKind {

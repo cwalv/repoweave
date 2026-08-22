@@ -88,9 +88,9 @@ fn add_new_malformed_path_is_decorated_once() {
     let tmp = common::tempdir().unwrap();
     let workspace = workspace_with_project(&tmp);
     assert_one_decoration(
-        &["add", "not-a-path", "--new"],
+        &["add", "owner/repo", "--new"],
         &workspace,
-        "does not look like a valid repo path",
+        "does not look like a valid creation address",
     );
 }
 
@@ -101,7 +101,7 @@ fn add_new_unknown_registry_is_decorated_once() {
     assert_one_decoration(
         &["add", "unknownhost/owner/repo", "--new"],
         &workspace,
-        "could not infer a URL",
+        "is not a registry rwv can create through",
     );
 }
 

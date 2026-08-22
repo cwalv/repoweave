@@ -1906,6 +1906,15 @@ pub trait Vcs: Send + Sync {
     /// `git init --initial-branch=main`.
     fn init_repo(&self, dest: &Path) -> Result<(), VcsError>;
 
+    /// Create an empty **bare** repository at `dest` — no working tree —
+    /// creating the directory and any missing parents first.
+    ///
+    /// A registry that creates its own upstream (`local`) needs one: a
+    /// non-bare `init_repo` upstream refuses a push to its checked-out
+    /// branch, so the first `git push` from the member it backs would fail
+    /// against the very thing creation was for.
+    fn init_bare_repo(&self, dest: &Path) -> Result<(), VcsError>;
+
     /// Clone `url` into `dest`, naming the remote by the convention this VCS
     /// uses for a repo rwv manages.
     ///

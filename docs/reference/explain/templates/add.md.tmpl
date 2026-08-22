@@ -38,10 +38,56 @@ If the argument is a relative path (no URL scheme) and the path already exists
 under the primary weave root, `add` infers the URL from the clone's `origin`
 remote and registers it without a network clone.
 
+### Creation (`--new`)
+
+`--new` is expected to be rare. The common path is to create the repo with
+the registry's own tools (a forge's web UI, `gh`/`glab`, or `mkdir` + `git
+init` for a local one) and then run a plain `rwv add <url>`, which already
+works for anything `placement` covers. `--new` is a secondary convenience for
+when that isn't done yet.
+
+With `--new`, the positional argument is a **creation address**, not a URL or
+a path — a bare registry name (`local`), or a three-segment shorthand
+(`github/acme/fresh`) that fills the `owner` and `repo` parameters for
+whichever registry the first segment names. Any parameter the registry still
+needs — every parameter, for a bare registry name — is supplied with
+`--param <name>=<value>` (repeatable) or as one JSON object via
+`--params-json '{"name": "value"}'`. A parameter named in more than one of
+these three places refuses rather than picking a winner.
+
+Creation is registry-dispatched: each registry declares its own parameters
+and plans what gets created from them.
+
+{{MSG:creation_params_table}}
+
+- **A domain registry** (`github`, `gitlab`, `bitbucket`) needs `owner` and
+  `repo`. Nothing is created remotely — rwv has no HTTP client — so the
+  member is `git init`'d locally and its remote is set to the minted URL as
+  an intent. `rwv add github/acme/fresh --new` and `rwv add github --new
+  --param owner=acme --param repo=fresh` are equivalent.
+- **`local`** needs `root`, `owner`, and `repo`. Creation is two-sided: rwv
+  creates a **bare** repository at `<root>/<owner>/<repo>` and clones the
+  member from it, so the member's remote is real from birth and `git push
+  -u` works immediately. `root` must already exist (rwv creates
+  `<root>/<owner>/<repo>`, not `<root>` itself) and must be outside the
+  weave. `rwv add local/acme/fresh --new` fills `owner` and `repo` from the
+  shorthand and still needs `--param root=<dir>`.
+
+The placement path is always derived from the minted URL, the same way a
+plain `rwv add <url>` derives it — the creation address only selects a
+registry and supplies parameters, never a layout.
+
+### Local-path form
+
+If the argument is a relative path (no URL scheme) and the path already exists
+under the primary weave root, `add` infers the URL from the clone's `origin`
+remote and registers it without a network clone.
+
 ## Invocation
 
 ```
-rwv add <url> [--role <role>] [--new] [--project <name>]
+rwv add <url> [--role <role>] [--project <name>]
+rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <json>] [--role <role>] [--project <name>]
 ```
 
 - `<url>` — repository URL. Parsed through the registry topology to derive
@@ -49,10 +95,12 @@ rwv add <url> [--role <role>] [--new] [--project <name>]
   to an existing directory under the primary weave root.
 - `--role <role>` — role for the repo in the manifest (`owned`, `fork`,
   `dependency`, `reference`). Defaults to `owned`.
-- `--new` — initialize a new local repo (via `git init`) at the canonical
-  path instead of cloning. Use when creating a new repo that has no upstream
-  yet. The argument is the canonical path (`registry/owner/repo`); its URL is
-  derived from the path via the registry topology.
+- `--new` — create a new repo instead of cloning. The positional argument
+  becomes a creation address (see "Creation" above) rather than a URL or path.
+- `--param <name>=<value>` — a creation parameter (repeatable). See the table
+  above for what each registry declares.
+- `--params-json <json>` — the same parameters as one JSON object of string
+  values.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 
@@ -97,10 +145,24 @@ Register a repo that's already cloned:
 rwv add github/myorg/existing-repo
 ```
 
-Initialize a brand-new local repo:
+Create a repo at a registry that hosts it (member `git init`'d locally,
+remote set to the minted URL as an intent):
 
 ```
 rwv add github/myorg/new-project --new
+```
+
+Create a repo with no registry backing it, from scratch — rwv creates a bare
+upstream under `--param root` and clones the member from it:
+
+```
+rwv add local --new --param root=/srv/repos --param owner=myorg --param repo=new-project
+```
+
+The same creation, scripted:
+
+```
+rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "repo": "new-project"}'
 ```
 
 ## Common errors
@@ -110,3 +172,9 @@ rwv add github/myorg/new-project --new
 - *clone failed* — network error or authentication problem; inspect git output.
 - *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
   is valid TOML.
+- *missing creation parameter* — `--new` and a required parameter (see the
+  table above) was not supplied by the address, `--param`, or `--params-json`.
+- *duplicate creation parameter* — the same parameter name arrived through
+  more than one of the address shorthand, `--param`, and `--params-json`.
+- *occupied placement* — the creation address's placement already maps to a
+  different URL in the manifest.

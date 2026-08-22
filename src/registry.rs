@@ -6,8 +6,9 @@
 //! The `Registry` trait allows different hosts (GitHub, GitLab, self-hosted)
 //! to have different URL parsing, authentication, and discovery behavior.
 
-use crate::manifest::{RepoPath, RepoUrl};
+use crate::manifest::{RepoPath, RepoUrl, VcsType};
 use crate::refusal::RefusalKind;
+use std::path::PathBuf;
 
 /// A short name for a code host or directory that serves as the first path
 /// segment in the canonical layout: `{registry}/{owner}/{repo}/`.
@@ -139,6 +140,104 @@ fn derive_local_path_from_url(url: &str) -> Option<String> {
     Some(canonical_local_path(&registry, owner, repo))
 }
 
+/// One parameter a registry's [`Registry::plan_creation`] needs.
+///
+/// Rendered, not written twice: the missing-parameter refusal and the
+/// generated `rwv explain add` creation-parameter table both walk
+/// [`Registry::creation_params`], so a registry that grows a parameter grows
+/// both surfaces from the same slice.
+#[derive(Debug, Clone, Copy)]
+pub struct ParamSpec {
+    pub name: &'static str,
+    pub required: bool,
+    pub help: &'static str,
+}
+
+/// The parsed `--param`/`--params-json` values a creation address carries,
+/// merged with whatever the address's own shorthand supplied.
+///
+/// String-valued only: no [`ParamSpec`] declares a type yet, so a caller
+/// parsing `--params-json` rejects a non-string value before it would reach
+/// here rather than stringifying it silently.
+#[derive(Debug, Clone, Default)]
+pub struct ParamMap(std::collections::BTreeMap<String, String>);
+
+impl ParamMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert `name=value`, returning the previous value if `name` was
+    /// already present — the signal a caller merging several sources (an
+    /// address's own shorthand, `--param`, `--params-json`) uses to detect a
+    /// key supplied more than once.
+    pub fn insert(&mut self, name: impl Into<String>, value: impl Into<String>) -> Option<String> {
+        self.0.insert(name.into(), value.into())
+    }
+
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+}
+
+/// Why [`Registry::plan_creation`] refused `params`.
+#[derive(Debug, Clone)]
+pub enum CreationParamError {
+    /// A required [`ParamSpec::name`] has no entry in the map.
+    Missing(Vec<&'static str>),
+    /// The map carries a name this registry's [`Registry::creation_params`]
+    /// does not declare.
+    Unrecognized(String),
+}
+
+/// What must exist upstream of a member this design creates, before the
+/// member itself is cloned or initialised from it.
+#[derive(Debug, Clone)]
+pub enum Upstream {
+    /// rwv creates it, here, before the member is cloned from it.
+    InitBareAt(PathBuf),
+    /// The URL names a repo rwv cannot bring into existence.
+    Named,
+}
+
+/// What a registry's [`Registry::plan_creation`] hands back: the URL the new
+/// member will be known by, the backend that creates it, and what — if
+/// anything — rwv must bring into existence upstream first.
+#[derive(Debug, Clone)]
+pub struct CreationPlan {
+    pub url: RepoUrl,
+    pub vcs: VcsType,
+    pub upstream: Upstream,
+}
+
+/// `params` declares every name in `specs` and nothing outside it.
+///
+/// Shared by every [`Registry::plan_creation`] implementation so "a required
+/// parameter is missing" and "an unrecognised one was supplied" are checked
+/// identically everywhere, rather than each registry re-deriving the same
+/// two loops.
+fn check_creation_params(specs: &[ParamSpec], params: &ParamMap) -> Result<(), CreationParamError> {
+    let declared: std::collections::HashSet<&str> = specs.iter().map(|s| s.name).collect();
+    for key in params.keys() {
+        if !declared.contains(key) {
+            return Err(CreationParamError::Unrecognized(key.to_owned()));
+        }
+    }
+    let missing: Vec<&'static str> = specs
+        .iter()
+        .filter(|s| s.required && params.get(s.name).is_none())
+        .map(|s| s.name)
+        .collect();
+    if !missing.is_empty() {
+        return Err(CreationParamError::Missing(missing));
+    }
+    Ok(())
+}
+
 /// A code host or directory that can resolve URLs to local paths.
 ///
 /// Different registries may parse URLs differently (HTTPS vs SSH vs
@@ -162,6 +261,13 @@ pub trait Registry {
     /// and every caller asserts `Some`; introducing one means revisiting those
     /// assertions, not adding a branch.
     fn clone_url(&self, id: &RepoId) -> Option<RepoUrl>;
+
+    /// The parameters `plan_creation` needs to create a repo through this
+    /// registry.
+    fn creation_params(&self) -> &[ParamSpec];
+
+    /// Turn a filled-in parameter map into a plan for creating a repo.
+    fn plan_creation(&self, params: &ParamMap) -> Result<CreationPlan, CreationParamError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +341,38 @@ impl Registry for DomainRegistry {
             repo: id.repo().to_owned(),
         })
     }
+
+    fn creation_params(&self) -> &[ParamSpec] {
+        DOMAIN_CREATION_PARAMS
+    }
+
+    fn plan_creation(&self, params: &ParamMap) -> Result<CreationPlan, CreationParamError> {
+        check_creation_params(DOMAIN_CREATION_PARAMS, params)?;
+        let owner = params.get("owner").expect("checked required above");
+        let repo = params.get("repo").expect("checked required above");
+        let url = self
+            .clone_url(&RepoId::new(owner, repo))
+            .expect("DomainRegistry::clone_url always returns Some");
+        Ok(CreationPlan {
+            url,
+            vcs: VcsType::Git,
+            upstream: Upstream::Named,
+        })
+    }
 }
+
+const DOMAIN_CREATION_PARAMS: &[ParamSpec] = &[
+    ParamSpec {
+        name: "owner",
+        required: true,
+        help: "the account or organisation that owns the repo",
+    },
+    ParamSpec {
+        name: "repo",
+        required: true,
+        help: "the repo's name",
+    },
+];
 
 /// The repo's own name at the tail of a clone source.
 ///
@@ -396,7 +533,85 @@ pub fn builtin_registries() -> Vec<Box<dyn Registry>> {
             registry_name: RegistryName::new("bitbucket"),
             domain: "bitbucket.org".into(),
         }),
+        // Appended, never prepended: `resolve_to_clone_info` defaults a
+        // registry-less two-part shorthand to `registries.first()`, and that
+        // stays GitHub. `matches` claims nothing, so `RepoUrl::from_str` can
+        // never mint `Shorthand { registry: Some(local) }` — `local` is
+        // reachable only by being named as a creation address.
+        Box::new(LocalRegistry {
+            registry_name: RegistryName::new("local"),
+        }),
     ]
+}
+
+// ---------------------------------------------------------------------------
+// Local registry — a directory rwv creates and clones from, not a host
+// ---------------------------------------------------------------------------
+
+/// A registry with no host: creating through it means creating a bare
+/// upstream under an operator-supplied directory and cloning the member from
+/// that. It never matches an existing source and never mints a clone URL for
+/// one — both would require inferring a directory from the outside, which
+/// isn't given, and `matches` claiming even one input would let a `local`
+/// shorthand mint from `DomainRegistry`'s parse path, breaking the
+/// `resolve_to_clone_info` default this list's append order relies on.
+pub struct LocalRegistry {
+    pub registry_name: RegistryName,
+}
+
+const LOCAL_CREATION_PARAMS: &[ParamSpec] = &[
+    ParamSpec {
+        name: "root",
+        required: true,
+        help: "the directory the repository is created under",
+    },
+    ParamSpec {
+        name: "owner",
+        required: true,
+        help: "the owner segment of the placement path",
+    },
+    ParamSpec {
+        name: "repo",
+        required: true,
+        help: "the repo segment of the placement path",
+    },
+];
+
+impl Registry for LocalRegistry {
+    fn name(&self) -> &RegistryName {
+        &self.registry_name
+    }
+
+    fn matches(&self, _raw: &str) -> Option<RepoUrl> {
+        None
+    }
+
+    fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
+        None
+    }
+
+    fn creation_params(&self) -> &[ParamSpec] {
+        LOCAL_CREATION_PARAMS
+    }
+
+    fn plan_creation(&self, params: &ParamMap) -> Result<CreationPlan, CreationParamError> {
+        check_creation_params(LOCAL_CREATION_PARAMS, params)?;
+        let root = params.get("root").expect("checked required above");
+        let owner = params.get("owner").expect("checked required above");
+        let repo = params.get("repo").expect("checked required above");
+        // The upstream directory is named exactly as the URL spells it — no
+        // `.git` suffix — so the URL and the path are the same string and
+        // the mapping needs no rule.
+        let url: RepoUrl = format!("file://{root}/{owner}/{repo}")
+            .parse()
+            .expect("RepoUrl::from_str is infallible");
+        let bare_path = PathBuf::from(root).join(owner).join(repo);
+        Ok(CreationPlan {
+            url,
+            vcs: VcsType::Git,
+            upstream: Upstream::InitBareAt(bare_path),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -891,5 +1106,126 @@ mod tests {
             placement_result(&parse("github/owner/re\\po")),
             Err(PlacementError::Invalid(_))
         ));
+    }
+
+    // -----------------------------------------------------------------------
+    // creation surface
+    // -----------------------------------------------------------------------
+
+    /// A fixture registry declaring a parameter no built-in registry has, so
+    /// a check that reads it from a hardcoded literal instead of from
+    /// [`Registry::creation_params`] has something to disagree with.
+    struct FixtureRegistry {
+        registry_name: RegistryName,
+    }
+
+    const FIXTURE_PARAMS: &[ParamSpec] = &[
+        ParamSpec {
+            name: "owner",
+            required: true,
+            help: "owner",
+        },
+        ParamSpec {
+            name: "widget_count",
+            required: true,
+            help: "how many widgets",
+        },
+    ];
+
+    impl Registry for FixtureRegistry {
+        fn name(&self) -> &RegistryName {
+            &self.registry_name
+        }
+        fn matches(&self, _raw: &str) -> Option<RepoUrl> {
+            None
+        }
+        fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
+            None
+        }
+        fn creation_params(&self) -> &[ParamSpec] {
+            FIXTURE_PARAMS
+        }
+        fn plan_creation(&self, params: &ParamMap) -> Result<CreationPlan, CreationParamError> {
+            check_creation_params(FIXTURE_PARAMS, params)?;
+            Ok(CreationPlan {
+                url: parse("fixture/owner/widget"),
+                vcs: VcsType::Git,
+                upstream: Upstream::Named,
+            })
+        }
+    }
+
+    /// The missing-parameter check is driven by [`Registry::creation_params`],
+    /// not by a literal list of names — a registry declaring a parameter no
+    /// built-in registry has still gets it reported as missing when absent.
+    #[test]
+    fn a_fixture_registrys_own_declared_parameter_is_reported_missing() {
+        let fixture = FixtureRegistry {
+            registry_name: RegistryName::new("fixture"),
+        };
+        let mut params = ParamMap::new();
+        params.insert("owner", "acme");
+        // widget_count is declared but not supplied.
+        match fixture.plan_creation(&params) {
+            Err(CreationParamError::Missing(missing)) => {
+                assert_eq!(missing, vec!["widget_count"]);
+            }
+            other => panic!("expected Missing([\"widget_count\"]), got {other:?}"),
+        }
+    }
+
+    /// The full-supply case for the same fixture: every declared parameter
+    /// present is exactly what `plan_creation` needs, nothing more.
+    #[test]
+    fn a_fixture_registrys_own_declared_parameters_are_sufficient() {
+        let fixture = FixtureRegistry {
+            registry_name: RegistryName::new("fixture"),
+        };
+        let mut params = ParamMap::new();
+        params.insert("owner", "acme");
+        params.insert("widget_count", "3");
+        assert!(fixture.plan_creation(&params).is_ok());
+    }
+
+    /// AC8: every `creation_params()` entry round-trips through that
+    /// registry's own `plan_creation`, and no name outside the slice is
+    /// accepted. Non-vacuity: at least one registry must declare at least
+    /// one parameter, or this pin would pass by having nothing to check.
+    #[test]
+    fn every_builtin_registrys_declared_params_round_trip_through_its_own_plan_creation() {
+        let registries = builtin_registries();
+        let mut total_params = 0usize;
+        for reg in &registries {
+            let specs = reg.creation_params();
+            total_params += specs.len();
+
+            let mut full = ParamMap::new();
+            for spec in specs {
+                full.insert(spec.name, "x");
+            }
+            assert!(
+                reg.plan_creation(&full).is_ok(),
+                "{}'s own declared parameters must be sufficient for its own \
+                 plan_creation",
+                reg.name().as_str()
+            );
+
+            let mut with_unrecognized = full;
+            with_unrecognized.insert("not-a-declared-param", "y");
+            assert!(
+                matches!(
+                    reg.plan_creation(&with_unrecognized),
+                    Err(CreationParamError::Unrecognized(_))
+                ),
+                "{} must reject a parameter its own creation_params() does not \
+                 declare",
+                reg.name().as_str()
+            );
+        }
+        assert!(
+            total_params > 0,
+            "non-vacuity: at least one built-in registry must declare a \
+             creation parameter"
+        );
     }
 }

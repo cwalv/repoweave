@@ -216,6 +216,136 @@ fn a_typed_repo_path_error_routes_to_its_token() {
     assert_routes_to(&stderr, "backslash-in-repo-path");
 }
 
+// ---------------------------------------------------------------------------
+// The rwv add --new creation surface
+// ---------------------------------------------------------------------------
+
+/// `rwv add local --new` with `owner` and `repo` but no `root` — the driving
+/// input fork 7's ruling turns into a one-flag repair.
+#[test]
+fn a_missing_creation_param_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    let stderr = refusal_stderr(
+        &[
+            "add",
+            "local",
+            "--new",
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &ws,
+    );
+    assert!(
+        stderr.contains("root") && stderr.contains("--param root=<value>"),
+        "precondition: the refusal names the missing parameter and the flag \
+         to add:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "missing-creation-param");
+}
+
+/// A `root` that does not exist — one of several conditions
+/// `unusable-creation-param` covers; this is the one that needs no upstream
+/// state to drive.
+#[test]
+fn an_unusable_creation_param_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let missing_root = tmp.path().join("nonexistent-root");
+
+    let stderr = refusal_stderr(
+        &[
+            "add",
+            "local",
+            "--new",
+            "--param",
+            &format!("root={}", missing_root.display()),
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &ws,
+    );
+    assert!(
+        stderr.contains("does not exist"),
+        "precondition: this is the missing-root refusal:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "unusable-creation-param");
+}
+
+/// Two `rwv add local --new` invocations naming the same owner/repo under
+/// different roots: the second placement collision refuses rather than
+/// silently discarding the operator's new root.
+#[test]
+fn an_occupied_placement_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let root_a = tmp.path().join("root-a");
+    let root_b = tmp.path().join("root-b");
+    std::fs::create_dir_all(&root_a).unwrap();
+    std::fs::create_dir_all(&root_b).unwrap();
+
+    let first = common::rwv()
+        .args([
+            "add",
+            "local",
+            "--new",
+            "--param",
+            &format!("root={}", root_a.display()),
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv should run");
+    assert!(
+        first.status.success(),
+        "precondition: the first creation must succeed:\n{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let stderr = refusal_stderr(
+        &[
+            "add",
+            "local",
+            "--new",
+            "--param",
+            &format!("root={}", root_b.display()),
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &ws,
+    );
+    assert!(
+        stderr.contains("already maps to"),
+        "precondition: this is the occupied-placement refusal:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "occupied-placement");
+}
+
+/// `rwv init --provider local/owner`: `local` cannot mint a clone URL from
+/// an owner and a project name alone — it has no `--root` to draw one from.
+#[test]
+fn a_provider_cannot_mint_url_routes_to_its_token() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    let stderr = refusal_stderr(&["init", "newproj", "--provider", "local/acme"], &ws);
+    assert!(
+        stderr.contains("cannot name a repository"),
+        "precondition: this is the provider-cannot-mint-url refusal:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "provider-cannot-mint-url");
+}
+
 /// The selector errors, which are three conditions under one type. A single
 /// drive would pass on an arm that answered the same kind for all three.
 #[test]

@@ -298,6 +298,110 @@ fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
     );
 }
 
+/// `rwv add local --new --param root=<lab> --param owner=acme --param
+/// repo=fresh` creates two things: a bare upstream under `<lab>`, and the
+/// member cloned from it. All five assertions matter — the first four alone
+/// pass even if `--param root` were parsed and discarded, since the member
+/// still lands at the right placement path regardless of where its upstream
+/// actually is; only reading the upstream's own location (2, 3) and
+/// re-fetching from the recorded URL on a second weave (5) can see that.
+#[test]
+fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
+    let tmp = common::tempdir().unwrap();
+    let lab = tmp.path().join("lab");
+    std::fs::create_dir_all(&lab).unwrap();
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args([
+            "add",
+            "local",
+            "--new",
+            "--param",
+            &format!("root={}", lab.display()),
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    // 1. The member exists on disk at <weave>/local/acme/fresh.
+    let member = workspace.join("local").join("acme").join("fresh");
+    assert!(
+        member.join(".git").exists(),
+        "member must be a git checkout at the placement path"
+    );
+
+    // 2. The upstream exists at <lab>/acme/fresh and is bare.
+    let upstream = lab.join("acme").join("fresh");
+    assert!(
+        upstream.is_dir(),
+        "the bare upstream must exist under the operator's root"
+    );
+    let is_bare = common::git()
+        .args(["config", "--get", "core.bare"])
+        .current_dir(&upstream)
+        .output()
+        .expect("git should run");
+    assert_eq!(
+        String::from_utf8_lossy(&is_bare.stdout).trim(),
+        "true",
+        "the upstream must be bare, not a working checkout"
+    );
+    assert!(
+        !upstream.join(".git").exists(),
+        "a bare repo has no .git subdirectory of its own"
+    );
+
+    // 3. The manifest records local/acme/fresh against file://<lab>/acme/fresh.
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
+    let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();
+    let expected_url = common::file_url(&upstream);
+    assert!(
+        manifest_content.contains("local/acme/fresh") && manifest_content.contains(&expected_url),
+        "manifest must record local/acme/fresh against {expected_url}, got:\n{manifest_content}"
+    );
+
+    // A fresh creation's HEAD is unborn (nothing committed yet) — the same
+    // state a plain `git init` leaves, and orthogonal to what item 4 is
+    // about (whether the walk reaches the member at all, not whether the
+    // member has commits). Commit and push so doctor's own "unborn HEAD, run
+    // rwv lock" finding doesn't stand in for the thing being checked.
+    common::git_in(&member, &["config", "user.email", "test@test.com"]);
+    common::git_in(&member, &["config", "user.name", "Test"]);
+    std::fs::write(member.join("README"), "hello").unwrap();
+    common::git_in(&member, &["add", "-A"]);
+    common::git_in(&member, &["commit", "-m", "init"]);
+    common::git_in(&member, &["push", "origin", "main"]);
+
+    // 4. `rwv doctor` reports clean immediately after.
+    rwv()
+        .args(["doctor"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    // 5. A second weave `rwv fetch`ing that manifest materialises the member
+    // from that URL — the assertion that actually depends on the upstream
+    // being real rather than merely named.
+    let (workspace2, _project_dir2) =
+        setup_workspace_with_project(&tmp, &[("local/acme/fresh", &expected_url)]);
+    rwv()
+        .args(["fetch"])
+        .current_dir(&workspace2)
+        .assert()
+        .success();
+    let member2 = workspace2.join("local").join("acme").join("fresh");
+    assert!(
+        member2.join(".git").exists(),
+        "a second weave must be able to materialise the member from the recorded URL"
+    );
+}
+
 #[test]
 
 fn add_with_role_flag_sets_annotation() {
@@ -816,21 +920,22 @@ fn add_new_infers_url_for_github_path() {
 }
 
 #[test]
-fn add_new_without_path_like_argument_errors() {
+fn add_new_bare_name_is_a_creation_address_not_a_malformed_path() {
+    // A bare name without slashes is the "registry name alone" creation
+    // address shape (every parameter arrives via --param) — not a malformed
+    // path. This name matches no built-in registry, so the refusal is
+    // unknown-registry, not malformed-repo-path.
     let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
-    // A bare name without slashes is not a valid path.
     rwv()
-        .args(["add", "not-a-path", "--new"])
+        .args(["add", "not-a-registry", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("does not look like")
-                .or(predicate::str::contains("Error"))
-                .or(predicate::str::contains("error")),
-        );
+        .stderr(predicate::str::contains(
+            "is not a registry rwv can create through",
+        ));
 }
 
 #[test]
@@ -838,17 +943,31 @@ fn add_new_with_two_segment_path_errors() {
     let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
-    // Two segments (owner/repo) without registry prefix is not enough.
+    // Two segments (owner/repo) matches neither the bare-registry-name nor
+    // the three-segment shorthand creation address shape.
     rwv()
         .args(["add", "owner/repo", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("does not look like")
-                .or(predicate::str::contains("Error"))
-                .or(predicate::str::contains("error")),
-        );
+        .stderr(predicate::str::contains(
+            "does not look like a valid creation address",
+        ));
+}
+
+#[test]
+fn add_new_with_four_segment_path_errors() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", "github/owner/repo/extra", "--new"])
+        .current_dir(&workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not look like a valid creation address",
+        ));
 }
 
 #[test]
@@ -856,17 +975,15 @@ fn add_new_with_unknown_registry_errors() {
     let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
-    // A three-segment path with an unknown registry prefix should fail.
+    // A three-segment shorthand whose registry segment matches nothing.
     rwv()
         .args(["add", "unknownhost/owner/repo", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("could not infer")
-                .or(predicate::str::contains("Error"))
-                .or(predicate::str::contains("error")),
-        );
+        .stderr(predicate::str::contains(
+            "is not a registry rwv can create through",
+        ));
 }
 
 #[test]

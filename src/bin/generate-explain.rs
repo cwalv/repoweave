@@ -169,6 +169,30 @@ fn doctor_kind_list_md() -> String {
         .join(", ")
 }
 
+/// One row per registry per declared creation parameter, walked from
+/// `builtin_registries()` — the same slice `rwv add --new`'s
+/// missing-parameter refusal reads — rather than hand-typed, so a registry
+/// that grows a parameter cannot leave this table behind.
+fn creation_params_table_md() -> String {
+    let registries = repoweave::registry::builtin_registries();
+    let mut out = String::new();
+    out.push_str("| Registry | Parameter | Required | Help |\n");
+    out.push_str("|---|---|---|---|\n");
+    for reg in &registries {
+        for param in reg.creation_params() {
+            out.push_str(&format!(
+                "| `{}` | `{}` | {} | {} |\n",
+                reg.name().as_str(),
+                param.name,
+                if param.required { "yes" } else { "no" },
+                param.help
+            ));
+        }
+    }
+    out.truncate(out.trim_end().len());
+    out
+}
+
 /// Same as [`doctor_kind_list_md`], filtered to variants that carry an
 /// additional `sub_kind` field.
 fn doctor_subkind_variant_list_md() -> String {
@@ -896,6 +920,11 @@ fn build_msg_registry() -> MsgRegistry {
         "doctor_workweave_tree_integrity_subkinds",
         doctor_workweave_tree_integrity_subkind_list_md(),
     );
+
+    // "creation_params_table": the `rwv add --new` per-registry creation
+    // parameter table, walked from `builtin_registries()` — see
+    // `creation_params_table_md`.
+    m.insert("creation_params_table", creation_params_table_md());
 
     m
 }

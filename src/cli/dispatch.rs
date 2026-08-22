@@ -722,12 +722,14 @@ pub fn run() -> anyhow::Result<()> {
             url,
             role,
             new,
+            params,
+            params_json,
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             if new {
-                add_remove::run_add_new(&url, role, &ctx)?;
+                add_remove::run_add_new(&url, role, &params, params_json.as_deref(), &ctx)?;
             } else {
                 add_remove::run_add(&url, role, &ctx)?;
             }

@@ -7,13 +7,17 @@ src/activate.rs	unaccepted-generated-content	-	1
 src/activate.rs	wrong-checkout-kind	-	1
 src/add_remove.rs	(untokened:internal-invariant)	-	1
 src/add_remove.rs	malformed-repo-path	-	1
-src/add_remove.rs	no-matching-registry	-	2
+src/add_remove.rs	missing-creation-param	tests/refusal_arrival_test.rs	1
+src/add_remove.rs	no-matching-registry	-	1
 src/add_remove.rs	no-remote-default-branch	-	2
 src/add_remove.rs	no-remote-url	-	1
+src/add_remove.rs	occupied-placement	tests/refusal_arrival_test.rs	1
 src/add_remove.rs	repo-not-in-manifest	-	1
 src/add_remove.rs	shared-clone-referenced	-	1
 src/add_remove.rs	store-claims-unreadable	-	2
 src/add_remove.rs	store-still-claimed	-	1
+src/add_remove.rs	unknown-registry	-	1
+src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	8
 src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
@@ -34,6 +38,7 @@ src/init.rs	malformed-provider	-	1
 src/init.rs	nested-project-name	-	1
 src/init.rs	occupied-bootstrap-dir	-	1
 src/init.rs	project-dir-occupied	-	2
+src/init.rs	provider-cannot-mint-url	tests/refusal_arrival_test.rs	1
 src/init.rs	unknown-registry	-	1
 src/integration_runner.rs	(untokened:integration-channel)	-	6
 src/integrations/cargo_workspace.rs	(untokened:integration-channel)	-	7

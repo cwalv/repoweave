@@ -4,7 +4,7 @@ use crate::activate::{activate_intent, activate_workweave_intent};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::refusal::{refusal, RefusalKind};
-use crate::registry::{builtin_registries, Registry};
+use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
 use crate::vcs::{vcs_for, EphemeralRefName, HeadAttachment, RefName, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
@@ -619,15 +619,157 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
     )
 }
 
-/// Execute `rwv add PATH --new`.
+/// Parse an `rwv add --new` creation address into the registry it names and
+/// the `(owner, repo)` prefix a three-segment shorthand fills, if any.
 ///
-/// Instead of cloning from a URL, this creates a new repo at the canonical
-/// path by running `git init`. The URL is inferred from the path convention
-/// via registries (e.g., `github/owner/repo` → `https://github.com/owner/repo.git`).
+/// A bare registry name is one segment; the shorthand is exactly three
+/// (`registry/owner/repo`, ruled to fill only that prefix — whatever else the
+/// registry declares arrives via `--param`). Anything else does not look like
+/// either spelling.
+fn parse_creation_address(
+    address: &str,
+) -> anyhow::Result<(RegistryName, Option<(String, String)>)> {
+    let segments: Vec<&str> = address.split('/').filter(|s| !s.is_empty()).collect();
+    match segments.as_slice() {
+        [registry] => Ok((RegistryName::new(*registry), None)),
+        [registry, owner, repo] => Ok((
+            RegistryName::new(*registry),
+            Some((owner.to_string(), repo.to_string())),
+        )),
+        _ => crate::refuse!(
+            RefusalKind::MalformedRepoPath,
+            "'{}' does not look like a valid creation address (expected a bare registry \
+             name, or `registry/owner/repo`)",
+            address
+        ),
+    }
+}
+
+/// The `missing-creation-param` refusal text: every name in `missing`, with
+/// the `help` its own registry declares for it, and the one-flag repair for
+/// each. Renders entirely from `registry.creation_params()` and `supplied`'s
+/// own keys — nothing here is a literal per-registry sentence, which is what
+/// keeps a registry that grows a parameter from needing an edit here too.
+fn missing_creation_param_message(
+    registry: &dyn crate::registry::Registry,
+    missing: &[&'static str],
+    supplied: &ParamMap,
+) -> String {
+    let need: Vec<String> = registry
+        .creation_params()
+        .iter()
+        .filter(|p| missing.contains(&p.name))
+        .map(|p| format!("{} ({})", p.name, p.help))
+        .collect();
+    let supplied_keys: Vec<&str> = supplied.keys().collect();
+    let supplied_desc = if supplied_keys.is_empty() {
+        "nothing".to_string()
+    } else {
+        supplied_keys.join(", ")
+    };
+    let flags: Vec<String> = missing
+        .iter()
+        .map(|n| format!("--param {n}=<value>"))
+        .collect();
+    format!(
+        "'{}' needs {}; the address supplied {}. Re-run with {} added.",
+        registry.name().as_str(),
+        need.join(", "),
+        supplied_desc,
+        flags.join(" ")
+    )
+}
+
+/// Insert `name=value` into `map`, refusing if `name` already has an entry —
+/// the address's own shorthand, `--param`, and `--params-json` are three
+/// spellings for the same map, and a name arriving through more than one of
+/// them is a conflict rather than a precedence question.
+fn insert_creation_param(map: &mut ParamMap, name: &str, value: String) -> anyhow::Result<()> {
+    if map.insert(name, value).is_some() {
+        crate::refuse!(
+            RefusalKind::UnusableCreationParam,
+            "creation parameter '{}' was supplied more than once — by the address \
+             shorthand, `--param`, and `--params-json` each supply values into the same \
+             map, and only one of them may name a given parameter",
+            name
+        );
+    }
+    Ok(())
+}
+
+/// Merge a creation address's own `(owner, repo)` prefix with `--param` and
+/// `--params-json` into one [`ParamMap`].
+fn build_creation_params(
+    prefix: Option<(String, String)>,
+    params: &[String],
+    params_json: Option<&str>,
+) -> anyhow::Result<ParamMap> {
+    let mut map = ParamMap::new();
+
+    if let Some((owner, repo)) = prefix {
+        insert_creation_param(&mut map, "owner", owner)?;
+        insert_creation_param(&mut map, "repo", repo)?;
+    }
+
+    for raw in params {
+        let (name, value) = raw.split_once('=').ok_or_else(|| {
+            refusal(
+                RefusalKind::UnusableCreationParam,
+                format!("'--param {raw}' is not NAME=VALUE"),
+            )
+        })?;
+        insert_creation_param(&mut map, name, value.to_string())?;
+    }
+
+    if let Some(json) = params_json {
+        let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
+            refusal(
+                RefusalKind::UnusableCreationParam,
+                format!("--params-json is not valid JSON: {e}"),
+            )
+        })?;
+        let obj = value.as_object().ok_or_else(|| {
+            refusal(
+                RefusalKind::UnusableCreationParam,
+                "--params-json must be a JSON object of string values",
+            )
+        })?;
+        for (name, v) in obj {
+            let s = v.as_str().ok_or_else(|| {
+                refusal(
+                    RefusalKind::UnusableCreationParam,
+                    format!(
+                        "--params-json's '{name}' is not a string; creation parameters \
+                         take string values only"
+                    ),
+                )
+            })?;
+            insert_creation_param(&mut map, name, s.to_string())?;
+        }
+    }
+
+    Ok(map)
+}
+
+/// Execute `rwv add <creation-address> --new [--param NAME=VALUE]...
+/// [--params-json JSON] [--role ROLE]`.
+///
+/// The address names a registry — a bare name, or a three-segment shorthand
+/// that fills `owner` and `repo` for any registry (fork 7) — which turns a
+/// filled-in parameter map into a [`registry::CreationPlan`](crate::registry::CreationPlan):
+/// the URL the new member will be known by, and what, if anything, rwv must
+/// create upstream before cloning the member from it. `placement` derives
+/// the member's path from that URL; nothing here asserts one.
 ///
 /// `ctx` is the already-resolved invocation context. Handlers must not
 /// re-resolve.
-pub fn run_add_new(path_arg: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn run_add_new(
+    address: &str,
+    role: Role,
+    params: &[String],
+    params_json: Option<&str>,
+    ctx: &WorkspaceContext,
+) -> anyhow::Result<()> {
     // `rwv add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
     // operates through and the `vcs_type` it records.
@@ -636,80 +778,178 @@ pub fn run_add_new(path_arg: &str, role: Role, ctx: &WorkspaceContext) -> anyhow
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
-    // Validate that the argument looks like a path (registry/owner/repo).
-    let segments: Vec<&str> = path_arg.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 3 {
-        crate::refuse!(
-            RefusalKind::MalformedRepoPath,
-            "'{}' does not look like a valid repo path (expected registry/owner/repo)",
-            path_arg
-        );
-    }
+    let (registry_name, prefix) = parse_creation_address(address)?;
 
-    // Try to infer the URL from the path via registries.
     let owned_registries = builtin_registries();
-    let registry_refs: Vec<&dyn Registry> = owned_registries.iter().map(|r| r.as_ref()).collect();
+    let registry = owned_registries
+        .iter()
+        .find(|r| r.name() == &registry_name)
+        .ok_or_else(|| {
+            let names = crate::registry::builtin_registry_names();
+            let known: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
+            refusal(
+                RefusalKind::UnknownRegistry,
+                format!(
+                    "'{}' is not a registry rwv can create through. Known registries: {}. \
+                     To add a repo a registry already hosts, use `rwv add <url>` instead.",
+                    registry_name.as_str(),
+                    known.join(", ")
+                ),
+            )
+        })?;
 
-    let url = infer_url_from_path(path_arg, &registry_refs).ok_or_else(|| {
-        refusal(
-            RefusalKind::NoMatchingRegistry,
-            format!("could not infer a URL from path '{path_arg}' — no matching registry"),
-        )
-    })?;
+    let param_map = build_creation_params(prefix, params, params_json)?;
 
-    let repo_path = RepoPath::new(path_arg)?;
+    let plan = match registry.plan_creation(&param_map) {
+        Ok(plan) => plan,
+        Err(CreationParamError::Missing(missing)) => {
+            let message = missing_creation_param_message(registry.as_ref(), &missing, &param_map);
+            crate::refuse!(RefusalKind::MissingCreationParam, "{}", message);
+        }
+        Err(CreationParamError::Unrecognized(name)) => {
+            let declared: Vec<&str> = registry.creation_params().iter().map(|p| p.name).collect();
+            crate::refuse!(
+                RefusalKind::UnusableCreationParam,
+                "'{}' does not accept a parameter named '{}'; it declares: {}",
+                registry_name.as_str(),
+                name,
+                declared.join(", ")
+            );
+        }
+    };
+
+    let repo_path = crate::registry::placement(&plan.url)
+        .expect("a CreationPlan's minted URL is always placeable");
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.contains_repo(&repo_path) {
-        eprintln!(
-            "Repository already exists in manifest at '{}'",
-            repo_path.as_str()
+    if let Some(existing) = manifest.get_entry(&repo_path) {
+        if existing.url == plan.url {
+            eprintln!(
+                "Repository already exists in manifest at '{}'",
+                repo_path.as_str()
+            );
+            return Ok(());
+        }
+        crate::refuse!(
+            RefusalKind::OccupiedPlacement,
+            "'{}' already maps to '{}' in the manifest; this creation would map it to \
+             '{}' instead. Placement is a function of the identity, not of `--param root` \
+             — two roots cannot both live at the same path.",
+            repo_path.as_str(),
+            existing.url,
+            plan.url
         );
-        return Ok(());
     }
 
-    // Create the directory and run git init at primary's canonical path
-    // (clones are global infrastructure).
+    // Creation always lives at primary's canonical path (clones are global
+    // infrastructure).
     let dest = ctx.primary_path().join(repo_path.as_path());
 
     // Warn when this repo path is already registered by another project with
     // a potentially different role. The physical init'd repo is shared; the
     // operator should know. This is not a refusal.
-    {
-        warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
-    }
-    if dest.exists() {
-        eprintln!(
-            "Directory already exists at '{}', skipping init",
-            dest.display()
-        );
-    } else {
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
+
+    match &plan.upstream {
+        Upstream::InitBareAt(bare_path) => {
+            let root = bare_path
+                .parent()
+                .and_then(|p| p.parent())
+                .expect("InitBareAt is always root/owner/repo");
+            if !root.is_dir() {
+                crate::refuse!(
+                    RefusalKind::UnusableCreationParam,
+                    "the root '{}' does not exist; rwv creates '<root>/<owner>/<repo>' but \
+                     not '<root>' itself — create it first",
+                    root.display()
+                );
+            }
+            let root_canon = root
+                .canonicalize()
+                .with_context(|| format!("failed to resolve root {}", root.display()))?;
+            let weave_canon = ctx.primary_path().canonicalize().with_context(|| {
+                format!(
+                    "failed to resolve weave root {}",
+                    ctx.primary_path().display()
+                )
+            })?;
+            if root_canon.starts_with(&weave_canon) {
+                crate::refuse!(
+                    RefusalKind::UnusableCreationParam,
+                    "the root '{}' is inside the weave at '{}'; the upstream it would \
+                     create would then be walked, deletable, and reportable as a member \
+                     of the very weave it backs — choose a root outside the weave",
+                    root.display(),
+                    weave_canon.display()
+                );
+            }
+
+            if !bare_path.is_dir() {
+                if let Some(parent) = bare_path.parent() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create directory {}", parent.display())
+                    })?;
+                }
+                vcs.init_bare_repo(bare_path).with_context(|| {
+                    format!("failed to init bare upstream at {}", bare_path.display())
+                })?;
+            }
+
+            if dest.exists() {
+                eprintln!(
+                    "Directory already exists at '{}', skipping clone",
+                    dest.display()
+                );
+            } else {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create directory {}", parent.display())
+                    })?;
+                }
+                vcs.clone_repo(&plan.url.to_string(), &dest)
+                    .with_context(|| {
+                        format!("failed to clone '{}' into {}", plan.url, dest.display())
+                    })?;
+            }
         }
-        vcs.init_repo(&dest)
-            .with_context(|| format!("failed to init repo at {}", dest.display()))?;
+        Upstream::Named => {
+            if dest.exists() {
+                eprintln!(
+                    "Directory already exists at '{}', skipping init",
+                    dest.display()
+                );
+            } else {
+                if let Some(parent) = dest.parent() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create directory {}", parent.display())
+                    })?;
+                }
+                vcs.init_repo(&dest)
+                    .with_context(|| format!("failed to init repo at {}", dest.display()))?;
+                vcs.add_remote(&dest, &plan.url.to_string())
+                    .with_context(|| format!("failed to add the remote in {}", dest.display()))?;
+            }
+        }
     }
 
     let default_branch = match vcs.head_attachment(&dest)? {
         HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
         HeadAttachment::Attached(a) => RefName::new(a.to_string()),
         HeadAttachment::Detached(_) => anyhow::bail!(
-            "rwv add: repo at {} has a detached HEAD right after `git init`; \
+            "rwv add: repo at {} has a detached HEAD right after creation; \
              inspect with `git -C {} status` before retrying `rwv add {} --new`",
             dest.display(),
             dest.display(),
-            path_arg
+            address
         ),
     };
 
     let entry = RepoEntry {
         vcs_type,
-        url,
+        url: plan.url,
         version: default_branch,
         role,
     };
@@ -721,9 +961,9 @@ pub fn run_add_new(path_arg: &str, role: Role, ctx: &WorkspaceContext) -> anyhow
     eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
 
     // In a workweave, attempt to create a worktree at the workweave so the
-    // new repo is materialized there. `git init` produces an unborn HEAD,
-    // so create_worktree_in_workweave silently skips until the first commit
-    // lands upstream (operator can then `rwv sync`).
+    // new repo is materialized there. An unborn HEAD (both creation shapes
+    // start unborn) means create_worktree_in_workweave silently skips until
+    // the first commit lands upstream (operator can then `rwv sync`).
     if let Checkout::Workweave {
         name, dir, project, ..
     } = &ctx.checkout
@@ -813,129 +1053,156 @@ fn warn_if_shared_clone(
     }
 }
 
-/// Infer a clone URL from a local path by matching the first segment against
-/// known registries.
-///
-/// For example, `github/owner/repo` matches the GitHub registry and produces
-/// `https://github.com/owner/repo.git`.
-fn infer_url_from_path(path: &str, registries: &[&dyn Registry]) -> Option<RepoUrl> {
-    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 3 {
-        return None;
-    }
-
-    // Parse into `RegistryName` at the boundary so the comparison runs
-    // through the newtype rather than against its raw interior. (Audit A2.)
-    let registry_name = crate::registry::RegistryName::new(segments[0]);
-    let owner = segments[1];
-    let repo = segments[2];
-
-    let id = crate::registry::RepoId::new(owner, repo);
-
-    for reg in registries {
-        if reg.name() == &registry_name {
-            return reg.clone_url(&id);
-        }
-    }
-
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::{DomainRegistry, RegistryName};
+    use crate::registry::{CreationPlan, ParamSpec, RepoId};
 
-    fn github_reg() -> DomainRegistry {
-        DomainRegistry {
-            registry_name: RegistryName::new("github"),
-            domain: "github.com".into(),
+    // -----------------------------------------------------------------------
+    // missing_creation_param_message (AC3's renderer pin)
+    // -----------------------------------------------------------------------
+
+    /// A registry whose parameter surface no built-in registry has, so a
+    /// message-builder reading from a hardcoded literal instead of from
+    /// `creation_params()` has something to disagree with.
+    struct FixtureRegistry {
+        registry_name: RegistryName,
+    }
+
+    const FIXTURE_PARAMS: &[ParamSpec] = &[ParamSpec {
+        name: "warehouse",
+        required: true,
+        help: "the warehouse the widgets ship from",
+    }];
+
+    impl crate::registry::Registry for FixtureRegistry {
+        fn name(&self) -> &RegistryName {
+            &self.registry_name
+        }
+        fn matches(&self, _raw: &str) -> Option<RepoUrl> {
+            None
+        }
+        fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
+            None
+        }
+        fn creation_params(&self) -> &[ParamSpec] {
+            FIXTURE_PARAMS
+        }
+        fn plan_creation(&self, _params: &ParamMap) -> Result<CreationPlan, CreationParamError> {
+            unimplemented!("this fixture only exercises the message renderer")
         }
     }
 
-    fn gitlab_reg() -> DomainRegistry {
-        DomainRegistry {
-            registry_name: RegistryName::new("gitlab"),
-            domain: "gitlab.com".into(),
-        }
+    /// The missing-parameter refusal names the parameter and its `help` text
+    /// exactly as a fixture registry — never seen by any hardcoded literal —
+    /// declares them, with no edit to `missing_creation_param_message` itself.
+    #[test]
+    fn missing_creation_param_message_renders_from_the_registrys_own_declared_slice() {
+        let fixture = FixtureRegistry {
+            registry_name: RegistryName::new("fixture"),
+        };
+        let supplied = ParamMap::new();
+        let message = missing_creation_param_message(&fixture, &["warehouse"], &supplied);
+        assert!(
+            message.contains("warehouse")
+                && message.contains("the warehouse the widgets ship from"),
+            "message must name the fixture's own declared parameter and help text: {message}"
+        );
+        assert!(
+            message.contains("--param warehouse=<value>"),
+            "message must print the one-flag repair: {message}"
+        );
     }
 
     // -----------------------------------------------------------------------
-    // infer_url_from_path
+    // parse_creation_address
     // -----------------------------------------------------------------------
 
     #[test]
-    fn infer_url_github_three_segments() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        let url = infer_url_from_path("github/owner/repo", &registries).unwrap();
-        assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
+    fn parse_creation_address_bare_registry_name() {
+        let (registry, prefix) = parse_creation_address("local").unwrap();
+        assert_eq!(registry.as_str(), "local");
+        assert!(prefix.is_none());
     }
 
     #[test]
-    fn infer_url_gitlab_three_segments() {
-        let gl = gitlab_reg();
-        let registries: Vec<&dyn Registry> = vec![&gl];
-        let url = infer_url_from_path("gitlab/org/project", &registries).unwrap();
-        assert_eq!(url.to_string(), "https://gitlab.com/org/project.git");
+    fn parse_creation_address_three_segment_shorthand() {
+        let (registry, prefix) = parse_creation_address("github/acme/fresh").unwrap();
+        assert_eq!(registry.as_str(), "github");
+        assert_eq!(prefix, Some(("acme".to_string(), "fresh".to_string())));
     }
 
     #[test]
-    fn infer_url_first_matching_registry_wins() {
-        let gh = github_reg();
-        let gl = gitlab_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh, &gl];
-        let url = infer_url_from_path("github/alice/widgets", &registries).unwrap();
-        assert_eq!(url.to_string(), "https://github.com/alice/widgets.git");
+    fn parse_creation_address_two_segments_is_malformed() {
+        assert!(parse_creation_address("owner/repo").is_err());
     }
 
     #[test]
-    fn infer_url_unknown_registry_returns_none() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        assert!(infer_url_from_path("unknown/owner/repo", &registries).is_none());
+    fn parse_creation_address_four_segments_is_malformed() {
+        assert!(parse_creation_address("github/owner/repo/extra").is_err());
     }
 
     #[test]
-    fn infer_url_two_segments_returns_none() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        assert!(infer_url_from_path("owner/repo", &registries).is_none());
+    fn parse_creation_address_empty_is_malformed() {
+        assert!(parse_creation_address("").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // build_creation_params
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_creation_params_merges_prefix_and_flags() {
+        let map = build_creation_params(
+            Some(("acme".to_string(), "fresh".to_string())),
+            &["root=/srv/repos".to_string()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(map.get("owner"), Some("acme"));
+        assert_eq!(map.get("repo"), Some("fresh"));
+        assert_eq!(map.get("root"), Some("/srv/repos"));
     }
 
     #[test]
-    fn infer_url_single_segment_returns_none() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        assert!(infer_url_from_path("repo", &registries).is_none());
+    fn build_creation_params_merges_json_spelling() {
+        let map = build_creation_params(None, &[], Some(r#"{"owner": "acme", "repo": "fresh"}"#))
+            .unwrap();
+        assert_eq!(map.get("owner"), Some("acme"));
+        assert_eq!(map.get("repo"), Some("fresh"));
     }
 
     #[test]
-    fn infer_url_empty_string_returns_none() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        assert!(infer_url_from_path("", &registries).is_none());
+    fn build_creation_params_duplicate_across_prefix_and_param_refuses() {
+        let err = build_creation_params(
+            Some(("acme".to_string(), "fresh".to_string())),
+            &["owner=other".to_string()],
+            None,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("owner"));
     }
 
     #[test]
-    fn infer_url_empty_registries_returns_none() {
-        let registries: Vec<&dyn Registry> = vec![];
-        assert!(infer_url_from_path("github/owner/repo", &registries).is_none());
+    fn build_creation_params_duplicate_across_param_and_json_refuses() {
+        let err = build_creation_params(None, &["root=/a".to_string()], Some(r#"{"root": "/b"}"#))
+            .unwrap_err();
+        assert!(format!("{err:#}").contains("root"));
     }
 
     #[test]
-    fn infer_url_extra_segments_uses_first_three() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        let url = infer_url_from_path("github/owner/repo/extra/path", &registries).unwrap();
-        assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
+    fn build_creation_params_non_string_json_value_refuses() {
+        let err = build_creation_params(None, &[], Some(r#"{"root": 1}"#)).unwrap_err();
+        assert!(format!("{err:#}").contains("root"));
     }
 
     #[test]
-    fn infer_url_leading_slash_ignored() {
-        let gh = github_reg();
-        let registries: Vec<&dyn Registry> = vec![&gh];
-        let url = infer_url_from_path("/github/owner/repo", &registries).unwrap();
-        assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
+    fn build_creation_params_non_object_json_refuses() {
+        assert!(build_creation_params(None, &[], Some("[1,2,3]")).is_err());
+    }
+
+    #[test]
+    fn build_creation_params_malformed_param_flag_refuses() {
+        assert!(build_creation_params(None, &["no-equals-sign".to_string()], None).is_err());
     }
 }

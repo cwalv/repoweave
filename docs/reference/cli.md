@@ -209,7 +209,9 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.toml
 | Flag | Effect |
 |---|---|
 | `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. |
-| `--new` | Init a new local repo at canonical path; infer URL from path convention |
+| `--new` | Create a new repo instead of cloning; the positional argument becomes a creation address (a bare registry name, or `registry/owner/repo`) rather than a URL or path. See `rwv explain add`. |
+| `--param <name>=<value>` | A creation parameter for `--new` (repeatable). |
+| `--params-json <json>` | The same parameters as one JSON object of string values. |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 `rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.

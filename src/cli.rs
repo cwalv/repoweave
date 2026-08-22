@@ -97,14 +97,24 @@ pub enum Commands {
     // ── Setup & lifecycle ─────────────────────────────────────────────────────
     /// Add a repo to the active project
     Add {
-        /// Repository URL or path (with --new)
+        /// Repository URL, or (with --new) a creation address: a bare
+        /// registry name, or `registry/owner/repo`
         url: String,
         /// Role for the repo
         #[arg(long, default_value_t = manifest::Role::Owned, value_enum)]
         role: manifest::Role,
-        /// Create a new repo (git init) at the canonical path instead of cloning
+        /// Create a new repo instead of cloning: the argument is a creation
+        /// address, not a URL or path
         #[arg(long)]
         new: bool,
+        /// A creation parameter as NAME=VALUE (repeatable). See `rwv explain add`
+        /// for what each registry declares.
+        #[arg(long = "param", value_name = "NAME=VALUE")]
+        params: Vec<String>,
+        /// Creation parameters as one JSON object of string values, e.g.
+        /// '{"root": "/srv/repos"}'. A name given both here and via --param refuses.
+        #[arg(long = "params-json", value_name = "JSON")]
+        params_json: Option<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
