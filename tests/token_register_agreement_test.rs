@@ -39,15 +39,36 @@
 //! type: `cherry-pick` was carried in the VCS register by an earlier walk, and
 //! no prose was going to notice.
 //!
-//! **Residue.** More kebab vocabularies reach `--json` than this file reads —
-//! outcome tags, drift classifications, lock and containment relations. None
-//! of them names a condition, so none is owed an entry, and that part of the
-//! boundary costs nothing. The disjointness property is the part that does:
-//! every one of them owes it and only `ConflictOp` is held to it, because
-//! `ConflictOp` is the one this file already had a reason to read. Widening
-//! wants its own record of deliberate reuse first — those vocabularies share
-//! tokens with each other, and a walk that reds on all of it says nothing.
+//! **Residue, now walked for one property.** More kebab vocabularies reach
+//! `--json` than the five above — outcome tags, drift classifications, lock
+//! and containment relations. None of them earns an `rwv explain` entry, and
+//! that part of the boundary still costs nothing. The disjointness property is
+//! the part that does, and
+//! [`every_unwalked_kebab_vocabulary_is_disjoint_from_conditions`] now holds
+//! it for all of them, not just `ConflictOp` — reading
+//! `docs/reference/schemas/*.json` (`generate-explain`'s own drift-gated
+//! output, so a stale artifact here is a stale artifact everywhere else that
+//! reads one) rather than source, because these vocabularies are not
+//! hand-parsed match arms the way the five registers above are. Vocab-vocab
+//! lexical sharing among them (`failed` in four, `ahead`/`behind`/`diverged`
+//! in two, `safe-to-fix` in two more) is deliberately not recorded as an
+//! [`INTENDED_REUSE`] entry: every one of these tokens sits on its own
+//! positionally-fixed field (`kind`, `relation`, …), so which vocabulary
+//! published a shared string is never ambiguous the way a condition name —
+//! read out of context, in an error message or an `rwv explain` argument —
+//! would be.
+//!
+//! Widening the walk to the full population did find a real collision, not a
+//! vacuous pass: four of the doctor sub-kind vocabularies deliberately mirror
+//! seven `RefusalKind` conditions — the same D1 sentence one level below the
+//! five registers, recorded in [`INTENDED_SUBKIND_REUSE`] rather than
+//! [`INTENDED_REUSE`] because a sub-kind is not a token any of the five
+//! registers mints.
 
+mod common;
+
+use common::json_schema;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -639,5 +660,261 @@ fn every_published_token_is_servable_or_a_recorded_exception() {
     assert!(
         now_servable.is_empty(),
         "these are recorded as unservable but now have an entry — drop them from the record:\n{now_servable:#?}"
+    );
+}
+
+/// True for a wire token this file treats as kebab-case: lowercase ASCII
+/// letters, digits and `-` only.
+///
+/// A property declared `rename_all = "snake_case"` still passes through here
+/// unfiltered when every one of its members happens to be one word (`ok`,
+/// `failed`) — snake_case and kebab-case coincide until a name needs a
+/// separator. What this excludes is a literal underscore surviving into a
+/// token (`LockRelation`'s `no_lock`), the same character class `arm_tokens`
+/// already holds every hand-parsed register to.
+fn is_kebab_token(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// `prop`'s value when it is a `{"type": "string", "enum": [x]}` singleton —
+/// the shape schemars gives an internally-tagged variant's own discriminant
+/// field, whether or not the variant carries other fields alongside it.
+fn single_value_enum(prop: &Value) -> Option<&str> {
+    if prop.get("type")?.as_str()? != "string" {
+        return None;
+    }
+    match prop.get("enum")?.as_array()?.as_slice() {
+        [one] => one.as_str(),
+        _ => None,
+    }
+}
+
+/// The kebab tokens one `oneOf` arm (or a bare enum definition treated as its
+/// own sole arm) contributes.
+///
+/// Three shapes, because schemars uses a different one depending on whether a
+/// variant carries a doc comment and whether it carries fields: a flat
+/// `{"enum": [...]}` for a run of undocumented fieldless variants
+/// (`FetchOutcomeStatus`); a single-key `{"enum": [x]}` for one documented
+/// fieldless variant (`UpdateKind`'s arms) or as an internally-tagged
+/// variant's discriminant property alongside its other fields
+/// (`PushOutcomeOutput`'s `kind`, `ContainmentVerdictOutput`'s `relation`);
+/// and a single required key equal to its own sole property, for an
+/// externally-tagged variant that carries data
+/// (`WorkweaveTreeIntegrityKind`'s `dangling-parent`). A parser that reads
+/// only the first shape is the one that under-reads every doctor sub-kind
+/// enum in the schema corpus.
+fn collect_arm_tokens(arm: &Value, out: &mut BTreeSet<String>) {
+    if arm.get("type").and_then(Value::as_str) == Some("string") {
+        for value in arm
+            .get("enum")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(s) = value.as_str() {
+                if is_kebab_token(s) {
+                    out.insert(s.to_owned());
+                }
+            }
+        }
+        return;
+    }
+    if arm.get("type").and_then(Value::as_str) != Some("object") {
+        return;
+    }
+    let props = arm.get("properties").and_then(Value::as_object);
+    let mut tagged = false;
+    for (_, prop) in props.into_iter().flatten() {
+        if let Some(tag) = single_value_enum(prop) {
+            if is_kebab_token(tag) {
+                out.insert(tag.to_owned());
+            }
+            tagged = true;
+        }
+    }
+    if tagged {
+        return;
+    }
+    let required = arm.get("required").and_then(Value::as_array);
+    if let (Some(required), Some(props)) = (required, props) {
+        if let [Value::String(tag)] = required.as_slice() {
+            if props.len() == 1 && props.contains_key(tag) && is_kebab_token(tag) {
+                out.insert(tag.clone());
+            }
+        }
+    }
+}
+
+/// A schema `definitions` entry's full kebab vocabulary: every arm of its
+/// `oneOf`, or its own `enum` when it has no `oneOf` at all.
+fn definition_tokens(def: &Value) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    if def.get("type").and_then(Value::as_str) == Some("string") {
+        collect_arm_tokens(def, &mut out);
+        return out;
+    }
+    for arm in def
+        .get("oneOf")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        collect_arm_tokens(arm, &mut out);
+    }
+    out
+}
+
+/// Every kebab vocabulary reaching `--json`, keyed by the `definitions` entry
+/// that owns it — condition registers and `ConflictOp` included, so a caller
+/// wanting the residue filters [`ALREADY_WALKED`] out itself.
+///
+/// Reads every committed schema artifact rather than one: the same
+/// `definitions` entry is duplicated verbatim across every verb whose schema
+/// references it (`FetchOutcomeStatus` sits in both `fetch.json` and
+/// `fetch-record.json`), so this folds those into one entry rather than
+/// reading only the first file that happens to declare a name and missing
+/// whatever a schema unique to some other verb adds under a name of its own.
+fn kebab_vocabularies() -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for verb in json_schema::committed_verbs() {
+        let schema = json_schema::committed_schema(&verb);
+        let Some(definitions) = schema.get("definitions").and_then(Value::as_object) else {
+            continue;
+        };
+        for (name, def) in definitions {
+            let tokens = definition_tokens(def);
+            if !tokens.is_empty() {
+                out.entry(name.clone()).or_default().extend(tokens);
+            }
+        }
+    }
+    out
+}
+
+/// The schema `definitions` names this file already holds to the
+/// disjointness property by another route: the four condition registers'
+/// wire mirrors, plus `ConflictOp`, which
+/// [`an_op_name_is_not_also_a_condition_name`] already checks with its own
+/// arm-count and `Display`-agreement pins — a stronger shape than the generic
+/// walk below has any way to give it. `RefusalKind` earns no entry here
+/// because it is not a wire type; nothing in `docs/reference/schemas/`
+/// declares it.
+const ALREADY_WALKED: &[&str] = &[
+    "ViolationOutput",
+    "IssueKindOutput",
+    "VcsErrorOutput",
+    "SyncFailureOutput",
+    "ConflictOp",
+];
+
+/// (vocabulary count, token count) the residue census reads today. Re-derived
+/// directly from `docs/reference/schemas/*.json` for this file, not carried
+/// over from any earlier count — an earlier count of this same residue
+/// (20 vocabularies, 55 tokens) undercounted several externally-tagged doctor
+/// sub-kinds and missed four vocabularies outright; this file's own walk is
+/// the source of truth for the number below, and a mismatch here means the
+/// walk moved, not that the constant needs editing to match.
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (23, 88);
+
+/// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
+/// vocabulary that mirrors it — the D1 sentence again, one level deeper than
+/// [`INTENDED_REUSE`] reaches.
+///
+/// `src/refusal.rs`'s own module doc states the rule these seven follow: some
+/// `RefusalKind` variants "deliberately mint a token a `rwv doctor` finding
+/// ... already publishes, because a token names one condition wherever it
+/// appears," and each is marked "Shared with the finding" at its declaration.
+/// Two of the seven go further than documentation: `MarkerDefect::kind()`
+/// (`src/workspace.rs`) builds `RefusalKind::DanglingPrimary` and
+/// `RefusalKind::UnreadableMarker` directly from the doctor variant, so those
+/// two cannot drift apart in code even if this list went stale.
+///
+/// These sit outside [`INTENDED_REUSE`] rather than inside it because none of
+/// them is a token any of the five hand-walked registers mints — a doctor
+/// sub-kind is not part of `ViolationOutput`'s own `kind`, so `registers()`
+/// never sees it, and only `RefusalKind` half of each pair does.
+const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
+    ("unmigrated-ephemeral-branch", "BranchDisciplineKind"),
+    ("standalone-in-workweave", "CloneTopologyKind"),
+    ("dangling-primary", "MarkerDefect"),
+    ("dangling-parent", "WorkweaveTreeIntegrityKind"),
+    ("stale-registry-entry", "WorkweaveTreeIntegrityKind"),
+    ("unreadable-marker", "WorkweaveTreeIntegrityKind"),
+    ("unregistered-workweave", "WorkweaveTreeIntegrityKind"),
+];
+
+/// Every kebab vocabulary reaching `--json` that is not one of
+/// [`ALREADY_WALKED`] is disjoint from the condition universe, except the
+/// seven recorded in [`INTENDED_SUBKIND_REUSE`] —
+/// [`an_op_name_is_not_also_a_condition_name`]'s property, held for every
+/// such vocabulary at once rather than for `ConflictOp` alone.
+///
+/// Population is read from the committed schema artifacts under
+/// `docs/reference/schemas/`, not from source: these are outcome tags, drift
+/// classifications, and lock/containment relations minted across a dozen
+/// files with three different schemars shapes depending on whether a variant
+/// carries a doc comment or fields, and the artifacts already normalise that
+/// for every verb that publishes one. They are `generate-explain`'s own
+/// output and are drift-gated by `scripts/ci-local.sh`'s final stage, so a
+/// stale artifact here is a stale artifact everywhere else that reads one.
+///
+/// Pinned to [`UNWALKED_KEBAB_CENSUS`], an exact count rather than a floor —
+/// a floor catches the walk going dark wholesale and misses it losing one
+/// vocabulary, which is the more likely drift. Both directions are the alarm:
+/// a shrink means a vocabulary this test relied on vanished or renamed out
+/// from under the pin, a growth means a new one arrived unrecorded, and either
+/// way the fix is to re-read `docs/reference/schemas/*.json`, confirm the new
+/// number by hand, and move the pin — never to adjust it to make the run
+/// green without reading what moved.
+#[test]
+fn every_unwalked_kebab_vocabulary_is_disjoint_from_conditions() {
+    let vocabs = kebab_vocabularies();
+    assert!(
+        !vocabs.is_empty(),
+        "the schema-artifact walk read no kebab vocabulary at all — \
+         docs/reference/schemas/*.json parsing has gone blind, and every assertion below is \
+         vacuous"
+    );
+
+    let residue: BTreeMap<&String, &BTreeSet<String>> = vocabs
+        .iter()
+        .filter(|(name, _)| !ALREADY_WALKED.contains(&name.as_str()))
+        .collect();
+    let residue_tokens: usize = residue.values().map(|v| v.len()).sum();
+    assert_eq!(
+        (residue.len(), residue_tokens),
+        UNWALKED_KEBAB_CENSUS,
+        "the unwalked kebab-vocabulary census has moved — a vocabulary arrived, left, or \
+         changed size in docs/reference/schemas/*.json; re-derive the count by hand before \
+         moving the pin:\n{residue:#?}"
+    );
+
+    let conditions: BTreeSet<String> = registers().values().flatten().cloned().collect();
+    let collided: BTreeSet<(&str, &str)> = residue
+        .iter()
+        .flat_map(|(name, tokens)| tokens.iter().map(move |t| (t.as_str(), name.as_str())))
+        .filter(|(token, _)| conditions.contains(*token))
+        .collect();
+    let recorded: BTreeSet<(&str, &str)> = INTENDED_SUBKIND_REUSE.iter().copied().collect();
+
+    let unrecorded: Vec<&(&str, &str)> = collided.difference(&recorded).collect();
+    assert!(
+        unrecorded.is_empty(),
+        "these residue (token, vocabulary) pairs collide with a condition name and nothing \
+         records the reuse as deliberate — an operator reading one off `--json` cannot tell \
+         which vocabulary it names. If this is a shared condition, record it in \
+         INTENDED_SUBKIND_REUSE; if two conditions collided on one name, rename one of \
+         them:\n{unrecorded:#?}"
+    );
+
+    let vanished: Vec<&(&str, &str)> = recorded.difference(&collided).collect();
+    assert!(
+        vanished.is_empty(),
+        "these sub-kind reuses are recorded but no longer collide with a condition name — the \
+         token or the vocabulary moved, which is the drift this check exists to catch:\n\
+         {vanished:#?}"
     );
 }
