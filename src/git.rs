@@ -875,12 +875,17 @@ impl GitVcs {
     }
 
     /// Re-mint a failed `merge --ff-only` as [`VcsError::UntrackedCollision`]
-    /// when git's own refusal names the untracked files in the way.
-    fn classify_untracked_collision(e: VcsError, repo: &Path) -> VcsError {
-        let VcsError::CommandFailed { stderr, .. } = &e else {
+    /// when untracked files stand where the advance would have written.
+    fn classify_untracked_collision(
+        &self,
+        e: VcsError,
+        repo: &Path,
+        to: &ResolvedRevisionId,
+    ) -> VcsError {
+        if !matches!(e, VcsError::CommandFailed { .. }) {
             return e;
-        };
-        match Self::untracked_collision_paths(stderr) {
+        }
+        match self.untracked_paths_in_the_way(repo, to) {
             Some(paths) => VcsError::UntrackedCollision {
                 repo: repo.to_path_buf(),
                 paths,
@@ -889,49 +894,59 @@ impl GitVcs {
         }
     }
 
-    /// Pull the file list out of git's untracked-collision refusal:
+    /// The untracked working-tree files an advance to `to` would overwrite:
+    /// the paths it newly writes, intersected with what is untracked on disk.
     ///
-    /// ```text
-    /// error: The following untracked working tree files would be overwritten by merge:
-    ///         <path>
-    /// Please move or remove them before you merge.
-    /// Aborting
-    /// ```
+    /// `None` leaves the caller's raw [`VcsError::CommandFailed`] standing,
+    /// which is the answer for every ff-only failure that is not this
+    /// condition — a tracked file modified, a directory in the way, a
+    /// submodule. Those carry git's own account of themselves; this one
+    /// cannot, because the operator needs the path list to act on.
     ///
-    /// `None` when `stderr` isn't shaped like that refusal, so a caller falls
-    /// back to the raw [`VcsError::CommandFailed`] instead of misreading an
-    /// unrelated ff-only failure (real divergence, an unknown ref) as a file list.
+    /// **The ancestry guard is not redundant with the caller's.** A diverged
+    /// tip refuses for a reason no amount of moving files resolves, and its
+    /// incoming tree still adds paths that may happen to exist untracked
+    /// here. Without the guard those coincidences would be reported as a
+    /// collision, sending the operator to clear files and retry into the same
+    /// refusal.
     ///
-    /// **Both halves of the match are load-bearing, and the near-miss is a
-    /// different refusal with the same tail.** git says
-    /// `Your local changes to the following files would be overwritten by
-    /// merge:` when the obstruction is *tracked* and modified — a different
-    /// condition, remedied by committing or stashing rather than by moving a
-    /// file. It shares the `would be overwritten by merge:` fragment, so the
-    /// header must be matched whole; and it ends `Please commit your changes
-    /// or stash them`, so the trailer must be *required* rather than used as a
-    /// split that yields everything when it is absent. Matching loosely on
-    /// either side reports that refusal as this one and lifts git's own prose
-    /// into `paths` as though the sentences were filenames.
-    ///
-    /// **English-only.** [`git_command`] pins no `LC_ALL`/`LANG`, so a
-    /// translated git prints different wording and this returns `None` —
-    /// the caller falls back to the raw error, which still refuses (the
-    /// safety is git's own, not this parse's) but loses the named path list
-    /// and the `--continue` hint. Pinning the locale would make the match
-    /// unconditional, but it means changing what every git subprocess in
-    /// this codebase inherits, not just this one call site; that is a
-    /// wider change than this refusal justifies on its own.
-    fn untracked_collision_paths(stderr: &str) -> Option<Vec<String>> {
-        const HEADER: &str =
-            "The following untracked working tree files would be overwritten by merge:";
-        const TRAILER: &str = "Please move or remove them";
-        let (_, after_header) = stderr.split_once(HEADER)?;
-        let (before_trailer, _) = after_header.split_once(TRAILER)?;
-        let paths: Vec<String> = before_trailer
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
+    /// **`--no-renames`** because git's rename detection reports a renamed
+    /// file as `R` and would omit the destination the advance still writes.
+    fn untracked_paths_in_the_way(
+        &self,
+        repo: &Path,
+        to: &ResolvedRevisionId,
+    ) -> Option<Vec<String>> {
+        let head = self.head_revision(repo).ok()?;
+        if !self.is_ancestor(repo, &head, to).ok()? {
+            return None;
+        }
+
+        let arriving = Self::run(
+            &[
+                "diff",
+                "--name-only",
+                "--diff-filter=A",
+                "--no-renames",
+                "-z",
+                head.as_str(),
+                to.as_str(),
+            ],
+            repo,
+        )
+        .ok()?;
+        let arriving: Vec<&str> = arriving.split('\0').filter(|p| !p.is_empty()).collect();
+        if arriving.is_empty() {
+            return None;
+        }
+
+        let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
+        args.extend_from_slice(&arriving);
+        let obstructing = Self::run(&args, repo).ok()?;
+
+        let paths: Vec<String> = obstructing
+            .split('\0')
+            .filter(|p| !p.is_empty())
             .map(str::to_owned)
             .collect();
         (!paths.is_empty()).then_some(paths)
@@ -1840,7 +1855,7 @@ impl Vcs for GitVcs {
             repo: repo.to_path_buf(),
             stderr,
         };
-        Err(Self::classify_untracked_collision(err, repo))
+        Err(self.classify_untracked_collision(err, repo, to))
     }
 
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {

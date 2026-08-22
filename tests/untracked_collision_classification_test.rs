@@ -1,15 +1,15 @@
 //! `untracked-collision` must name the condition it says it names.
 //!
-//! git refuses a fast-forward with two different messages that share a tail.
-//! One is about untracked files standing where the incoming tree writes; the
-//! other is about tracked files the operator has modified. They are different
-//! conditions with different remedies — move-or-delete versus commit-or-stash
-//! — and the second is not this kind.
+//! The kind is for untracked files standing where an advance writes. Two
+//! neighbouring refusals are not it, and both are reachable from a fixture a
+//! few lines apart: a tracked file the operator modified, remedied by
+//! commit-or-stash rather than move-or-delete; and a diverged tip, remedied
+//! by neither.
 //!
-//! Driven through the real git implementation rather than by handing the
-//! classifier a string. The refusals this depends on are git's own wording,
-//! so a fixture that quotes them proves the parser matches the fixture; only
-//! a real repo proves it matches git.
+//! Driven through the real git implementation rather than by constructing the
+//! error directly. What the classification rests on is git's own account of
+//! the repo, so a hand-built error proves only that the arms agree with the
+//! hand-built error.
 
 use repoweave::vcs::{ResolvedRevisionId, VcsError};
 use std::path::Path;
@@ -100,5 +100,83 @@ fn a_tracked_modification_is_not_an_untracked_collision() {
     assert!(
         stderr.contains("Your local changes to the following files"),
         "the fallback must carry git's own account of the refusal: {stderr:?}"
+    );
+}
+
+/// The same obstruction, on a repo where git's refusal says less.
+///
+/// git prints `Please move or remove them before you merge.` only when
+/// `advice.commitBeforeMerge` is on. GitHub's macOS runner image turns it off
+/// globally, so on that host git names the obstructing files and stops. The
+/// condition is identical and the classification must be too.
+#[test]
+fn an_untracked_obstruction_is_named_when_git_advice_is_off() {
+    let tmp = common::tempdir().unwrap();
+    let repo = repo_at(tmp.path(), "advice-off");
+    let tip = seed(&repo);
+    common::git_in(&repo, &["config", "advice.commitBeforeMerge", "false"]);
+    std::fs::write(repo.join("arriving.txt"), "mine, untracked\n").unwrap();
+
+    let err = repoweave::git::git_vcs()
+        .advance_if_fast_forward(&repo, &tip)
+        .expect_err("git refuses to clobber an untracked file");
+
+    let VcsError::UntrackedCollision { paths, .. } = &err else {
+        panic!("expected untracked-collision, got {}: {err}", err.kind());
+    };
+    assert_eq!(
+        paths,
+        &["arriving.txt".to_owned()],
+        "paths are the obstructing files, and stay so when git's closing \
+         sentence is absent to bound them"
+    );
+}
+
+/// `main` and `side` each hold a commit the other lacks, and `side` adds
+/// `arriving.txt`.
+fn seed_diverged(repo: &Path) -> ResolvedRevisionId {
+    let tip = seed(repo);
+    std::fs::write(repo.join("main-only.txt"), "main\n").unwrap();
+    common::git_in(repo, &["add", "."]);
+    common::git_in(repo, &["commit", "-m", "main diverges"]);
+    tip
+}
+
+/// A diverged tip refuses for a reason moving files cannot fix. Its incoming
+/// tree still adds paths, so one of them happening to exist untracked here is
+/// a coincidence — naming it a collision would send the operator to clear
+/// files and retry into the identical refusal.
+#[test]
+fn a_diverged_tip_is_not_an_untracked_collision() {
+    let tmp = common::tempdir().unwrap();
+    let repo = repo_at(tmp.path(), "diverged");
+    let tip = seed_diverged(&repo);
+    std::fs::write(repo.join("arriving.txt"), "mine, untracked\n").unwrap();
+
+    let vcs = repoweave::git::git_vcs();
+    let head = vcs.head_revision(&repo).unwrap();
+    assert!(
+        !vcs.is_ancestor(&repo, &head, &tip).unwrap(),
+        "fixture precondition: the tip must not be reachable, else this \
+         exercises the collision arm rather than the guard before it"
+    );
+    assert_eq!(
+        common::git_in(&repo, &["ls-files", "--others", "--exclude-standard"]),
+        "arriving.txt",
+        "fixture precondition: an untracked file must sit at a path the \
+         incoming tree adds, else the guard is untested either way"
+    );
+
+    let err = vcs
+        .advance_if_fast_forward(&repo, &tip)
+        .expect_err("git refuses to fast-forward a diverged tip");
+
+    if let VcsError::UntrackedCollision { paths, .. } = &err {
+        panic!("a diverged-tip refusal was reported as untracked-collision: {paths:?}");
+    }
+    assert_eq!(
+        err.kind(),
+        "command-failed",
+        "divergence has no kind of its own here: {err}"
     );
 }
