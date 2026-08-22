@@ -52,8 +52,8 @@ use crate::owned_state::{
 use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
 use crate::workspace::{
-    observe_root, project_dir, project_rel_dir, strip_projects_prefix, workspace_marker_names,
-    RootObservation, WorkspaceContext, WorkspaceSession,
+    observe_root, project_dir, project_rel_dir, scannable_registry_segments,
+    strip_projects_prefix, RootObservation, WorkspaceContext, WorkspaceSession, PROJECTS_DIR,
 };
 
 /// Which class of verb is driving activation.
@@ -890,7 +890,19 @@ fn report_and_check_activate_hook_issues(
 /// Directories that were created solely to hold nested symlinks are cleaned
 /// up if they become empty.
 fn remove_activation_symlinks(root: &Path, owned_files: &BTreeSet<String>) -> anyhow::Result<()> {
-    remove_activation_symlinks_in(root, root, owned_files)
+    let skip = sweep_descent_skip(root);
+    remove_activation_symlinks_in(root, root, owned_files, &skip)
+}
+
+/// Directory names a symlink sweep must not descend into: every registry
+/// segment a project manifest under `root` names, plus the built-ins, plus
+/// `projects/` itself. Computed once at each sweep's entry point — recursing
+/// into a candidate skip name would re-read every project manifest per
+/// directory entry.
+fn sweep_descent_skip(root: &Path) -> BTreeSet<String> {
+    let mut skip = scannable_registry_segments(root);
+    skip.insert(PROJECTS_DIR.to_string());
+    skip
 }
 
 /// Which of `names` the weave root currently surfaces out of a project, in
@@ -988,6 +1000,7 @@ fn remove_activation_symlinks_in(
     dir: &Path,
     root: &Path,
     owned_files: &BTreeSet<String>,
+    skip: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -1027,13 +1040,11 @@ fn remove_activation_symlinks_in(
             }
         } else if meta.file_type().is_dir() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if workspace_marker_names().iter().any(|m| m == name)
-                    || name == crate::git::GIT_DIR_ENTRY_NAME
-                {
+                if skip.contains(name) || name == crate::git::GIT_DIR_ENTRY_NAME {
                     continue;
                 }
             }
-            remove_activation_symlinks_in(&path, root, owned_files)?;
+            remove_activation_symlinks_in(&path, root, owned_files, skip)?;
 
             // Clean up empty directories that we may have created.
             if dir != root {
@@ -1461,8 +1472,9 @@ fn undeclared_project_links(
 ) -> Vec<UndeclaredLink> {
     let mut exempt = declared.clone();
     exempt.extend(disabled_integration_declarations(root, presented, manifest));
+    let skip = sweep_descent_skip(root);
     let mut found = Vec::new();
-    collect_undeclared_links_in(root, root, presented, &exempt, &mut found);
+    collect_undeclared_links_in(root, root, presented, &exempt, &skip, &mut found);
     found.sort_by(|a, b| a.name.cmp(&b.name));
     found
 }
@@ -1519,6 +1531,7 @@ fn collect_undeclared_links_in(
     root: &Path,
     presented: &ProjectName,
     declared: &BTreeSet<String>,
+    skip: &BTreeSet<String>,
     found: &mut Vec<UndeclaredLink>,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1531,13 +1544,11 @@ fn collect_undeclared_links_in(
         };
         if meta.file_type().is_dir() {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if workspace_marker_names().iter().any(|m| m == name)
-                    || name == crate::git::GIT_DIR_ENTRY_NAME
-                {
+                if skip.contains(name) || name == crate::git::GIT_DIR_ENTRY_NAME {
                     continue;
                 }
             }
-            collect_undeclared_links_in(&path, root, presented, declared, found);
+            collect_undeclared_links_in(&path, root, presented, declared, skip, found);
             continue;
         }
         if !meta.file_type().is_symlink() {

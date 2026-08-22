@@ -281,7 +281,7 @@ pub enum ContainerKind {
 // ---------------------------------------------------------------------------
 
 /// The directory every project's files live under, relative to a weave root.
-const PROJECTS_DIR: &str = "projects";
+pub(crate) const PROJECTS_DIR: &str = "projects";
 
 /// `<root>/projects` — where a weave keeps its projects.
 pub(crate) fn projects_dir(root: &Path) -> PathBuf {
@@ -560,16 +560,6 @@ pub(crate) fn project_name_from_dir(root: &Path, dir: &Path) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Well-known directory names that identify a workspace root.
-pub(crate) fn workspace_marker_names() -> Vec<String> {
-    let mut names: Vec<String> = builtin_registry_names()
-        .iter()
-        .map(|n| n.as_str().to_owned())
-        .collect();
-    names.push(PROJECTS_DIR.to_string());
-    names
-}
-
 /// Where a manifest member's checkout is for this run, and which of the two
 /// kinds it turned out to be.
 ///
@@ -612,16 +602,9 @@ pub fn member_checkout_dir(
     MemberCheckout::Primary(primary_root.join(repo_path.as_path()))
 }
 
-/// Returns true if `dir` looks like a workspace root (contains projects/ or
-/// a registry directory).
+/// Whether `dir` is a weave root: it contains a `projects/` subdirectory.
 pub fn is_workspace_root(dir: &Path) -> bool {
-    for marker in workspace_marker_names() {
-        let candidate = dir.join(&marker);
-        if candidate.is_dir() {
-            return true;
-        }
-    }
-    false
+    dir.join(PROJECTS_DIR).is_dir()
 }
 
 /// Returns `true` when the $HOME ceiling should block the walk from `current`
@@ -727,7 +710,7 @@ fn observe_active_pointer(root: &Path) -> ActivePointer {
 ///
 /// The built-ins stay in so a weave whose manifests name no `github/` member
 /// still reports a stray clone sitting there as orphaned.
-fn scannable_registry_segments(root: &Path) -> std::collections::BTreeSet<String> {
+pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTreeSet<String> {
     let mut segments: std::collections::BTreeSet<String> = builtin_registry_names()
         .iter()
         .map(|n| n.as_str().to_owned())

@@ -31,9 +31,9 @@
 //! for a name that itself contains that segment. It now strips the root's
 //! projects directory and nothing else, so there is a single body to scan.
 //!
-//! Residue. The body is located by two production-code anchors, so a rewrite
-//! of either fails the vacuity guard below rather than letting the main
-//! assertion pass over an empty slice. The needles name three spellings of
+//! Residue. The body is located by `body_of`, keyed on the function's name
+//! rather than its position, so a declaration inserted or removed around it
+//! does not change what is scanned. The needles name three spellings of
 //! "render a path as text"; a fourth reached some other way — a helper that
 //! renders internally, a `Display` impl, `OsString` concatenation — is not
 //! their shape. `src_scan`'s comment filter is line-leading `//` only, so a
@@ -41,11 +41,10 @@
 
 mod common;
 
-use common::src_scan::{production_lines, SourceLine};
+use common::src_scan::{body_of, production_lines};
 
 const OWNER: &str = "workspace.rs";
-const BLOCK_START: &str = "fn project_name_from_dir(root: &Path, dir: &Path) -> Option<String> {";
-const BLOCK_AFTER: &str = "fn workspace_marker_names() -> Vec<String> {";
+const TARGET_FN: &str = "project_name_from_dir";
 
 /// The spellings that turn a `Path` or `PathBuf` into text using the host's
 /// separator. Each must still occur somewhere in the owner file, which the
@@ -56,19 +55,6 @@ const RENDER_NEEDLES: &[&str] = &["to_string_lossy", ".display()", "PathBuf"];
 /// The helper that writes the separator explicitly.
 const EXPLICIT_JOIN: &str = "slash_separated(";
 
-/// `project_name_from_dir`'s body: the production lines between the two
-/// anchors, both exclusive. `None` when either anchor is missing or they sit
-/// out of order.
-fn body_lines(lines: &[SourceLine]) -> Option<Vec<&SourceLine>> {
-    let owned: Vec<&SourceLine> = lines.iter().filter(|l| l.file == OWNER).collect();
-    let start = owned.iter().position(|l| l.text.contains(BLOCK_START))?;
-    let after = owned.iter().position(|l| l.text.contains(BLOCK_AFTER))?;
-    if after <= start {
-        return None;
-    }
-    Some(owned[start + 1..after].to_vec())
-}
-
 #[test]
 fn the_scan_reaches_the_pinned_body() {
     let lines = production_lines();
@@ -78,17 +64,12 @@ fn the_scan_reaches_the_pinned_body() {
          would hold vacuously"
     );
 
-    let body = body_lines(&lines).unwrap_or_else(|| {
-        panic!(
-            "src/{OWNER} no longer contains `{BLOCK_START}` and `{BLOCK_AFTER}` \
-             in that order — the function moved or was rewritten, and this pin \
-             names the wrong lines"
-        )
-    });
+    let body = body_of(&lines, OWNER, TARGET_FN);
     assert!(
         !body.is_empty(),
-        "the anchors in src/{OWNER} are adjacent, so the scanned body is empty \
-         and the assertions below would prove nothing"
+        "src/{OWNER} no longer defines `{TARGET_FN}` with a non-empty body — \
+         the function was renamed, removed, or emptied, and this pin names \
+         the wrong target"
     );
 
     for needle in RENDER_NEEDLES {
@@ -106,7 +87,7 @@ fn the_scan_reaches_the_pinned_body() {
 #[test]
 fn the_name_is_not_rendered_from_a_path() {
     let lines = production_lines();
-    let body = body_lines(&lines).expect("checked by the scan-reach test above");
+    let body = body_of(&lines, OWNER, TARGET_FN);
 
     let strays: Vec<String> = body
         .iter()
@@ -132,7 +113,7 @@ fn the_name_is_not_rendered_from_a_path() {
 #[test]
 fn the_name_is_joined_explicitly() {
     let lines = production_lines();
-    let body = body_lines(&lines).expect("checked by the scan-reach test above");
+    let body = body_of(&lines, OWNER, TARGET_FN);
 
     let calls = body
         .iter()
