@@ -85,8 +85,11 @@ if run_stage windows; then
 fi
 
 if run_stage test; then
-    header "cargo test --release"
-    cargo test --release
+    header "cargo test --release --no-fail-fast"
+    # --no-fail-fast: without it cargo stops at the first failing binary and
+    # every later one goes unrun rather than green — this is what makes the
+    # red list a list.
+    cargo test --release --no-fail-fast
 fi
 
 if run_stage clippy; then

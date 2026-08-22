@@ -116,7 +116,7 @@ fn stderr_of(out: &Output) -> String {
 const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",
     "==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc",
-    "==> cargo test --release",
+    "==> cargo test --release --no-fail-fast",
     "==> cargo clippy --all-targets -- -D warnings",
     "==> cargo doc --no-deps --document-private-items (rustdoc warnings deny)",
     "==> cargo fmt --all -- --check",
