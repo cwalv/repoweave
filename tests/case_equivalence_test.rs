@@ -60,6 +60,16 @@ fn doctor_output(ws: &Path) -> String {
     )
 }
 
+/// What each folding arm would have measured, said in the one place the arm's
+/// announcement and the pin that reads it back can both name it. A notice
+/// spelled twice is a notice that can disagree with itself.
+const NOT_FOLDING_HERE_REUSE: &str = "this filesystem does not fold case, so the reuse \
+     guard's refusal to adopt a case-twin directory is unexercised here";
+const NOT_FOLDING_HERE_MINT: &str = "this filesystem does not fold case, so the mint \
+     refusal that names the occupant as the parent lists it is unexercised here";
+const NOT_FOLDING_HERE_DOCTOR: &str = "this filesystem does not fold case, so doctor's \
+     confusable-sibling finding over recorded repository paths is unexercised here";
+
 /// Whether `dir` holds one entry for two spellings that differ only by ASCII
 /// case, asked of `dir` itself.
 ///
@@ -110,6 +120,56 @@ fn the_case_probe_agrees_with_what_the_directory_lists() {
         if folds { 1 } else { 2 },
         "and the listing must hold those entries and nothing the probe left"
     );
+}
+
+/// Every folding arm this host cannot reach says so, and only where it cannot
+/// reach it.
+///
+/// Three tests below hold a folding arm and an ordinary one. Where the
+/// filesystem does not fold, the ordinary arm runs, the subject is measured by
+/// nothing, and the default summary has only `ok` to report it with — which is
+/// the state the notice exists to end. libtest discards an `eprintln!` from a
+/// test that passes, so the notice is read back from a subprocess run WITHOUT
+/// `--nocapture`: that run is the one whose silence is the defect.
+///
+/// The expected value is computed from the same probe the subjects branch on,
+/// so this pin has no arm of its own for a host to vacate — on a folding host
+/// it asserts the notice is absent, and that assertion still runs.
+#[test]
+fn every_arm_this_host_cannot_reach_announces_itself() {
+    let tmp = common::tempdir().unwrap();
+    let folds = filesystem_folds_case(tmp.path());
+
+    for (subject, notice) in [
+        (
+            "workweave_reuse_refuses_to_adopt_a_case_twin_directory",
+            NOT_FOLDING_HERE_REUSE,
+        ),
+        (
+            "a_confusable_sibling_warns_at_mint_and_is_still_created",
+            NOT_FOLDING_HERE_MINT,
+        ),
+        (
+            "a_confusable_sibling_is_reported_by_doctor",
+            NOT_FOLDING_HERE_DOCTOR,
+        ),
+    ] {
+        let out = common::rerun_one_test(subject);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stdout.contains("1 passed"),
+            "{subject} must have run and passed, or the notice below is unreached:\
+             \nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert_eq!(
+            stderr.contains(&format!("SKIP: {notice}")),
+            !folds,
+            "{subject}: the folding arm is unreachable exactly where the filesystem \
+             does not fold, and that is where it must say so:\
+             \nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +383,7 @@ fn workweave_reuse_refuses_to_adopt_a_case_twin_directory() {
             "the refusal must leave the occupant alone"
         );
     } else {
+        common::report_skip(NOT_FOLDING_HERE_REUSE);
         assert!(
             out.status.success(),
             "no collision exists at this exact spelling, so the mint proceeds: {stderr}"
@@ -453,6 +514,7 @@ fn a_confusable_sibling_warns_at_mint_and_is_still_created() {
             "the refusal must leave the occupant where it was"
         );
     } else {
+        common::report_skip(NOT_FOLDING_HERE_MINT);
         assert!(
             out.status.success(),
             "the mint must succeed — this is a warning, not a refusal: {stderr}"
@@ -493,6 +555,7 @@ fn a_confusable_sibling_is_reported_by_doctor() {
     let folds = filesystem_folds_case(&ws.join("projects"));
 
     if !folds {
+        common::report_skip(NOT_FOLDING_HERE_DOCTOR);
         rwv()
             .args(["init", "Chatly"])
             .current_dir(&ws)

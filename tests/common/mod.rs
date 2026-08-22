@@ -26,6 +26,21 @@ pub fn report_skip(reason: &str) {
     let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
 }
 
+/// Run one test out of the calling binary again, as a subprocess under the
+/// default capture.
+///
+/// A test cannot observe its own capture: libtest installs it around whatever
+/// is running, so a test reading back what it wrote sees the same bytes either
+/// way. A pin on what a notice reaches has to read it from outside, and the
+/// run without `--nocapture` is the one whose silence is the defect.
+pub fn rerun_one_test(name: &str) -> std::process::Output {
+    let exe = std::env::current_exe().expect("this test binary's own path");
+    Command::new(&exe)
+        .args([name, "--exact", "--test-threads=1"])
+        .output()
+        .unwrap_or_else(|e| panic!("re-invoking {} failed: {e}", exe.display()))
+}
+
 /// Whether `tool` is absent from PATH, announcing the skip when it is.
 ///
 /// ```ignore

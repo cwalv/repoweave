@@ -25,11 +25,7 @@ const ABSENT_TOOL: &str = "rwv-absent-tool-probe";
 
 /// Re-invoke this binary for one test, under the default capture.
 fn run_subject(test: &str) -> Output {
-    let exe = std::env::current_exe().expect("this test binary's own path");
-    Command::new(&exe)
-        .args([test, "--exact", "--test-threads=1"])
-        .output()
-        .unwrap_or_else(|e| panic!("re-invoking {} failed: {e}", exe.display()))
+    common::rerun_one_test(test)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +292,16 @@ fn a_test_that_did_not_skip_prints_no_notice() {
 //   `which::which`. A guard two helpers deep is invisible here.
 // - The comment filter is line-leading `//` only, so a needle inside a block
 //   comment or after code on the same line is read as source.
+// - The BRANCH-VACATED form is out of the population: a test that branches on
+//   what the host can do and leaves its subject in the arm this host does not
+//   take. The scan keys on the return, and that shape either has none, or has
+//   one belonging to the arm that measures while the vacated code is the
+//   fall-through. Reaching it would take a probe list admitting a filesystem
+//   consult, which every fixture builder in this corpus performs, and the scan
+//   would still have to guess which arm holds the subject — both assert. Those
+//   sites announce where they stand instead;
+//   `the_return_scan_reads_the_return_and_not_the_arm_that_measures` pins the
+//   boundary so a widening reddens rather than arriving in silence.
 
 /// `ETXTBSY`. Not worth a dependency for one number, and it is the same on
 /// every unix this suite builds for.
@@ -423,6 +429,243 @@ fn every_skip_announcement_goes_through_the_one_reporter() {
     );
 }
 
+/// One file's environment-guarded bare returns: how many the walk reached, and
+/// which of those announce nothing.
+struct ReturnScan {
+    guarded: usize,
+    silent: Vec<String>,
+}
+
+fn scan_environment_returns(file: &Scanned) -> ReturnScan {
+    const PROBES: &[&str] = &[
+        "which::which",
+        "skip_without_tool(",
+        "go_on_path(",
+        "cfg!(windows)",
+        "cfg!(target_os",
+        "Command::new(",
+    ];
+    const ANNOUNCEMENTS: &[&str] = &["report_skip", "skip_without_tool"];
+
+    // One level of local helper, resolved per file: the names of `fn`s in this
+    // file whose body carries a primitive, and the names of those that
+    // announce. `require_go` is both.
+    let mut probing = Vec::new();
+    let mut announcing = Vec::new();
+    let mut current: Option<(String, usize)> = None;
+    for (n, line) in file.lines.iter().enumerate() {
+        if let Some(rest) = line.trim_start().split_once("fn ") {
+            let name: String = rest
+                .1
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                current = Some((name, n));
+            }
+        }
+        let Some((name, _)) = &current else { continue };
+        if PROBES.iter().any(|p| line.contains(p)) && !is_comment(line) {
+            probing.push(format!("{name}("));
+        }
+        if ANNOUNCEMENTS.iter().any(|a| line.contains(a)) && !is_comment(line) {
+            announcing.push(format!("{name}("));
+        }
+    }
+
+    let mut found = ReturnScan {
+        guarded: 0,
+        silent: Vec::new(),
+    };
+    for (n, line) in file.lines.iter().enumerate() {
+        if n < file.test_from || line.trim() != "return;" {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let Some(opened) = (n.saturating_sub(40)..n).rev().find(|&k| {
+            let prev = &file.lines[k];
+            !prev.trim().is_empty()
+                && prev.len() - prev.trim_start().len() < indent
+                && prev.trim_end().ends_with('{')
+        }) else {
+            continue;
+        };
+        let block = file.lines[opened..=n].join("\n");
+        let guard = &file.lines[opened];
+
+        let by_probe = PROBES.iter().any(|p| guard.contains(p))
+            || probing.iter().any(|h| guard.contains(h.as_str()));
+        if !by_probe || block.contains("assert") {
+            continue;
+        }
+        found.guarded += 1;
+
+        let announced = ANNOUNCEMENTS.iter().any(|a| block.contains(a))
+            || announcing.iter().any(|h| guard.contains(h.as_str()));
+        if !announced {
+            found.silent.push(format!(
+                "{}:{}  guard at :{}  {}",
+                file.rel,
+                n + 1,
+                opened + 1,
+                guard.trim()
+            ));
+        }
+    }
+    found
+}
+
+/// Source held as one line per element, so nothing here is a line of this file.
+///
+/// A fixture written as a block literal would be read by the corpus walk below,
+/// which reads this file like any other and cannot tell a planted shape from a
+/// real one. Quoting each line moves the needle off the line start, and the
+/// walk sees text rather than a guard.
+fn scanned_fixture(rel: &str, lines: &[&str]) -> Scanned {
+    Scanned {
+        rel: rel.to_owned(),
+        lines: lines.iter().map(|l| (*l).to_owned()).collect(),
+        test_from: 0,
+    }
+}
+
+/// The scan reads the return, and cannot read which arm of a branch measures.
+///
+/// The corpus assertion below is "nothing is silent", which is also what a walk
+/// that reads nothing says. These fixtures make the same predicate answer from
+/// planted inputs, so that green rests on a scan shown to react.
+///
+/// THE LAST THREE ARE A PINNED KNOWN LIMIT, asserted so they fail when the
+/// limit STOPS existing. The branch-vacated form — a subject sitting in the arm
+/// this host does not take — comes in two spellings: an if/else with no return
+/// at all, and an early return belonging to the arm that DOES measure, with the
+/// vacated code in the fall-through after it. The scan is silent on both, and
+/// the last fixture is why that silence is correct rather than a hole: it is
+/// the same shape with a subject in BOTH arms, and no structural reading
+/// separates the two. Widening to report the third would report the fourth, and
+/// a matcher that reports correct code gets turned off. Those sites announce
+/// where they stand instead. If the population ever grows to hold them, this
+/// reddens and the scope comment above is what needs rewriting.
+#[test]
+fn the_return_scan_reads_the_return_and_not_the_arm_that_measures() {
+    let unannounced = scan_environment_returns(&scanned_fixture(
+        "tests/fixture_unannounced.rs",
+        &[
+            "#[test]",
+            "fn t() {",
+            "    if which::which(\"cargo\").is_err() {",
+            "        return;",
+            "    }",
+            "    drive_the_subject();",
+            "}",
+        ],
+    ));
+    assert_eq!(
+        unannounced.guarded, 1,
+        "the walk must reach the planted guard, or every silence below is vacuous"
+    );
+    assert_eq!(
+        unannounced.silent.len(),
+        1,
+        "an environment-guarded return that announces nothing is the finding this \
+         scan exists for: {:?}",
+        unannounced.silent
+    );
+
+    let announced = scan_environment_returns(&scanned_fixture(
+        "tests/fixture_announced.rs",
+        &[
+            "#[test]",
+            "fn t() {",
+            "    if common::skip_without_tool(\"cargo\") {",
+            "        return;",
+            "    }",
+            "    drive_the_subject();",
+            "}",
+        ],
+    ));
+    assert_eq!(
+        announced.guarded, 1,
+        "the same shape must still be reached, or the silence below is the walk \
+         missing it rather than the announcement satisfying it"
+    );
+    assert!(
+        announced.silent.is_empty(),
+        "a guard that announces is not a finding: {:?}",
+        announced.silent
+    );
+
+    let vacated_branch = scan_environment_returns(&scanned_fixture(
+        "tests/fixture_vacated_branch.rs",
+        &[
+            "fn filesystem_folds_case(dir: &Path) -> bool {",
+            "    std::fs::create_dir(dir.join(\"twin\")).is_err()",
+            "}",
+            "#[test]",
+            "fn t() {",
+            "    let folds = filesystem_folds_case(&dir);",
+            "    if folds {",
+            "        assert!(the_refusal_names_the_occupant());",
+            "    } else {",
+            "        assert!(the_mint_proceeded());",
+            "    }",
+            "}",
+        ],
+    ));
+    assert_eq!(
+        vacated_branch.guarded, 0,
+        "no return, so nothing for this scan to key on: {:?}",
+        vacated_branch.silent
+    );
+
+    let vacated_fallthrough = scan_environment_returns(&scanned_fixture(
+        "tests/fixture_vacated_fallthrough.rs",
+        &[
+            "fn filesystem_folds_case(dir: &Path) -> bool {",
+            "    std::fs::create_dir(dir.join(\"twin\")).is_err()",
+            "}",
+            "#[test]",
+            "fn t() {",
+            "    let folds = filesystem_folds_case(&dir);",
+            "    if !folds {",
+            "        assert!(doctor_named_both_spellings());",
+            "        return;",
+            "    }",
+            "    assert!(the_record_namespace_is_linted());",
+            "}",
+        ],
+    ));
+    assert_eq!(
+        vacated_fallthrough.guarded, 0,
+        "the return belongs to the arm that measured; what went unexercised is \
+         below the block, which no return marks: {:?}",
+        vacated_fallthrough.silent
+    );
+
+    let two_sided = scan_environment_returns(&scanned_fixture(
+        "tests/fixture_two_sided.rs",
+        &[
+            "fn run_the_verb() -> std::process::Output {",
+            "    Command::new(\"rwv\").arg(\"sync-to\").output().unwrap()",
+            "}",
+            "#[test]",
+            "fn t() {",
+            "    let output = run_the_verb();",
+            "    if output.status.success() {",
+            "        assert_eq!(primary_tip(), workweave_tip());",
+            "        return;",
+            "    }",
+            "    assert!(stderr_of(&output).contains(\"abort\"));",
+            "}",
+        ],
+    ));
+    assert_eq!(
+        vacated_fallthrough.guarded, two_sided.guarded,
+        "a subject in the fall-through and a subject in both arms read the same to \
+         this scan, which is why it reports neither"
+    );
+}
+
 /// A test whose environment decided it would not run says so.
 ///
 /// The population is every bare `return;` in test scope whose enclosing guard
@@ -450,81 +693,13 @@ fn every_skip_announcement_goes_through_the_one_reporter() {
 /// pin's scope IS its coverage claim.
 #[test]
 fn no_environment_guard_returns_without_announcing() {
-    const PROBES: &[&str] = &[
-        "which::which",
-        "skip_without_tool(",
-        "go_on_path(",
-        "cfg!(windows)",
-        "cfg!(target_os",
-        "Command::new(",
-    ];
-    const ANNOUNCEMENTS: &[&str] = &["report_skip", "skip_without_tool"];
-
     let mut silent = Vec::new();
     let mut guarded = 0usize;
 
     for file in scanned_corpus() {
-        // One level of local helper, resolved per file: the names of `fn`s in
-        // this file whose body carries a primitive, and the names of those that
-        // announce. `require_go` is both.
-        let mut probing = Vec::new();
-        let mut announcing = Vec::new();
-        let mut current: Option<(String, usize)> = None;
-        for (n, line) in file.lines.iter().enumerate() {
-            if let Some(rest) = line.trim_start().split_once("fn ") {
-                let name: String = rest
-                    .1
-                    .chars()
-                    .take_while(|c| c.is_alphanumeric() || *c == '_')
-                    .collect();
-                if !name.is_empty() {
-                    current = Some((name, n));
-                }
-            }
-            let Some((name, _)) = &current else { continue };
-            if PROBES.iter().any(|p| line.contains(p)) && !is_comment(line) {
-                probing.push(format!("{name}("));
-            }
-            if ANNOUNCEMENTS.iter().any(|a| line.contains(a)) && !is_comment(line) {
-                announcing.push(format!("{name}("));
-            }
-        }
-
-        for (n, line) in file.lines.iter().enumerate() {
-            if n < file.test_from || line.trim() != "return;" {
-                continue;
-            }
-            let indent = line.len() - line.trim_start().len();
-            let Some(opened) = (n.saturating_sub(40)..n).rev().find(|&k| {
-                let prev = &file.lines[k];
-                !prev.trim().is_empty()
-                    && prev.len() - prev.trim_start().len() < indent
-                    && prev.trim_end().ends_with('{')
-            }) else {
-                continue;
-            };
-            let block = file.lines[opened..=n].join("\n");
-            let guard = &file.lines[opened];
-
-            let by_probe = PROBES.iter().any(|p| guard.contains(p))
-                || probing.iter().any(|h| guard.contains(h.as_str()));
-            if !by_probe || block.contains("assert") {
-                continue;
-            }
-            guarded += 1;
-
-            let announced = ANNOUNCEMENTS.iter().any(|a| block.contains(a))
-                || announcing.iter().any(|h| guard.contains(h.as_str()));
-            if !announced {
-                silent.push(format!(
-                    "{}:{}  guard at :{}  {}",
-                    file.rel,
-                    n + 1,
-                    opened + 1,
-                    guard.trim()
-                ));
-            }
-        }
+        let found = scan_environment_returns(&file);
+        guarded += found.guarded;
+        silent.extend(found.silent);
     }
 
     assert!(
