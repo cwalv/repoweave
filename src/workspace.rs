@@ -2646,9 +2646,9 @@ mod tests {
     /// The narrowed shape test's known, accepted false-positive class: a
     /// member checkout that itself carries a `projects/` directory is
     /// workspace-shaped on its own, and the walk stops at the first ancestor
-    /// that answers — the checkout, not the real weave root above it. Fork 6
-    /// ruled the shape test the contract rather than a heuristic, so this is
-    /// the accepted behaviour rather than a bug to chase; pinned so a later
+    /// that answers — the checkout, not the real weave root above it. The
+    /// shape test is the contract rather than a heuristic, so this is the
+    /// accepted behaviour rather than a bug to chase; pinned so a later
     /// "fix" of the asymmetry is a conversation with that ruling rather than
     /// silent drift. True before this narrowing too — `projects/` was
     /// already one of the two marker names it replaces.
