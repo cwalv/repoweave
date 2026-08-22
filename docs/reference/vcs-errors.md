@@ -6,6 +6,13 @@ that name is what a machine consumer is meant to branch on rather than parsing
 the message text. This page has one entry per name, so a kind read off a
 machine surface can be looked up without translation.
 
+Sync's own per-repo failure kinds are here too. They say why a repo did not
+reach the target, and they are on this page because they are in the same JSON
+object as the names above: sync's kind is the outer one and the VCS kind, when
+there is one, is the `cause.kind` beneath it. A reader holding a failed repo
+outcome needs both, and splitting them across two pages would publish how rwv
+is built rather than anything about the failure.
+
 ## How this page differs from Refusals
 
 [Refusals](./refusals.md) names conditions rwv *could have acted on and
@@ -19,15 +26,19 @@ The practical consequence is that **the exit is usually git-side**. A refusal's
 exit is something to do to rwv; most exits below are something to do to the
 repository, after which the rwv command re-runs unchanged.
 
-A condition that both registers name keeps its single entry wherever that entry
+A condition that two registers name keeps its single entry wherever that entry
 already lives — `mid-operation` and `untracked-collision` are shared with the
-refusal register and are documented on [Refusals](./refusals.md).
+refusal register and are documented on [Refusals](./refusals.md);
+`head-unreadable` is shared with `rwv doctor` and is documented on [Doctor
+findings](./doctor-findings.md). `rwv explain` serves an entry without regard
+to which page holds it, so the split costs a reader nothing.
 
 ## Where these names appear
 
 - `rwv sync --json` / `rwv sync-to --json`, under a failed repo outcome, as
-  `failure.cause.kind` — when the failure carries a typed cause at all. The
-  field is omitted rather than null when it does not, so read it as optional.
+  `failure.kind` — always present — and as `failure.cause.kind` when the
+  failure carries a typed cause at all. The `cause` field is omitted rather
+  than null when it does not, so read it as optional.
 - The published schemas under `docs/reference/schemas/`, where the same set
   appears as an `"enum"`.
 
@@ -53,6 +64,23 @@ context.
 condition. A failure that gains a specific kind in a later release stops
 arriving as `command-failed`, and that is the intended direction of change:
 this set grows at `command-failed`'s expense.
+
+### `ff-impossible`
+
+**Condition.** A sync failure kind. `--strategy ff` could not advance a repo to
+the target, because the target is not ahead of where that repo's HEAD already
+is.
+
+**What it means.** `ff` is the strategy that will not rewrite history: it moves
+a branch pointer forward or it stops. A repo that has diverged — local commits
+the target does not contain — has nothing to fast-forward to, so the strategy
+has run out of moves rather than hit an error. This kind never carries a
+`cause`: nothing underneath failed.
+
+**Exits.** Re-run with `--strategy rebase` to replay the local commits on top of
+the target. That is the deliberate choice `ff` exists to make you make, because
+rebase rewrites the repo's history and fast-forward does not. If the local
+commits are not wanted, move the branch yourself and re-run unchanged.
 
 ### `hook-rejected`
 
@@ -134,6 +162,22 @@ verb that started the replay — `rwv sync --continue` or `rwv sync-to
 remaining phases after the replay, and a replay finished behind its back leaves
 them undone. To abandon instead, `rwv abort` rolls the op back to the state it
 started from.
+
+### `rebase-failed`
+
+**Condition.** A sync failure kind. `--strategy rebase` did not land a repo on
+the target. Says that the replay did not finish, not why.
+
+**What it means.** The why is in `cause`, and reading it is the whole point of
+the split: a conflict needing a person and a repo git could not read are the
+same kind here and different `cause.kind`s underneath. A conflict arrives as
+`rebase-conflict` and leaves the repo mid-replay; anything else is a git
+failure that changed nothing.
+
+**Exits.** Branch on `cause.kind` and follow that entry — `rwv explain` serves
+it the same way it served this one. With no `cause`, the `message` field is all
+there is; that combination means the replay failed through a path that had no
+typed error to carry, and the message is the VCS's own account.
 
 ### `revision-not-found`
 

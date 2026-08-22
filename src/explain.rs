@@ -59,12 +59,11 @@ const VCS_ERRORS_PAGE: &str = include_str!("../docs/reference/vcs-errors.md");
 /// touch is settled per finding and carried on it — so a mark keyed to the
 /// kind would be false for some of the findings that kind covers.
 ///
-/// The VCS wire kinds are the fourth such register and the one that reads
-/// least like the others: rwv did not decline, it was stopped, so those kinds
-/// are outside the refusal class and carry their own page rather than
-/// borrowing a refusal token. Nothing about serving an entry depends on which
-/// page holds it, which is what makes a third page a listing rather than a
-/// special case.
+/// The VCS wire kinds and sync's per-repo failure kinds read least like the
+/// others: rwv did not decline, it was stopped, so they sit outside the
+/// refusal class and share a page of their own rather than borrowing a refusal
+/// token. Nothing about serving an entry depends on which page holds it, which
+/// is what makes another page a listing rather than a special case.
 const ENTRY_PAGES: &[&str] = &[REFUSALS_PAGE, DOCTOR_FINDINGS_PAGE, VCS_ERRORS_PAGE];
 
 /// The heading level of `line` when it is a heading titled exactly `` `token` ``.
