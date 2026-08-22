@@ -1162,8 +1162,9 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         "expected mid-rebase state (.git/rebase-merge should exist)"
     );
 
-    // Now write conflict markers into rwv.lock — simulating a sync that
-    // left rwv.lock with conflict markers.
+    // raw lock bytes: a lock carrying 3-way merge markers, which is what a
+    // rebase that stopped on it leaves behind and what `rwv abort` must
+    // survive. No writer that parses before it writes can produce one.
     std::fs::write(
         project_dir.join("rwv.lock"),
         "<<<<<<< HEAD\n[repositories]\n=======\n[repositories]\n>>>>>>> abc1234\n",

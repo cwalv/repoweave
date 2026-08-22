@@ -31,8 +31,6 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-const EMPTY_LOCK: &str = "{\n  \"repositories\": {}\n}\n";
-
 fn rwv(args: &[&str], cwd: &Path) -> (bool, String) {
     let output = common::rwv()
         .args(args)
@@ -98,7 +96,7 @@ fn weave_with_a_generator(root: &Path) -> PathBuf {
         "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 

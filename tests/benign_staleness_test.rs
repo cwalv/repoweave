@@ -1430,10 +1430,11 @@ fn dirty_source_rwv_lock_only_is_carved_out() {
     // file MODIFIED-BUT-UNCOMMITTED in the project repo — the only tracked dirt
     // in the project repo is rwv.lock, which the carve-out permits.
     commit_file(&f.ww.manifest_repo, "adv.txt", "adv\n", "ww: adv");
-    // Hand-edit the committed lock file so it shows as a tracked
-    // modification. Trailing whitespace is the only append JSON tolerates
-    // without becoming unparseable — a comment line (the YAML-era trick)
-    // is trailing *content* and fails to parse.
+    // raw lock bytes: an append onto the committed lock, so it reads as a
+    // tracked modification. The shared builder writes a whole file for given
+    // content and cannot make an existing one dirty. Trailing whitespace is
+    // the only append JSON tolerates without becoming unparseable — a comment
+    // line (the YAML-era trick) is trailing *content* and fails to parse.
     let lock_path = f.ww.project_dir.join("rwv.lock");
     let mut contents = std::fs::read_to_string(&lock_path).unwrap();
     contents.push('\n');

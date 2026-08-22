@@ -967,20 +967,10 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "v1.0.0"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
+    );
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved_lock, failures) = lock.resolve_versions(&root);
@@ -1018,20 +1008,14 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "v9.9.9-nonexistent"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(
+            repo_path,
+            "https://github.com/acme/server.git",
+            "v9.9.9-nonexistent",
+        )],
+    );
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved_lock, failures) = lock.resolve_versions(&root);
@@ -1207,22 +1191,11 @@ fn status_ok_when_lock_pins_tag_at_current_head() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
-    // Hand-write a tag-form lock to mirror the SME's reproducer.
-    let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "v0.3.3"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    // The reproducer pinned a tag rather than a SHA.
+    common::fixture_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v0.3.3")],
+    );
 
     rwv_cmd()
         .arg("status")
@@ -1255,21 +1228,10 @@ fn check_locked_ok_when_lock_pins_tag_at_current_head() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
-    let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "v0.3.3"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v0.3.3")],
+    );
 
     rwv_cmd()
         .args(["doctor", "--locked"])
@@ -1481,20 +1443,10 @@ fn lock_file_from_path_yields_raw_entries() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "v1.0.0"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
+    );
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let entry = &lock.repo_map()
@@ -1522,20 +1474,14 @@ fn resolve_versions_surfaces_unknown_ref_in_failures() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "deadbeef-not-a-real-ref"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(
+            repo_path,
+            "https://github.com/acme/server.git",
+            "deadbeef-not-a-real-ref",
+        )],
+    );
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved, failures) = lock.resolve_versions(&root);
@@ -1572,20 +1518,10 @@ fn resolve_versions_roundtrip_raw_then_resolved_json_shape() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
     let lock_path = project_dir.join("rwv.lock");
-    std::fs::write(
-        &lock_path,
-        r#"{
-  "repositories": {
-    "github/acme/server": {
-      "type": "git",
-      "url": "https://github.com/acme/server.git",
-      "version": "v1.0.0"
-    }
-  }
-}
-"#,
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
+    );
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved, _failures) = lock.resolve_versions(&root);
@@ -1637,10 +1573,10 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Plant a conflict-markered rwv.lock — the state you'd see after a
-    // `git rebase` stopped on rwv.lock and left the file with 3-way
-    // merge markers in it. Strict JSON parsing dies on the marker
-    // lines; `Project::from_dir_skip_lock` bypasses that.
+    // raw lock bytes: a conflict-markered rwv.lock — the state a `git rebase`
+    // that stopped on it leaves behind. Strict JSON parsing dies on the marker
+    // lines and `Project::from_dir_skip_lock` bypasses that, so no writer that
+    // parses before it writes can produce this file.
     let markered = format!(
         "{{\n  \"repositories\": {{\n\
          <<<<<<< HEAD\n\

@@ -22,7 +22,6 @@ mod common;
 
 const SERVER_PATH: &str = "github/example/server";
 const SERVER_URL: &str = "https://github.com/example/server";
-const EMPTY_LOCK: &str = "{\n  \"repositories\": {}\n}\n";
 
 /// Stderr of a run that must fail.
 fn refusal_stderr(args: &[&str], cwd: &Path) -> String {
@@ -92,7 +91,7 @@ fn plain_weave(root: &Path) -> PathBuf {
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
     ws

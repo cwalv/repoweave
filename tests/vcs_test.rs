@@ -1227,13 +1227,26 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
     );
 }
 
+/// Put a per-branch distinguishable body at the path a replay exclusion is
+/// configured for.
+///
+/// What the rebase tests below drive is git's resolution of the `rwv.lock`
+/// path, not the lock's content: the body only has to differ per side so the
+/// side that survives is legible.
+fn write_lock_marker(repo: &Path, body: &str) {
+    // raw lock bytes: an arbitrary marker, because the path is the subject and
+    // nothing on this route parses one. A real lock would make the surviving
+    // side unreadable in the failure output.
+    fs::write(repo.join("rwv.lock"), body).unwrap();
+}
+
 #[test]
 fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     // Both sides modify the same `rwv.lock` content; with replay-exclusion
     // configured, the rebase should keep main's version with no conflict.
     let dir = init_repo();
     let p = dir.path();
-    fs::write(p.join("rwv.lock"), "v0\n").unwrap();
+    write_lock_marker(p, "v0\n");
     common::git_in(p, &["add", "rwv.lock"]);
     // Configure replay-exclusion BEFORE the commits that mutate the lock.
     git_vcs()
@@ -1243,13 +1256,13 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     common::git_in(p, &["commit", "-m", "lock + .gitattributes"]);
     let c1 = common::git_in(p, &["rev-parse", "HEAD"]);
 
-    fs::write(p.join("rwv.lock"), "main version\n").unwrap();
+    write_lock_marker(p, "main version\n");
     common::git_in(p, &["add", "rwv.lock"]);
     common::git_in(p, &["commit", "-m", "main: change lock"]);
     let main_lock_content = fs::read_to_string(p.join("rwv.lock")).unwrap();
 
     common::git_in(p, &["checkout", "-b", "feat", &c1]);
-    fs::write(p.join("rwv.lock"), "feat version\n").unwrap();
+    write_lock_marker(p, "feat version\n");
     common::git_in(p, &["add", "rwv.lock"]);
     common::git_in(p, &["commit", "-m", "feat: change lock"]);
 
@@ -1496,7 +1509,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     // Base commit: rwv.lock + shared exist, and `.gitattributes` assigns the
     // `rwv-ours` driver to `rwv.lock` via the production path (so committed
     // trees carry the assignment).
-    fs::write(p.join("rwv.lock"), "v0\n").unwrap();
+    write_lock_marker(p, "v0\n");
     fs::write(p.join("shared"), "v0\n").unwrap();
     common::git_in(p, &["add", "rwv.lock", "shared"]);
     git_vcs()
@@ -1508,7 +1521,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
 
     // main: bump shared AND lock in one commit (both will conflict with feat).
     fs::write(p.join("shared"), "main version\n").unwrap();
-    fs::write(p.join("rwv.lock"), "main lock\n").unwrap();
+    write_lock_marker(p, "main lock\n");
     common::git_in(p, &["add", "shared", "rwv.lock"]);
     common::git_in(p, &["commit", "-m", "main: bump shared + lock"]);
     let main_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
@@ -1518,7 +1531,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     fs::write(p.join("shared"), "feat version\n").unwrap();
     common::git_in(p, &["add", "shared"]);
     common::git_in(p, &["commit", "-m", "F1: change shared"]);
-    fs::write(p.join("rwv.lock"), "feat lock\n").unwrap();
+    write_lock_marker(p, "feat lock\n");
     common::git_in(p, &["add", "rwv.lock"]);
     common::git_in(p, &["commit", "-m", "F2: bump lock only"]);
 

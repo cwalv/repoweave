@@ -75,17 +75,7 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
     let manifest_toml = format!(
         "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
     );
-    // Round-trips through the real parser + serializer so this fixture is
-    // byte-identical to what `rwv lock` itself would write for the same
-    // content, not merely equivalent YAML-vs-JSON.
-    let raw_lock = format!(
-        "{{\"repositories\": {{\"local/org/dep\": {{\"type\": \"git\", \"url\": {dep_url:?}, \"version\": {dep_sha:?}}}}}}}"
-    );
-    let mut lock = serde_json::to_string_pretty(
-        &repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap(),
-    )
-    .unwrap();
-    lock.push('\n');
+    let lock = common::fixture_lock_bytes(&[("local/org/dep", dep_url.as_str(), dep_sha.as_str())]);
     init_bare_repo_with_commit(
         &project_bare,
         &[("rwv.toml", &manifest_toml), ("rwv.lock", &lock)],

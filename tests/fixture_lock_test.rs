@@ -7,6 +7,11 @@
 //! holds through the exact form (a whole-file literal; parsed triples), so a
 //! hand-written format string that merely resembles the output cannot
 //! satisfy either.
+//!
+//! `common::fixture_lock_bytes` exists so a caller needing those bytes as a
+//! value does not reach for the format string instead, and is pinned here to
+//! the file its sibling writes rather than to a literal of its own — a
+//! second literal is a second thing to drift.
 
 mod common;
 
@@ -32,6 +37,31 @@ fn fixture_lock_writes_what_the_shipped_serializer_writes() {
     assert_eq!(
         text, expected,
         "the helper's bytes must equal the shipped serializer's for this content"
+    );
+}
+
+/// The value form and the file form are the same bytes, over content that
+/// exercises both the entry separator and the trailing newline. Asserting
+/// against the file rather than against a literal is what keeps a serializer
+/// change from needing an edit in two places, only one of which anything
+/// would notice.
+#[test]
+fn fixture_lock_bytes_are_the_bytes_fixture_lock_writes() {
+    let tmp = common::tempdir().unwrap();
+    let entries = [
+        ("github/example/server", URL, SHA),
+        (
+            "github/example/web",
+            "https://github.com/example/web.git",
+            "2222222222222222222222222222222222222222",
+        ),
+    ];
+    common::fixture_lock(tmp.path(), &entries);
+
+    assert_eq!(
+        common::fixture_lock_bytes(&entries),
+        std::fs::read_to_string(tmp.path().join("rwv.lock")).unwrap(),
+        "a caller holding the bytes must hold what a caller writing the file gets"
     );
 }
 

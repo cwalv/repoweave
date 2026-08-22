@@ -78,11 +78,20 @@ fn violation_kinds_for(ws: &Path, repo: &str) -> Vec<String> {
 const LEDGER: &str = ".rwv-owned-digests";
 const LOCK: &str = "version = 4\n";
 
-/// Two `rwv.lock` bodies that both parse. The staleness axis is about bytes
-/// changing under a generation, so an unparseable lock would test doctor's
-/// manifest gate instead — that gate reports first and returns.
-const EMPTY_LOCK: &str = "{\n  \"repositories\": {}\n}\n";
-const MOVED_LOCK: &str = "{\n  \"repositories\": {}\n}\n\n";
+/// Rewrite the lock with a body that parses and is not the bytes already
+/// there — what a recorded input looks like once it has moved.
+fn move_the_lock(project_dir: &Path) {
+    // raw lock bytes: the empty lock plus one more newline. The subject is an
+    // input whose bytes changed while its content did not, which the shared
+    // builder cannot write: it emits the canonical bytes for content and
+    // nothing else. An unparseable body would test doctor's manifest gate
+    // instead, and that gate reports first and returns.
+    std::fs::write(
+        project_dir.join("rwv.lock"),
+        "{\n  \"repositories\": {}\n}\n\n",
+    )
+    .unwrap();
+}
 
 /// A weave whose `Cargo.lock` is attested as a generation, with the inputs that
 /// generation read recorded beside it.
@@ -98,7 +107,7 @@ fn weave(root: &Path) -> PathBuf {
     std::fs::create_dir_all(ws.join("github")).unwrap();
 
     std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
@@ -142,7 +151,7 @@ fn an_input_that_moved_makes_the_generation_stale_on_both_surfaces() {
     let project_dir = ws.join("projects/app");
 
     // The lock and its digest still agree — this is not drift.
-    std::fs::write(project_dir.join("rwv.lock"), MOVED_LOCK).unwrap();
+    move_the_lock(&project_dir);
 
     let (_, report) = rwv(&["doctor"], &ws);
     assert!(
@@ -234,7 +243,7 @@ fn an_input_that_appeared_since_the_generation_counts_as_moved() {
         "precondition: a generation over the inputs that exist is current"
     );
 
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
 
     let found = advisories(&ws);
     assert_eq!(
@@ -314,7 +323,7 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
         "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
@@ -374,7 +383,7 @@ fn weave_with_a_path_dep(root: &Path) -> (PathBuf, PathBuf) {
         "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
@@ -781,7 +790,7 @@ fn a_stale_entry_on_a_drifted_file_is_not_a_deadlock() {
     let ws = weave_with_a_producer(tmp.path());
     let project_dir = ws.join("projects/app");
 
-    std::fs::write(project_dir.join("rwv.lock"), MOVED_LOCK).unwrap();
+    move_the_lock(&project_dir);
     std::fs::write(project_dir.join("Cargo.lock"), "version = 3\n").unwrap();
 
     let (ok, refused) = rwv(&["materialize"], &ws);
@@ -839,7 +848,7 @@ fn weave_with_a_build_script_producer(root: &Path) -> (PathBuf, PathBuf) {
         "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), EMPTY_LOCK).unwrap();
+    common::fixture_lock(&project_dir, &[]);
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
@@ -985,7 +994,7 @@ fn a_member_manifest_is_not_a_recorded_input() {
          covers the state the staleness map declines to see; got {moved:?}"
     );
 
-    std::fs::write(project_dir.join("rwv.lock"), MOVED_LOCK).unwrap();
+    move_the_lock(&project_dir);
     let found = advisories(&ws);
     assert_eq!(
         found.len(),

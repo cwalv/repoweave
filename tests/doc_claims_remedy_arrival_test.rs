@@ -31,6 +31,9 @@ fn make_workspace(parent: &Path, manifest: &str, lock: &str) -> PathBuf {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     if !lock.is_empty() {
+        // raw lock bytes: every caller's subject is a body rwv cannot parse —
+        // a lock left in the pre-JSON format. The shared builder parses before
+        // it writes, so it has no way to produce one.
         std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
     }
     std::fs::write(workspace.join(".rwv-active"), "alpha\n").unwrap();

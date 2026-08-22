@@ -125,16 +125,16 @@ fn lock_overwrites_previous_lock_with_current_head() {
     let tmp = common::tempdir().unwrap();
     let (_root, project_dir, real_sha) = make_workspace_with_repo(tmp.path());
 
-    // Hand-write a lock containing a fake SHA.
     let fake_sha = "0000000000000000000000000000000000000000";
     assert_ne!(real_sha, fake_sha);
-    std::fs::write(
-        project_dir.join("rwv.lock"),
-        format!(
-            "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"{fake_sha}\"\n"
-        ),
-    )
-    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(
+            "github/acme/server",
+            "https://github.com/acme/server.git",
+            fake_sha,
+        )],
+    );
 
     rwv()
         .arg("lock")

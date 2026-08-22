@@ -305,17 +305,18 @@ fn in_place_fetch_leaves_present_member_at_locked_sha_unmoved() {
 #[test]
 fn in_place_fetch_fast_forwards_the_counterpart_and_stays_attached() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
-    let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
 
     // Present, clean, on main at the FIRST commit; the lock pins the SECOND,
     // so the pin is a strict descendant of the branch tip.
     let dest_a = materialize_repo_on_branch_at(&s.workspace, repo_a, bare_a, first_a);
     // The pin has to be the second commit for this to be a fast-forward; the
-    // shared fixture locks the first, so rewrite the lock here.
-    let lock_path = s.workspace.join("projects/my-app/rwv.lock");
-    let lock = std::fs::read_to_string(&lock_path).unwrap();
-    let second_a = s.repos[0].3.clone();
-    std::fs::write(&lock_path, lock.replace(first_a, &second_a)).unwrap();
+    // shared fixture locks the first, so re-pin here.
+    let url_a = common::file_url(bare_a);
+    common::fixture_lock(
+        &s.workspace.join("projects/my-app"),
+        &[(repo_a.as_str(), url_a.as_str(), second_a.as_str())],
+    );
 
     rwv()
         .arg("fetch")
@@ -325,7 +326,7 @@ fn in_place_fetch_fast_forwards_the_counterpart_and_stays_attached() {
 
     assert_eq!(
         common::git_in(&dest_a, &["rev-parse", "HEAD"]),
-        second_a,
+        second_a.as_str(),
         "present member must be realigned to the locked SHA"
     );
     assert_eq!(
@@ -335,7 +336,7 @@ fn in_place_fetch_fast_forwards_the_counterpart_and_stays_attached() {
     );
     assert_eq!(
         common::git_in(&dest_a, &["rev-parse", "main"]),
-        second_a,
+        second_a.as_str(),
         "the branch ref is what moved — HEAD did not leave it behind"
     );
 }
@@ -439,7 +440,7 @@ fn in_place_fetch_refuses_when_the_branch_carries_commits_origin_does_not_have()
 #[test]
 fn in_place_fetch_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
-    let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
 
     // On a personal branch positioned so that taking the pin WOULD be a
     // fast-forward. The refusal therefore cannot be the fast-forward check:
@@ -448,10 +449,11 @@ fn in_place_fetch_refuses_when_attached_to_a_branch_the_manifest_does_not_declar
     // commits and still silently change what the bookmark means.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     common::git_in(&dest_a, &["checkout", "-b", "feature", first_a]);
-    let lock_path = s.workspace.join("projects/my-app/rwv.lock");
-    let lock = std::fs::read_to_string(&lock_path).unwrap();
-    let second_a = s.repos[0].3.clone();
-    std::fs::write(&lock_path, lock.replace(first_a, &second_a)).unwrap();
+    let url_a = common::file_url(bare_a);
+    common::fixture_lock(
+        &s.workspace.join("projects/my-app"),
+        &[(repo_a.as_str(), url_a.as_str(), second_a.as_str())],
+    );
 
     rwv()
         .arg("fetch")

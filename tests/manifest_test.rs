@@ -275,7 +275,21 @@ fn project_from_dir_manifest_and_lock() {
     let project_dir = dir.path().join("proj");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.toml"), FULL_MANIFEST).unwrap();
-    std::fs::write(project_dir.join("rwv.lock"), LOCK_JSON).unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[
+            (
+                "github/acme/server",
+                "https://github.com/acme/server.git",
+                "abc123def456",
+            ),
+            (
+                "github/acme/client",
+                "https://github.com/acme/client.git",
+                "789000aabbcc",
+            ),
+        ],
+    );
 
     let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap()).unwrap();
     assert_eq!(project.manifest.len(), 4);

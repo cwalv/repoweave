@@ -1034,21 +1034,6 @@ fn bare_status(dir: &Path) -> String {
     bare_git_ok(&["status", "--porcelain"], dir)
 }
 
-/// Lock-file JSON in the exact shape `make_primary` writes, with a chosen
-/// version value — both branches rewrite the same `"version"` line so a
-/// 3-way merge without the driver is guaranteed to conflict.
-fn lock_json(manifest_repo: &Path, version: &str) -> String {
-    let repo_url = common::file_url(manifest_repo);
-    let raw_lock = format!(
-        "{{\"repositories\": {{{path:?}: {{\"type\": \"git\", \"url\": {repo_url:?}, \"version\": {version:?}}}}}}}",
-        path = MANIFEST_REPO_PATH,
-    );
-    let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    let mut json = serde_json::to_string_pretty(&lock).unwrap();
-    json.push('\n');
-    json
-}
-
 /// The literal incident shape this closes, driven end-to-end by a
 /// git process rwv did not spawn:
 ///
@@ -1087,12 +1072,16 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     commit_file(&repo, "shared.txt", "base\n", "base: add shared.txt");
     common::git_in(&repo, &["branch", "feature"]);
 
-    // main: bump the lock and shared.txt in one commit.
-    let main_lock = lock_json(
-        &primary.manifest_repo,
+    // main: bump the lock and shared.txt in one commit. Both branches rewrite
+    // the same `"version"` line, so a 3-way merge without the driver is
+    // guaranteed to conflict.
+    let manifest_url = common::file_url(&primary.manifest_repo);
+    let main_pin = [(
+        MANIFEST_REPO_PATH,
+        manifest_url.as_str(),
         "1111111111111111111111111111111111111111",
-    );
-    std::fs::write(repo.join("rwv.lock"), &main_lock).unwrap();
+    )];
+    common::fixture_lock(&repo, &main_pin);
     std::fs::write(repo.join("shared.txt"), "main version\n").unwrap();
     common::git_in(&repo, &["add", "rwv.lock", "shared.txt"]);
     common::git_in(&repo, &["commit", "-m", "main: bump lock + shared"]);
@@ -1105,11 +1094,14 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
         "feature version\n",
         "F1: edit shared.txt",
     );
-    let feat_lock = lock_json(
-        &primary.manifest_repo,
-        "2222222222222222222222222222222222222222",
+    common::fixture_lock(
+        &repo,
+        &[(
+            MANIFEST_REPO_PATH,
+            manifest_url.as_str(),
+            "2222222222222222222222222222222222222222",
+        )],
     );
-    std::fs::write(repo.join("rwv.lock"), &feat_lock).unwrap();
     common::git_in(&repo, &["add", "rwv.lock"]);
     common::git_in(&repo, &["commit", "-m", "F2: lock-only bump"]);
     let feature_tip = common::git_in(&repo, &["rev-parse", "HEAD"]);
@@ -1245,7 +1237,8 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
     // rwv-driven replay.
     let final_lock = common::read_normalized(repo.join("rwv.lock"));
     assert_eq!(
-        final_lock, main_lock,
+        final_lock,
+        common::fixture_lock_bytes(&main_pin),
         "final rwv.lock must be main's version (ours semantics)"
     );
 

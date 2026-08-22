@@ -207,13 +207,10 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
             repo = common::url_path(&managed_repo)
         ),
     );
-    write(
+    let managed_url = format!("file://{}", common::url_path(&managed_repo));
+    common::fixture_lock(
         &project_dir,
-        "rwv.lock",
-        &format!(
-            "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"{managed_sha}\"\n",
-            repo = common::url_path(&managed_repo)
-        ),
+        &[(MANAGED_REPO, managed_url.as_str(), managed_sha.as_str())],
     );
     common::git_in(
         &project_dir,

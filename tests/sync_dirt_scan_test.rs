@@ -472,10 +472,11 @@ fn sync_dirty_lock_in_destination_project_refuses() {
 
     let ww_project_head_before = head(&f.ww.project_dir);
 
-    // Hand-edit the destination's rwv.lock so it shows as tracked-dirty.
-    // Trailing whitespace is the only append JSON tolerates without
-    // becoming unparseable — a comment line (the YAML-era trick) is
-    // trailing *content* and fails to parse.
+    // raw lock bytes: an append onto the destination's lock, so it reads as
+    // tracked-dirty. The shared builder writes a whole file for given content
+    // and cannot make an existing one dirty. Trailing whitespace is the only
+    // append JSON tolerates without becoming unparseable — a comment line
+    // (the YAML-era trick) is trailing *content* and fails to parse.
     let lock_path = f.ww.project_dir.join("rwv.lock");
     let mut lock = std::fs::read_to_string(&lock_path).unwrap();
     lock.push('\n');

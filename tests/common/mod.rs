@@ -468,11 +468,18 @@ pub struct PushWorkspace {
 /// `type: "git"` — the only `VcsType` today, so the constant is temporary by
 /// that enum's own admission; the file is always `rwv.lock` directly under
 /// `project_dir`; and the bytes are always well-formed and current-shaped.
-/// No consumer of this builder samples the malformed, legacy, or
-/// non-canonical-bytes plane — a test whose subject IS those bytes (an empty
-/// lock, a stale-format one, one that must not parse) builds them locally
-/// and says why at the site; `advisory_op_check_test.rs`'s hand-spelled
-/// `EMPTY_LOCK` is the worked example of that boundary.
+/// A version is whatever the parser accepts, tag forms included, so pinning
+/// something that is not a SHA is inside this and not outside it. So is an
+/// entry count of zero: `&[]` writes the empty lock.
+///
+/// What is outside, and is written raw at the site behind a
+/// `// raw lock bytes: …` line naming which of these it is: bytes that must
+/// differ from canonical while still parsing; bytes that must not parse at
+/// all; a payload that is an arbitrary distinguishable marker because the
+/// path rather than the content is what the test drives; and an append onto
+/// a lock already written here, whose subject is the file reading as
+/// tracked-dirty. `tests/lock_write_route_census_test.rs` holds every such
+/// site to that line, and reports any raw write that carries none.
 pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)]) {
     let entries: Vec<String> = repos
         .iter()
@@ -485,6 +492,21 @@ pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)])
         .expect("a fixture lock must parse before it is written");
     repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock"))
         .expect("a fixture lock must be writable");
+}
+
+/// The bytes [`fixture_lock`] writes, for a caller that needs them as a value
+/// — committing through a helper that takes file contents, or asserting
+/// against what a lock write must produce.
+///
+/// Produced by writing one and reading it back, so the bytes are the shipped
+/// serializer's by construction. A caller that instead spells
+/// `to_string_pretty` plus a newline is byte-correct only while `write_lock`
+/// is that and nothing else.
+pub fn fixture_lock_bytes(repos: &[(&str, &str, &str)]) -> String {
+    let tmp = crate::common::tempdir().expect("a tempdir for the lock bytes");
+    fixture_lock(tmp.path(), repos);
+    std::fs::read_to_string(tmp.path().join("rwv.lock"))
+        .expect("the lock this just wrote must be readable")
 }
 
 /// Build a workspace with `repos.len()` manifest repos plus a project repo.

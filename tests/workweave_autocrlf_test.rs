@@ -121,6 +121,9 @@ fn a_genuinely_dirty_lock_is_still_captured_with_capture_dirty() {
     let (home, ws) = smudging_weave(tmp.path());
 
     let app = ws.join("projects/app");
+    // raw lock bytes: an append onto the committed lock, so it reads as
+    // tracked-dirty for `--capture-dirty` to carry. The shared builder writes
+    // a whole file for given content and cannot make an existing one dirty.
     let committed = std::fs::read(app.join("rwv.lock")).unwrap();
     let mut dirty = committed.clone();
     dirty.extend_from_slice(b"\n");
