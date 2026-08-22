@@ -375,7 +375,11 @@ fn make_shared_with_stale_target_for_sync_to(parent: &Path) -> (Workspace, Works
 // ---------------------------------------------------------------------------
 
 /// (i) Stale CWD lock on sync-to names "lock-freshness precondition" AND
-/// "--allow-stale-lock".
+/// "--allow-stale-lock". The fabricated SHA in this fixture resolves nowhere,
+/// so the condition that fires is `unresolvable-lock-entry`, not a
+/// lock↔HEAD relation mismatch (`stale-lock`) — pinning the route line tells
+/// the two apart, since both share the "lock-freshness precondition" prefix
+/// and both print `--allow-stale-lock`.
 #[test]
 fn sync_to_stale_cwd_lock_names_condition_and_flag() {
     let tmp = common::tempdir().unwrap();
@@ -395,6 +399,12 @@ fn sync_to_stale_cwd_lock_names_condition_and_flag() {
     assert!(
         stderr.contains("--allow-stale-lock"),
         "sync-to stale-CWD refusal must name '--allow-stale-lock'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv explain unresolvable-lock-entry"),
+        "sync-to stale-CWD refusal must route to 'unresolvable-lock-entry', the condition its \
+         unresolvable fabricated SHA actually drives, not 'stale-lock' or 'target-lock-behind'; \
+         got:\n{stderr}"
     );
 }
 
@@ -423,7 +433,12 @@ fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
 // ---------------------------------------------------------------------------
 
 /// (i) Stale target lock on sync-to names "lock-freshness precondition" AND
-/// "--allow-stale-lock".
+/// "--allow-stale-lock". The target's committed lock is a real, resolvable
+/// commit that its reset-back server HEAD lacks, so this drives the
+/// lock↔HEAD relation mismatch `stale-lock` — not `unresolvable-lock-entry`
+/// (no unresolvable revision here) and not `target-lock-behind` (that arm
+/// wants the opposite relation, lock behind HEAD, and never offers
+/// `--allow-stale-lock`).
 #[test]
 fn sync_to_stale_target_lock_names_condition_and_flag() {
     let tmp = common::tempdir().unwrap();
@@ -443,6 +458,12 @@ fn sync_to_stale_target_lock_names_condition_and_flag() {
     assert!(
         stderr.contains("--allow-stale-lock"),
         "sync-to stale-target refusal must name '--allow-stale-lock'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv explain stale-lock"),
+        "sync-to stale-target refusal must route to 'stale-lock', the lock↔HEAD relation \
+         mismatch this fixture actually drives, not 'unresolvable-lock-entry' or \
+         'target-lock-behind'; got:\n{stderr}"
     );
 }
 
