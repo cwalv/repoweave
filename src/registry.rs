@@ -1,7 +1,7 @@
 //! Registry: maps remote hosts/paths to short local prefixes.
 //!
-//! A registry resolves a repo URL to a local path prefix. Built-in registries
-//! handle well-known hosts; custom registries are user-configured.
+//! A registry resolves a repo URL to a local path prefix. The set of
+//! registries is fixed at build time, not user-configurable.
 //!
 //! The `Registry` trait allows different hosts (GitHub, GitLab, self-hosted)
 //! to have different URL parsing, authentication, and discovery behavior.
@@ -210,7 +210,7 @@ pub struct CloneInfo {
 
 /// Extract a [`CloneInfo`] from a parsed [`RepoUrl`].
 ///
-/// HTTPS, SSH, and File variants pass through directly — their registry, owner,
+/// HTTPS and SSH variants pass through directly — their registry, owner,
 /// and repo are already known from parsing. Shorthand variants are converted
 /// into a real clone URL via the named (or default) registry. Unknown variants
 /// that look like URLs are accepted with a synthetic `"unknown"` registry;

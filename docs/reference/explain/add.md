@@ -51,8 +51,8 @@ rwv add <url> [--role <role>] [--new] [--project <name>]
   `dependency`, `reference`). Defaults to `owned`.
 - `--new` — initialize a new local repo (via `git init`) at the canonical
   path instead of cloning. Use when creating a new repo that has no upstream
-  yet. The URL argument is used to derive the canonical path from the registry
-  topology.
+  yet. The argument is the canonical path (`registry/owner/repo`); its URL is
+  derived from the path via the registry topology.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 
@@ -105,9 +105,8 @@ rwv add github/myorg/new-project --new
 
 ## Common errors
 
-- *unrecognized URL* — the URL does not parse through any configured registry
-  and has no derivable local path. Check the URL format or configure a matching
-  registry entry.
+- *unrecognized URL* — the URL does not parse through any built-in registry
+  and has no derivable local path. Check the URL format.
 - *clone failed* — network error or authentication problem; inspect git output.
 - *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
-  is valid YAML.
+  is valid TOML.
