@@ -71,12 +71,12 @@ impl Integration for MockIntegration {
         self.default_enabled
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         self.call_log.lock().unwrap().push((
             "activate".into(),
             format!("project={}", ctx.project.as_str()),
         ));
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
@@ -571,8 +571,8 @@ impl Integration for MockIntegrationWithActivateHook {
         true
     }
 
-    fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
-        Ok(())
+    fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, _root: &Path) -> anyhow::Result<()> {
@@ -1198,12 +1198,12 @@ mod generated_managed_split_and_trigger_model {
         fn default_enabled(&self) -> bool {
             true
         }
-        fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
             self.calls.lock().unwrap().activate += 1;
             if let Some((fname, body)) = self.write_on_activate.borrow().as_ref() {
                 std::fs::write(ctx.output_dir.join(fname), body)?;
             }
-            Ok(())
+            Ok(Vec::new())
         }
         fn deactivate(&self, _root: &Path) -> anyhow::Result<()> {
             Ok(())
@@ -1249,8 +1249,8 @@ mod generated_managed_split_and_trigger_model {
             fn default_enabled(&self) -> bool {
                 true
             }
-            fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
-                Ok(())
+            fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+                Ok(Vec::new())
             }
             fn deactivate(&self, _root: &Path) -> anyhow::Result<()> {
                 Ok(())
@@ -1309,8 +1309,8 @@ mod generated_managed_split_and_trigger_model {
             fn default_enabled(&self) -> bool {
                 true
             }
-            fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
-                Ok(())
+            fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+                Ok(Vec::new())
             }
             fn deactivate(&self, _root: &Path) -> anyhow::Result<()> {
                 Ok(())
@@ -1511,8 +1511,8 @@ mod generated_managed_split_and_trigger_model {
             fn default_enabled(&self) -> bool {
                 true
             }
-            fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
-                Ok(())
+            fn activate(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+                Ok(Vec::new())
             }
             fn deactivate(&self, _root: &Path) -> anyhow::Result<()> {
                 Ok(())

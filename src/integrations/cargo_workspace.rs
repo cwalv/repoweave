@@ -620,15 +620,19 @@ impl Integration for CargoWorkspace {
         &["Cargo.toml"]
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let cfg: CargoWorkspaceConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
 
         // The authored region is a function of the manifest alone. Returning
         // early instead would make it a function of history too: the last
         // member's path stays behind, in a marked key rwv still owns and would
         // no longer author.
         if !Self::has_active_cargo_work(ctx, &cfg) {
-            return Self::strip_managed_region(ctx.output_dir);
+            Self::strip_managed_region(ctx.output_dir)?;
+            return Ok(Vec::new());
         }
 
         let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
@@ -712,7 +716,7 @@ impl Integration for CargoWorkspace {
         // with the pre-port behavior of leaving hand-written files alone; the
         // user-facing signal is on the `verify()` / `rwv doctor` side.
 
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

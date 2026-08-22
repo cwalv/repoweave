@@ -436,14 +436,15 @@ impl Integration for UvWorkspace {
         &["pyproject.toml"]
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let paths = ctx.detect_repos_with_manifest("pyproject.toml");
         // The authored `members` list is a function of the manifest alone.
         // Returning early instead would make it a function of history too: the
         // last member's path stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            return Self::strip_managed_region(ctx.output_dir);
+            Self::strip_managed_region(ctx.output_dir)?;
+            return Ok(Vec::new());
         }
 
         // Sort members for determinism.
@@ -470,7 +471,7 @@ impl Integration for UvWorkspace {
         // For now, silently defer — consistent with the pre-port behavior of
         // leaving hand-written sections alone.
 
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

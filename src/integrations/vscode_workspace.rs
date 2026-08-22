@@ -421,8 +421,11 @@ impl Integration for VscodeWorkspace {
         true
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let cfg: VscodeConfig = ctx.config.settings()?;
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let cfg: VscodeConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
         let filename = format!(
             "{}.code-workspace",
             crate::workspace::flat_project_segment(ctx.project)
@@ -451,7 +454,7 @@ impl Integration for VscodeWorkspace {
         // an unmarked file would stamp the marker and hand rwv the rest on the
         // next run.
         if !doc.has_marker(&[]) && owned_region_present(doc.root()) {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
         let obj = doc.root_mut();
@@ -508,7 +511,7 @@ impl Integration for VscodeWorkspace {
 
         let content = doc.serialize()?;
         std::fs::write(&filepath, content)?;
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

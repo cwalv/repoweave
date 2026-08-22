@@ -81,14 +81,15 @@ impl Integration for PnpmWorkspaces {
         &["package.json"]
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         // The authored `packages:` list is a function of the manifest alone.
         // Returning early instead would make it a function of history too: the
         // last member's glob stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            return Self::strip_managed_region(ctx.output_dir);
+            Self::strip_managed_region(ctx.output_dir)?;
+            return Ok(Vec::new());
         }
 
         let path = ctx.output_dir.join("pnpm-workspace.yaml");
@@ -109,7 +110,7 @@ impl Integration for PnpmWorkspaces {
         merge_activate::<YamlDoc>(&path, &owned)
             .with_context(|| format!("pnpm-workspaces: activate {}", path.display()))?;
 
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

@@ -252,8 +252,7 @@ pub fn run_activations(
         let ctx = ctx_base.build_context(config, manifest);
         integration
             .activate(&ctx)
-            .map_err(|e| anyhow::anyhow!("activation failed: {e}"))?;
-        Ok(Vec::new())
+            .map_err(|e| anyhow::anyhow!("activation failed: {e}"))
     })
 }
 
@@ -441,7 +440,7 @@ mod tests {
             self.default_enabled
         }
 
-        fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
             self.call_log.lock().unwrap().push((
                 "activate".into(),
                 format!("project={}", ctx.project.as_str()),
@@ -449,7 +448,7 @@ mod tests {
             if let Some(ref msg) = self.activate_err {
                 anyhow::bail!("{msg}");
             }
-            Ok(())
+            Ok(Vec::new())
         }
 
         fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

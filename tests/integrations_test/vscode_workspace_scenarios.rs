@@ -560,7 +560,9 @@ fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
 
     contract::assert_activate_leaves_user_held_untouched(
         &root.join("foundations.code-workspace"),
-        || VscodeWorkspace.activate(&ctx).unwrap(),
+        || {
+            VscodeWorkspace.activate(&ctx).unwrap();
+        },
     );
 
     // Specifically: no marker was stamped, so the file does not become

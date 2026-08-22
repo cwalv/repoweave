@@ -89,7 +89,7 @@ impl Integration for StaticFiles {
         false
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         // Static files live in the project directory and are symlinked to the
         // workspace root by the activation framework (via `generated_files()`).
         // The activate hook itself is a no-op — it does not need to generate
@@ -98,7 +98,10 @@ impl Integration for StaticFiles {
         // We validate here that declared files actually exist so that the user
         // gets early feedback (activation still succeeds — missing files are
         // simply skipped by the symlink machinery in activate.rs).
-        let cfg: StaticFilesConfig = ctx.config.settings()?;
+        let cfg: StaticFilesConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
 
         // Defense in depth: even though `run_checks` runs in Context-mode
         // activation (and `run_activations` itself drives `check`-then-bail in
@@ -125,7 +128,7 @@ impl Integration for StaticFiles {
                 );
             }
         }
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

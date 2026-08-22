@@ -548,9 +548,19 @@ pub trait Integration {
 
     /// Generate config files and run install commands.
     /// Called during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, and `rwv remove`.
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()>;
+    ///
+    /// Returns findings the same way `check()` and `verify()` do — a
+    /// condition with a published kind (a malformed `[integrations.<name>]`
+    /// block, reported as `IssueKind::MalformedSettings`) is returned rather
+    /// than bailed, so it reaches the operator under that kind instead of the
+    /// runner's generic capture.
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>>;
 
     /// Remove generated files. Called during deactivation.
+    ///
+    /// Stays `Result<()>`: cleanup acts on ownership evidence already on disk
+    /// — a marker, a whole file — and reads no `[integrations.<name>]`
+    /// settings, so there is no settings-shaped finding to misreport here.
     fn deactivate(&self, root: &Path) -> anyhow::Result<()>;
 
     /// Read-only inspection. Returns issues without changing state.
@@ -574,6 +584,16 @@ pub trait Integration {
     /// here: a hook fires on paths the operator did not ask for a dependency
     /// update on (`rwv doctor --fix` among them), and firing frequency is
     /// only harmless because a materializing hook is idempotent.
+    ///
+    /// Stays `Result<()>`, unlike `activate()`. That is safe by construction
+    /// only where this hook is reached after `activate()` already ran and
+    /// gated on its own `Issue`s — true for `ActivationMode::Intent`, false
+    /// for `ActivationMode::Context` (what the `rwv activate` command itself
+    /// runs), which calls `check()`/`verify()` — which report and continue,
+    /// never gate — and then runs this hook regardless. An implementation
+    /// that reads `[integrations.<name>]` settings directly is unprotected on
+    /// that path: its bail still reaches the runner's generic
+    /// `IntegrationFailed` capture rather than `MalformedSettings`.
     fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
         Ok(())
     }

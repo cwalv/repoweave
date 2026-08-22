@@ -10,9 +10,10 @@
 //! by returning an `Issue`, not by bailing — moving one onto the bail path is
 //! the regression these red on.
 //!
-//! Both hook halves are driven, because a condition can be routed correctly out
-//! of `check()` and still bail out of `verify()`: the two are separate
-//! `for_each_enabled` passes and each captures its own errors.
+//! Every hook a condition can reach is driven, because a condition can be
+//! routed correctly out of one and still bail out of another: `check()`,
+//! `verify()` and `activate()` are separate `for_each_enabled` passes, and
+//! each captures its own errors.
 //!
 //! Asserted through the serialized `--json` payload rather than the `IssueKind`
 //! value, because the wire token is what an operator looks up and what a
@@ -23,7 +24,7 @@
 use repoweave::check::build_doctor_json;
 use repoweave::integration::Integration;
 use repoweave::integration_runner::{
-    build_detection_cache, run_checks, run_verifications, IntegrationContextBase,
+    build_detection_cache, run_activations, run_checks, run_verifications, IntegrationContextBase,
 };
 use repoweave::integrations::{CargoWorkspace, StaticFiles, VscodeWorkspace};
 use repoweave::manifest::{Manifest, ProjectName};
@@ -68,12 +69,13 @@ fn issue_kinds(issues: Vec<repoweave::integration::Issue>) -> Vec<String> {
         .collect()
 }
 
-/// Which of the two `Vec<Issue>` hooks to drive. They are separate
+/// Which of the three `Vec<Issue>` hooks to drive. They are separate
 /// `for_each_enabled` passes, so routing a condition correctly out of one says
-/// nothing about the other.
+/// nothing about the others.
 enum Hook {
     Check,
     Verify,
+    Activate,
 }
 
 fn hook_kinds(
@@ -99,6 +101,7 @@ fn hook_kinds(
     issue_kinds(match hook {
         Hook::Check => run_checks(&integrations, manifest, &ctx_base),
         Hook::Verify => run_verifications(&integrations, manifest, &ctx_base),
+        Hook::Activate => run_activations(&integrations, manifest, &ctx_base),
     })
 }
 
@@ -202,7 +205,7 @@ fn malformed_settings_reach_json_under_their_own_kind() {
     )
     .unwrap();
 
-    for hook in [Hook::Check, Hook::Verify] {
+    for hook in [Hook::Check, Hook::Verify, Hook::Activate] {
         let kinds = hook_kinds(hook, &CargoWorkspace, root, &manifest, None);
         assert_eq!(
             kinds,
@@ -212,8 +215,54 @@ fn malformed_settings_reach_json_under_their_own_kind() {
     }
 }
 
+/// The doctor path (`check()`/`verify()`) and the activate path must report
+/// the *same* kind for the *same* malformed block — not merely a kind each,
+/// independently chosen. Before `activate()` had an `Issue` channel this could
+/// not even be stated: its bail reached the operator as `integration-failed`
+/// while `check()`/`verify()` already reported `malformed-settings` for the
+/// identical `rwv.toml`, so which kind you got depended on which verb you ran.
+#[test]
+fn malformed_settings_reach_the_same_kind_from_activate_as_from_doctor() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    write(
+        root,
+        "github/acme/plain/Cargo.toml",
+        "[package]\nname = \"p\"\n",
+    );
+
+    let manifest = Manifest::from_toml_str(
+        "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         [integrations.cargo-workspace]\nexclude = \"not-a-list\"\n",
+    )
+    .unwrap();
+
+    let doctor_check = hook_kinds(Hook::Check, &CargoWorkspace, root, &manifest, None);
+    let doctor_verify = hook_kinds(Hook::Verify, &CargoWorkspace, root, &manifest, None);
+    let activate = hook_kinds(Hook::Activate, &CargoWorkspace, root, &manifest, None);
+
+    assert_eq!(
+        activate,
+        vec!["malformed-settings".to_string()],
+        "rwv activate must report the same kind rwv doctor does for identical malformed \
+         settings, got: {activate:?}"
+    );
+    assert_eq!(
+        doctor_check, activate,
+        "check() and activate() disagree on the kind for the same malformed input"
+    );
+    assert_eq!(
+        doctor_verify, activate,
+        "verify() and activate() disagree on the kind for the same malformed input"
+    );
+}
+
 /// The same condition on the two other integrations that read settings inside
-/// a `Vec<Issue>` hook, one per hook half.
+/// a `Vec<Issue>` hook, across every hook half that reads them — including
+/// `activate()`, so a settings-parsing integration cannot drift back to
+/// bailing on just one verb.
 ///
 /// Named rather than derived: an integration that starts reading settings in a
 /// hook is a site this file has to be told about, and there is no handle that
@@ -235,6 +284,11 @@ fn malformed_settings_carry_their_kind_out_of_every_hook_that_reads_them() {
         vec!["malformed-settings".to_string()],
         "static-files reads its settings in check()"
     );
+    assert_eq!(
+        hook_kinds(Hook::Activate, &StaticFiles, root, &static_files, None),
+        vec!["malformed-settings".to_string()],
+        "static-files reads the same settings in activate()"
+    );
 
     let vscode = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
@@ -247,6 +301,11 @@ fn malformed_settings_carry_their_kind_out_of_every_hook_that_reads_them() {
         vec!["malformed-settings".to_string()],
         "vscode-workspace reads its settings in verify(), ahead of the MISSING arm — a \
          missing file must not mask the reason it cannot be regenerated"
+    );
+    assert_eq!(
+        hook_kinds(Hook::Activate, &VscodeWorkspace, root, &vscode, None),
+        vec!["malformed-settings".to_string()],
+        "vscode-workspace reads the same settings in activate()"
     );
 }
 

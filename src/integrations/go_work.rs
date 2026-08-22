@@ -110,14 +110,15 @@ impl Integration for GoWork {
         &["go.mod"]
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let paths = ctx.detect_repos_with_manifest("go.mod");
         // The authored `use` block is a function of the manifest alone.
         // Returning early instead would make it a function of history too: the
         // last member's path stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            return Self::strip_managed_region(ctx.output_dir);
+            Self::strip_managed_region(ctx.output_dir)?;
+            return Ok(Vec::new());
         }
 
         let go_work_path = ctx.output_dir.join("go.work");
@@ -149,7 +150,7 @@ impl Integration for GoWork {
                 // safe_to_fix=false), consistent with all other hybrid integrations.
                 // No ad-hoc eprintln here — callers see the Issue through the
                 // standard Issue stream.
-                return Ok(());
+                return Ok(Vec::new());
             }
         }
 
@@ -176,7 +177,7 @@ impl Integration for GoWork {
             activate_via_hand_edit(&go_work_path, &paths, go_version_override.as_deref())?;
         }
 
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

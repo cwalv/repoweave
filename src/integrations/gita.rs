@@ -86,9 +86,9 @@ impl Integration for Gita {
         false
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let Some(authored) = Self::authored_csvs(ctx) else {
-            return Ok(());
+            return Ok(Vec::new());
         };
 
         let gita_dir = ctx.output_dir.join("gita");
@@ -96,7 +96,7 @@ impl Integration for Gita {
         for (name, body) in authored {
             std::fs::write(ctx.output_dir.join(name), body)?;
         }
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {

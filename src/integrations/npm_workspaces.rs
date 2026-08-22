@@ -140,7 +140,7 @@ impl Integration for NpmWorkspaces {
         &["package.json"]
     }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         // The authored `workspaces` list is a function of the manifest alone.
         // Returning early instead would make it a function of history too: the
@@ -148,7 +148,7 @@ impl Integration for NpmWorkspaces {
         // would no longer author.
         if paths.is_empty() {
             Self::strip_managed_region(ctx.output_dir)?;
-            return Ok(());
+            return Ok(Vec::new());
         }
         let paths = expand_workspace_entries(ctx.workspace_root, paths);
 
@@ -168,7 +168,7 @@ impl Integration for NpmWorkspaces {
         // set_marker, write back, and preserves all foreign keys untouched.
         // The x-repoweave marker is written by JsonDoc<XRepoweaveMarker>.
         merge_activate::<JsonDoc<XRepoweaveMarker>>(&path, &owned)?;
-        Ok(())
+        Ok(Vec::new())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
