@@ -6,7 +6,7 @@
 //! The `Registry` trait allows different hosts (GitHub, GitLab, self-hosted)
 //! to have different URL parsing, authentication, and discovery behavior.
 
-use crate::manifest::RepoUrl;
+use crate::manifest::{RepoPath, RepoUrl};
 use crate::refusal::RefusalKind;
 
 /// A short name for a code host or directory that serves as the first path
@@ -64,6 +64,61 @@ impl RepoId {
 /// mints a spelling the validator refuses.
 pub(crate) fn canonical_local_path(registry: &str, owner: &str, repo: &str) -> String {
     format!("{registry}/{owner}/{repo}")
+}
+
+/// The canonical local path `source` belongs at, or `None` when it names
+/// neither a URL a built-in registry resolves nor a registry-qualified
+/// shorthand.
+///
+/// The only site in this crate that turns a clone source's identity into a
+/// path; every other `RepoPath` construction is a lookup key against
+/// something that already exists or an observation of where a checkout
+/// already sits.
+pub fn placement(source: &RepoUrl) -> Option<RepoPath> {
+    let raw = source.to_string();
+    let path = source
+        .local_path()
+        .or_else(|| derive_local_path_from_url(&raw))?;
+    RepoPath::new(path).ok()
+}
+
+/// Derive a local path for a URL no built-in registry matched, in the same
+/// `{registry}/{owner}/{repo}` shape a matched registry would have produced.
+/// The registry segment is the URL's own host (user-info and port stripped),
+/// or `local` for `file://`, which has none. The bare `{owner}/{repo}` shape
+/// a matched registry never produces is not a valid substitute here: it
+/// collides with the workspace-root layout every other repo is written
+/// under.
+fn derive_local_path_from_url(url: &str) -> Option<String> {
+    let (registry, path_str) = if let Some(rest) = url.strip_prefix("file://") {
+        ("local".to_owned(), rest)
+    } else if url.contains("://") {
+        let rest = url.split("://").nth(1)?;
+        let (authority, path) = rest.split_once('/')?;
+        let host = authority.rsplit('@').next()?.split(':').next()?;
+        if host.is_empty() {
+            return None;
+        }
+        (host.to_owned(), path)
+    } else {
+        return None;
+    };
+
+    let trimmed = path_str.trim_end_matches('/');
+    let segments: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() < 2 {
+        return None;
+    }
+
+    let repo = segments[segments.len() - 1];
+    let owner = segments[segments.len() - 2];
+    let repo = repo.strip_suffix(".git").unwrap_or(repo);
+
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+
+    Some(canonical_local_path(&registry, owner, repo))
 }
 
 /// A code host or directory that can resolve URLs to local paths.
@@ -329,6 +384,7 @@ pub fn builtin_registries() -> Vec<Box<dyn Registry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn github_reg() -> DomainRegistry {
         DomainRegistry {
@@ -688,5 +744,120 @@ mod tests {
     #[test]
     fn resolve_to_clone_info_rejects_four_part() {
         assert!(resolve_to_clone_info(&parse("a/b/c/d")).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // derive_local_path_from_url
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn derive_path_from_file_url() {
+        let url = format!(
+            "file://{}",
+            std::env::temp_dir().join("foo/bar/remote.git").display()
+        );
+        let path = derive_local_path_from_url(&url).unwrap();
+        assert_eq!(path, PathBuf::from("local/bar/remote"));
+    }
+
+    #[test]
+    fn derive_path_strips_git_suffix() {
+        let path = derive_local_path_from_url("file:///srv/repos/owner/repo.git").unwrap();
+        assert_eq!(path, PathBuf::from("local/owner/repo"));
+    }
+
+    #[test]
+    fn derive_path_no_git_suffix() {
+        let path = derive_local_path_from_url("file:///srv/repos/owner/repo").unwrap();
+        assert_eq!(path, PathBuf::from("local/owner/repo"));
+    }
+
+    #[test]
+    fn derive_path_https_url() {
+        let path = derive_local_path_from_url("https://example.com/owner/repo.git").unwrap();
+        assert_eq!(path, PathBuf::from("example.com/owner/repo"));
+    }
+
+    #[test]
+    fn derive_path_trailing_slash() {
+        let path = derive_local_path_from_url("file:///srv/repos/owner/repo/").unwrap();
+        assert_eq!(path, PathBuf::from("local/owner/repo"));
+    }
+
+    #[test]
+    fn derive_path_single_segment_returns_none() {
+        assert!(derive_local_path_from_url("file:///repo").is_none());
+    }
+
+    #[test]
+    fn derive_path_no_scheme_returns_none() {
+        assert!(derive_local_path_from_url("/some/path").is_none());
+    }
+
+    #[test]
+    fn derive_path_empty_returns_none() {
+        assert!(derive_local_path_from_url("").is_none());
+    }
+
+    #[test]
+    fn derive_path_unknown_host_gets_registry_segment() {
+        // The bug this pins: a host no built-in registry recognises must
+        // still produce the three-segment shape, not bare `owner/repo` —
+        // the shape that used to escape into the workspace-root level.
+        let path = derive_local_path_from_url("https://git.corp.example/team/repo.git").unwrap();
+        assert_eq!(path, PathBuf::from("git.corp.example/team/repo"));
+    }
+
+    #[test]
+    fn derive_path_strips_userinfo_and_port_from_host() {
+        let path =
+            derive_local_path_from_url("https://user@git.corp.example:8443/team/repo.git").unwrap();
+        assert_eq!(path, PathBuf::from("git.corp.example/team/repo"));
+    }
+
+    #[test]
+    fn derive_path_ssh_scheme_unknown_host_gets_registry_segment() {
+        let path = derive_local_path_from_url("ssh://git@git.corp.example/team/repo.git").unwrap();
+        assert_eq!(path, PathBuf::from("git.corp.example/team/repo"));
+    }
+
+    // -----------------------------------------------------------------------
+    // placement
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn placement_of_https_url_reads_local_path() {
+        let p = placement(&parse("https://github.com/owner/repo.git")).unwrap();
+        assert_eq!(p.as_str(), "github/owner/repo");
+    }
+
+    #[test]
+    fn placement_of_three_part_shorthand_reads_local_path() {
+        let p = placement(&parse("github/acme/x")).unwrap();
+        assert_eq!(p.as_str(), "github/acme/x");
+    }
+
+    #[test]
+    fn placement_of_two_part_shorthand_refuses_no_default() {
+        // A registry-less two-part shorthand has no default registry to
+        // place under; `run_add`'s refusal is what owns this absence.
+        assert!(placement(&parse("cwalv/repoweave")).is_none());
+    }
+
+    #[test]
+    fn placement_of_unmatched_host_url_falls_back_to_host_segment() {
+        let p = placement(&parse("https://git.corp.example/team/repo.git")).unwrap();
+        assert_eq!(p.as_str(), "git.corp.example/team/repo");
+    }
+
+    #[test]
+    fn placement_of_file_url_falls_back_to_local_segment() {
+        let p = placement(&parse("file:///srv/repos/owner/repo.git")).unwrap();
+        assert_eq!(p.as_str(), "local/owner/repo");
+    }
+
+    #[test]
+    fn placement_of_non_url_non_shorthand_is_none() {
+        assert!(placement(&parse("not a url or shorthand")).is_none());
     }
 }

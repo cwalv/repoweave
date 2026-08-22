@@ -229,26 +229,21 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         }
     }
 
-    let local_path = parsed_url
-        .local_path()
-        .or_else(|| derive_local_path_from_url(url))
-        .ok_or_else(|| {
-            let registries = builtin_registries();
-            let names = registries
-                .iter()
-                .map(|r| r.name().as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            refusal(
-                RefusalKind::NoMatchingRegistry,
-                format!(
-                    "unrecognized URL '{url}' — could not derive a local path \
-                     (supported registries: {names})"
-                ),
-            )
-        })?;
-
-    let repo_path = RepoPath::new(local_path)?;
+    let repo_path = crate::registry::placement(&parsed_url).ok_or_else(|| {
+        let registries = builtin_registries();
+        let names = registries
+            .iter()
+            .map(|r| r.name().as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        refusal(
+            RefusalKind::NoMatchingRegistry,
+            format!(
+                "unrecognized URL '{url}' — could not derive a local path \
+                 (supported registries: {names})"
+            ),
+        )
+    })?;
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
@@ -286,8 +281,9 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        vcs.clone_repo(url, &dest)
-            .with_context(|| format!("failed to clone '{}' into {}", url, dest.display()))?;
+        let clone_url = crate::registry::resolve_to_clone_info(&parsed_url)?.url;
+        vcs.clone_repo(&clone_url.to_string(), &dest)
+            .with_context(|| format!("failed to clone '{}' into {}", clone_url, dest.display()))?;
     }
 
     let Some(remote_default) = vcs
@@ -841,52 +837,10 @@ fn infer_url_from_path(path: &str, registries: &[&dyn Registry]) -> Option<RepoU
     None
 }
 
-/// Derive a local path for a URL no built-in registry matched, in the same
-/// `{registry}/{owner}/{repo}` shape a matched registry would have produced.
-/// The registry segment is the URL's own host (user-info and port stripped),
-/// or `local` for `file://`, which has none. The bare `{owner}/{repo}` shape
-/// a matched registry never produces is not a valid substitute here: it
-/// collides with the workspace-root layout every other repo is written
-/// under.
-fn derive_local_path_from_url(url: &str) -> Option<String> {
-    let (registry, path_str) = if let Some(rest) = url.strip_prefix("file://") {
-        ("local".to_owned(), rest)
-    } else if url.contains("://") {
-        let rest = url.split("://").nth(1)?;
-        let (authority, path) = rest.split_once('/')?;
-        let host = authority.rsplit('@').next()?.split(':').next()?;
-        if host.is_empty() {
-            return None;
-        }
-        (host.to_owned(), path)
-    } else {
-        return None;
-    };
-
-    let trimmed = path_str.trim_end_matches('/');
-    let segments: Vec<&str> = trimmed.split('/').filter(|s| !s.is_empty()).collect();
-    if segments.len() < 2 {
-        return None;
-    }
-
-    let repo = segments[segments.len() - 1];
-    let owner = segments[segments.len() - 2];
-    let repo = repo.strip_suffix(".git").unwrap_or(repo);
-
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-
-    Some(crate::registry::canonical_local_path(
-        &registry, owner, repo,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::registry::{DomainRegistry, RegistryName};
-    use std::path::PathBuf;
 
     fn github_reg() -> DomainRegistry {
         DomainRegistry {
@@ -979,80 +933,5 @@ mod tests {
         let registries: Vec<&dyn Registry> = vec![&gh];
         let url = infer_url_from_path("/github/owner/repo", &registries).unwrap();
         assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
-    }
-
-    // -----------------------------------------------------------------------
-    // derive_local_path_from_url
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn derive_path_from_file_url() {
-        let url = format!(
-            "file://{}",
-            std::env::temp_dir().join("foo/bar/remote.git").display()
-        );
-        let path = derive_local_path_from_url(&url).unwrap();
-        assert_eq!(path, PathBuf::from("local/bar/remote"));
-    }
-
-    #[test]
-    fn derive_path_strips_git_suffix() {
-        let path = derive_local_path_from_url("file:///srv/repos/owner/repo.git").unwrap();
-        assert_eq!(path, PathBuf::from("local/owner/repo"));
-    }
-
-    #[test]
-    fn derive_path_no_git_suffix() {
-        let path = derive_local_path_from_url("file:///srv/repos/owner/repo").unwrap();
-        assert_eq!(path, PathBuf::from("local/owner/repo"));
-    }
-
-    #[test]
-    fn derive_path_https_url() {
-        let path = derive_local_path_from_url("https://example.com/owner/repo.git").unwrap();
-        assert_eq!(path, PathBuf::from("example.com/owner/repo"));
-    }
-
-    #[test]
-    fn derive_path_trailing_slash() {
-        let path = derive_local_path_from_url("file:///srv/repos/owner/repo/").unwrap();
-        assert_eq!(path, PathBuf::from("local/owner/repo"));
-    }
-
-    #[test]
-    fn derive_path_single_segment_returns_none() {
-        assert!(derive_local_path_from_url("file:///repo").is_none());
-    }
-
-    #[test]
-    fn derive_path_no_scheme_returns_none() {
-        assert!(derive_local_path_from_url("/some/path").is_none());
-    }
-
-    #[test]
-    fn derive_path_empty_returns_none() {
-        assert!(derive_local_path_from_url("").is_none());
-    }
-
-    #[test]
-    fn derive_path_unknown_host_gets_registry_segment() {
-        // The bug this pins: a host no built-in registry recognises must
-        // still produce the three-segment shape, not bare `owner/repo` —
-        // the shape that used to escape into the workspace-root level.
-        let path = derive_local_path_from_url("https://git.corp.example/team/repo.git").unwrap();
-        assert_eq!(path, PathBuf::from("git.corp.example/team/repo"));
-    }
-
-    #[test]
-    fn derive_path_strips_userinfo_and_port_from_host() {
-        let path =
-            derive_local_path_from_url("https://user@git.corp.example:8443/team/repo.git").unwrap();
-        assert_eq!(path, PathBuf::from("git.corp.example/team/repo"));
-    }
-
-    #[test]
-    fn derive_path_ssh_scheme_unknown_host_gets_registry_segment() {
-        let path = derive_local_path_from_url("ssh://git@git.corp.example/team/repo.git").unwrap();
-        assert_eq!(path, PathBuf::from("git.corp.example/team/repo"));
     }
 }

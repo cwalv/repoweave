@@ -239,6 +239,66 @@ fn add_unrecognized_registry_url_writes_three_segment_manifest_path() {
 }
 
 #[test]
+fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
+    // `github/acme/x` with no pre-existing `<primary>/github/acme/x`
+    // directory fails `is_url()` and falls through the local-path arm into
+    // the URL arm below it, so the clone must be driven by the URL the
+    // registry resolves the shorthand to, not by the three-segment string
+    // itself. `url.<base>.insteadOf` proves this offline and
+    // deterministically: only a URL matching the `https://github.com/`
+    // prefix is rewritten, so the clone can succeed only if the resolved
+    // form reached `git clone`. The raw shorthand argument is not a URL at
+    // all and would not match the rewrite.
+    let tmp = common::tempdir().unwrap();
+
+    let bare = tmp.path().join("fakegithub").join("acme").join("x.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    init_bare_repo_with_commit(&bare);
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    let redirect_base = format!(
+        "file://{}/",
+        common::url_path(tmp.path().join("fakegithub"))
+    );
+
+    rwv()
+        .args(["add", "github/acme/x"])
+        .current_dir(&workspace)
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_1", format!("url.{redirect_base}.insteadOf"))
+        .env("GIT_CONFIG_VALUE_1", "https://github.com/")
+        .assert()
+        .success();
+
+    let cloned_readme = workspace
+        .join("github")
+        .join("acme")
+        .join("x")
+        .join("README");
+    assert!(
+        cloned_readme.exists(),
+        "the clone should have landed at the placement path with the fake \
+         remote's content, not failed on the raw shorthand"
+    );
+    assert_eq!(std::fs::read_to_string(&cloned_readme).unwrap(), "init");
+
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
+    let manifest =
+        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    assert!(
+        manifest
+            .get_entry(&RepoPath::new("github/acme/x").unwrap())
+            .is_some(),
+        "expected the placement path 'github/acme/x' in the manifest, got: {:?}",
+        manifest
+            .iter_repo_paths()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 
 fn add_with_role_flag_sets_annotation() {
     let tmp = common::tempdir().unwrap();
