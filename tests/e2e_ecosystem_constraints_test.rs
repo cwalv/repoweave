@@ -27,7 +27,11 @@
 //! A missing tool below fails loudly instead of skipping quietly: a quiet
 //! skip here is exactly the unmeasured state the linkage above exists to
 //! rule out, and nothing but the real tool lifts it — a PATH shim would
-//! only prove the shim ran.
+//! only prove the shim ran. A tool that is present but predates the
+//! behaviour under test is the one case that returns without measuring, and
+//! it says so on stderr: no fixture turns npm 9 into npm 10's resolver, so
+//! failing there reddens a lane over which npm a machine installed. Being
+//! unable to run the tool at all is neither case — that is the loud one.
 //!
 //! Observations recorded on 2026-04-05, tool versions:
 //!   cargo  1.94.0
@@ -49,21 +53,26 @@ fn tool_available(name: &str) -> bool {
     which::which(name).is_ok()
 }
 
-/// Return the major version of a tool, or 0 if it can't be determined.
-fn tool_major_version(name: &str) -> u32 {
-    let output = Command::new(name)
+/// The major version `program --version` reports, or `None` where the spawn
+/// failed or printed nothing a version can be read out of.
+///
+/// `program` is spelled as it is spawned, not as it is spoken: on Windows the
+/// npm-family tools are `.cmd` shims and `Command::new("npm")` finds no
+/// `npm.exe` to run. Unrunnable answers `None` rather than a number, because
+/// every numeric stand-in for it sorts below every real version and a caller
+/// comparing versions reads it as a tool too old to measure.
+fn tool_major_version(program: &str) -> Option<u32> {
+    let output = Command::new(program)
         .arg("--version")
         .output()
         .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_default();
+        .and_then(|o| String::from_utf8(o.stdout).ok())?;
     // Parse first number-like token (e.g. "9.2.0" from "9.2.0" or "npm 11.9.0")
     output
         .split(|c: char| !c.is_ascii_digit() && c != '.')
         .find(|s| s.contains('.'))
         .and_then(|v| v.split('.').next())
         .and_then(|major| major.parse().ok())
-        .unwrap_or(0)
 }
 
 /// Write `content` to `path`, creating parent directories as needed.
@@ -291,20 +300,29 @@ fn go_work_catches_version_mismatch() {
 ///   matching published version, and errors.
 #[test]
 fn npm_workspace_checks_version_mismatch() {
+    let npm = common::node_tool("npm");
     assert!(
-        tool_available("npm"),
+        tool_available(&npm),
         "SKIP: npm not on PATH. This test measures npm's own workspace \
          resolver, not a stand-in for it — a PATH shim would only prove \
          the shim ran. Install npm to lift this."
     );
-    let npm_major = tool_major_version("npm");
-    assert!(
-        npm_major >= 10,
-        "SKIP: npm {npm_major} does not enforce workspace version \
-         constraints (need 10+) — the constraint this test measures does \
-         not exist below npm 10, so nothing but a real npm 10+ exercises \
-         it. Upgrade npm to lift this."
-    );
+    let Some(npm_major) = tool_major_version(&npm) else {
+        panic!(
+            "`{npm}` is on PATH but reports no version, so nothing here knows \
+             whether it is the npm 10+ this test needs. That is an install this \
+             machine cannot run, not a version too old to measure."
+        );
+    };
+    if npm_major < 10 {
+        common::report_skip(&format!(
+            "npm {npm_major} does not enforce workspace version constraints \
+             (need 10+) — the constraint this test measures does not exist \
+             below npm 10, so nothing but a real npm 10+ exercises it. \
+             Upgrade npm to lift this."
+        ));
+        return;
+    }
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
