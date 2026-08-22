@@ -442,11 +442,20 @@ has no entry. Both stay silent, which is what makes a fresh or upgraded weave
 quiet rather than noisy.
 
 **What to do:** run `rwv materialize` to re-derive the project's generated
-files and record them afresh. `--fix` does not do it for you: rebuilding the
-record attests whatever is on disk at that moment as accepted, and what was
-accepted before is exactly what has been lost, so nothing can check the two
-against each other first. If the current content matters, inspect it before
-you re-derive.
+files and record them afresh.
+
+Where the project generates none — no cargo workspace, and no other
+integration that owns a whole file — there is nothing to re-derive, and the
+run leaves an empty record instead, saying on its way past which file it did
+that to. That is a repair and not a shrug: every check reading an unreadable
+record already answers "nothing is attested", so an empty one states what they
+were all computing, and states it somewhere this finding can see the fault has
+gone.
+
+`--fix` does not do it for you: rebuilding the record attests whatever is on
+disk at that moment as accepted, and what was accepted before is exactly what
+has been lost, so nothing can check the two against each other first. If the
+current content matters, inspect it before you re-derive.
 
 ### `unreadable-workweave-index`
 

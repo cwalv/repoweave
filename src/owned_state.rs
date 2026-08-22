@@ -725,6 +725,33 @@ pub fn forget_owned_digest(dir: &Path, file_name: &str) -> anyhow::Result<()> {
     })
 }
 
+/// Replace `dir`'s ledger with an empty one when what is there cannot be read
+/// as a ledger, returning the fault that made it unreadable — or `None` when it
+/// reads and nothing was written.
+///
+/// This discards no attestation, because an unreadable ledger holds none that
+/// anything can reach: the read every caller in this module goes through maps
+/// corruption to the empty map already. What the empty record changes is that
+/// the state those callers were computing is now on disk, where
+/// [`unreadable_ledger`] can see the fault has gone. It is the recovery
+/// [`stamp_owned_digest`] performs as a side effect of stamping, for the
+/// callers that have nothing to stamp.
+///
+/// Two reads, and the second is the deciding one: the first is an unclaimed
+/// fast path so a healthy ledger never touches the claim, and by the time the
+/// exclusion is held a peer's stamp may already have rewritten the file.
+pub fn reset_unreadable_ledger(dir: &Path) -> anyhow::Result<Option<String>> {
+    if unreadable_ledger(dir).is_none() {
+        return Ok(None);
+    }
+    let claim = LedgerClaim::acquire(dir)?;
+    let fault_under_claim = unreadable_ledger(dir);
+    if fault_under_claim.is_some() {
+        write_owned_digests(&claim, &BTreeMap::new())?;
+    }
+    Ok(fault_under_claim)
+}
+
 /// The files `dir`'s ledger attests, in ledger order.
 pub fn attested_owned_files(dir: &Path) -> Vec<String> {
     read_owned_digests(dir).into_keys().collect()

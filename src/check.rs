@@ -6965,8 +6965,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                          parse ({error}); until it is rebuilt, the managed-file \
                          drift and derived-state staleness checks report nothing \
                          for project `{project}` — including for files that had \
-                         already drifted. Run `rwv materialize` to re-derive its \
-                         generated files and record them afresh",
+                         already drifted. Run `rwv materialize` to rebuild it: it \
+                         re-derives the generated files this project has and \
+                         records them afresh, and leaves an empty record where it \
+                         has none",
                         state_path.display()
                     ),
                 ),

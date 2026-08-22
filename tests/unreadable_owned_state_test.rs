@@ -8,6 +8,13 @@
 //! fault is reported instead, and that the two silences the record is
 //! *supposed* to keep are still kept.
 //!
+//! Both populations are driven, because the remedy the finding names is not
+//! one mechanism: in a project that generates a fully-owned file the record is
+//! rebuilt as a side effect of the generation, and in one that generates
+//! nothing there is no generation to ride on and the record is emptied
+//! instead. A single-population suite here reported a live remedy for a
+//! project it had never built.
+//!
 //! Driven through the shipped binary, and the assertions parse the `--json`
 //! envelope rather than grepping prose: an agent branching on `kind` is the
 //! consumer this exists for.
@@ -34,6 +41,25 @@ fn rwv_on_path(args: &[&str], cwd: &Path, path: &OsStr) -> (bool, String) {
         .args(args)
         .current_dir(cwd)
         .env("PATH", path)
+        .output()
+        .expect("rwv should run");
+    (
+        output.status.success(),
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+/// Run `rwv` with the machine's own `PATH`. For a fixture where no enabled
+/// integration has a generation to run, which tools are reachable decides
+/// nothing, and narrowing would only cost the run its `git`.
+fn rwv_here(args: &[&str], cwd: &Path) -> (bool, String) {
+    let output = common::rwv()
+        .args(args)
+        .current_dir(cwd)
         .output()
         .expect("rwv should run");
     (
@@ -83,6 +109,10 @@ fn kinds(ws: &Path) -> Vec<String> {
 /// active and its managed-file axis actually runs — the axis whose silence is
 /// the subject here. Its `Cargo.lock` is attested through the library's own
 /// stamp, so the fixture cannot drift from the shape production writes.
+///
+/// Every project it builds generates a fully-owned file, which is the input
+/// that decides whether the remedy the finding names can do anything at all.
+/// [`weave_with_nothing_to_generate`] is the fixture that diverges it.
 fn weave(root: &Path) -> PathBuf {
     let ws = root.join("ws");
     let project_dir = ws.join("projects/app");
@@ -126,6 +156,46 @@ fn weave(root: &Path) -> PathBuf {
         repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws),
     )
     .unwrap();
+    ws
+}
+
+/// The other population: a weave whose one member carries no `Cargo.toml`, so
+/// cargo-workspace has no active cargo work and no enabled integration here
+/// generates a fully-owned file at all. Nothing ever stamps the record.
+///
+/// What it holds constant, beside [`weave`]: one member, `owned` role, git,
+/// and an ecosystem no builtin integration claims. It samples no project that
+/// generates through a DIFFERENT ecosystem — the npm and uv integrations reach
+/// the same ledger through the same stamp, and a project generating through
+/// one of those is the cargo population as far as this file is concerned.
+fn weave_with_nothing_to_generate(root: &Path) -> PathBuf {
+    let ws = root.join("ws");
+    let project_dir = ws.join("projects/app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let member = ws.join("github/acme/notes");
+    std::fs::create_dir_all(&member).unwrap();
+    std::fs::write(member.join("README.md"), "notes\n").unwrap();
+    git_init_with_commit(&member);
+
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories.\"github/acme/notes\"]\ntype = \"git\"\nurl = \"https://github.com/acme/notes.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    common::fixture_lock(&project_dir, &[]);
+    git_init_with_commit(&project_dir);
+    std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        "app",
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author the workspace manifest");
     ws
 }
 
@@ -232,5 +302,111 @@ fn materialize_rebuilds_the_record_and_clears_the_finding() {
         !kinds_with_path(&ws, Some(path)).contains(&"unreadable-owned-state".to_owned()),
         "`rwv materialize` is the remedy the finding names: {:?}",
         kinds_with_path(&ws, Some(path))
+    );
+    assert_eq!(
+        repoweave::owned_state::attested_owned_files(&ws.join("projects/app")),
+        vec!["Cargo.lock".to_owned()],
+        "and it must rebuild the record from the generation it just ran — a \
+         repair that cleared the finding by emptying the record would pass the \
+         assertion above while throwing away everything this project attests"
+    );
+}
+
+/// The same remedy in the population that generates nothing. Here no hook
+/// stamps, so nothing rwv does incidentally rewrites the record, and every
+/// earlier step of materialize decides from a READ of the record it would have
+/// to write: an unreadable one reads as empty, the steps find nothing to do,
+/// and the file does not move. Before this arm, the one verb the finding names
+/// exited 0 and left the finding standing, for as long as the operator kept
+/// re-running it.
+///
+/// Not `#[cfg(unix)]`, unlike the arm above: that one needs a stand-in `cargo`
+/// so the generation it measures happens on a machine with no toolchain, and
+/// the stand-in is a shell script resolved off `PATH`. This fixture runs no
+/// generation, so there is no tool for the machine to be missing.
+#[test]
+fn materialize_clears_the_finding_where_no_generator_can_rebuild_the_record() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_nothing_to_generate(tmp.path());
+    let project_dir = ws.join("projects/app");
+    let ledger = project_dir.join(LEDGER);
+
+    let (ok, out) = rwv_here(&["materialize"], &ws);
+    assert!(ok, "{out}");
+    assert!(
+        !ledger.exists(),
+        "the fixture is only the population it claims to be if a full \
+         materialize leaves no record at all — a record written here would mean \
+         something DID generate, and every assertion below would be measuring \
+         the cargo path under another name"
+    );
+
+    std::fs::write(&ledger, "not a ledger {{{").unwrap();
+    assert!(
+        kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        "precondition: {:?}",
+        kinds(&ws)
+    );
+
+    let (ok, out) = rwv_here(&["materialize"], &ws);
+    assert!(ok, "{out}");
+    assert!(
+        !kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        "`rwv materialize` is the remedy the finding names here too: {:?}",
+        kinds(&ws)
+    );
+    let rebuilt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap())
+            .expect("what materialize leaves must be a record, not more unparseable bytes");
+    assert_eq!(
+        rebuilt,
+        serde_json::json!({}),
+        "and it must be the empty one: this project attests nothing, and a \
+         record claiming otherwise would be a derivation nobody performed"
+    );
+    assert!(
+        out.contains(LEDGER),
+        "emptying the record destroys bytes the operator might have wanted to \
+         read, so the run says which file it did that to:\n{out}"
+    );
+}
+
+/// How a record arrives in the population above, so that arm is a shape
+/// production writes rather than one only a test can build.
+///
+/// `rwv remove` is an intent verb: it rewrites the manifest and does not touch
+/// the record, which is correct — dropping an attestation is materialize's job
+/// and it announces each one. So between the removal of the last cargo member
+/// and the next materialize, a live record naming `Cargo.lock` sits in a
+/// project that can no longer generate one. That window is where the remedy
+/// used to die.
+#[test]
+fn the_record_outlives_the_member_whose_generation_it_attests() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let project_dir = ws.join("projects/app");
+
+    let (ok, out) = rwv_here(&["remove", "github/acme/lib"], &ws);
+    assert!(ok, "{out}");
+    assert_eq!(
+        repoweave::owned_state::attested_owned_files(&project_dir),
+        vec!["Cargo.lock".to_owned()],
+        "the record must survive the member, or this file's other population is \
+         unreachable and the arm that drives it is fiction"
+    );
+
+    std::fs::write(project_dir.join(LEDGER), "not a ledger {{{").unwrap();
+    assert!(
+        kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        "precondition: {:?}",
+        kinds(&ws)
+    );
+    let (ok, out) = rwv_here(&["materialize"], &ws);
+    assert!(ok, "{out}");
+    assert!(
+        !kinds(&ws).contains(&"unreadable-owned-state".to_owned()),
+        "and the remedy must reach it by the route an operator actually takes \
+         to get here: {:?}",
+        kinds(&ws)
     );
 }

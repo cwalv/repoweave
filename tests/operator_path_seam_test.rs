@@ -84,6 +84,14 @@ const ROUTED: &[Routed] = &[
         prints: "the withheld-hooks notice, listing the same files as the refusal above",
     },
     Routed {
+        file: "activate.rs",
+        scope: "fn reset_ledger_no_generator_rebuilt(",
+        needle: r#""[reset] core: {} did not parse"#,
+        renders: 1,
+        prints: "materialize's notice that it emptied an unreadable owned-generation \
+                 record nothing here could rebuild",
+    },
+    Routed {
         file: "check.rs",
         scope: "",
         needle: r#"`.rwv-active` here (the marker is left alone)","#,

@@ -45,7 +45,8 @@ use crate::integration_runner::{
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::owned_state::{
-    attested_owned_files, drifted_attested_owned_files, forget_owned_digest, stamp_owned_digest,
+    attested_owned_files, drifted_attested_owned_files, forget_owned_digest, ledger_path,
+    reset_unreadable_ledger, stamp_owned_digest,
 };
 use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
@@ -705,6 +706,37 @@ fn activate_at(
         report_and_check_activate_hook_issues(&hook_issues)?;
     }
 
+    if matches!(mode, ActivationMode::Materialize(_)) {
+        reset_ledger_no_generator_rebuilt(&ctx_base.output_dir)?;
+    }
+
+    Ok(())
+}
+
+/// Make `unreadable-owned-state` clearable in a project whose integrations
+/// generate nothing, by emptying a ledger the run just failed to rebuild.
+///
+/// The advised repair for that finding is this verb, and the rebuild it names
+/// is a side effect of stamping: a generator runs, and the stamp rewrites the
+/// whole ledger on its way past. Where nothing here generates a fully-owned
+/// file, no stamp happens, and every earlier step of materialize is gated on
+/// reading the ledger it would have to write. Nothing moves, and the operator
+/// re-runs the one verb the finding names against a finding that never clears.
+///
+/// Last, so the two populations do not collide. A generator that ran has
+/// already written a record of real derivations, which this must not overwrite
+/// with an empty one, and a hook that FAILED returns above this line — leaving
+/// the fault standing, which is correct for a run that rebuilt nothing.
+fn reset_ledger_no_generator_rebuilt(output_dir: &Path) -> anyhow::Result<()> {
+    let Some(error) = reset_unreadable_ledger(output_dir)? else {
+        return Ok(());
+    };
+    eprintln!(
+        "[reset] core: {} did not parse ({error}) and nothing here regenerated \
+         it, so it is now an empty record — rwv attests no generated file for \
+         this project until one is generated again",
+        crate::path_spelling::operator_path(&ledger_path(output_dir))
+    );
     Ok(())
 }
 
