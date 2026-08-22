@@ -712,7 +712,13 @@ fn add_new_with_role_flag_records_that_role() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/myorg/newrepo", "--new", "--role", "reference"])
+        .args([
+            "add",
+            "github/myorg/newrepo",
+            "--new",
+            "--role",
+            "reference",
+        ])
         .current_dir(&workspace)
         .assert()
         .success();
