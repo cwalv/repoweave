@@ -37,10 +37,11 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::cli::consent::{DriftConsent, RemoveUndeclaredLinksConsent};
-use crate::integration::{Integration, OwnedPath, Severity, SurfacedSource};
+use crate::integration::{Integration, IssueKind, OwnedPath, Severity, SurfacedSource};
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
     run_activate_hooks, run_activations, run_checks, run_deactivations, run_verifications,
+    IntegrationContextBase,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
@@ -702,6 +703,7 @@ fn activate_at(
     //    context-switches; the user can run install commands directly when
     //    they need them.
     if !opts.no_materialize && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
+        refuse_hooks_over_malformed_settings(&integrations, &manifest, &ctx_base)?;
         let hook_issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         report_and_check_activate_hook_issues(&hook_issues)?;
     }
@@ -794,6 +796,49 @@ fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
         drifted.len()
     );
     true
+}
+
+/// Refuse the install hooks while an `[integrations.<name>]` block does not
+/// deserialize into the settings type its integration declares.
+///
+/// A hook that reads its own settings has nothing to act on, and reading them
+/// raw it bails — which the runner captures as `IssueKind::IntegrationFailed`,
+/// whose advised repair is a regeneration that would have to read the same
+/// block it just failed to read. Refusing here is what keeps the cause attached
+/// to its remedy: only an edit to `rwv.toml` makes the block readable.
+///
+/// Placed at the hooks rather than in an [`ActivationMode`] arm: `Intent` gates
+/// on `activate()`'s own findings and `Context` reports check and verify
+/// findings without gating on either, so a guard written per mode is a guard
+/// each new mode must remember. This is the one line every mode reaches the
+/// hooks through.
+///
+/// The population is what `check()` reports. An integration whose `check()`
+/// does not deserialize its settings contributes nothing here, and its hook
+/// keeps only whatever guard it wrote for itself.
+fn refuse_hooks_over_malformed_settings(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> anyhow::Result<()> {
+    let malformed: Vec<_> = run_checks(integrations, manifest, ctx_base)
+        .into_iter()
+        .filter(|issue| issue.kind == IssueKind::MalformedSettings)
+        .collect();
+    if malformed.is_empty() {
+        return Ok(());
+    }
+    let listed = malformed
+        .iter()
+        .map(|issue| format!("\n  {}: {}", issue.integration, issue.message))
+        .collect::<String>();
+    anyhow::bail!(
+        "activate: the install hooks were not run. {} `[integrations.<name>]` \
+         block(s) in rwv.toml yielded no settings, and a hook that reads its own \
+         has nothing to act on:{listed}\n\
+         Edit rwv.toml at the field each line names, then re-run.",
+        malformed.len()
+    );
 }
 
 /// Report integration activate-hook issues to stderr and bail if any are
@@ -1852,12 +1897,17 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn activate_hook_error_names_doctor_fix() {
+    fn hook_that_failed_while_running_names_doctor_fix() {
         // Partial-activation errors (from install hooks like `npm install`,
         // `cargo generate-lockfile`) must name `rwv doctor --fix` as the
         // repair verb — re-running activate does NOT re-run hooks and cannot
         // self-heal. This test asserts the house pattern:
         //   state → verb → escape hatch.
+        //
+        // Scoped to a hook that ran and failed, which is the only cause that
+        // reaches this reporter: `refuse_hooks_over_malformed_settings` takes
+        // the settings-parse cause before any hook is called, and re-running
+        // the generators repairs nothing there.
         let issues = vec![issue("cargo", Severity::Error, "generate-lockfile failed")];
         let err = report_and_check_activate_hook_issues(&issues).unwrap_err();
         let msg = err.to_string();
@@ -1870,6 +1920,74 @@ mod tests {
             msg.contains("partially activated"),
             "partial-activation error must describe the state; got: {msg}"
         );
+    }
+
+    /// A weave whose one project hands `[integrations.cargo-workspace]` the
+    /// given body, ready for a context-mode activation with the hooks live.
+    fn make_cargo_settings_workspace(settings_body: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("github")).unwrap();
+        let project_dir = root.join("projects").join("demo");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join(Manifest::FILE_NAME),
+            format!("[repositories]\n\n[integrations.cargo-workspace]\n{settings_body}\n"),
+        )
+        .unwrap();
+        std::fs::write(root.join(".rwv-active"), "demo\n").unwrap();
+        tmp
+    }
+
+    fn activate_context_with_hooks(root: &Path) -> anyhow::Result<()> {
+        activate_at(
+            root,
+            "demo",
+            ActivateOptions {
+                no_materialize: false,
+            },
+            ActivationMode::Context,
+        )
+    }
+
+    #[test]
+    fn settings_that_do_not_parse_send_the_operator_to_the_manifest() {
+        // The command operators run takes the context path, whose check and
+        // verify passes report and continue. Reaching the hooks with a block
+        // that yielded no settings means a raw bail captured as a generic hook
+        // failure, and the repair that capture advises — regenerate, re-run the
+        // hooks — has to read the block it just failed to read. So the outcome
+        // asserted here is the operator-facing one: the run names the edit that
+        // fixes it and never names the regeneration that cannot.
+        let tmp = make_cargo_settings_workspace("exclude = \"not-a-list\"");
+        let err = activate_context_with_hooks(tmp.path()).unwrap_err();
+        let msg = err.to_string();
+
+        // The prohibition first, so that whatever removes the guard is reported
+        // against the sentence the operator must never see rather than against
+        // whichever positive assertion happens to be listed above it.
+        assert!(
+            !msg.contains("doctor --fix"),
+            "a regeneration cannot read a block that does not parse, so the \
+             operator must not be sent to one; got: {msg}"
+        );
+        assert!(
+            msg.contains("Edit rwv.toml"),
+            "the remedy is an edit to the manifest, and the operator has to be \
+             told to make it — a mention of the filename inside a finding is not \
+             an instruction; got: {msg}"
+        );
+        assert!(
+            msg.contains("install hooks were not run"),
+            "the run must say the hooks were withheld, not that they failed; \
+             got: {msg}"
+        );
+
+        // The same weave with a well-formed block activates: what the arm above
+        // captured is the settings, not a fixture this activation cannot run
+        // against at all.
+        let control = make_cargo_settings_workspace("exclude = []");
+        activate_context_with_hooks(control.path()).unwrap();
     }
 
     // -----------------------------------------------------------------------

@@ -585,15 +585,15 @@ pub trait Integration {
     /// update on (`rwv doctor --fix` among them), and firing frequency is
     /// only harmless because a materializing hook is idempotent.
     ///
-    /// Stays `Result<()>`, unlike `activate()`. That is safe by construction
-    /// only where this hook is reached after `activate()` already ran and
-    /// gated on its own `Issue`s — true for `ActivationMode::Intent`, false
-    /// for `ActivationMode::Context` (what the `rwv activate` command itself
-    /// runs), which calls `check()`/`verify()` — which report and continue,
-    /// never gate — and then runs this hook regardless. An implementation
-    /// that reads `[integrations.<name>]` settings directly is unprotected on
-    /// that path: its bail still reaches the runner's generic
-    /// `IntegrationFailed` capture rather than `MalformedSettings`.
+    /// Stays `Result<()>`, unlike `activate()`, and the settings-shaped finding
+    /// it therefore cannot return is kept away from it instead: the caller
+    /// refuses every hook while any enabled integration's
+    /// `[integrations.<name>]` block fails to deserialize, so an implementation
+    /// reading its own settings here is reached only once they parse. What is
+    /// left to bail with is a hook that failed while running, which reaches the
+    /// operator as [`IssueKind::IntegrationFailed`] — whose advised repair,
+    /// re-running the generators and the hooks, is the right one for that cause
+    /// and the wrong one for a block nothing can read.
     fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
         Ok(())
     }
