@@ -52,8 +52,8 @@ use crate::owned_state::{
 use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
 use crate::workspace::{
-    observe_root, project_dir, project_rel_dir, scannable_registry_segments,
-    strip_projects_prefix, RootObservation, WorkspaceContext, WorkspaceSession, PROJECTS_DIR,
+    observe_root, project_dir, project_rel_dir, scannable_registry_segments, strip_projects_prefix,
+    RootObservation, WorkspaceContext, WorkspaceSession, PROJECTS_DIR,
 };
 
 /// Which class of verb is driving activation.

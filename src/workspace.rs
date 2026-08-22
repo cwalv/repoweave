@@ -2643,6 +2643,32 @@ mod tests {
     // Resolve from inside a primary weave directory (registry subdir)
     // ========================================================================
 
+    /// The narrowed shape test's known, accepted false-positive class: a
+    /// member checkout that itself carries a `projects/` directory is
+    /// workspace-shaped on its own, and the walk stops at the first ancestor
+    /// that answers — the checkout, not the real weave root above it. Fork 6
+    /// ruled the shape test the contract rather than a heuristic, so this is
+    /// the accepted behaviour rather than a bug to chase; pinned so a later
+    /// "fix" of the asymmetry is a conversation with that ruling rather than
+    /// silent drift. True before this narrowing too — `projects/` was
+    /// already one of the two marker names it replaces.
+    #[test]
+    fn a_member_checkouts_own_projects_dir_shadows_the_real_weave_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "myworkspace");
+        let member = root.join("github").join("acme").join("thing");
+        std::fs::create_dir_all(member.join("projects")).unwrap();
+
+        let ctx = WorkspaceContext::resolve_invocation(&member, None).unwrap();
+        assert_eq!(
+            ctx.primary_path(),
+            member.canonicalize().unwrap(),
+            "the walk stops at the first workspace-shaped ancestor, so the \
+             member checkout resolves as its own primary rather than reaching \
+             the real weave root above it"
+        );
+    }
+
     #[test]
     fn resolve_from_inside_weave_registry_dir() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2720,11 +2746,10 @@ mod tests {
     // Resolve from inside a repo within a marker-less {left}--{name} dir.
     //
     // Without the legacy fallback the {left}--{name} directory is not treated
-    // as a workweave. If the directory happens to contain registry subdirs
-    // (github/ etc.) it is recognized as a workspace root (Weave) instead —
-    // the same behaviour as any other directory that has workspace markers.
-    // `rwv doctor` will flag such a directory as an unregistered workweave-
-    // shaped directory.
+    // as a workweave. If the directory is itself workspace-shaped (carries
+    // `projects/`) it is recognized as a workspace root (Weave) instead — the
+    // same behaviour as any other directory of that shape. `rwv doctor` will
+    // flag such a directory as an unregistered workweave-shaped directory.
     // ========================================================================
 
     #[test]
@@ -2732,10 +2757,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _root = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat-login");
+        std::fs::create_dir_all(weave_dir.join("projects")).unwrap();
         let repo_dir = weave_dir.join("github").join("acme").join("server");
         std::fs::create_dir_all(&repo_dir).unwrap();
 
-        // No marker in ws--feat-login. The walk-up finds `github/` inside
+        // No marker in ws--feat-login. The walk-up finds `projects/` inside
         // ws--feat-login and treats it as a workspace root.
         let ctx = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap();
         match &ctx.checkout {
@@ -4978,6 +5004,29 @@ mod tests {
                 );
                 assert!(matches!(pointer, ActivePointer::Absent));
             }
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+    }
+
+    /// A primary that exists and carries a registry directory but no
+    /// `projects/` satisfied the old disjunctive shape test and read as a
+    /// live primary. The narrowed test requires `projects/` specifically, so
+    /// the same tree now reports `DanglingPrimary` — the flip the narrowing
+    /// accepts, pinned so it stays a deliberate call rather than drift.
+    #[test]
+    fn observe_root_reads_a_registry_only_primary_as_dangling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("registry-only");
+        std::fs::create_dir_all(primary.join("github")).unwrap();
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable { defect, .. } => match defect {
+                MarkerDefect::DanglingPrimary { primary: reported } => {
+                    assert_eq!(reported, primary)
+                }
+                other => panic!("expected DanglingPrimary, got {other:?}"),
+            },
             other => panic!("expected MarkerUnverifiable, got {other:?}"),
         }
     }

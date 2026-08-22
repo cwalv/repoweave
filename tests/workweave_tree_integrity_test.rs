@@ -398,6 +398,33 @@ fn foreign_primary_other_workspace_is_visible_via_json() {
     );
 }
 
+/// A marker whose `primary` resolves to a directory that carries a registry
+/// dir (`github/`) but no `projects/` used to read as a real, foreign
+/// workspace under the old disjunctive shape test — `foreign-primary-other-
+/// workspace`, filtered from the text report as a sibling's own business.
+/// The narrowed shape test requires `projects/` specifically, so the same
+/// tree now falls through to `foreign-primary`, which *does* claim the
+/// marker may have been copied from another machine. Pinned so the flip
+/// stays a deliberate, visible call rather than silent drift.
+#[test]
+fn foreign_primary_missing_projects_dir_is_reported_as_unresolvable() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let registry_only = tmp.path().join("registry-only");
+    std::fs::create_dir_all(registry_only.join("github")).unwrap();
+    let ww_dir = workweaves_dir(&ws).join("my-project--sibling");
+    write_marker(&ww_dir, &registry_only, "my-project", &registry_only);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("copied from another machine"),
+        "a primary lacking `projects/` no longer reads as a live workspace, \
+         so the finding falls through to the unresolvable case; got:\n{stdout}"
+    );
+}
+
 // ===========================================================================
 // 5. JSON output (`--json`) includes workweave-tree-integrity kind
 // ===========================================================================
