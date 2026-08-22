@@ -51,70 +51,95 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-/// Tokens deliberately shared between registers, and the condition each names.
+/// Tokens deliberately shared between registers, the exact set of registers
+/// each is shared across, and the condition each names.
 ///
 /// This is the file's only hand-written list, and it has to be: whether two
 /// registers naming one string is intent or accident is not recoverable from
-/// the source. A new shared token reds this until someone records which it is,
-/// which is the whole point — the failure mode being guarded is a collision
-/// arriving unnoticed.
-const INTENDED_REUSE: &[(&str, &str)] = &[
+/// the source, and neither is which registers were meant to share it. A new
+/// shared token reds this until someone records which it is; a register
+/// outside the recorded set picking up an already-recorded token reds it too
+/// — the failure mode being guarded is a collision arriving unnoticed, and a
+/// third register silently joining a recorded two-register reuse is one.
+const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
     (
         "clone-topology",
+        &["doctor", "refusal"],
         "a clone sits in a topology rwv does not maintain",
     ),
     (
         "dangling-active-project",
+        &["doctor", "refusal"],
         "the active-project pointer names a project that is not there",
     ),
     (
         "dead-op-lease",
+        &["doctor", "refusal"],
         "an op-state lease outlived the process that took it",
     ),
-    ("head-unreadable", "a repo's HEAD could not be read"),
+    (
+        "head-unreadable",
+        &["doctor", "sync"],
+        "a repo's HEAD could not be read",
+    ),
     (
         "incomplete-lock",
+        &["doctor", "refusal"],
         "the lock does not cover every manifest repo",
     ),
     (
         "legacy-manifest-format",
+        &["doctor", "refusal"],
         "the project carries a manifest in the retired format",
     ),
     (
         "legacy-workweave-index",
+        &["doctor", "refusal"],
         "the workweave index is in the retired format",
     ),
     (
         "legacy-workweave-marker",
+        &["doctor", "refusal"],
         "the workweave marker is in the retired format",
     ),
     (
         "mid-operation",
+        &["refusal", "vcs"],
         "the repository is mid-rebase, mid-merge or similar",
     ),
     (
         "missing-canonical-clone",
+        &["doctor", "refusal"],
         "the canonical clone a checkout derives from is gone",
     ),
     (
         "missing-replay-exclusion",
+        &["doctor", "refusal"],
         "the replay exclusion a workweave needs is absent",
     ),
-    ("stale-lock", "the lock-to-HEAD relation is not `ok`"),
+    (
+        "stale-lock",
+        &["doctor", "refusal"],
+        "the lock-to-HEAD relation is not `ok`",
+    ),
     (
         "unparseable-project",
+        &["doctor", "refusal"],
         "a project directory does not parse as a project",
     ),
     (
         "unresolvable-lock-entry",
+        &["doctor", "refusal"],
         "a lock entry names a revision that does not resolve",
     ),
     (
         "untracked-collision",
+        &["refusal", "vcs"],
         "untracked files stand where the operation must write",
     ),
     (
         "weave-root-identity-conflict",
+        &["doctor", "refusal"],
         "two weave roots claim one identity",
     ),
 ];
@@ -433,19 +458,24 @@ fn an_op_name_is_not_also_a_condition_name() {
 #[test]
 fn a_token_in_two_registers_is_a_recorded_reuse() {
     let regs = registers();
-    let mut shared: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    let mut shared: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
     for (name, tokens) in &regs {
         for token in tokens {
-            shared.entry(token.clone()).or_default().push(name);
+            shared.entry(token.clone()).or_default().insert(name);
         }
     }
-    let shared: BTreeMap<String, Vec<&str>> =
+    let shared: BTreeMap<String, BTreeSet<&str>> =
         shared.into_iter().filter(|(_, r)| r.len() > 1).collect();
 
-    let recorded: BTreeSet<&str> = INTENDED_REUSE.iter().map(|(t, _)| *t).collect();
-    let found: BTreeSet<&str> = shared.keys().map(|s| s.as_str()).collect();
+    let recorded: BTreeMap<&str, BTreeSet<&str>> = INTENDED_REUSE
+        .iter()
+        .map(|(token, registers, _)| (*token, registers.iter().copied().collect()))
+        .collect();
 
-    let unrecorded: Vec<&&str> = found.difference(&recorded).collect();
+    let found: BTreeSet<&str> = shared.keys().map(|s| s.as_str()).collect();
+    let recorded_tokens: BTreeSet<&str> = recorded.keys().copied().collect();
+
+    let unrecorded: Vec<&&str> = found.difference(&recorded_tokens).collect();
     assert!(
         unrecorded.is_empty(),
         "these tokens are published by more than one register with nothing saying that is \
@@ -453,11 +483,25 @@ fn a_token_in_two_registers_is_a_recorded_reuse() {
          on one name, rename one of them:\n{unrecorded:#?}\n(registers: {shared:#?})"
     );
 
-    let vanished: Vec<&&str> = recorded.difference(&found).collect();
+    let vanished: Vec<&&str> = recorded_tokens.difference(&found).collect();
     assert!(
         vanished.is_empty(),
         "these reuses are recorded but no longer shared — one side was renamed or removed, \
          which is the drift this file exists to catch:\n{vanished:#?}"
+    );
+
+    let widened: Vec<(&str, &BTreeSet<&str>, &BTreeSet<&str>)> = recorded
+        .iter()
+        .filter_map(|(token, claimed)| {
+            let actual = &shared[*token];
+            (actual != claimed).then_some((*token, claimed, actual))
+        })
+        .collect();
+    assert!(
+        widened.is_empty(),
+        "these tokens are shared by a register set other than the one recorded — a register \
+         outside it has picked up the token, or one inside it dropped it (token, recorded, \
+         actual):\n{widened:#?}"
     );
 }
 
@@ -470,7 +514,7 @@ fn a_token_in_two_registers_is_a_recorded_reuse() {
 #[test]
 fn no_two_conditions_sit_one_edit_apart() {
     let regs = registers();
-    let recorded: BTreeSet<&str> = INTENDED_REUSE.iter().map(|(t, _)| *t).collect();
+    let recorded: BTreeSet<&str> = INTENDED_REUSE.iter().map(|(t, _, _)| *t).collect();
     let universe: BTreeSet<String> = regs.values().flatten().cloned().collect();
     assert!(
         universe.len() >= 130,
