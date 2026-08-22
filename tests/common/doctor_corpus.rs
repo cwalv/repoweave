@@ -703,6 +703,7 @@ pub fn issue_corpus() -> Vec<Issue> {
         IssueKind::ManagedFileUserHeld,
         IssueKind::Surfacing,
         IssueKind::ConfigRejected,
+        IssueKind::MalformedSettings,
         IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
             "go-work",
             &path("/ws/projects/proj/go.work"),
@@ -740,6 +741,7 @@ pub fn issue_kind_token(kind: &IssueKind) -> String {
         | IssueKind::ManagedFileUserHeld
         | IssueKind::Surfacing
         | IssueKind::ConfigRejected
+        | IssueKind::MalformedSettings
         | IssueKind::MemberIncompatibility(_)
         | IssueKind::DerivedStateStale
         | IssueKind::DisabledIntegrationArtifact

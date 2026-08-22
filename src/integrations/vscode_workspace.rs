@@ -178,10 +178,9 @@ pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Ve
 /// caller's `Checkout` settled on, and that arm cannot lose content.
 fn expected_generated_set(
     ctx: &IntegrationContext,
+    cfg: &VscodeConfig,
     prev: &HashSet<String>,
 ) -> anyhow::Result<BTreeMap<String, bool>> {
-    let cfg: VscodeConfig = ctx.config.settings()?;
-
     let active_repo_set: HashSet<String> = ctx
         .repos
         .iter()
@@ -423,6 +422,7 @@ impl Integration for VscodeWorkspace {
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        let cfg: VscodeConfig = ctx.config.settings()?;
         let filename = format!(
             "{}.code-workspace",
             crate::workspace::flat_project_segment(ctx.project)
@@ -469,7 +469,7 @@ impl Integration for VscodeWorkspace {
 
         // The rwv-derived files.exclude keys, under this container's write
         // semantics (replace at primary, monotone in a workweave).
-        let rwv_exclude_keys = expected_generated_set(ctx, &prev_rwv_excludes)?;
+        let rwv_exclude_keys = expected_generated_set(ctx, &cfg, &prev_rwv_excludes)?;
 
         // Compute the merged files.exclude map before mutating `obj` (Rust
         // borrow rules: shared borrow for read, then exclusive for write).
@@ -567,6 +567,14 @@ impl Integration for VscodeWorkspace {
     /// construction — whatever this container would not rewrite, it does not
     /// report.
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        // Ahead of the MISSING arm: verify's whole question is what `activate`
+        // would write, and settings that do not parse leave that unanswerable.
+        // Reporting the file absent would name a state whose repair is blocked
+        // by a cause this hook has already established and would not print.
+        let cfg: VscodeConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
         let filename = format!(
             "{}.code-workspace",
             crate::workspace::flat_project_segment(ctx.project)
@@ -621,7 +629,7 @@ impl Integration for VscodeWorkspace {
             .and_then(|v| v.as_object())
             .and_then(|s| s.get("files.exclude"))
             .and_then(|v| v.as_object());
-        let expected_excludes = expected_generated_set(ctx, &prev_rwv_excludes)?;
+        let expected_excludes = expected_generated_set(ctx, &cfg, &prev_rwv_excludes)?;
 
         let mut on_disk = vec![format!("folders[0]={on_disk_primary:?}")];
         on_disk.extend(

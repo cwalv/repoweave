@@ -940,6 +940,7 @@ Schema:
             "managed-file-user-held",
             "surfacing",
             "config-rejected",
+            "malformed-settings",
             "derived-state-stale",
             "disabled-integration-artifact",
             "integration-failed",

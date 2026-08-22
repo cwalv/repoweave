@@ -2377,6 +2377,7 @@ pub enum IssueKindOutput {
     ManagedFileUserHeld,
     Surfacing,
     ConfigRejected,
+    MalformedSettings,
     MemberIncompatibility(MemberIncompatibilityOutput),
     DerivedStateStale,
     DisabledIntegrationArtifact,
@@ -2409,6 +2410,7 @@ impl IssueKindOutput {
             IssueKind::ManagedFileUserHeld => Self::ManagedFileUserHeld,
             IssueKind::Surfacing => Self::Surfacing,
             IssueKind::ConfigRejected => Self::ConfigRejected,
+            IssueKind::MalformedSettings => Self::MalformedSettings,
             IssueKind::MemberIncompatibility(observation) => {
                 Self::MemberIncompatibility(MemberIncompatibilityOutput {
                     path: observation.path().to_string_lossy().into_owned(),

@@ -723,7 +723,10 @@ impl Integration for CargoWorkspace {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+        let cfg: CargoWorkspaceConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
         if !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(vec![]);
         }
@@ -969,7 +972,10 @@ impl Integration for CargoWorkspace {
     ///     without digest state (pre-upgrade) skip this axis silently.
     ///   - **CLEAN**: present, parseable, digest matches (or not recorded).
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+        let cfg: CargoWorkspaceConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
 
         if !Self::has_active_cargo_work(ctx, &cfg) {
             // Scoped to the manifest: with no members there is no lock content

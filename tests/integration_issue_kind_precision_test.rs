@@ -4,11 +4,15 @@
 //! `for_each_enabled` captures a hook's `Err` into
 //! `Issue{kind: IntegrationFailed}`, which is the only kind the runner can
 //! mint. So a condition reported by returning `Err` from a hook loses whatever
-//! kind it would have carried, and `docs/reference/doctor-findings.md` hands the
-//! operator the vaguest row in its table instead of the one naming the remedy.
-//! The conditions below each have a precise kind and each are reported by
-//! returning an `Issue`, not by bailing — moving one onto the bail path is the
-//! regression these red on.
+//! kind it would have carried, and `docs/reference/doctor-findings.md` routes
+//! the operator to the vaguest entry it publishes instead of the one naming the
+//! remedy. The conditions below each have a precise kind and each are reported
+//! by returning an `Issue`, not by bailing — moving one onto the bail path is
+//! the regression these red on.
+//!
+//! Both hook halves are driven, because a condition can be routed correctly out
+//! of `check()` and still bail out of `verify()`: the two are separate
+//! `for_each_enabled` passes and each captures its own errors.
 //!
 //! Asserted through the serialized `--json` payload rather than the `IssueKind`
 //! value, because the wire token is what an operator looks up and what a
@@ -18,8 +22,10 @@
 
 use repoweave::check::build_doctor_json;
 use repoweave::integration::Integration;
-use repoweave::integration_runner::{build_detection_cache, run_checks, IntegrationContextBase};
-use repoweave::integrations::{CargoWorkspace, StaticFiles};
+use repoweave::integration_runner::{
+    build_detection_cache, run_checks, run_verifications, IntegrationContextBase,
+};
+use repoweave::integrations::{CargoWorkspace, StaticFiles, VscodeWorkspace};
 use repoweave::manifest::{Manifest, ProjectName};
 use repoweave::workspace::ContainerKind;
 use std::collections::HashMap;
@@ -62,7 +68,16 @@ fn issue_kinds(issues: Vec<repoweave::integration::Issue>) -> Vec<String> {
         .collect()
 }
 
-fn check_kinds(
+/// Which of the two `Vec<Issue>` hooks to drive. They are separate
+/// `for_each_enabled` passes, so routing a condition correctly out of one says
+/// nothing about the other.
+enum Hook {
+    Check,
+    Verify,
+}
+
+fn hook_kinds(
+    hook: Hook,
     integration: &dyn Integration,
     root: &Path,
     manifest: &Manifest,
@@ -81,7 +96,19 @@ fn check_kinds(
         detection_cache: &detection_cache,
         workweave,
     };
-    issue_kinds(run_checks(&integrations, manifest, &ctx_base))
+    issue_kinds(match hook {
+        Hook::Check => run_checks(&integrations, manifest, &ctx_base),
+        Hook::Verify => run_verifications(&integrations, manifest, &ctx_base),
+    })
+}
+
+fn check_kinds(
+    integration: &dyn Integration,
+    root: &Path,
+    manifest: &Manifest,
+    workweave: Option<&repoweave::manifest::WorkweaveConfig>,
+) -> Vec<String> {
+    hook_kinds(Hook::Check, integration, root, manifest, workweave)
 }
 
 #[test]
@@ -149,11 +176,16 @@ fn static_files_name_collision_reaches_json_as_config_rejected() {
     );
 }
 
-/// The runner's capture really does mint `integration-failed`, so the two
-/// assertions above are refusing something reachable rather than something the
-/// payload cannot express.
+/// A settings block that does not deserialize is its own condition, not the
+/// runner's capture of a hook that gave up.
+///
+/// The value never parsed, so no predicate ran and nothing was asked of the
+/// workspace — which is what separates it from `config-rejected`, where rwv
+/// understood the request and could not meet it. `integration-failed` names
+/// neither the field nor a remedy; this kind's message carries the
+/// deserializer's own, which names both.
 #[test]
-fn a_hook_error_does_reach_json_as_integration_failed() {
+fn malformed_settings_reach_json_under_their_own_kind() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
@@ -167,6 +199,75 @@ fn a_hook_error_does_reach_json_as_integration_failed() {
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
          url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
          [integrations.cargo-workspace]\nexclude = \"not-a-list\"\n",
+    )
+    .unwrap();
+
+    for hook in [Hook::Check, Hook::Verify] {
+        let kinds = hook_kinds(hook, &CargoWorkspace, root, &manifest, None);
+        assert_eq!(
+            kinds,
+            vec!["malformed-settings".to_string()],
+            "a settings block that does not deserialize must reach --json under its own kind"
+        );
+    }
+}
+
+/// The same condition on the two other integrations that read settings inside
+/// a `Vec<Issue>` hook, one per hook half.
+///
+/// Named rather than derived: an integration that starts reading settings in a
+/// hook is a site this file has to be told about, and there is no handle that
+/// enumerates them.
+#[test]
+fn malformed_settings_carry_their_kind_out_of_every_hook_that_reads_them() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "NOTES.md", "notes\n");
+
+    let static_files = Manifest::from_toml_str(
+        "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         [integrations.static-files]\nenabled = true\nfiles = \"NOTES.md\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        check_kinds(&StaticFiles, root, &static_files, None),
+        vec!["malformed-settings".to_string()],
+        "static-files reads its settings in check()"
+    );
+
+    let vscode = Manifest::from_toml_str(
+        "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         [integrations.vscode-workspace]\nhide-dotfiles = \"yes\"\n",
+    )
+    .unwrap();
+    assert_eq!(
+        hook_kinds(Hook::Verify, &VscodeWorkspace, root, &vscode, None),
+        vec!["malformed-settings".to_string()],
+        "vscode-workspace reads its settings in verify(), ahead of the MISSING arm — a \
+         missing file must not mask the reason it cannot be regenerated"
+    );
+}
+
+/// The runner's capture really does mint `integration-failed`, so the
+/// assertions above are refusing something reachable rather than something the
+/// payload cannot express.
+///
+/// The seeded failure is an unreadable member manifest — a directory where
+/// `partition` expects a file — because that is an error with no kind of its
+/// own to lose, which is the population the capture is for. Every condition
+/// this file names a kind for is by construction unavailable here.
+#[test]
+fn a_hook_error_does_reach_json_as_integration_failed() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("github/acme/plain/Cargo.toml")).unwrap();
+
+    let manifest = Manifest::from_toml_str(
+        "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
 

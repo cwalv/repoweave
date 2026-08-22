@@ -1210,6 +1210,33 @@ all never reached a predicate, so nothing was asked and nothing here applies.
 message names which of the two sides to move. Never auto-fixed: rwv cannot
 tell whether the declaration or the workspace is the part you meant.
 
+### `malformed-settings`
+
+An `[integrations.<name>]` block in `rwv.toml` does not read as the settings
+that integration declares — a value of the wrong type, most often. The finding
+carries the deserializer's own account of it, which names the field and the
+type it expected.
+
+Separate from `config-rejected`, and the distinction is the one worth knowing:
+there, rwv understood the request and the workspace could not meet it; here no
+value was recovered at all, so nothing was asked and no predicate ran. The two
+have different remedies — one moves the workspace, the other fixes a typo —
+which is why they are two tokens.
+
+Always `safe_to_fix: false`. The repair is an edit to a file you hold the pen
+on, and the only repair `--fix` has for this project regenerates from the very
+settings that did not read — so it is withheld rather than attempted and
+reported as failed.
+
+Everything that integration would otherwise have reported for this project is
+missing from the run alongside it. A hook that cannot read its own
+configuration has nothing to say, and this finding is rwv saying so rather
+than reporting a healthy project.
+
+**What to do:** correct the field the message names, or delete it to take the
+default. Then re-run `rwv doctor` — the findings that were suppressed while
+the block was unreadable will appear.
+
 ### `member-incompatibility`
 
 The one kind that carries fields rather than only

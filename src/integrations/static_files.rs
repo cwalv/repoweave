@@ -139,7 +139,10 @@ impl Integration for StaticFiles {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let cfg: StaticFilesConfig = ctx.config.settings()?;
+        let cfg: StaticFilesConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
         let mut issues = Vec::new();
 
         // Collision with workweave.link: hard Severity::Error so

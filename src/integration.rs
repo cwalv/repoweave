@@ -81,6 +81,37 @@ pub struct IntegrationContext<'a> {
 }
 
 impl<'a> IntegrationContext<'a> {
+    /// The typed settings for `integration`, or the finding to report when its
+    /// `rwv.toml` block does not deserialize into them.
+    ///
+    /// A hook that propagates the parse error instead reaches the operator as
+    /// `integration-failed`, which is the runner's capture of anything a hook
+    /// bails with and names neither the field nor a remedy. Returning the
+    /// finding is what keeps [`IssueKind::MalformedSettings`] on it — the
+    /// deserializer's own message already names the field and the type it
+    /// expected, so the caller has something to act on.
+    ///
+    /// `safe_to_fix` is false: the repair is an edit to `rwv.toml`, and on the
+    /// `verify()` path a true here makes `--fix` attempt a regeneration whose
+    /// input it has just failed to read.
+    pub fn settings_or_issue<T: serde::de::DeserializeOwned>(
+        &self,
+        integration: &str,
+    ) -> Result<T, Issue> {
+        self.config.settings().map_err(|e| Issue {
+            integration: integration.to_string(),
+            severity: Severity::Error,
+            message: format!(
+                "`[integrations.{integration}]` in rwv.toml does not parse into this \
+                 integration's settings: {}. Correct the field it names, or drop it to take \
+                 the default",
+                e.to_string().trim_end()
+            ),
+            kind: IssueKind::MalformedSettings,
+            safe_to_fix: false,
+        })
+    }
+
     /// Repos that should appear in ecosystem workspace configs.
     /// Excludes `reference` repos — they're read-only, not part of the build graph.
     pub fn active_repos(&self) -> impl Iterator<Item = (&RepoPath, &RepoEntry)> {
@@ -166,6 +197,12 @@ pub enum IssueKind {
     /// sections claim, a declared file that is not there, a member topology
     /// the ecosystem tool rejects.
     ConfigRejected,
+    /// An `[integrations.<name>]` block does not deserialize into the settings
+    /// type that integration declares. Distinct from
+    /// [`IssueKind::ConfigRejected`], which is a well-formed request the
+    /// workspace cannot meet: here no value was recovered, so nothing was
+    /// asked and no predicate ran.
+    MalformedSettings,
     /// An `Ownership::DefaultOnly` value that is incompatible with what the
     /// members require. Carries the observation the predicate made.
     MemberIncompatibility(Box<MemberIncompatibility>),
@@ -203,6 +240,7 @@ impl IssueKind {
             Self::ManagedFileUserHeld => "managed-file-user-held",
             Self::Surfacing => "surfacing",
             Self::ConfigRejected => "config-rejected",
+            Self::MalformedSettings => "malformed-settings",
             Self::MemberIncompatibility(_) => Self::MEMBER_INCOMPATIBILITY,
             Self::DerivedStateStale => "derived-state-stale",
             Self::DisabledIntegrationArtifact => "disabled-integration-artifact",
