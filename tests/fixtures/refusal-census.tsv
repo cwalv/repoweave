@@ -1,6 +1,6 @@
 # file	token-or-disposition	instrument-that-reads-this-site	sites
 src/activate.rs	(untokened:internal-invariant)	-	1
-src/activate.rs	(untokened:tally)	-	2
+src/activate.rs	(untokened:tally)	-	3
 src/activate.rs	no-active-project	-	1
 src/activate.rs	shared-name-contested	-	1
 src/activate.rs	unaccepted-generated-content	-	1
