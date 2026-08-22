@@ -253,7 +253,7 @@ fn remove_undeclared_links(root: &Path, project: &ProjectName) -> anyhow::Result
             "[removed] core: `{}` -> `{}` (a link at a name `{}` no longer declares; \
              the file it pointed at is untouched)",
             link.name(),
-            link.target().display(),
+            crate::path_spelling::weave_relative(link.target()),
             project
         );
     }
@@ -1640,7 +1640,7 @@ pub fn verify_surfacing(
                     link.name(),
                     link.owner(),
                     project,
-                    link.target().display()
+                    crate::path_spelling::weave_relative(link.target())
                 ),
                 kind: IssueKind::Surfacing,
                 safe_to_fix: false,
