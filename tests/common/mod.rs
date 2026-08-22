@@ -117,6 +117,22 @@ pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
     tempfile::TempDir::new_in(root)
 }
 
+/// `root` joined to a `/`-separated relative path, one component at a time.
+///
+/// `Path::join` pushes a slash-bearing literal whole, separator and all, so
+/// `root.join("projects/beta")` spells `…\ws\projects/beta` on Windows — a
+/// mixed spelling nothing rwv prints. An expectation built that way disagrees
+/// with correct output and reads at the failure as though the product were
+/// wrong. Build any multi-component fixture path this way when it is compared
+/// against what rwv printed; on Unix the result is the join it replaces.
+pub fn under(root: impl AsRef<std::path::Path>, rel: &str) -> PathBuf {
+    rel.split('/')
+        .fold(root.as_ref().to_path_buf(), |mut path, component| {
+            path.push(component);
+            path
+        })
+}
+
 /// Render a fixture path as a `file://` URL git accepts on every platform.
 ///
 /// `format!("file://{}", path.display())` breaks twice on Windows: the

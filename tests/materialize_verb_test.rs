@@ -294,7 +294,7 @@ fn materialized_then_pinned_back(f: &Fixture) -> PathBuf {
     let (ok, report) = f.rwv(&["materialize"], &f.ww);
     assert!(ok, "fixture: first materialize should succeed:\n{report}");
 
-    let lock = f.ww.join("projects/app/Cargo.lock");
+    let lock = common::under(&f.ww, "projects/app/Cargo.lock");
     let generated = std::fs::read_to_string(&lock).expect("fixture: the hook writes the lock");
     assert_eq!(
         locked_pinnable_version(&generated).as_deref(),

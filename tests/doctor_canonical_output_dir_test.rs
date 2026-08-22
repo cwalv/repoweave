@@ -186,7 +186,7 @@ fn every_integration_names_the_canonical_path_for_an_inactive_project() {
     let report = f.rwv(&["doctor", "--all"]);
 
     for (integration, file) in EXPECTED_MISSING {
-        let canonical = f.ws.join("projects/beta").join(file);
+        let canonical = common::under(&f.ws, "projects/beta").join(file);
         let expected = format!(
             "{integration} managed file missing: {}; run rwv doctor --fix to regenerate",
             repoweave::path_spelling::operator_path(&canonical)
@@ -224,14 +224,20 @@ fn no_finding_names_the_weave_root_view_of_an_inactive_project() {
     for file in owned {
         // The Axis-1 surfacing pass legitimately names root paths — that axis
         // is *about* the root. Only the content findings are constrained here.
-        let root_view = format!("managed file missing: {}", f.ws.join(file).display());
+        let root_view = format!(
+            "managed file missing: {}",
+            repoweave::path_spelling::operator_path(&common::under(&f.ws, file))
+        );
         assert!(
             !report.contains(&root_view),
             "a content finding named the weave-root view of `{file}`, which for an \
              inactive project is either a path that does not exist or another \
              project's file.\ngot:\n{report}"
         );
-        let root_drift = format!("managed file has drift: {}", f.ws.join(file).display());
+        let root_drift = format!(
+            "managed file has drift: {}",
+            repoweave::path_spelling::operator_path(&common::under(&f.ws, file))
+        );
         assert!(
             !report.contains(&root_drift),
             "a content finding named the weave-root view of `{file}` as DRIFT — \
@@ -274,7 +280,9 @@ fn an_inactive_project_is_not_verified_against_the_active_project_s_file() {
         assert!(
             report.contains(&format!(
                 "{integration} managed file missing: {}",
-                repoweave::path_spelling::operator_path(&f.ws.join("projects/beta").join(file))
+                repoweave::path_spelling::operator_path(
+                    &common::under(&f.ws, "projects/beta").join(file)
+                )
             )),
             "beta's `{file}` is absent and must be reported; alpha's copy \
              satisfies beta's config, so through the root view this finding \
@@ -335,7 +343,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
         "fixture: workweave create failed:\n{create}"
     );
 
-    let canonical = ww.join("projects/web-app/web-app.code-workspace");
+    let canonical = common::under(&ww, "projects/web-app/web-app.code-workspace");
     assert!(
         !canonical.exists(),
         "fixture: the gitignored code-workspace must not have come across, \
