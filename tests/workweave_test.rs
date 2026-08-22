@@ -1639,6 +1639,52 @@ fn claude_hook_remove_cleans_up() {
 }
 
 #[test]
+fn claude_hook_remove_warning_carries_the_index_parse_cause() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "to-remove"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--to-remove");
+    assert!(ww_dir.exists(), "workweave should exist before removal");
+
+    // Corrupt the index so the removal path fails inside the JSON parse
+    // (a real anyhow context chain), not the ok_or_else lookup beneath it.
+    let index_path = ws
+        .join("projects")
+        .join("web-app")
+        .join(".rwv-workweave-index");
+    assert!(index_path.exists(), "index should exist after create");
+    std::fs::write(&index_path, "{not valid json").unwrap();
+
+    let json = worktree_remove_json(&ww_dir);
+    let assert = rwv()
+        .args(["workweave", "--claude-hook"])
+        .write_stdin(json)
+        .assert()
+        .success(); // fire-and-forget: hook always exits 0
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("failed to parse"),
+        "expected the index-read context in stderr, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("key must be a string"),
+        "expected serde_json's own parse cause chained in (not just the \
+         context message) in stderr, got: {stderr}"
+    );
+}
+
+#[test]
 fn claude_hook_unknown_event_errors() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");

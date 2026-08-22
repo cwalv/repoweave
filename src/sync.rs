@@ -4740,7 +4740,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             Err(e) => {
                 if emit_text {
-                    eprintln!("  {repo_path}: materialize failed: {e}");
+                    eprintln!("  {repo_path}: materialize failed: {e:#}");
                 }
                 materialize_failures.push(repo_path.clone());
             }
@@ -4780,7 +4780,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     if emit_text {
-                        eprintln!("  {repo_path}: prune skipped: {e}");
+                        eprintln!("  {repo_path}: prune skipped: {e:#}");
                     }
                 }
             }
@@ -5059,7 +5059,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     if let Err(e) = phase1_outcome {
         if emit_text {
-            eprintln!("Phase 1' (project repo) failed: {e}");
+            eprintln!("Phase 1' (project repo) failed: {e:#}");
         }
         // Only teach the VCS-native resume when the project repo is actually
         // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
@@ -5288,7 +5288,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.source_workspace_name,
     ) {
         if emit_text {
-            eprintln!("Phase 3 (re-lock) failed: {e}");
+            eprintln!("Phase 3 (re-lock) failed: {e:#}");
         }
         // Phase 3 (relock) is a lock regeneration + commit, never a VCS
         // rebase/merge — so there is never a live ConflictOp to resume with a
@@ -6282,7 +6282,7 @@ pub fn run_abort(
                 &mut any_foreign,
             ),
             Err(e) => {
-                eprintln!("  {repo_path}: {e}");
+                eprintln!("  {repo_path}: {e:#}");
                 any_failure = true;
             }
         }
@@ -6310,7 +6310,7 @@ pub fn run_abort(
             &mut any_foreign,
         ),
         Err(e) => {
-            eprintln!("  (project): {e}");
+            eprintln!("  (project): {e:#}");
             any_failure = true;
         }
     }
@@ -6377,7 +6377,7 @@ pub fn run_abort(
                             &mut any_foreign,
                         ),
                         Err(e) => {
-                            eprintln!("  [target] {repo_path}: {e}");
+                            eprintln!("  [target] {repo_path}: {e:#}");
                             any_failure = true;
                         }
                     }
@@ -6402,7 +6402,7 @@ pub fn run_abort(
                         &mut any_foreign,
                     ),
                     Err(e) => {
-                        eprintln!("  [target] (project): {e}");
+                        eprintln!("  [target] (project): {e:#}");
                         any_failure = true;
                     }
                 }

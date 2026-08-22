@@ -3738,7 +3738,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     )
                 });
                 if let Err(e) = outcome {
-                    eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
+                    eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e:#}");
                 }
             }
             // Always exit 0.
