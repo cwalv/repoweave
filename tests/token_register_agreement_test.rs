@@ -307,49 +307,28 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// vocabulary documented some other way — or not at all — is printed at people
 /// without being reachable by the command the tooling tells them to run.
 ///
-/// **Three distinct shapes, with three distinct fixes.** Grouped rather than
-/// flattened, because a single list would suggest a single remedy:
+/// **No entry anywhere, though a bare grep says otherwise.** The VCS wire
+/// kinds not shared with the refusal register. A plain `git grep` for one of
+/// these finds six or more files and reads like documentation; every hit is
+/// a generated JSON schema — standalone under `docs/reference/schemas/`, or
+/// inlined into a `docs/reference/explain/*.md` bundle inside an
+/// `"enum": [...]` block — plus one `docs/internals/` page, which is not
+/// operator-facing. None is an entry. The query that decides it asks for the
+/// heading rather than the string:
 ///
-/// 1. **Documented, but not under a bare-token heading.** `branch-discipline`
-///    has three `###` entries and is unservable anyway: each is titled
-///    `` `branch-discipline` — <suffix> ``. The most surprising of the three,
-///    because the page plainly documents it.
-/// 2. **Documented in prose, with no heading.** The nine integration issue
-///    kinds live in table rows and paragraphs on the findings page.
-/// 3. **No entry anywhere, though a bare grep says otherwise.** The VCS wire
-///    kinds not shared with the refusal register. A plain `git grep` for one of
-///    these finds six or more files and reads like documentation; every hit is
-///    a generated JSON schema — standalone under `docs/reference/schemas/`, or
-///    inlined into a `docs/reference/explain/*.md` bundle inside an
-///    `"enum": [...]` block — plus one `docs/internals/` page, which is not
-///    operator-facing. None is an entry. The query that decides it asks for the
-///    heading rather than the string:
+/// ```sh
+/// git grep '^#\+ `<token>`' -- docs/
+/// ```
 ///
-///    ```sh
-///    git grep '^#\+ `<token>`' -- docs/
-///    ```
+/// which returns nothing for any of them. `uncommitted-changes` is in this
+/// group and carries a second, separate problem: no code path can emit it.
 ///
-///    which returns nothing for all ten. `uncommitted-changes` is in this group
-///    and carries a second, separate problem: no code path can emit it.
-///
-/// Recorded rather than fixed — closing any of the three is a change to pages
-/// this file does not own. The set is asserted exactly, so a vocabulary gaining
-/// an entry, or a new one arriving unservable, reds here and is re-decided
-/// rather than absorbed.
+/// Recorded rather than fixed — closing it is a change to pages this file does
+/// not own. The set is asserted exactly, so a vocabulary gaining an entry, or a
+/// new one arriving unservable, reds here and is re-decided rather than
+/// absorbed.
 const NOT_EXPLAIN_SERVABLE: &[&str] = &[
-    // 1. documented, heading carries a suffix
-    "branch-discipline",
-    // 2. integration issue kinds — prose and table rows, no heading
-    "config-rejected",
-    "core-finding",
-    "derived-state-stale",
-    "disabled-integration-artifact",
-    "integration-failed",
-    "managed-file-drift",
-    "managed-file-missing",
-    "managed-file-user-held",
-    "tool-missing",
-    // 3. VCS wire kinds — no entry heading; a bare grep finds only schemas
+    // VCS wire kinds — no entry heading; a bare grep finds only schemas
     "branch-already-exists",
     "cherry-pick",
     "command-failed",

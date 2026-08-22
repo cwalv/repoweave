@@ -55,12 +55,18 @@ is indistinguishable from work you meant to keep.
 flag the entry names. The flag is named for the consequence it accepts, never
 as a blanket override.
 
-Every entry below opens with one of those three marks, and the marks are the
-published statement of what `--fix` does. `rwv doctor --help` and
-`rwv explain doctor` point here rather than restating the set, and a test
-compares each mark against the code that repairs it — so an arm that is added,
-removed or changes disposition without this page moving with it fails the
-build.
+Every entry for a finding on the `violations` array opens with one of those
+three marks, and the marks are the published statement of what `--fix` does.
+`rwv doctor --help` and `rwv explain doctor` point here rather than restating
+the set, and a test compares each mark against the code that repairs it — so an
+arm that is added, removed or changes disposition without this page moving with
+it fails the build.
+
+Entries under [The integration channel](#the-integration-channel) carry no
+mark, and that is a decision rather than an omission: on that channel `--fix`
+authority is decided per finding and travels with it as `safe_to_fix`, so a
+mark keyed to the kind would be false for one of the findings the kind covers.
+The section says so where it starts.
 
 **Safe class / live class** — a distinction applied to anything droppable. A
 ref or savepoint whose tip is already reachable from a live branch carries no
@@ -720,6 +726,8 @@ come from the remote.
 
 ## Branches and ownership receipts
 
+### `branch-discipline`
+
 `branch-discipline` enforces the invariant that every workweave repo checkout
 sits on its own `<project>--<workweave>` ephemeral branch, every canonical
 clone sits on a non-ephemeral branch, and stale ephemeral branches left over
@@ -730,6 +738,13 @@ left an orphan behind in the canonical.
 Every deletion `--fix` performs is gated twice: on an ownership receipt for
 that exact ref in that exact store, and on a warrant proving the loss is safe.
 Neither gate is inferable from a branch name.
+
+Its findings are grouped below by what each one is about — the workweave
+checkout, the canonical store, or a leftover ephemeral branch — because the
+disposition differs across them and no statement about the kind as a whole
+would be true. Every finding names a `sub_kind`, which `rwv doctor --json`
+prints and which `rwv explain <sub-kind>` serves directly; that is the entry
+to read, and this one is only the route to it.
 
 ### `branch-discipline` — a workweave checkout on the wrong branch
 
@@ -1100,21 +1115,71 @@ An `issues` entry carries `integration` (which integration raised it),
 `severity`, the operator-facing `message`, and `safe_to_fix` — `false` marking
 a file region you hold the pen on, which `--fix` reports and never overwrites.
 
-| `kind` | What it is |
-| --- | --- |
-| `tool-missing` | The ecosystem CLI the integration drives is not on `PATH`. |
-| `managed-file-missing` | A file the integration owns is not in the project directory. |
-| `managed-file-drift` | Owned content on disk differs from what `rwv activate` would write, or the owning tool can no longer read it. |
-| `managed-file-user-held` | The owned key or region is present without rwv's ownership marker. You hold the pen; `--fix` will not touch it. |
-| `surfacing` | A weave-root symlink's on-disk state does not match what `rwv activate`'s surfacing step would put there. Reported only in part — see below. |
-| `config-rejected` | `rwv.toml` asks for something the workspace cannot satisfy — a name two sections claim, a declared file that is not there, a member topology the ecosystem tool rejects. |
-| `member-incompatibility` | A value you hold is incompatible with what the members require. Carries the observation as fields, below. |
-| `derived-state-stale` | Generated ecosystem state no longer follows from the inputs it was derived from. Reported only — see below. |
-| `disabled-integration-artifact` | An integration is disabled for this project, but content it authored is still on disk. Reported only — see below. |
-| `integration-failed` | An integration's hook returned an error; the runner captured it so the remaining integrations could still run. |
-| `core-finding` | Raised by doctor itself while driving the integrations. On the wire this appears only under `--fix`, which `--json` has no form of — see the disjointness rule above. |
+That field is why the entries below open with prose instead of one of the three
+marks. On this channel what `--fix` may touch is decided per finding and
+travels with it, where a mark is a statement about a whole kind — and one kind
+here covers both dispositions at once. `surfacing` reports a link a fresh pass
+repairs outright and a link standing over content you wrote; no single mark is
+true of both. So read `safe_to_fix` on the finding you have, and take the
+entry's **What to do** as the account of when each answer comes up.
 
-`surfacing` reports a weave-root symlink out of step with what `rwv activate`'s
+### `tool-missing`
+
+The ecosystem CLI the integration drives is not on `PATH`. The integration
+names which tool in its message, and reports nothing further about the files
+that tool owns, because it has nothing to ask.
+
+**What to do:** install the named tool, or turn the integration off for this
+project — `enabled = false` under its `[integrations.<name>]` block in
+`rwv.toml` — if this weave does not use that ecosystem. Turning one off leaves
+whatever it already authored on disk; see `disabled-integration-artifact`.
+
+### `managed-file-missing`
+
+A file the integration owns is not in the project directory. rwv authors that
+file, so its absence is a state a fresh generation reaches rather than a
+decision you made.
+
+**What to do:** `rwv doctor --fix`, which re-runs the generation that writes
+it. `rwv activate` and `rwv materialize` run the same step.
+
+### `managed-file-drift`
+
+Owned content on disk differs from what `rwv activate` would write, or the
+owning tool can no longer read it.
+
+Two shapes with two answers, and `safe_to_fix` is what tells them apart. Drift
+in a file rwv regenerates from present inputs is repaired by regenerating it.
+Drift in a *generated* file — one whose accepted content rwv recorded a digest
+for — is not, because the content on disk may be something you meant: rwv
+cannot tell an edit you made from an edit you want discarded, and the finding
+carries `safe_to_fix: false` rather than guess.
+
+**What to do:** `rwv doctor --fix` for the first. For the second the message
+names the three exits and they are all `rwv materialize`'s:
+`--adopt-drifted` records the current content as the accepted generation,
+`--regenerate-drifted` discards it and regenerates from present inputs, or
+restore the file to the recorded content yourself.
+
+### `managed-file-user-held`
+
+The owned key or region is present without rwv's ownership marker. You hold
+the pen on it.
+
+Always `safe_to_fix: false`, and this is the one kind where that is a property
+of the kind rather than of the finding: taking over an unmarked region means
+overwriting content rwv never wrote and has no record of. `--fix` reports it
+and moves on.
+
+**What to do:** nothing, if the content is what you want — the state is stable
+and rwv keeps reporting rather than acting. To hand the region over, do what
+the message says: cut it over by hand, or write the ownership marker it names.
+The spelling differs by file format, which is why the finding names it rather
+than this page.
+
+### `surfacing`
+
+A weave-root symlink out of step with what `rwv activate`'s
 surfacing step would put there — the finding and `--fix` read the same
 predicate, so they agree on what "in step" means. Most of what it reports
 `--fix` (or `rwv activate` / `rwv materialize`, which run the same step)
@@ -1131,7 +1196,39 @@ For a link at a name the project no longer declares, run `rwv materialize
 --remove-undeclared-links`, which unlinks exactly the names the finding
 named — the files they pointed at are untouched either way.
 
-`derived-state-stale` is the standing form of the note `rwv sync` prints once.
+### `config-rejected`
+
+`rwv.toml` asks for something the workspace cannot satisfy — a name two
+sections claim, a declared file that is not there, a member topology the
+ecosystem tool rejects.
+
+The config parsed and rwv understood the request; what it names is not
+available. That is the boundary this kind draws: a value rwv could not read at
+all never reached a predicate, so nothing was asked and nothing here applies.
+
+**What to do:** edit `rwv.toml` so it asks for something that exists — the
+message names which of the two sides to move. Never auto-fixed: rwv cannot
+tell whether the declaration or the workspace is the part you meant.
+
+### `member-incompatibility`
+
+The one kind that carries fields rather than only
+a tag, because the four facts its predicate established are what the remedy
+turns on: `path` (the managed file holding the value), `key`, `on_disk`,
+`required`, and `required_by` (the member file carrying the requirement).
+Doctor is the standing observation arm for it, and `rwv update` reports the
+same finding at the moment it creates one. Neither gates: nothing refuses on
+it, and `--fix` cannot repair it — rwv seeded the key once and never
+overwrites it, so this is not drift.
+
+**What to do:** raise the value at `key` in `path` to what `required` names,
+or change the member at `required_by` so it stops requiring it. Which of the
+two is right is a policy question about your weave, which is why rwv reports
+the observation and stops.
+
+### `derived-state-stale`
+
+The standing form of the note `rwv sync` prints once.
 rwv records the digests of the inputs each generation read — the project
 manifest and `rwv.lock` — beside the digest of what it produced, so whether a
 lock file still follows from this checkout is answerable at any later moment
@@ -1154,7 +1251,12 @@ rwv never accepted, materialize refuses first and names the two consents — see
 `rwv explain materialize`; taking either one clears both conditions, because the
 generation that follows attests its own inputs.
 
-`disabled-integration-artifact` is the one kind `--fix` has no arm for at all,
+### `disabled-integration-artifact`
+
+An integration is disabled for this project, but content it authored is still
+on disk.
+
+This is the one kind `--fix` has no arm for at all,
 and the omission is the design rather than a gap. Disabling an integration
 withdraws the justification for what it authored but not the content: the marked
 region in your hybrid file, the lock file it generated, and the weave-root
@@ -1177,11 +1279,31 @@ committed and authors none.
 run `rwv materialize` to remove what it left. Doing nothing is also stable —
 the finding is a warning and does not change doctor's exit status.
 
-`member-incompatibility` is the one kind that carries fields rather than only
-a tag, because the four facts its predicate established are what the remedy
-turns on: `path` (the managed file holding the value), `key`, `on_disk`,
-`required`, and `required_by` (the member file carrying the requirement).
-Doctor is the standing observation arm for it, and `rwv update` reports the
-same finding at the moment it creates one. Neither gates: nothing refuses on
-it, and `--fix` cannot repair it — rwv seeded the key once and never
-overwrites it, so this is not drift.
+### `integration-failed`
+
+An integration's hook returned an error; the runner captured it so the
+remaining integrations could still run.
+
+The kind of last resort. A hook that returns `Err` carries no kind of its own,
+so this is the only tag the runner can put on what it caught, and the message
+is the whole of what the operator gets. A condition that has a remedy worth
+naming is reported by *returning* it as a finding under its own kind instead —
+so seeing this one means either an environment failure rwv has nothing to say
+about, or a condition that has not been given its kind yet.
+
+**What to do:** read the message; the hook that failed is named in
+`integration`. There is no generic repair, and `--fix` re-runs the same hook.
+
+### `core-finding`
+
+Raised by doctor itself while driving the integrations. On the wire this
+appears only under `--fix`, which `--json` has no form of — see the
+disjointness rule above.
+
+Two shapes reach it. Under `--fix`, a repair rwv attempted and could not
+complete. In the default text output, the roll-up lines that stand in for a
+class of core findings whose per-item detail is behind `rwv doctor --json`.
+
+**What to do:** whatever the finding it stands for calls for — the entry is
+above, on the `violations` half of this page. For a roll-up, take the per-item
+detail from `rwv doctor --json` first.
