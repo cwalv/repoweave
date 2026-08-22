@@ -1,11 +1,11 @@
 //! One token string, one condition, across every register that publishes one.
 //!
-//! Four vocabularies reach an operator as stable kebab-case tokens:
-//! `RefusalKind`, `CheckViolation`'s doctor kinds, `IssueKind`'s tags, and
-//! `VcsErrorOutput`'s wire kinds. A token appearing in two of them is either a
-//! deliberate reuse — one condition named the same way wherever it surfaces —
-//! or an accident, and the two are indistinguishable by reading either register
-//! alone.
+//! Five vocabularies name a condition to an operator as a stable kebab-case
+//! token: `RefusalKind`, `CheckViolation`'s doctor kinds, `IssueKind`'s tags,
+//! `VcsErrorOutput`'s wire kinds, and `SyncFailureOutput`'s. A token appearing
+//! in two of them is either a deliberate reuse — one condition named the same
+//! way wherever it surfaces — or an accident, and the two are
+//! indistinguishable by reading either register alone.
 //!
 //! **This is the direction that was missing.** Each register's own tests assert
 //! its own spellings. A shared token could be renamed on the *doctor* side with
@@ -20,20 +20,24 @@
 //! never listed here; the one thing this file states is *intent*, which is the
 //! one thing source cannot tell you (see [`INTENDED_REUSE`]).
 //!
-//! **Scope.** The four registers above, parsed from `src/refusal.rs`,
-//! `src/check.rs`, `src/integration.rs` and `src/vcs.rs` — the three
-//! match-minted ones read from the body of the one function that mints each,
-//! so every arm is in range whatever it is spelled like. A token built by
+//! **Scope.** The five registers above, parsed from `src/refusal.rs`,
+//! `src/check.rs`, `src/integration.rs`, `src/vcs.rs` and `src/sync.rs` — the
+//! four match-minted ones read from the body of the one function that mints
+//! each, so every arm is in range whatever it is spelled like. A token built by
 //! concatenation is still invisible; one written as a constant is resolved.
 //!
-//! **Residue.** Kebab-case values reach `--json` from enums that are not `kind`
-//! registers — `ConflictOp` serialises `rebase` / `merge` / `cherry-pick` as a
-//! field value, and `SyncFailureOutput` mints its own tags — and nothing here
-//! reads them. They are not compared against these four for collisions and not
-//! checked for entries. That boundary is deliberate: this file is about the
-//! vocabularies a token means one condition *in*. It is also exactly the shape
-//! that hid a defect here once, so it is written down rather than assumed
-//! harmless.
+//! **A field value is not a condition.** `ConflictOp` serialises `rebase` /
+//! `merge` / `cherry-pick` into `--json`, but as the `op` field *inside* the
+//! `rebase-conflict` condition rather than as a `kind` discriminant. It answers
+//! which operation was in flight; it never names what happened, so it earns no
+//! `rwv explain` entry and is not a register here. It is still walked, for one
+//! property: an op name must not also be a condition name, or a token read off
+//! a machine surface stops identifying which vocabulary it came from. That is
+//! [`an_op_name_is_not_also_a_condition_name`], and the distinction rests on
+//! that assertion rather than on the paragraph you are reading. A boundary
+//! written down here and held nowhere is worth about as much as it costs to
+//! type: `cherry-pick` was carried in the VCS register by an earlier walk, and
+//! no prose was going to notice.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -58,6 +62,7 @@ const INTENDED_REUSE: &[(&str, &str)] = &[
         "dead-op-lease",
         "an op-state lease outlived the process that took it",
     ),
+    ("head-unreadable", "a repo's HEAD could not be read"),
     (
         "incomplete-lock",
         "the lock does not cover every manifest repo",
@@ -200,19 +205,23 @@ fn arm_count(source: &str, signature: &str) -> usize {
     minting_fn(source, signature).matches("=>").count()
 }
 
-/// The tokens `RefusalKind` publishes: `rename_all = "kebab-case"` over each
-/// variant name, **except** where an explicit `#[serde(rename = "…")]`
-/// overrides it.
+/// The tokens a `rename_all = "kebab-case"` enum publishes: its variant names
+/// kebabbed, **except** where an explicit `#[serde(rename = "…")]` overrides
+/// one.
 ///
 /// Honouring the override is not a nicety. A variant attribute is how a token
 /// is renamed without touching Rust code, so a parser that reads only variant
 /// names is blind to the exact edit this file exists to catch — three
 /// mutations proved it by slipping past an earlier version of this function.
-fn refusal_tokens() -> BTreeSet<String> {
-    let src = source("refusal.rs");
+///
+/// Fieldless variants only, which is what both callers declare. A variant
+/// carrying fields spans lines this yields nothing for, so a register that
+/// grows one goes partially blind — the reason each caller is pinned against a
+/// count it does not compute itself.
+fn serde_enum_tokens(src: &str, decl: &str) -> BTreeSet<String> {
     let body = src
-        .split_once("pub enum RefusalKind {")
-        .expect("the enum is declared")
+        .split_once(decl)
+        .unwrap_or_else(|| panic!("`{decl}` is declared"))
         .1;
     let body = body.split_once("\n}").expect("the enum closes").0;
     let mut out = BTreeSet::new();
@@ -239,6 +248,22 @@ fn refusal_tokens() -> BTreeSet<String> {
     out
 }
 
+fn refusal_tokens() -> BTreeSet<String> {
+    serde_enum_tokens(&source("refusal.rs"), "pub enum RefusalKind {")
+}
+
+/// The op names `ConflictOp` puts on the wire, read from the declaration that
+/// serialises them rather than from the `Display` impl that spells them a
+/// second time.
+///
+/// Reading `Display` would be reading the wrong producer: a `#[serde(rename)]`
+/// moves the wire token and leaves the `Display` arm untouched. The two are
+/// compared in [`an_op_name_is_not_also_a_condition_name`], which is what makes
+/// the second spelling safe to keep.
+fn conflict_op_tokens() -> BTreeSet<String> {
+    serde_enum_tokens(&source("vcs.rs"), "pub enum ConflictOp {")
+}
+
 fn kebab(name: &str) -> String {
     let mut out = String::new();
     for (i, c) in name.char_indices() {
@@ -254,8 +279,15 @@ fn kebab(name: &str) -> String {
     out
 }
 
-/// The three hand-minted registers, each as the file that declares it and the
+/// The hand-minted registers, each as the file that declares it and the
 /// signature of the one function that mints its tokens.
+///
+/// `sync` is the one whose minting function is not itself the wire producer:
+/// `rwv sync --json` serialises `SyncFailureOutput` and never calls
+/// `SyncFailure::kind`. Reading the match arms is faithful only because
+/// `sync_failure_kind_matches_wire_tag` pins the two spellings against each
+/// other over every variant, so a rename on the wire side cannot pass while the
+/// arms stand still.
 const MINTED_REGISTERS: &[(&str, &str, &str)] = &[
     (
         "doctor",
@@ -268,6 +300,7 @@ const MINTED_REGISTERS: &[(&str, &str, &str)] = &[
         "pub fn tag(&self) -> &'static str {",
     ),
     ("vcs", "vcs.rs", "pub fn kind(&self) -> &'static str {"),
+    ("sync", "sync.rs", "pub fn kind(&self) -> &'static str {"),
 ];
 
 fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
@@ -332,6 +365,7 @@ fn the_register_walk_is_not_vacuous() {
         // have, so it moves when the register does; it is not a claim that the
         // register may not shrink.
         ("vcs", 8),
+        ("sync", 3),
     ];
     for (name, floor) in floors {
         let found = regs[name].len();
@@ -341,6 +375,49 @@ fn the_register_walk_is_not_vacuous() {
              it has stopped reading that register"
         );
     }
+}
+
+/// `ConflictOp`'s vocabulary is exempt from needing an `rwv explain` entry, and
+/// this is the property that exemption rests on.
+///
+/// An op name is a field value, so an operator meets it beside a condition
+/// token in one JSON object and has only the spelling to tell them apart. The
+/// exemption is safe exactly while the two vocabularies are disjoint; a
+/// condition minted as `merge` would make `rwv explain merge` owe an answer
+/// that names the wrong kind of thing.
+///
+/// The count and the `Display` arms are what keep this from passing vacuously.
+/// A parser that stopped reading the declaration would assert disjointness over
+/// nothing, and a `#[serde(rename)]` that moved a wire token would leave the
+/// second spelling behind — the failure mode that put an op name in the VCS
+/// register once, read off `Display` by a walk that had no business there.
+#[test]
+fn an_op_name_is_not_also_a_condition_name() {
+    let vcs = source("vcs.rs");
+    let ops = conflict_op_tokens();
+    let display = "impl std::fmt::Display for ConflictOp {";
+    let spelled = arm_tokens(&vcs, display);
+    let arms = arm_count(&vcs, display);
+    assert_eq!(
+        ops.len(),
+        arms,
+        "ConflictOp declares {} serialised op names against {arms} `Display` arms; one \
+         producer moved without the other, or the declaration walk has gone blind:\n{ops:#?}",
+        ops.len()
+    );
+    assert_eq!(
+        ops, spelled,
+        "ConflictOp's wire spelling and its `Display` spelling have diverged, so a caller \
+         composing a message from `Display` names an op the wire does not"
+    );
+
+    let conditions: BTreeSet<String> = registers().values().flatten().cloned().collect();
+    let collided: Vec<&String> = ops.iter().filter(|op| conditions.contains(*op)).collect();
+    assert!(
+        collided.is_empty(),
+        "these name an in-flight operation on one surface and a condition on another, and \
+         an operator reading one off `--json` cannot tell which:\n{collided:#?}"
+    );
 }
 
 /// The D1 sentence, asserted between registers rather than within one.
