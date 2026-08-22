@@ -684,7 +684,7 @@ fn add_new_updates_manifest_with_inferred_url() {
 }
 
 #[test]
-fn add_new_sets_role_to_primary() {
+fn add_new_without_role_flag_defaults_to_owned() {
     let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
@@ -698,8 +698,6 @@ fn add_new_sets_role_to_primary() {
     let manifest_content =
         std::fs::read_to_string(&manifest_path).expect("rwv.toml should exist after add --new");
 
-    // Find the entry for our repo and verify it has role: owned.
-    // The YAML should contain "role: owned" in the newrepo entry.
     assert!(
         manifest_content.contains(r#"role = "owned""#),
         "new repo should have role owned, got:\n{manifest_content}"
