@@ -526,12 +526,6 @@ fn every_vcs_error() -> Vec<VcsErrorOutput> {
             repo: repo.clone(),
             rev: sha('a'),
         },
-        VcsErrorOutput::BranchAlreadyExists {
-            repo: repo.clone(),
-            branch: "main".to_owned(),
-        },
-        VcsErrorOutput::WorktreeExists { path: repo.clone() },
-        VcsErrorOutput::UncommittedChanges { path: repo.clone() },
         VcsErrorOutput::RebaseConflict {
             repo: repo.clone(),
             op: ConflictOp::Rebase,
@@ -579,9 +573,6 @@ fn vcs_error_tag(e: &VcsErrorOutput) -> &'static str {
     match e {
         VcsErrorOutput::NotARepo { .. } => "not-a-repo",
         VcsErrorOutput::RevisionNotFound { .. } => "revision-not-found",
-        VcsErrorOutput::BranchAlreadyExists { .. } => "branch-already-exists",
-        VcsErrorOutput::WorktreeExists { .. } => "worktree-exists",
-        VcsErrorOutput::UncommittedChanges { .. } => "uncommitted-changes",
         VcsErrorOutput::RebaseConflict { .. } => "rebase-conflict",
         VcsErrorOutput::StaleRefWitness { .. } => "stale-ref-witness",
         VcsErrorOutput::MidOperation { .. } => "mid-operation",

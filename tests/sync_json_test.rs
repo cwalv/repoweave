@@ -483,21 +483,6 @@ fn vcs_error_kind_tags_match_kind_method() {
             "revision-not-found",
         ),
         (
-            VcsError::BranchAlreadyExists {
-                repo: PathBuf::from("/x"),
-                branch: repoweave::vcs::RefName::new("feat"),
-            },
-            "branch-already-exists",
-        ),
-        (
-            VcsError::WorktreeExists(PathBuf::from("/x")),
-            "worktree-exists",
-        ),
-        (
-            VcsError::UncommittedChanges(PathBuf::from("/x")),
-            "uncommitted-changes",
-        ),
-        (
             VcsError::RebaseConflict {
                 repo: PathBuf::from("/x"),
                 op: ConflictOp::Merge,

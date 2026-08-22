@@ -327,7 +327,11 @@ fn the_register_walk_is_not_vacuous() {
         ("refusal", 90usize),
         ("doctor", 30),
         ("issue", 8),
-        ("vcs", 10),
+        // Lowered from 10 when three variants nothing constructed were retired
+        // off the wire. A floor tracks how many tokens a register is known to
+        // have, so it moves when the register does; it is not a claim that the
+        // register may not shrink.
+        ("vcs", 8),
     ];
     for (name, floor) in floors {
         let found = regs[name].len();
@@ -433,13 +437,18 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// vocabulary documented some other way — or not at all — is printed at people
 /// without being reachable by the command the tooling tells them to run.
 ///
-/// **The VCS wire kinds, which had no entry anywhere though a bare grep said
-/// otherwise.** A plain `git grep` for one of these finds six or more files and
-/// reads like documentation; every hit is a generated JSON schema — standalone
-/// under `docs/reference/schemas/`, or inlined into a
-/// `docs/reference/explain/*.md` bundle inside an `"enum": [...]` block — plus
-/// one `docs/internals/` page, which is not operator-facing. None was an entry.
-/// The query that decides it asks for the heading rather than the string:
+/// **Empty, and that is the assertion.** Every token any register publishes is
+/// served. This list exists so that stops being true loudly: a vocabulary that
+/// arrives undocumented reds here rather than being printed at people who
+/// cannot look it up.
+///
+/// It was not always empty. The VCS wire kinds had no entry anywhere while a
+/// bare `git grep` for one of them found six or more files and read like
+/// documentation — every hit a generated JSON schema, standalone under
+/// `docs/reference/schemas/` or inlined into a `docs/reference/explain/*.md`
+/// bundle inside an `"enum": [...]` block, plus one `docs/internals/` page that
+/// is not operator-facing. The query that decides it asks for the heading
+/// rather than the string:
 ///
 /// ```sh
 /// git grep '^#\+ `<token>`' -- docs/
@@ -448,27 +457,12 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// Run it against a control, because a query that answers nothing everywhere
 /// proves nothing: it returns one for `mid-operation`, which is served.
 ///
-/// The reachable kinds now have entries on `docs/reference/vcs-errors.md`. What
-/// is left is a different condition wearing the same symptom, and the reason it
-/// stays is the opposite of the reason the others were here. These three are
-/// not missing an entry — an entry would describe a state no operator can
-/// reach, because no production path constructs the variant. Each has the same
-/// footprint: five definitional sites in `src/vcs.rs`, three test-only sites,
-/// and nothing else. `branch-already-exists` is the sharpest of them:
-/// `birth_ref_at_head` detects that exact collision and routes past the variant
-/// on stated grounds, so it is superseded rather than merely unused.
-///
-/// Recorded rather than fixed — closing it is a change to pages this file does
-/// not own, and for these three the change is to the wire surface rather than
-/// to a page. The set is asserted exactly, so a vocabulary gaining an entry, or
-/// a new one arriving unservable, reds here and is re-decided rather than
-/// absorbed.
-const NOT_EXPLAIN_SERVABLE: &[&str] = &[
-    // VCS wire kinds no production path constructs
-    "branch-already-exists",
-    "uncommitted-changes",
-    "worktree-exists",
-];
+/// The reachable kinds gained entries on `docs/reference/vcs-errors.md`. The
+/// rest were removed from the wire: three variants no production path ever
+/// constructed, so no entry could describe a state an operator could reach.
+/// Documenting them would have published the fiction; retiring them is what
+/// let this list reach nothing.
+const NOT_EXPLAIN_SERVABLE: &[&str] = &[];
 
 /// Every token any register publishes is served by `rwv explain`, except the
 /// recorded set above — and that set is exactly the unservable ones.

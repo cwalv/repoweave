@@ -70,33 +70,22 @@ fn published() -> BTreeSet<String> {
 
 /// Published kinds with no entry, and why each is recorded rather than written.
 ///
-/// Asserted exactly, so a token leaving this list without gaining an entry —
-/// or gaining one while still listed — reds rather than being absorbed.
-const NO_ENTRY: &[(&str, &str)] = &[
-    (
-        "uncommitted-changes",
-        "no production path constructs it, so an entry would describe a \
-         condition no operator can meet",
-    ),
-    (
-        "branch-already-exists",
-        "as uncommitted-changes, but superseded rather than overlooked: \
-         birth_ref_at_head detects the collision and routes past the variant, \
-         because the refusal it owes is about rwv's receipt, not git's name \
-         clash",
-    ),
-    (
-        "worktree-exists",
-        "as uncommitted-changes — a `worktree add` onto a taken path goes \
-         through the shared runner and comes back as command-failed",
-    ),
-];
+/// **Empty.** Every kind `VcsError::kind` mints resolves to an entry — seven on
+/// this page, and `mid-operation` and `untracked-collision` from the refusal
+/// register, which named those two conditions first and keeps them.
+///
+/// Asserted exactly in both directions, so a kind arriving without an entry
+/// reds, and so does a recorded exemption that has quietly gained one.
+const NO_ENTRY: &[(&str, &str)] = &[];
 
 #[test]
 fn the_vcs_register_walk_is_not_vacuous() {
     let published = published();
+    // Lowered from 11 when three variants nothing constructed were retired off
+    // the wire. The floor tracks the register's known size, not a claim that it
+    // may only grow.
     assert!(
-        published.len() >= 11,
+        published.len() >= 8,
         "the VCS register walk yielded {} tokens; it has stopped matching the \
          arms it reads:\n{published:#?}",
         published.len()

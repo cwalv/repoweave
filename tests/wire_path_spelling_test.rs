@@ -222,8 +222,14 @@ fn every_path_typed_wire_field_is_spelled_by_the_mint() {
         "the scan found only {wire_items} `--json` types; it has stopped \
          seeing the population it is supposed to police"
     );
+    // Lowered from 25 when three `VcsErrorOutput` variants nothing constructed
+    // were retired off the wire, taking one path-typed field each. Read rather
+    // than assumed, which is what this assertion's own message asks for: the
+    // mint count in `src/vcs.rs` went 11 -> 8, and the three that left are
+    // exactly `BranchAlreadyExists`, `WorktreeExists` and `UncommittedChanges`.
+    // The walk sees what it saw before, minus fields that no longer exist.
     assert!(
-        routed >= 25,
+        routed >= 22,
         "the scan found only {routed} path-typed wire fields carrying the \
          mint; either the walk has gone blind or the fields moved to a \
          `String` minted at construction, and which one it is has to be read"

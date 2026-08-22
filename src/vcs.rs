@@ -331,12 +331,6 @@ pub enum VcsError {
     NotARepo(PathBuf),
     /// A named revision (SHA, tag, branch) couldn't be resolved.
     RevisionNotFound { repo: PathBuf, rev: String },
-    /// Branch already exists (when caller attempted to create one).
-    BranchAlreadyExists { repo: PathBuf, branch: RefName },
-    /// Worktree path already exists (when caller attempted to create one).
-    WorktreeExists(PathBuf),
-    /// Working tree has uncommitted changes when caller required clean state.
-    UncommittedChanges(PathBuf),
     /// In-flight VCS operation (rebase / merge / cherry-pick) hit a conflict.
     ///
     /// The repo is left in the VCS-native in-flight state — for git, that means
@@ -418,9 +412,6 @@ impl VcsError {
         match self {
             Self::NotARepo(_) => "not-a-repo",
             Self::RevisionNotFound { .. } => "revision-not-found",
-            Self::BranchAlreadyExists { .. } => "branch-already-exists",
-            Self::WorktreeExists(_) => "worktree-exists",
-            Self::UncommittedChanges(_) => "uncommitted-changes",
             Self::RebaseConflict { .. } => "rebase-conflict",
             Self::StaleRefWitness { .. } => "stale-ref-witness",
             Self::MidOperation { .. } => "mid-operation",
@@ -450,19 +441,6 @@ pub enum VcsErrorOutput {
         #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
         rev: String,
-    },
-    BranchAlreadyExists {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
-        branch: String,
-    },
-    WorktreeExists {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        path: PathBuf,
-    },
-    UncommittedChanges {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        path: PathBuf,
     },
     RebaseConflict {
         #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
@@ -514,12 +492,6 @@ impl From<&VcsError> for VcsErrorOutput {
                 repo: repo.clone(),
                 rev: rev.clone(),
             },
-            VcsError::BranchAlreadyExists { repo, branch } => Self::BranchAlreadyExists {
-                repo: repo.clone(),
-                branch: branch.as_str().to_owned(),
-            },
-            VcsError::WorktreeExists(p) => Self::WorktreeExists { path: p.clone() },
-            VcsError::UncommittedChanges(p) => Self::UncommittedChanges { path: p.clone() },
             VcsError::RebaseConflict { repo, op } => Self::RebaseConflict {
                 repo: repo.clone(),
                 op: *op,
@@ -564,13 +536,6 @@ impl fmt::Display for VcsError {
             Self::NotARepo(p) => write!(f, "{} is not a vcs repository", p.display()),
             Self::RevisionNotFound { repo, rev } => {
                 write!(f, "revision '{rev}' not found in {}", repo.display())
-            }
-            Self::BranchAlreadyExists { repo, branch } => {
-                write!(f, "branch '{branch}' already exists in {}", repo.display())
-            }
-            Self::WorktreeExists(p) => write!(f, "worktree path already exists: {}", p.display()),
-            Self::UncommittedChanges(p) => {
-                write!(f, "{} has uncommitted changes", p.display())
             }
             Self::RebaseConflict { repo, op } => {
                 write!(

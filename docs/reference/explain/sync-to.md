@@ -847,64 +847,6 @@ Schema:
         {
           "type": "object",
           "required": [
-            "branch",
-            "kind",
-            "repo"
-          ],
-          "properties": {
-            "branch": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "branch-already-exists"
-              ]
-            },
-            "repo": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "path"
-          ],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "worktree-exists"
-              ]
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "path"
-          ],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "uncommitted-changes"
-              ]
-            },
-            "path": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
             "kind",
             "op",
             "repo"
