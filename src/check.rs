@@ -4166,12 +4166,10 @@ fn workweave_checkouts(
 ) -> Vec<PathBuf> {
     use crate::workweave::{classify_checkout, CheckoutKind};
 
-    let registries = crate::registry::builtin_registries();
-    let mut out: Vec<PathBuf> =
-        crate::workspace::scan_repos_on_disk(workweave_dir, &registries, vcs)
-            .into_iter()
-            .map(|repo| workweave_dir.join(repo.as_path()))
-            .collect();
+    let mut out: Vec<PathBuf> = crate::workspace::scan_repos_on_disk(workweave_dir, vcs)
+        .into_iter()
+        .map(|repo| workweave_dir.join(repo.as_path()))
+        .collect();
     out.push(project_dir(workweave_dir, project_name));
     out.retain(|abs| abs.is_dir() && classify_checkout(abs) != CheckoutKind::ReferenceAlias);
     out
@@ -4696,8 +4694,7 @@ fn canonical_stores(
 
     let mut out = Vec::new();
 
-    let registries = crate::registry::builtin_registries();
-    for repo in crate::workspace::scan_repos_on_disk(ws_root, &registries, vcs) {
+    for repo in crate::workspace::scan_repos_on_disk(ws_root, vcs) {
         let tracking = match declared.get(&repo) {
             Some(versions) if versions.len() == 1 => {
                 let raw = RawRefName::new(versions.iter().next().expect("len == 1").clone());

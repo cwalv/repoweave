@@ -28,7 +28,7 @@
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use crate::refusal::RefusalKind;
-use crate::registry::{builtin_registries, builtin_registry_names, Registry};
+use crate::registry::builtin_registry_names;
 use crate::vcs::Vcs;
 use anyhow::Context;
 use saphyr::{LoadableYamlNode, YamlOwned};
@@ -714,20 +714,57 @@ fn observe_active_pointer(root: &Path) -> ActivePointer {
     }
 }
 
+/// The first path segments a member checkout can occupy under `root`: every
+/// registry a project manifest names, plus the built-ins.
+///
+/// Derived rather than listed because `rwv add` mints the segment from the
+/// source URL — `local` for `file://`, the URL's own host otherwise — so a
+/// manifest can name a segment no list anticipates. A member sitting in a
+/// segment left out of this set is indistinguishable on disk from one that
+/// was never cloned, and every scan keyed on the walk goes quiet for it:
+/// the manifest entry reads as a dangling reference, and its lock, its
+/// HEAD and its branch state are never compared against anything.
+///
+/// The built-ins stay in so a weave whose manifests name no `github/` member
+/// still reports a stray clone sitting there as orphaned.
+fn scannable_registry_segments(root: &Path) -> std::collections::BTreeSet<String> {
+    let mut segments: std::collections::BTreeSet<String> = builtin_registry_names()
+        .iter()
+        .map(|n| n.as_str().to_owned())
+        .collect();
+
+    for project in discover_projects(root) {
+        let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+        let Ok(manifest) = Manifest::from_path(&manifest_path) else {
+            continue;
+        };
+        for repo_path in manifest.iter_repo_paths() {
+            if let Some((registry, _, _)) =
+                crate::registry::split_canonical_local_path(repo_path.as_str())
+            {
+                segments.insert(registry.to_owned());
+            }
+        }
+    }
+
+    segments
+}
+
 /// Scan registry directories under `root` for VCS repos on disk.
 ///
-/// Walks the `{registry}/{owner}/{repo}` directory structure for each
-/// registry, filters directories using `vcs.is_repo()`, and returns
-/// relative paths from `root`.
-pub fn scan_repos_on_disk(
-    root: &Path,
-    registries: &[Box<dyn Registry>],
-    vcs: &dyn Vcs,
-) -> Vec<RepoPath> {
+/// Walks the `{registry}/{owner}/{repo}` directory structure of every registry
+/// segment a project manifest under `root` names, and of the built-ins,
+/// filters directories using `vcs.is_repo()`, and returns relative paths from
+/// `root`.
+///
+/// The walk set is derived from `root` rather than passed in: a caller
+/// holding a narrower set than the manifests name is the shape that hides
+/// members from every disk-keyed scan at once.
+pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
     let mut repos = Vec::new();
 
-    for reg in registries {
-        let reg_dir = root.join(reg.name().as_str());
+    for segment in scannable_registry_segments(root) {
+        let reg_dir = root.join(&segment);
         if !reg_dir.is_dir() {
             continue;
         }
@@ -927,12 +964,11 @@ pub struct WorkspaceSession {
 }
 
 impl WorkspaceSession {
-    /// Build a `WorkspaceSession` by running the standard scan triad:
-    /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_projects()`.
+    /// Build a `WorkspaceSession` by scanning `root` once for the repos on
+    /// disk and once for the projects under `projects/`.
     pub fn new(root: &Path) -> Self {
-        let registries = builtin_registries();
         let vcs = crate::vcs::probe_vcs();
-        let repos_on_disk = scan_repos_on_disk(root, &registries, vcs.as_ref());
+        let repos_on_disk = scan_repos_on_disk(root, vcs.as_ref());
         let project_paths = discover_projects(root)
             .into_iter()
             .map(|p| p.as_str().to_owned())
