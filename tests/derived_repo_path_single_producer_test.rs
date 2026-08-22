@@ -38,8 +38,11 @@ use common::src_scan::{self, SourceLine};
 const DERIVED_PRODUCER_MODULE: &str = "registry.rs";
 
 /// The function inside [`DERIVED_PRODUCER_MODULE`] that is the sole derived
-/// producer.
-const DERIVED_PRODUCER_FN: &str = "placement";
+/// producer. `placement` itself is a thin `Option`-returning wrapper around
+/// this — the construction site is here because the caller that needs to
+/// distinguish "nothing to derive from" from "derived a path that fails
+/// validation" reads the `Result` this returns.
+const DERIVED_PRODUCER_FN: &str = "placement_result";
 
 const NEEDLE: &str = "RepoPath::new(";
 

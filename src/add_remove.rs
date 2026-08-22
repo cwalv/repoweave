@@ -229,21 +229,25 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         }
     }
 
-    let repo_path = crate::registry::placement(&parsed_url).ok_or_else(|| {
-        let registries = builtin_registries();
-        let names = registries
-            .iter()
-            .map(|r| r.name().as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        refusal(
-            RefusalKind::NoMatchingRegistry,
-            format!(
-                "unrecognized URL '{url}' — could not derive a local path \
-                 (supported registries: {names})"
-            ),
-        )
-    })?;
+    let repo_path = match crate::registry::placement_result(&parsed_url) {
+        Ok(repo_path) => repo_path,
+        Err(crate::registry::PlacementError::Invalid(e)) => return Err(e.into()),
+        Err(crate::registry::PlacementError::NoMatch) => {
+            let registries = builtin_registries();
+            let names = registries
+                .iter()
+                .map(|r| r.name().as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(refusal(
+                RefusalKind::NoMatchingRegistry,
+                format!(
+                    "unrecognized URL '{url}' — could not derive a local path \
+                     (supported registries: {names})"
+                ),
+            ));
+        }
+    };
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)

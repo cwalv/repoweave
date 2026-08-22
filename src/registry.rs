@@ -66,6 +66,28 @@ pub(crate) fn canonical_local_path(registry: &str, owner: &str, repo: &str) -> S
     format!("{registry}/{owner}/{repo}")
 }
 
+/// Why [`placement_result`] could not place `source`.
+pub(crate) enum PlacementError {
+    /// No built-in registry or host mapping applies to `source` at all —
+    /// there is nothing here to derive a path from.
+    NoMatch,
+    /// A path was derived, but [`RepoPath::new`]'s own validation rejects it.
+    Invalid(crate::manifest::RepoPathError),
+}
+
+/// [`placement`], keeping the reason for a failure a caller needs to render
+/// a specific refusal from — a validation failure on a derived path is a
+/// different condition from there being no registry to derive one at all,
+/// and the two route to different operator-facing messages.
+pub(crate) fn placement_result(source: &RepoUrl) -> Result<RepoPath, PlacementError> {
+    let raw = source.to_string();
+    let path = source
+        .local_path()
+        .or_else(|| derive_local_path_from_url(&raw))
+        .ok_or(PlacementError::NoMatch)?;
+    RepoPath::new(path).map_err(PlacementError::Invalid)
+}
+
 /// The canonical local path `source` belongs at, or `None` when it names
 /// neither a URL a built-in registry resolves nor a registry-qualified
 /// shorthand.
@@ -75,11 +97,7 @@ pub(crate) fn canonical_local_path(registry: &str, owner: &str, repo: &str) -> S
 /// something that already exists or an observation of where a checkout
 /// already sits.
 pub fn placement(source: &RepoUrl) -> Option<RepoPath> {
-    let raw = source.to_string();
-    let path = source
-        .local_path()
-        .or_else(|| derive_local_path_from_url(&raw))?;
-    RepoPath::new(path).ok()
+    placement_result(source).ok()
 }
 
 /// Derive a local path for a URL no built-in registry matched, in the same
@@ -859,5 +877,19 @@ mod tests {
     #[test]
     fn placement_of_non_url_non_shorthand_is_none() {
         assert!(placement(&parse("not a url or shorthand")).is_none());
+    }
+
+    #[test]
+    fn placement_result_distinguishes_no_match_from_an_invalid_derived_path() {
+        assert!(matches!(
+            placement_result(&parse("not a url or shorthand")),
+            Err(PlacementError::NoMatch)
+        ));
+        // The registry matches and a path is derived; the derived path itself
+        // fails RepoPath's own validation.
+        assert!(matches!(
+            placement_result(&parse("github/owner/re\\po")),
+            Err(PlacementError::Invalid(_))
+        ));
     }
 }
