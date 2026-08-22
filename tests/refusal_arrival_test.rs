@@ -277,6 +277,37 @@ fn an_unusable_creation_param_routes_to_its_token() {
     assert_routes_to(&stderr, "unusable-creation-param");
 }
 
+/// AC2 row 4: a `root` inside the weave refuses — the degenerate case is an
+/// upstream that is also walked, deletable, and reportable as one of the
+/// weave's own members.
+#[test]
+fn a_root_inside_the_weave_routes_to_unusable_creation_param() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let inside_root = ws.join("local");
+    std::fs::create_dir_all(&inside_root).unwrap();
+
+    let stderr = refusal_stderr(
+        &[
+            "add",
+            "local",
+            "--new",
+            "--param",
+            &format!("root={}", inside_root.display()),
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &ws,
+    );
+    assert!(
+        stderr.contains("inside the weave"),
+        "precondition: this is the root-inside-weave refusal:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "unusable-creation-param");
+}
+
 /// Two `rwv add local --new` invocations naming the same owner/repo under
 /// different roots: the second placement collision refuses rather than
 /// silently discarding the operator's new root.
