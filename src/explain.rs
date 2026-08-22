@@ -43,6 +43,20 @@ const DOCTOR_FINDINGS_PAGE: &str = include_str!("../docs/reference/doctor-findin
 /// served from the findings page rather than given a second entry here. That
 /// is why this is a list of pages and not a page: nothing about serving an
 /// entry may depend on which page carries it.
+///
+/// The vocabulary this resolves over is every register that publishes an
+/// operator-facing token, **the integration channel's issue kinds included**.
+/// That inclusion is the one a reader is likely to get wrong: those kinds
+/// arrive on a separate `--json` array, from hooks rather than from rwv's own
+/// scans, and neither fact takes them out of the index. An issue kind is
+/// looked up the same way, from these same pages.
+///
+/// One consequence, visible on the findings page and easy to read as an
+/// oversight: entries for issue kinds open with prose where an entry for a
+/// `violations` finding opens with an Auto-fixable / Report-only mark. A mark
+/// states a disposition for a whole kind, and on that channel what `--fix` may
+/// touch is settled per finding and carried on it — so a mark keyed to the
+/// kind would be false for some of the findings that kind covers.
 const ENTRY_PAGES: &[&str] = &[REFUSALS_PAGE, DOCTOR_FINDINGS_PAGE];
 
 /// The heading level of `line` when it is a heading titled exactly `` `token` ``.
