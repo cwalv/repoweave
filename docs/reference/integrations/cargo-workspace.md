@@ -312,7 +312,7 @@ exclude = ["github/cwalv/mcp_agent_mail_rust"]
    but its sub-packages have one each — list the sub-paths and the root
    workspace check is skipped for that repo.
 
-Opted-out repos do not appear under `members` and are surfaced as a `# excluded: <path> (opted out)` comment above the workspace block in the generated `Cargo.toml`, so operators can see what was left out.
+Opted-out repos do not appear under `members` and are surfaced as a `# excluded: <path> (opted out)` comment line above `members` in the generated `Cargo.toml`, so operators can see what was left out.
 
 **Tradeoff:** opted-out repos remain in the weave (their clones are still on disk, still reachable from the workweave) but are absent from the unified workspace. That means `cargo test --workspace`, `cargo build --workspace`, and similar workspace-scoped commands do not cover them. If an opted-out repo depends on a workspace member (or vice versa), the dependency is resolved via the registry rather than the local clone — the zero-version-change shortcut does not apply across the opt-out boundary. Work inside the opted-out repo must be built and tested by `cd`-ing into it directly.
 

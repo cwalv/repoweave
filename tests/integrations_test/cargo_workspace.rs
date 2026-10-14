@@ -226,13 +226,8 @@ fn nested_workspace_without_opt_out_fails_with_named_repo_error() {
 
 #[test]
 fn nested_workspace_with_opt_out_drops_repo_from_members() {
-    // With the opt-out set, the conflicting repo is dropped from members.
-    // Post-port: the `# excluded:` comment emitted by the
-    // legacy whole-overwrite path is gone. The merge model owns *keys*,
-    // not free-floating comments — TomlDoc has no comment-emission API
-    // and the helper's contract is "never author outside the owned-key
-    // set". Operators see exclusions in rwv.toml directly; surfacing
-    // them in the file was decorative.
+    // With the opt-out set, the conflicting repo is dropped from members
+    // and surfaced as a `# excluded:` comment decorating the `members` key.
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
@@ -267,6 +262,118 @@ fn nested_workspace_with_opt_out_drops_repo_from_members() {
     assert!(
         !content.contains("\"github/cwalv/forked\""),
         "opted-out repo should not appear as a member, got:\n{content}"
+    );
+    assert!(
+        content.contains("# excluded: github/cwalv/forked (opted out)"),
+        "opted-out repo should be visible as a comment, got:\n{content}"
+    );
+}
+
+#[test]
+fn excluded_comment_sits_above_members_and_lists_each_opted_out_repo() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    touch(root, "github/acme/server/Cargo.toml");
+    touch(root, "github/acme/legacy/Cargo.toml");
+
+    let manifest = make_manifest(vec![
+        ("github/acme/server", Role::Owned),
+        ("github/acme/legacy", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project").unwrap();
+    let config = IntegrationConfig::from_toml("exclude = [\"github/acme/legacy\"]");
+    let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    CargoWorkspace.activate(&ctx).unwrap();
+
+    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let members_line = content
+        .lines()
+        .position(|l| l.trim_start().starts_with("members ="))
+        .expect("members key should be present");
+    let excluded_line = content
+        .lines()
+        .position(|l| l.trim() == "# excluded: github/acme/legacy (opted out)")
+        .expect("excluded comment should be present");
+    assert!(
+        excluded_line < members_line,
+        "excluded comment should sit above members, got:\n{content}"
+    );
+}
+
+#[test]
+fn reactivation_rewrites_the_excluded_comment_instead_of_accumulating() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    touch(root, "github/acme/server/Cargo.toml");
+    touch(root, "github/acme/old/Cargo.toml");
+    touch(root, "github/acme/new/Cargo.toml");
+
+    let manifest = make_manifest(vec![
+        ("github/acme/server", Role::Owned),
+        ("github/acme/old", Role::Owned),
+        ("github/acme/new", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project").unwrap();
+    let cache = HashMap::new();
+
+    let first_config = IntegrationConfig::from_toml("exclude = [\"github/acme/old\"]");
+    let first_ctx = make_ctx(root, &project, &manifest, &first_config, &cache);
+    CargoWorkspace.activate(&first_ctx).unwrap();
+
+    let second_config = IntegrationConfig::from_toml("exclude = [\"github/acme/new\"]");
+    let second_ctx = make_ctx(root, &project, &manifest, &second_config, &cache);
+    CargoWorkspace.activate(&second_ctx).unwrap();
+
+    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(
+        !content.contains("# excluded: github/acme/old"),
+        "the prior activation's excluded-repo comment should not linger, got:\n{content}"
+    );
+    assert!(
+        content.contains("# excluded: github/acme/new (opted out)"),
+        "the current activation's excluded repo should be commented, got:\n{content}"
+    );
+    assert_eq!(
+        content.matches("# excluded:").count(),
+        1,
+        "re-activating should rewrite the comment, not accumulate it, got:\n{content}"
+    );
+}
+
+#[test]
+fn deactivation_strips_the_excluded_comment_with_members() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    touch(root, "github/acme/server/Cargo.toml");
+    touch(root, "github/acme/legacy/Cargo.toml");
+
+    let manifest = make_manifest(vec![
+        ("github/acme/server", Role::Owned),
+        ("github/acme/legacy", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project").unwrap();
+    let config = IntegrationConfig::from_toml("exclude = [\"github/acme/legacy\"]");
+    let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    CargoWorkspace.activate(&ctx).unwrap();
+    assert!(std::fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap()
+        .contains("# excluded:"));
+
+    CargoWorkspace.deactivate(root).unwrap();
+
+    // `members` (Author) is stripped along with its decor; `resolver`
+    // (DefaultOnly) survives, so the file itself remains.
+    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(
+        !content.contains("# excluded:"),
+        "the excluded comment rides members' decor and must go with it, got:\n{content}"
     );
 }
 

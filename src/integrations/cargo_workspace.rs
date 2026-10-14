@@ -144,11 +144,11 @@
 //!       - github/cwalv/mcp_agent_mail_rust
 //! ```
 //!
-//! Opted-out repos are dropped from `members`. (The pre-port behavior of
-//! emitting `# excluded: <path> (opted out)` comments above the `[workspace]`
-//! block is gone — the TomlDoc helper authors keys, not free-floating
-//! comments. Operators see exclusions in `rwv.toml`; surfacing them via
-//! `check()` is a separate concern.)
+//! Opted-out repos are dropped from `members` and surfaced as a
+//! `# excluded: <path> (opted out)` comment line, one per entry, riding the
+//! `members` key's own decor — the TomlDoc helper authors per-key decor, not
+//! free-floating comments, so this is the one place rwv can put the text and
+//! have it travel with the key through activate/deactivate.
 //!
 //! Opt-out keys that don't match any active Rust repo are silently ignored
 //! (so leaving a stale entry behind after removing a repo is not an error).
@@ -167,6 +167,7 @@ use crate::owned_state::{
     OwnedDigestCheck,
 };
 use anyhow::Context;
+use semver::{Version, VersionReq};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -401,12 +402,16 @@ impl CargoWorkspace {
     /// path packages" signal. With no root file there is no `[workspace]` to
     /// conflict with, so the nested-workspace check is moot for that path.
     ///
-    /// Returns `(members, nested_conflicts)`. `members` is sorted
-    /// lexicographically (the on-disk ordering the toml_edit array honors).
+    /// Returns `(members, excluded, nested_conflicts)`. `members` and
+    /// `excluded` are sorted lexicographically (the on-disk ordering the
+    /// toml_edit array honors). `excluded` holds only `cfg.exclude` entries
+    /// that matched a repo actually in scope — a stale opt-out naming a
+    /// repo that's gone from the manifest is silently absent from it, same
+    /// as it's silently absent from `members`.
     fn partition(
         ctx: &IntegrationContext,
         cfg: &CargoWorkspaceConfig,
-    ) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+    ) -> anyhow::Result<(Vec<String>, Vec<String>, Vec<String>)> {
         let rust_repos = ctx.detect_repos_with_manifest("Cargo.toml");
         let rust_repo_set: BTreeSet<&str> = rust_repos.iter().map(String::as_str).collect();
         let opt_out: BTreeSet<&str> = cfg.exclude.iter().map(String::as_str).collect();
@@ -427,10 +432,12 @@ impl CargoWorkspace {
         all_repos.extend(active_members_in_cfg.iter().cloned());
 
         let mut members: Vec<String> = Vec::new();
+        let mut excluded: Vec<String> = Vec::new();
         let mut nested_conflicts: Vec<String> = Vec::new();
 
         for repo in &all_repos {
             if opt_out.contains(repo.as_str()) {
+                excluded.push(repo.clone());
                 continue;
             }
 
@@ -469,7 +476,7 @@ impl CargoWorkspace {
 
         members.sort();
         members.dedup();
-        Ok((members, nested_conflicts))
+        Ok((members, excluded, nested_conflicts))
     }
 
     /// Enumerate cargo-workspace members for the READ-ONLY scan path
@@ -605,6 +612,53 @@ impl CargoWorkspace {
 
         owned
     }
+
+    /// Decorate `[workspace].members` with one `# excluded: <path> (opted
+    /// out)` comment line per entry in `excluded`, riding the same per-key
+    /// decor slot the `# managed by rwv` marker occupies — `TomlDoc` has no
+    /// free-floating-comment primitive, only per-key decor, so this writes
+    /// the comment into the one place rwv already owns text on this key.
+    /// Rewrites the lines from scratch each call: a stale line from a prior
+    /// activation's exclude set is replaced, not accumulated. The whole
+    /// prefix (and these lines with it) is removed by `remove_owned` when
+    /// `members` itself is stripped at deactivate.
+    fn annotate_excluded(path: &Path, excluded: &[String]) -> anyhow::Result<()> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {} for excluded-comment", path.display()))?;
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {} for excluded-comment", path.display()))?;
+
+        let Some(toml_edit::Item::Table(workspace)) = doc.as_table_mut().get_mut("workspace")
+        else {
+            return Ok(());
+        };
+        let Some(mut key_mut) = workspace.key_mut("members") else {
+            return Ok(());
+        };
+        let decor = key_mut.leaf_decor_mut();
+        let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
+
+        let mut lines: Vec<&str> = existing
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("# excluded:"))
+            .collect();
+        let new_lines: Vec<String> = excluded
+            .iter()
+            .map(|repo| format!("# excluded: {repo} (opted out)"))
+            .collect();
+        lines.extend(new_lines.iter().map(String::as_str));
+
+        let mut new_prefix = lines.join("\n");
+        if !new_prefix.is_empty() {
+            new_prefix.push('\n');
+        }
+        decor.set_prefix(new_prefix);
+
+        std::fs::write(path, doc.to_string())
+            .with_context(|| format!("writing {} after excluded-comment", path.display()))?;
+        Ok(())
+    }
 }
 
 impl Integration for CargoWorkspace {
@@ -635,7 +689,7 @@ impl Integration for CargoWorkspace {
             return Ok(Vec::new());
         }
 
-        let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
+        let (members, excluded, nested_conflicts) = Self::partition(ctx, &cfg)?;
 
         if !nested_conflicts.is_empty() {
             anyhow::bail!("{}", nested_workspace_error(&nested_conflicts));
@@ -647,8 +701,16 @@ impl Integration for CargoWorkspace {
         let path = ctx.output_dir.join("Cargo.toml");
         let owned = Self::owned_pairs(&members, &cfg);
 
-        let _result: MergeResult = merge_activate::<TomlDoc>(&path, &owned)
+        let result: MergeResult = merge_activate::<TomlDoc>(&path, &owned)
             .with_context(|| format!("merge-activate {}", path.display()))?;
+
+        // Only decorate `members` with the excluded-repo comment when rwv
+        // actually holds the pen on it this activation — a deferred
+        // (user-held) key gets no rwv-authored text riding its decor.
+        if result.authored.contains(&keypath(["workspace", "members"])) {
+            Self::annotate_excluded(&path, &excluded)
+                .with_context(|| format!("annotate-excluded {}", path.display()))?;
+        }
 
         // When `cfg.patch` opts in, generate `[patch]` entries. Patch entries
         // are dynamic (one per matched dep), not a fixed owned-key set, so
@@ -748,7 +810,7 @@ impl Integration for CargoWorkspace {
 
         // Surface nested-workspace conflicts as errors during `rwv doctor`
         // so operators see the same diagnostic without having to run lock.
-        let (_, nested_conflicts) = Self::partition(ctx, &cfg)?;
+        let (_, _, nested_conflicts) = Self::partition(ctx, &cfg)?;
         if !nested_conflicts.is_empty() {
             issues.push(Issue {
                 integration: self.name().to_string(),
@@ -1133,7 +1195,7 @@ impl CargoWorkspace {
         //   - `resolver` is `Ownership::DefaultOnly` → operators may override
         //     it (e.g. `resolver = "1"` for compat); any on-disk value is
         //     CLEAN. Skip the resolver drift check entirely.
-        let (members, nested_conflicts) = Self::partition(ctx, cfg)?;
+        let (members, _, nested_conflicts) = Self::partition(ctx, cfg)?;
         if !nested_conflicts.is_empty() {
             // Nested-workspace conflict: activation would fail anyway;
             // don't add a misleading DRIFT finding on top of the check error.
@@ -1197,7 +1259,7 @@ impl CargoWorkspace {
         // Compute the expected patch set (same computation activate uses).
         // Nested-workspace conflicts short-circuit the whole verify — the
         // check() error already covers them; no misleading DRIFT.
-        let (members, nested_conflicts) = Self::partition(ctx, cfg)?;
+        let (members, _, nested_conflicts) = Self::partition(ctx, cfg)?;
         if !nested_conflicts.is_empty() {
             return Ok(vec![]);
         }
@@ -3250,79 +3312,25 @@ fn extract_dep_fields(dep_item: &toml_edit::Item) -> Option<DepFieldsTuple> {
     ))
 }
 
-/// Best-effort version-req satisfaction check for the derived-mode patch
-/// precheck.
+/// Version-req satisfaction check for the derived-mode patch precheck.
+/// Delegates to the `semver` crate — the same matcher cargo itself runs —
+/// so caret/tilde/wildcard/comparator-list requirements get cargo's exact
+/// semantics for free, prereleases included.
 ///
-/// v1 fidelity — matches the version-skew scanner's "string-first, don't
-/// pull in a semver resolver" bar: noisy is safer than silent. Rules:
-///
-/// 1. Exact byte-equal (after trimming whitespace and stripping a leading
-///    caret/tilde/`=`) is satisfied.
-/// 2. Otherwise, split each on `.` and check that the version's
-///    components element-wise match the requirement's non-`*` components.
-///    A trailing wildcard (`*`) in the requirement matches any suffix.
-///    A shorter requirement (e.g. `"1.2"`) is satisfied by any version
-///    whose leading components match (`"1.2.3"`, `"1.2.99"`).
-///
-/// This is intentionally *narrower* than cargo's caret semantics: it does
-/// not accept `"0.3.5"` as satisfying requirement `"0.3.0"` even though
-/// cargo would, because pulling in a full semver-req resolver here is out
-/// of scope — the precheck must stay lightweight enough to run on every
-/// doctor invocation without adding a heavy dependency for one warning
-/// path. The consequence is the precheck may skip *some* patches cargo
-/// would accept — but it will never *emit* one cargo rejects, which is the
-/// direction that matters (a broken patch produces cargo's misleading
-/// crates.io error at generate-lockfile time).
-///
-/// Empty inputs: an empty requirement is treated as satisfied by anything
-/// (defensive default — a caller that produces `Some("")` is deliberately
-/// broken, not this function's problem). An empty version cannot satisfy
-/// a non-empty requirement.
+/// An unparseable requirement or version is conservatively treated as
+/// satisfied: this precheck exists to avoid a misleading crates-io error
+/// at generate-lockfile time, and a false refusal (skipping a patch cargo
+/// would have accepted) is the failure mode that matters here, not a false
+/// accept — cargo still catches a genuinely incompatible version when the
+/// lockfile is generated.
 fn version_satisfies(requirement: &str, version: &str) -> bool {
-    let req = requirement
-        .trim()
-        .trim_start_matches(|c: char| c == '^' || c == '~' || c == '=' || c.is_whitespace());
-    let ver = version.trim();
-
-    if req.is_empty() {
+    let Ok(req) = VersionReq::parse(requirement.trim()) else {
         return true;
-    }
-    if ver.is_empty() {
-        return false;
-    }
-    if req == ver {
+    };
+    let Ok(ver) = Version::parse(version.trim()) else {
         return true;
-    }
-
-    // If the requirement carries any comparator that indicates a range or
-    // exclusive bound we don't model (e.g. `>=`, `<`, `>`, `<=`, `,`), be
-    // conservative and treat as satisfied — we cannot rule the version
-    // out with v1 fidelity, and false negatives would surface as
-    // gratuitous warnings that mask real problems. Cargo will still catch
-    // a truly wrong version at generate-lockfile time.
-    if requirement.contains("<") || requirement.contains(">") || requirement.contains(",") {
-        return true;
-    }
-
-    // Component-wise prefix match.
-    let req_parts: Vec<&str> = req.split('.').collect();
-    let ver_parts: Vec<&str> = ver.split('.').collect();
-
-    if req_parts.len() > ver_parts.len() {
-        // Requirement is more specific than the version can be — mismatch.
-        // (e.g. req `"1.2.3"` vs ver `"1.2"`).
-        return false;
-    }
-
-    for (r, v) in req_parts.iter().zip(ver_parts.iter()) {
-        if *r == "*" {
-            return true;
-        }
-        if r != v {
-            return false;
-        }
-    }
-    true
+    };
+    req.matches(&ver)
 }
 
 // ===========================================================================
@@ -3484,18 +3492,15 @@ mod tests {
     fn version_satisfies_mismatch() {
         // Major differs.
         assert!(!version_satisfies("2.0", "1.9.9"));
-        // Requirement more specific than version.
-        assert!(!version_satisfies("1.2.3", "1.2"));
+        // Requirement needs a newer patch than what's installed.
+        assert!(!version_satisfies("1.3.0", "1.2.9"));
     }
 
     #[test]
-    fn version_satisfies_conservative_on_range_ops() {
-        // We don't model `>=` / `<` — treat conservatively as satisfied
-        // so the precheck never blocks a patch it can't confidently rule
-        // out. Cargo will still hard-error at generate-lockfile time if
-        // the version is truly wrong.
+    fn version_satisfies_comparator_list() {
         assert!(version_satisfies(">=1.2, <2.0", "1.5.0"));
         assert!(version_satisfies("<0.5", "0.4.0"));
+        assert!(!version_satisfies(">=1.2, <2.0", "2.0.0"));
     }
 
     #[test]
@@ -3505,14 +3510,35 @@ mod tests {
     }
 
     #[test]
-    fn version_satisfies_narrower_than_cargo_semver() {
-        // v1 fidelity is documented as narrower than caret semver. Cargo
-        // would accept 0.3.5 for req 0.3.0 (`^0.3.0` = `>=0.3.0, <0.4.0`),
-        // but our string-first prefix check does not — because we cannot
-        // model caret without a semver crate. Documented in the fn docs;
-        // asserted here so any future upgrade to a real resolver is
-        // caught by this test flipping.
-        assert!(!version_satisfies("0.3.0", "0.3.5"));
+    fn version_satisfies_unparseable_input_is_conservative() {
+        assert!(version_satisfies("not a version requirement!!", "1.2.3"));
+        assert!(version_satisfies("1.2.3", "not a version"));
+    }
+
+    #[test]
+    fn version_satisfies_prerelease_excluded_outside_its_own_tuple() {
+        // A prerelease version matches a requirement only through a
+        // comparator naming that exact [major, minor, patch].
+        assert!(!version_satisfies("1.2.3", "1.2.4-alpha"));
+        assert!(version_satisfies("1.2.3-alpha.1", "1.2.3-alpha.1"));
+    }
+
+    #[test]
+    fn version_satisfies_caret_accepts_a_later_minor_and_patch() {
+        assert!(version_satisfies("0.3.0", "0.3.5"));
+        assert!(version_satisfies("2.4.0", "2.4.5"));
+    }
+
+    #[test]
+    fn version_satisfies_ordinary_pin_against_a_higher_in_weave_version() {
+        // Same installed version throughout: a bare major, a dotted
+        // prefix, an exact pin, and a pin below it all satisfy by caret;
+        // a pin ahead of what's installed correctly does not.
+        assert!(version_satisfies("2", "2.8.3"));
+        assert!(version_satisfies("2.8", "2.8.3"));
+        assert!(version_satisfies("2.8.3", "2.8.3"));
+        assert!(version_satisfies("2.4.0", "2.8.3"));
+        assert!(!version_satisfies("2.8.5", "2.8.3"));
     }
 
     // -----------------------------------------------------------------------

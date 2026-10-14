@@ -71,6 +71,11 @@ saphyr = { version = "0.0.11", default-features = false }
 # Unix host can exercise. `dunce::simplified` is also the identity on
 # non-Windows, so the call sites take no `cfg` pair. No dependencies, no I/O.
 dunce = "1.0.5"
+# Cargo's own requirement/version matcher, for the derived-mode patch
+# precheck (`version_satisfies`). Matches cargo's caret/tilde/wildcard
+# semantics exactly instead of re-deriving them by hand. No default
+# features: this crate only parses and compares, never touches a registry.
+semver = { version = "1", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
