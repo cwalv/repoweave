@@ -281,9 +281,12 @@ impl Integration for GoWork {
     /// A hard predicate in the sense
     /// [`Integration::member_incompatibility`]
     /// requires: it reads the members' `go.mod` files and the managed `go.work`
-    /// and nothing else, and the consequence needs no interpretation — the go
-    /// toolchain refuses to build a workspace whose go.work asks for less than
-    /// a member's go.mod declares.
+    /// and nothing else, and the consequence needs no interpretation — a member
+    /// requiring `go 1.21` or above makes the go toolchain refuse to build a
+    /// workspace whose go.work asks for less. Below `1.21`, measured directly:
+    /// `go build` exits 0 against a go.work pinned under the requirement
+    /// (`go.work 1.12`, member `1.15`) — the go-line was advisory before the
+    /// toolchain started enforcing it, so there is no consequence to report.
     ///
     /// Not the same question as [`Self::verify`]: the go-line is
     /// `Ownership::DefaultOnly`, so a divergence from rwv's computed default
@@ -295,7 +298,9 @@ impl Integration for GoWork {
     /// - `go.work` has no go-line — with no pin on disk there is no choice to
     ///   be incompatible with;
     /// - either side is unparseable — the category states facts or nothing;
-    /// - the on-disk version is at or above the requirement.
+    /// - the on-disk version is at or above the requirement;
+    /// - the requirement itself is below `1.21` — the toolchain does not
+    ///   enforce it, whatever the on-disk pin says.
     ///
     /// Comparison includes the patch component (absent reads as `0`), so
     /// `go 1.26` against a member's `go 1.26.1` is a breach and `go 1.9`
@@ -324,6 +329,10 @@ impl Integration for GoWork {
         };
 
         if on_disk >= required {
+            return Ok(None);
+        }
+
+        if required < GO_ENFORCES_WORKSPACE_CONSISTENCY_FROM {
             return Ok(None);
         }
 
@@ -723,6 +732,15 @@ fn activate_via_hand_edit(
 /// A go language version as `(major, minor, patch)`, with an absent patch
 /// component read as `0` (`1.26` and `1.26.0` are the same requirement).
 type GoVersion = (u64, u64, u64);
+
+/// The oldest member requirement the go toolchain actually enforces against
+/// `go.work`. Measured directly with `go build` (go1.25 toolchain): a member
+/// requiring `go 1.21` or above fails the build when go.work's go-line is
+/// lower, with an explicit "requires go >= …" error; a member requiring less
+/// builds regardless of what go.work's go-line says. The cutoff tracks the
+/// member's own requirement, not go.work's on-disk value — a go.work pinned
+/// at `1.12` still fails against a member requiring `1.25`.
+const GO_ENFORCES_WORKSPACE_CONSISTENCY_FROM: GoVersion = (1, 21, 0);
 
 /// Parse a go-directive value (`1.26`, `1.26.3`) into comparable components.
 /// Returns `None` for anything without at least `<major>.<minor>` numerics —
@@ -1409,6 +1427,72 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Regression: `go work use` attaches a comment directly above a
+    // single-entry `use <path>` line to that entry as a doc comment, and
+    // folding a second path into the resulting factored `use (…)` block
+    // carries the marker inside the parens rather than leaving it above the
+    // block — which made `ensure_marker_present` see no marker above and add
+    // a second one.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn regression_go_tool_path_does_not_duplicate_marker_when_folding_to_block() {
+        if !require_go() {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "go.work",
+            "// managed by repoweave\nuse ./github/test/repoweave\n",
+        );
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/test/some-go-tool/go.mod",
+            "module example.com/some-go-tool\n\ngo 1.21\n",
+        );
+
+        let manifest = make_manifest_local(vec![
+            ("github/test/repoweave", Role::Owned),
+            ("github/test/some-go-tool", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        GoWork.activate(&ctx).unwrap();
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert_eq!(
+            text.matches("// managed by repoweave").count(),
+            1,
+            "the marker must appear exactly once: {text}"
+        );
+        let marker_line = text
+            .lines()
+            .position(|l| l.trim() == "// managed by repoweave")
+            .expect("marker must be present");
+        let use_line = text
+            .lines()
+            .position(|l| l.trim().starts_with("use"))
+            .expect("use block must be present");
+        assert_eq!(
+            marker_line + 1,
+            use_line,
+            "the marker must sit immediately above the use block, not inside it: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // The property the twin above is an instance of: which path ran is not
     // observable in the output. Least-surprise is a global property, so the
     // same inputs must produce the same file whether or not `go` is installed.
@@ -1876,6 +1960,18 @@ mod tests {
         assert!(
             probe(Some("1.26.1"), "1.26").is_none(),
             "a patch-level bump above the requirement is compatible"
+        );
+    }
+
+    #[test]
+    fn member_incompatibility_silent_when_requirement_predates_enforcement() {
+        // Measured with `go build` (go1.25 toolchain): a go.work pinned under
+        // this exact pair exits 0 — go enforces the workspace/member
+        // consistency check only from 1.21 requirements on.
+        assert!(
+            probe(Some("1.12"), "1.15").is_none(),
+            "a member requiring less than go 1.21 is not something the \
+             toolchain rejects, whatever the on-disk pin says"
         );
     }
 

@@ -1424,7 +1424,36 @@ impl GoWorkDoc {
     /// already-on-disk text after the fact rather than riding
     /// `set_owned`/`serialize`'s `pending_use` injection (the FALLBACK
     /// path's route, which never runs here).
+    ///
+    /// `go work use` treats a comment immediately above a single-entry
+    /// `use <path>` line as that entry's own doc comment: folding a second
+    /// path into a factored `use (…)` block carries the comment inside the
+    /// parens, attached to the first entry, rather than leaving it above the
+    /// block. Measured directly against the go1.25 toolchain. Dropping any
+    /// copy that ends up strictly inside the block before checking for one
+    /// above it is what keeps this idempotent on a file the bug already
+    /// doubled.
+    pub(crate) fn strip_interior_marker(&mut self) {
+        let Some((start, end, _)) = Self::locate_use_block(&self.text) else {
+            return;
+        };
+        let trailing_newline = self.text.ends_with('\n');
+        let lines: Vec<&str> = self.text.lines().collect();
+        let kept: Vec<&str> = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, line)| !(*i > start && *i < end && line.trim() == GO_MARKER_LINE))
+            .map(|(_, line)| *line)
+            .collect();
+        let mut out = kept.join("\n");
+        if trailing_newline && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        self.text = out;
+    }
+
     pub(crate) fn ensure_marker(&mut self) {
+        self.strip_interior_marker();
         let Some((start, _, marker_idx)) = Self::locate_use_block(&self.text) else {
             return;
         };
