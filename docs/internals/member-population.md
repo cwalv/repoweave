@@ -204,12 +204,14 @@ were placed; `written` counts every tracked entry the backend wrote, repairs
 included. Text reports name the member on `workweave create`, `add`, `fetch`,
 `update`, `sync`, `sync-to`, `abort` and `doctor --fix`.
 
-Under `--json`, counts live only in placement records,
-`{path, absolute_path, files}`, each naming the checkout it describes, in
-`fetch`, `update`, `sync` and `sync-to`. The envelope carries a `placements`
-array, empty rather than absent when nothing was placed; NDJSON mode emits a
-placement line as each placement happens, under a `$schema` of its own that
-every verb shares. Outcome records never carry counts, because a placement need
+Under `--json`, counts live only in placement records — `PlacementOutput`
+(`src/placement.rs`), `{path, absolute_path, files}` — each naming the checkout
+it describes, in `fetch`, `update`, `sync` and `sync-to`. The envelope carries
+a `placements` array, empty rather than absent when nothing was placed. NDJSON
+mode (`--json -j N`, `N > 1`) streams a placement line as each placement
+happens, beside the verb's own per-repo lines; its `$schema` names
+`docs/reference/schemas/placement-record.json`, which every verb shares and is
+how a consumer tells the two kinds of line apart. Outcome records never carry counts, because a placement need
 not be of the checkout an outcome names: `sync-to` re-shares a repo in the seat
 and in the target, and `fetch` in a workweave creates the seat's worktree while
 its outcome names the canonical clone. Only the placement's own
