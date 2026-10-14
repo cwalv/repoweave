@@ -250,6 +250,24 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
   and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
   branch pointer advances without replaying anything.
 
+**Replay prunes a member only when the op drops it from CWD's lock.**
+Before advancing anything, Phase 2 materializes members the source's lock
+names and CWD lacks on disk, and weighs pruning members CWD's lock names
+and the source's does not. That absence is ambiguous: the source may have
+dropped the member, or CWD may have added it and the source not taken it
+yet. The lock committed at the common ancestor of the two project tips
+tells them apart. A member that lock names was dropped by the source, and
+its checkout is pruned behind the dirty, unique-commit and store-claim
+refusals. A member it lacks was added on CWD's side; Phase 1' replays the
+add onto the source's tip, so the member stays in CWD's next lock and its
+checkout is kept, with a `kept` line saying so. Role plays no part. When
+no shared lock can be read — histories with no common commit, no lock at
+the common ancestor — nothing shows the source dropped the member, and it
+is kept with the reason; replaying the whole of CWD's history keeps it in
+CWD's lock in that case too. `--discard-local-commits` is the exception:
+it hands CWD the source's lock as it stands, so every member that lock
+lacks is pruned.
+
 **A pull does not refuse a destination whose own lock is behind its
 HEAD.** That lock is not replay's input — the targets come from the
 source — and relock regenerates it at op end, so the gate was refusing
