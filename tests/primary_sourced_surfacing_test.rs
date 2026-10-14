@@ -120,6 +120,30 @@ fn surfacing_lines(doctor: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `rwv doctor --json` surfacing issues naming `name` that report a link
+/// resolving somewhere other than expected.
+fn mis_target_issues(dir: &Path, name: &str) -> Vec<serde_json::Value> {
+    let output = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(dir)
+        .output()
+        .expect("rwv should run");
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("`--json` must emit parseable JSON");
+    parsed["issues"]
+        .as_array()
+        .expect("`issues` must be an array")
+        .iter()
+        .filter(|i| {
+            i["kind"] == "surfacing"
+                && i["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains(name) && m.contains("resolves to"))
+        })
+        .cloned()
+        .collect()
+}
+
 fn replace_link(dir: &Path, name: &str, target: &Path) {
     repoweave::symlink::remove(&dir.join(name)).unwrap();
     repoweave::symlink::create(
@@ -231,6 +255,10 @@ fn doctor_fix_replaces_a_link_into_the_workweaves_own_copy() {
         "doctor should report the mis-targeted link as fixable:\n{doctor}"
     );
 
+    let issues = mis_target_issues(&ww, ".shared");
+    assert_eq!(issues.len(), 1, "{issues:#?}");
+    assert_eq!(issues[0]["safe_to_fix"], true, "{:#}", issues[0]);
+
     let fix = rwv_output(&ww, &["doctor", "--fix"]);
     assert_eq!(link(&ww, ".shared"), weaves.primary_copy(), "{fix}");
 }
@@ -275,6 +303,13 @@ fn an_absolute_link_into_another_trees_projects_is_not_offered_as_fixable() {
             .iter()
             .any(|l| l.contains("resolves to") && l.contains("not auto-fixed")),
         "a link rwv did not make is reported, not offered to --fix:\n{doctor}"
+    );
+    let issues = mis_target_issues(&ww, ".shared");
+    assert_eq!(issues.len(), 1, "{issues:#?}");
+    assert_eq!(
+        issues[0]["safe_to_fix"], false,
+        "an agent reading --json must not wait on --fix for a link --fix leaves:\n{:#}",
+        issues[0]
     );
 
     rwv_output(&ww, &["doctor", "--fix"]);
