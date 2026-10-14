@@ -559,6 +559,43 @@ pub struct LocalRegistry {
     pub registry_name: RegistryName,
 }
 
+/// Mint a `file://` URL from an absolute path spelled however the operator's
+/// platform spells one — this is pure string shape, not `cfg(windows)`, so a
+/// Windows-shaped root drives the same code on every host.
+///
+/// Detects a drive letter (`C:\` or `C:/`) textually rather than through
+/// `Path::is_absolute`, which answers for the *compiling* platform, not the
+/// shape of the string in hand. A drive-letter path takes `\` as its
+/// separator and needs the authority slot `C:` would otherwise fill left
+/// empty behind an extra `/`; anything else is passed through unsplit, so a
+/// `/`-rooted path (its `\` is filename content, not a separator) keeps its
+/// bytes.
+fn mint_file_url(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let is_drive_letter_path = bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.get(1) == Some(&b':')
+        && matches!(bytes.get(2), None | Some(b'/') | Some(b'\\'));
+    let forward_separated = if is_drive_letter_path {
+        path.replace('\\', "/")
+    } else {
+        path.to_owned()
+    };
+    let mut encoded = String::with_capacity(forward_separated.len());
+    for byte in forward_separated.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
 const LOCAL_CREATION_PARAMS: &[ParamSpec] = &[
     ParamSpec {
         name: "root",
@@ -602,7 +639,7 @@ impl Registry for LocalRegistry {
         // The upstream directory is named exactly as the URL spells it — no
         // `.git` suffix — so the URL and the path are the same string and
         // the mapping needs no rule.
-        let url: RepoUrl = format!("file://{root}/{owner}/{repo}")
+        let url: RepoUrl = mint_file_url(&format!("{root}/{owner}/{repo}"))
             .parse()
             .expect("RepoUrl::from_str is infallible");
         let bare_path = PathBuf::from(root).join(owner).join(repo);
@@ -1227,5 +1264,74 @@ mod tests {
             "non-vacuity: at least one built-in registry must declare a \
              creation parameter"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // mint_file_url / LocalRegistry::plan_creation
+    // -----------------------------------------------------------------------
+
+    /// `mint_file_url` reads the drive letter out of the string itself, not
+    /// out of `cfg(windows)`, so this fixture drives the Windows shape on
+    /// whatever platform runs the suite.
+    #[test]
+    fn a_drive_letter_root_mints_a_well_formed_file_url() {
+        assert_eq!(
+            mint_file_url(r"C:\Users\runneradmin\AppData\Local\Temp\.tmp8MlRUw\lab/acme/fresh"),
+            "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmp8MlRUw/lab/acme/fresh"
+        );
+    }
+
+    #[test]
+    fn a_posix_root_mints_the_same_as_before() {
+        assert_eq!(
+            mint_file_url("/srv/repos/acme/fresh"),
+            "file:///srv/repos/acme/fresh"
+        );
+    }
+
+    /// A `/`-rooted path never loses a `\`: off a drive letter, it is
+    /// filename content, not a separator.
+    #[test]
+    fn a_backslash_off_a_drive_letter_is_left_alone() {
+        assert_eq!(
+            mint_file_url("/srv/repos/a\\b/fresh"),
+            "file:///srv/repos/a%5Cb/fresh"
+        );
+    }
+
+    #[test]
+    fn a_space_in_the_root_is_percent_encoded() {
+        assert_eq!(
+            mint_file_url(r"C:\Users\dev\My Repos\acme\fresh"),
+            "file:///C:/Users/dev/My%20Repos/acme/fresh"
+        );
+    }
+
+    fn local_reg() -> LocalRegistry {
+        LocalRegistry {
+            registry_name: RegistryName::new("local"),
+        }
+    }
+
+    /// `rwv add --new` against a Windows-shaped `root` must mint a clonable
+    /// URL, not `file://C:\...\owner\repo` (backslashes, and `C:` read as
+    /// authority for want of a third slash).
+    #[test]
+    fn plan_creation_mints_a_clonable_url_for_a_windows_shaped_root() {
+        let mut params = ParamMap::new();
+        params.insert(
+            "root",
+            r"C:\Users\runneradmin\AppData\Local\Temp\.tmp8MlRUw\lab",
+        );
+        params.insert("owner", "acme");
+        params.insert("repo", "fresh");
+
+        let plan = local_reg().plan_creation(&params).unwrap();
+
+        assert_eq!(
+            plan.url.to_string(),
+            "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmp8MlRUw/lab/acme/fresh"
+        );
+        assert!(!plan.url.to_string().contains('\\'));
     }
 }
