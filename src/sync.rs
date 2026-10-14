@@ -1597,6 +1597,7 @@ fn materialize_missing_repo(
                 project_name,
                 name.require(dir, project)?,
                 repo_path,
+                entry.role,
                 start,
             )?;
         }
@@ -1608,6 +1609,7 @@ fn materialize_missing_repo(
             }
             vcs.clone_repo(&entry.url.to_string(), &dest)
                 .with_context(|| format!("clone of {repo_path} from {} failed", entry.url))?;
+            crate::settle::settle(vcs, &dest, entry.role)?;
         }
     }
     Ok(())
@@ -5093,7 +5095,29 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .context("failed to write advanced_tips after Phase 1'")?;
     }
 
+    settle_members(&ctx.cwd_workspace_dir, &ctx.cwd_project_dir, emit_text);
+
     Ok(())
+}
+
+/// Settle every member checked out under `workspace` for the role its
+/// project's manifest now gives it: replay and advance-target rewrite member
+/// files, and a manifest that arrived with them can change a member's role.
+/// A member that cannot be settled is named, not fatal — the op's own work
+/// stands, and `rwv doctor --fix` settles what is left. A manifest that does
+/// not parse settles nothing here; the phase that needs it next refuses on it.
+fn settle_members(workspace: &Path, project_dir: &Path, emit_text: bool) {
+    let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) else {
+        return;
+    };
+    for (repo_path, e) in crate::settle::settle_workspace(workspace, &manifest) {
+        if emit_text {
+            eprintln!(
+                "  {repo_path}: warning: could not settle its files for its role ({e:#}); \
+                 `rwv doctor --fix` retries"
+            );
+        }
+    }
 }
 
 /// Pin the atomic source snapshot at T0: read the source project tip once,
@@ -5411,6 +5435,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         &ctx.cwd_project_name,
                         name,
                         repo_path,
+                        entry.role,
                         cwd_tip.as_str(),
                     )
                 }) {
@@ -5523,6 +5548,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             );
         }
     }
+
+    settle_members(&ctx.dest_workspace_dir, &ctx.dest_project_dir, emit_text);
 
     Ok(())
 }
@@ -6358,6 +6385,7 @@ pub fn run_abort(
             any_failure = true;
         }
     }
+    settle_members(&workspace_dir, &cwd_project_dir, true);
 
     // For sync-to: also roll back repos in the extra (target) workspaces.
     // The target side does not have its own `converged_tips` entries — the
@@ -6448,6 +6476,7 @@ pub fn run_abort(
                         any_failure = true;
                     }
                 }
+                settle_members(&extra_ws_dir, &extra_project_dir, true);
                 // Clear op-state from the extra workspace only when this side
                 // completed without a foreign-tip refusal — otherwise the
                 // operator may want to re-run abort after reconciling.

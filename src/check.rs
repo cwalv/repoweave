@@ -41,6 +41,17 @@ pub enum CheckViolation {
         repo: RepoPath,
     },
 
+    /// A member checkout whose tracked regular files do not hold the
+    /// permissions its role asks for: writable in a `reference` member, or
+    /// read-only in any other. `files` counts them.
+    MemberPermissions {
+        /// Workweave name; `None` for the primary weave.
+        workweave: Option<WorkweaveName>,
+        repo: RepoPath,
+        kind: PermissionsKind,
+        files: usize,
+    },
+
     /// An `rwv.toml` entry missing the `role` field.
     MissingRole {
         project: ProjectName,
@@ -713,7 +724,8 @@ impl CheckViolation {
             | CheckViolation::StaleWorktreeRegistration { .. }
             | CheckViolation::DanglingRefReceipt { .. }
             | CheckViolation::PreFlatRefReceipt { .. }
-            | CheckViolation::DeadOpLease { .. } => Auto,
+            | CheckViolation::DeadOpLease { .. }
+            | CheckViolation::MemberPermissions { .. } => Auto,
 
             CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
                 ReplayExclusionKind::Absent
@@ -801,6 +813,7 @@ impl CheckViolation {
             CheckViolation::OrphanedClone { .. } => "orphaned-clone",
             CheckViolation::UnknownSegmentClone { .. } => "unknown-segment-clone",
             CheckViolation::DanglingReference { .. } => "dangling-reference",
+            CheckViolation::MemberPermissions { .. } => "member-permissions",
             CheckViolation::MissingRole { .. } => "missing-role",
             CheckViolation::StaleLock { .. } => "stale-lock",
             CheckViolation::IncompleteLock { .. } => "incomplete-lock",
@@ -880,6 +893,17 @@ pub enum DeadOpLeaseKind {
         /// Op id of the record currently living at the owner workspace.
         owner_op_id: String,
     },
+}
+
+/// Which way a member's tracked files disagree with its role.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PermissionsKind {
+    /// A `reference` member's tracked file carries a write bit.
+    WritableReference,
+    /// A tracked file of a member of any other role is not writable by its
+    /// owner.
+    ReadOnlyMember,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1694,6 +1718,16 @@ pub enum ViolationOutput {
         absolute_path: String,
         project: String,
     },
+    MemberPermissions {
+        path: String,
+        absolute_path: String,
+        /// `None` for the primary weave.
+        workweave: Option<String>,
+        #[serde(rename = "sub_kind")]
+        sub_kind: PermissionsKind,
+        /// How many tracked regular files disagree with the member's role.
+        files: usize,
+    },
     MissingRole {
         path: String,
         absolute_path: String,
@@ -2042,6 +2076,18 @@ impl ViolationOutput {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
                 project: project.to_string(),
+            },
+            CheckViolation::MemberPermissions {
+                workweave,
+                repo,
+                kind,
+                files,
+            } => Self::MemberPermissions {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                sub_kind: kind,
+                files,
             },
             CheckViolation::MissingRole { project, repo } => Self::MissingRole {
                 absolute_path: abs(workspace_dir, &repo),
@@ -5269,6 +5315,155 @@ pub fn scan_uninitialized_submodules_in_workweaves(
     violations
 }
 
+/// The workweaves doctor answers for, each with its own project: the one it
+/// runs in, or, from the primary, each registered workweave of a project in
+/// scope. A workweave no registry entry names has no name to act under; the
+/// tree-integrity scan reports it.
+fn workweaves_in_scope(
+    ctx: &crate::workspace::WorkspaceContext,
+    project_scope: Option<&str>,
+) -> Vec<(WorkweaveName, PathBuf, Project)> {
+    use crate::workspace::Checkout;
+
+    let workweave_dirs: Vec<PathBuf> = match &ctx.checkout {
+        Checkout::Workweave { .. } => vec![ctx.active_path().to_path_buf()],
+        Checkout::Primary { .. } => crate::workweave::list_workweave_dirs(ctx.primary_path())
+            .into_iter()
+            .map(|(_, dir)| dir)
+            .collect(),
+    };
+    workweave_dirs
+        .into_iter()
+        .filter_map(|workweave_dir| {
+            let marker = crate::workspace::WorkweaveMarker::read(&workweave_dir).ok()??;
+            let project = marker.project().clone();
+            if project_scope.is_some_and(|scope| project.as_str() != scope) {
+                return None;
+            }
+            let workweave = crate::workweave::workweave_name_for_path(
+                ctx.primary_path(),
+                &project,
+                &workweave_dir,
+            )
+            .ok()??;
+            let loaded =
+                Project::from_dir(&project_dir(&workweave_dir, project.as_str()), project).ok()?;
+            Some((workweave, workweave_dir, loaded))
+        })
+        .collect()
+}
+
+/// A member checkout doctor answers for, with the role its own workspace's
+/// manifest gives it.
+struct MemberSlot {
+    workweave: Option<WorkweaveName>,
+    checkout: PathBuf,
+    repo: RepoPath,
+    vcs_type: crate::manifest::VcsType,
+    role: Role,
+}
+
+/// Every member checkout of the primary when doctor runs there, for the
+/// projects in scope, and of each workweave [`workweaves_in_scope`] names. A
+/// slot that is absent or a symlink is not a checkout. A clone two projects
+/// of the primary list is counted once, for the first of them.
+fn member_slots(
+    ctx: &crate::workspace::WorkspaceContext,
+    projects: &[Project],
+    project_scope: Option<&str>,
+) -> Vec<MemberSlot> {
+    use crate::workspace::Checkout;
+
+    let mut slots: Vec<MemberSlot> = Vec::new();
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut push = |workweave: Option<WorkweaveName>, dir: &Path, project: &Project| {
+        for (repo, entry) in project.manifest.iter_entries() {
+            let checkout = dir.join(repo.as_path());
+            if checkout.is_symlink() || !checkout.is_dir() || !seen.insert(checkout.clone()) {
+                continue;
+            }
+            slots.push(MemberSlot {
+                workweave: workweave.clone(),
+                checkout,
+                repo: repo.clone(),
+                vcs_type: entry.vcs_type,
+                role: entry.role,
+            });
+        }
+    };
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
+        for project in projects {
+            push(None, ctx.primary_path(), project);
+        }
+    }
+    for (workweave, dir, project) in workweaves_in_scope(ctx, project_scope) {
+        push(Some(workweave), &dir, &project);
+    }
+    slots
+}
+
+/// The member-permissions finding for `slot`, when any of its tracked regular
+/// files does not hold the permissions its role asks for.
+fn member_permissions_finding(slot: &MemberSlot) -> Option<CheckViolation> {
+    let vcs = crate::vcs::vcs_for(slot.vcs_type);
+    let files = crate::settle::unsettled(vcs.as_ref(), &slot.checkout, slot.role).ok()?;
+    (files > 0).then(|| CheckViolation::MemberPermissions {
+        workweave: slot.workweave.clone(),
+        repo: slot.repo.clone(),
+        kind: if slot.role == Role::Reference {
+            PermissionsKind::WritableReference
+        } else {
+            PermissionsKind::ReadOnlyMember
+        },
+        files,
+    })
+}
+
+/// `--fix` for `member-permissions`: settle every member slot, and drop the
+/// findings of the ones that settled. Runs after the per-finding repairs,
+/// which can rewrite a member's files.
+fn repair_member_permissions(
+    ctx: &crate::workspace::WorkspaceContext,
+    projects: &[Project],
+    project_scope: Option<&str>,
+    violations: Vec<CheckViolation>,
+    fix_errors: &mut Vec<String>,
+) -> Vec<CheckViolation> {
+    let mut settled: std::collections::HashSet<(Option<WorkweaveName>, RepoPath)> =
+        std::collections::HashSet::new();
+    for slot in member_slots(ctx, projects, project_scope) {
+        let location = match &slot.workweave {
+            Some(ww) => format!("{ww}/{}", slot.repo),
+            None => slot.repo.to_string(),
+        };
+        let vcs = crate::vcs::vcs_for(slot.vcs_type);
+        match crate::settle::settle(vcs.as_ref(), &slot.checkout, slot.role) {
+            Ok(changed) => {
+                if changed > 0 {
+                    println!(
+                        "[fixed] core: settled {changed} tracked file(s) of {location} for \
+                         its role ({role})",
+                        role = slot.role.as_str(),
+                    );
+                }
+                settled.insert((slot.workweave, slot.repo));
+            }
+            Err(e) => fix_errors.push(format!(
+                "member-permissions fix failed for {location}: {e:#}"
+            )),
+        }
+    }
+    violations
+        .into_iter()
+        .filter(|v| match v {
+            CheckViolation::MemberPermissions {
+                workweave, repo, ..
+            } => !settled.contains(&(workweave.clone(), repo.clone())),
+            _ => true,
+        })
+        .collect()
+}
+
 /// A member of a workweave with no worktree there: nothing at its slot while
 /// the workweave's `rwv.lock` pins it, or a symlink.
 struct MemberGap {
@@ -5277,6 +5472,7 @@ struct MemberGap {
     project: ProjectName,
     repo: RepoPath,
     vcs_type: crate::manifest::VcsType,
+    role: Role,
     symlinked: bool,
     /// The pinned revision, when the canonical clone holds it; the worktree
     /// can then be created without the network.
@@ -5311,36 +5507,9 @@ fn scan_member_gaps(
     ctx: &crate::workspace::WorkspaceContext,
     project_scope: Option<&str>,
 ) -> Vec<MemberGap> {
-    use crate::workspace::Checkout;
-
-    let workweave_dirs: Vec<PathBuf> = match &ctx.checkout {
-        Checkout::Workweave { .. } => vec![ctx.active_path().to_path_buf()],
-        Checkout::Primary { .. } => crate::workweave::list_workweave_dirs(ctx.primary_path())
-            .into_iter()
-            .map(|(_, dir)| dir)
-            .collect(),
-    };
-
     let mut gaps = Vec::new();
-    for workweave_dir in workweave_dirs {
-        let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&workweave_dir) else {
-            continue;
-        };
-        let project = marker.project().clone();
-        if project_scope.is_some_and(|scope| project.as_str() != scope) {
-            continue;
-        }
-        let Ok(Some(workweave)) =
-            crate::workweave::workweave_name_for_path(ctx.primary_path(), &project, &workweave_dir)
-        else {
-            continue;
-        };
-        let Ok(loaded) = Project::from_dir(
-            &project_dir(&workweave_dir, project.as_str()),
-            project.clone(),
-        ) else {
-            continue;
-        };
+    for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        let project = loaded.name.clone();
         for (repo, entry) in loaded.manifest.iter_entries() {
             let slot = workweave_dir.join(repo.as_path());
             let symlinked = crate::workweave::is_symlinked_member(&slot);
@@ -5372,6 +5541,7 @@ fn scan_member_gaps(
                 project: project.clone(),
                 repo: repo.clone(),
                 vcs_type: entry.vcs_type,
+                role: entry.role,
                 symlinked,
                 local_revision,
             });
@@ -5400,6 +5570,7 @@ fn repair_member_gaps(
             &gap.project,
             &gap.workweave,
             &gap.repo,
+            gap.role,
             revision.as_str(),
         ) {
             Ok(born) => println!(
@@ -6994,6 +7165,33 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                          missing manifest members, then re-run `rwv doctor` to verify"
                     ),
                 ),
+                CheckViolation::MemberPermissions {
+                    workweave,
+                    repo,
+                    kind,
+                    files,
+                } => {
+                    let location = match workweave {
+                        Some(ww) => format!("{ww}/{repo}"),
+                        None => format!("{repo}"),
+                    };
+                    let detail = match kind {
+                        PermissionsKind::WritableReference => format!(
+                            "{files} tracked file(s) of reference member {location} are \
+                             writable; `rwv doctor --fix` removes their write bits"
+                        ),
+                        PermissionsKind::ReadOnlyMember => format!(
+                            "{files} tracked file(s) of {location} are read-only, though it \
+                             is not a reference member; `rwv doctor --fix` restores the \
+                             owner's write bit, first giving a file shared with another \
+                             workspace a private copy"
+                        ),
+                    };
+                    (
+                        crate::integration::Severity::Warning,
+                        format!("member permissions: {detail}"),
+                    )
+                }
                 CheckViolation::MissingRole { project, repo } => (
                     crate::integration::Severity::Warning,
                     format!(
@@ -9378,7 +9576,15 @@ pub fn run_check(
     } = collect_doctor_violations(ctx, &world, ScanProgress::Heartbeat);
 
     let violations = if fix {
-        apply_finding_repairs(ctx, &world, violations, &repo_locations, &mut fix_errors)
+        let violations =
+            apply_finding_repairs(ctx, &world, violations, &repo_locations, &mut fix_errors);
+        repair_member_permissions(
+            ctx,
+            &world.input.projects,
+            world.project_scope(),
+            violations,
+            &mut fix_errors,
+        )
     } else {
         violations
     };
@@ -9710,6 +9916,11 @@ fn collect_doctor_violations(
 
     let member_gaps = scan_member_gaps(ctx, project_scope);
     violations.extend(member_gaps.iter().map(MemberGap::finding));
+    violations.extend(
+        member_slots(ctx, &input.projects, project_scope)
+            .iter()
+            .filter_map(member_permissions_finding),
+    );
 
     {
         use crate::workspace::read_active_project;

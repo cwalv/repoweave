@@ -43,13 +43,14 @@ fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)
 
 /// Create a worktree of `repo_path` in the workweave directory, pointing at
 /// the canonical clone at `primary_root`, born at the canonical clone's HEAD
-/// ([`crate::workweave::materialize_member`]). A symlink in the slot is
-/// replaced.
+/// and settled for `role` ([`crate::workweave::materialize_member`]). A
+/// symlink in the slot is replaced; a worktree already there is settled.
 ///
 /// If the canonical clone has no HEAD (e.g. `rwv add --new` produced an
 /// empty `git init`), the worktree creation is skipped — `git worktree add`
 /// against an unborn HEAD would fail. After the first commit, `rwv lock` pins
 /// it and `rwv doctor --fix` creates the worktree.
+#[allow(clippy::too_many_arguments)]
 fn create_worktree_in_workweave(
     vcs: &dyn Vcs,
     primary_root: &Path,
@@ -58,9 +59,11 @@ fn create_worktree_in_workweave(
     repo_path: &RepoPath,
     project: &ProjectName,
     workweave_name: &crate::manifest::WorkweaveName,
+    role: Role,
 ) -> anyhow::Result<()> {
     let dest = workweave_dir.join(repo_path.as_path());
     if !crate::workweave::is_symlinked_member(&dest) && dest.exists() {
+        crate::settle::settle(vcs, &dest, role)?;
         return Ok(());
     }
 
@@ -84,6 +87,7 @@ fn create_worktree_in_workweave(
         project,
         workweave_name,
         repo_path,
+        role,
         start.as_str(),
     )
     .with_context(|| {
@@ -96,33 +100,35 @@ fn create_worktree_in_workweave(
     Ok(())
 }
 
-/// In a workweave, give the workweave its worktree of the member whose
-/// canonical clone is `canonical`. Nothing to do at primary, or while the
-/// canonical clone is not on disk.
-fn worktree_for_workweave(
+/// Give the workspace `ctx` resolves to the member whose canonical clone is
+/// `canonical`, settled for `role`: in a workweave, its worktree; at primary,
+/// the canonical clone itself. Nothing to do while the canonical clone is not
+/// on disk.
+fn place_member(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     canonical: &Path,
     repo_path: &RepoPath,
+    role: Role,
 ) -> anyhow::Result<()> {
-    let Checkout::Workweave {
-        name, dir, project, ..
-    } = &ctx.checkout
-    else {
-        return Ok(());
-    };
     if !canonical.exists() {
         return Ok(());
     }
-    create_worktree_in_workweave(
-        vcs,
-        ctx.primary_path(),
-        canonical,
-        dir,
-        repo_path,
-        project,
-        name.require(dir, project)?,
-    )
+    match &ctx.checkout {
+        Checkout::Workweave {
+            name, dir, project, ..
+        } => create_worktree_in_workweave(
+            vcs,
+            ctx.primary_path(),
+            canonical,
+            dir,
+            repo_path,
+            project,
+            name.require(dir, project)?,
+            role,
+        ),
+        Checkout::Primary { .. } => crate::settle::settle(vcs, canonical, role).map(|_| ()),
+    }
 }
 
 /// Write `edited` as `project`'s manifest and regenerate the integrations from
@@ -242,11 +248,18 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                 role,
                 &manifest_path,
             )?;
-            // Local-path add doesn't clone, but if we are in a workweave the
-            // operator may still expect the workweave to see the repo as a
-            // worktree. Mirror the URL path's worktree-creation step.
+            // Local-path add doesn't clone, but the clone still has to hold
+            // the permissions of the role the manifest gives it, and a
+            // workweave still needs its worktree, as on the URL path.
             let canonical = ctx.primary_path().join(repo_path.as_path());
-            worktree_for_workweave(vcs.as_ref(), ctx, &canonical, &repo_path)?;
+            let role = match &registration {
+                Some((manifest, _)) => manifest.get_entry(&repo_path).map(|e| e.role),
+                None => Manifest::from_path(&manifest_path)?
+                    .get_entry(&repo_path)
+                    .map(|e| e.role),
+            }
+            .unwrap_or(role);
+            place_member(vcs.as_ref(), ctx, &canonical, &repo_path, role)?;
             settle_manifest(
                 ctx,
                 &project,
@@ -294,9 +307,9 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // `docs/explanation/joints/clone-topology.md`).
     let dest = ctx.primary_path().join(repo_path.as_path());
 
-    if manifest.contains_repo(&repo_path) {
+    if let Some(existing) = manifest.get_entry(&repo_path) {
         announce_already_registered(&repo_path);
-        worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+        place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
         return settle_manifest(ctx, &project, None);
     }
 
@@ -349,7 +362,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // In a workweave, also create a worktree at the workweave so the new
     // repo is materialized there. Before the manifest names it, because the
     // regeneration that follows authors only from members it finds on disk.
-    worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+    place_member(vcs.as_ref(), ctx, &dest, &repo_path, role)?;
 
     // Per-workspace state: the workweave's own copy when CWD is in one,
     // primary's otherwise.
@@ -849,7 +862,7 @@ pub fn run_add_new(
     if let Some(existing) = manifest.get_entry(&repo_path) {
         if existing.url == plan.url {
             announce_already_registered(&repo_path);
-            worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+            place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
             return settle_manifest(ctx, &project, None);
         }
         crate::refuse!(
@@ -974,7 +987,7 @@ pub fn run_add_new(
     // new repo is materialized there. An unborn HEAD (both creation shapes
     // start unborn) means create_worktree_in_workweave skips until the first
     // commit lands.
-    worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+    place_member(vcs.as_ref(), ctx, &dest, &repo_path, role)?;
 
     settle_manifest(ctx, &project, Some(&manifest))?;
 

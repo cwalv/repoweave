@@ -24,8 +24,9 @@
 
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
-    IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, ProvenanceKind, ReplayExclusionKind,
-    WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
+    IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind, ProvenanceKind,
+    ReplayExclusionKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
+    WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
@@ -71,6 +72,10 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::UnknownSegmentClone { .. } => "unknown-segment-clone".into(),
         CheckViolation::ConfusableSiblings { .. } => "confusable-siblings".into(),
         CheckViolation::DanglingReference { .. } => "dangling-reference".into(),
+        CheckViolation::MemberPermissions { kind, .. } => match kind {
+            PermissionsKind::WritableReference => "member-permissions/writable-reference".into(),
+            PermissionsKind::ReadOnlyMember => "member-permissions/read-only-member".into(),
+        },
         CheckViolation::MissingRole { .. } => "missing-role".into(),
         CheckViolation::StaleLock { .. } => "stale-lock".into(),
         CheckViolation::IncompleteLock { .. } => "incomplete-lock".into(),
@@ -247,6 +252,18 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::IncompleteLock {
             project: project(),
             repo: repo(),
+        },
+        CheckViolation::MemberPermissions {
+            workweave: Some(workweave()),
+            repo: repo(),
+            kind: PermissionsKind::WritableReference,
+            files: 3,
+        },
+        CheckViolation::MemberPermissions {
+            workweave: None,
+            repo: repo(),
+            kind: PermissionsKind::ReadOnlyMember,
+            files: 1,
         },
         CheckViolation::WorkweaveDrift {
             workweave: workweave(),

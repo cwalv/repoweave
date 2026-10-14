@@ -74,6 +74,7 @@ pub mod registry;
 pub mod root_write;
 mod schema_url;
 pub mod selector;
+pub mod settle;
 pub mod setup;
 pub mod state_file;
 pub mod status;

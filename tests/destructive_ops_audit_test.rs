@@ -171,6 +171,17 @@ const ALLOWLIST: &[Allowed] = &[
             directory is never removed here.",
     },
     Allowed {
+        file: "settle.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "settle's unshare: removes the private copy it wrote \
+            beside a shared file in the same call, and only when replacing \
+            the shared file with it failed. The path is minted there and \
+            holds nothing but that copy; the shared file and every other \
+            name for it are untouched.",
+    },
+    Allowed {
         file: "add_remove.rs",
         pattern: "remove_dir_all",
         count: 1,

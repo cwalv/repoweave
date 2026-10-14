@@ -265,6 +265,11 @@ fn update_for_project(
             &reporter,
             use_reporter,
         )
+        .and_then(|new_sha| {
+            crate::settle::settle(item.vcs.as_ref(), item.checkout.path(), item.entry.role)
+                .map(|_| new_sha)
+                .map_err(|e| format!("{}: {e:#}", item.repo_path))
+        })
     });
 
     // Aggregate errors in input order — matches the existing serial shape.

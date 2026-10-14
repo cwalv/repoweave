@@ -1586,6 +1586,13 @@ mod doctor_json {
             absolute_path: String,
             project: String,
         },
+        MemberPermissions {
+            path: String,
+            absolute_path: String,
+            workweave: Option<String>,
+            sub_kind: String,
+            files: usize,
+        },
         MissingRole {
             path: String,
             absolute_path: String,

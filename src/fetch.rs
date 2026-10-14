@@ -369,6 +369,7 @@ fn materialize_workweave_members(
             project,
             workweave,
             repo_path,
+            entry.role,
             pin.version.as_str(),
         ) {
             Ok(born) => {
@@ -530,6 +531,21 @@ fn fetch_project_repos(
             &reporter,
             json,
         );
+        let outcome = match outcome {
+            FetchOutcome::Ok { .. } => {
+                match crate::settle::settle(
+                    vcs.as_ref(),
+                    &workspace_root.join(repo_path.as_path()),
+                    entry.role,
+                ) {
+                    Ok(_) => outcome,
+                    Err(e) => FetchOutcome::Failed {
+                        msg: format!("{}: {e:#}", repo_path.as_str()),
+                    },
+                }
+            }
+            other => other,
+        };
 
         // NDJSON mode: emit one line per repo as soon as it finishes.
         if ndjson {

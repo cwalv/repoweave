@@ -29,7 +29,9 @@
 //!   adoption is a doctor act with the operator's consent.
 
 use crate::cli::consent::DiscardUnmergedConsent;
-use crate::manifest::{project_repo_key, LockFile, Manifest, ProjectName, RepoPath, WorkweaveName};
+use crate::manifest::{
+    project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, WorkweaveName,
+};
 use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
 use crate::vcs::{
@@ -1062,10 +1064,12 @@ pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
 
 /// Give the workweave at `workweave_dir` the workspace it lacks for
 /// `repo_path`: an ephemeral worktree of the canonical clone under
-/// `primary_root`, born at `start`. A symlink in the slot, dangling or not, is
-/// unlinked first; what it pointed at is never touched.
+/// `primary_root`, born at `start` and settled for `role`. A symlink in the
+/// slot, dangling or not, is unlinked first; what it pointed at is never
+/// touched.
 ///
 /// Returns the revision the worktree was born at.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn materialize_member(
     vcs: &dyn Vcs,
     primary_root: &Path,
@@ -1073,6 +1077,7 @@ pub(crate) fn materialize_member(
     project: &ProjectName,
     workweave: &WorkweaveName,
     repo_path: &RepoPath,
+    role: Role,
     start: &str,
 ) -> anyhow::Result<ResolvedRevisionId> {
     let canonical = primary_root.join(repo_path.as_path());
@@ -1108,6 +1113,7 @@ pub(crate) fn materialize_member(
     .with_context(|| format!("cannot materialize {repo_path}"))?
     .into_authored(&mut registry)
     .with_context(|| format!("worktree add for {repo_path} failed"))?;
+    crate::settle::settle(vcs, &dest, role)?;
     Ok(start)
 }
 
@@ -1704,10 +1710,12 @@ pub fn create_workweave(
             }
         }
 
+        if result.is_ok() {
+            rollback.record_worktree(repo_abs, worktree_dest.clone());
+            result = crate::settle::settle(vcs.as_ref(), &worktree_dest, entry.role).map(|_| ());
+        }
         match result {
             Ok(()) => {
-                rollback.record_worktree(repo_abs, worktree_dest.clone());
-
                 // R23 GAP: init submodules in the new worktree. Only runs
                 // when `.gitmodules` exists (no per-repo overhead otherwise).
                 // Failure is warn-and-continue: network may be down or
