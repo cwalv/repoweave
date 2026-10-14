@@ -93,7 +93,7 @@ cd ~/work
 rwv lock
 ```
 
-`rwv lock` reads HEAD from each repo and writes `projects/web-app/rwv.lock`. If a tag exists at HEAD, the lock records the tag name; otherwise the revision ID. The lock file is committable in the project repo:
+`rwv lock` reads HEAD from each repo and writes `projects/web-app/rwv.lock`. Each entry is the commit id HEAD is on, even where a tag names it. The lock file is committable in the project repo:
 
 ```bash
 cd projects/web-app

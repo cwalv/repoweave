@@ -15,7 +15,7 @@
 //!   5. Create a server-local package.json with a file: dependency on shared-types
 //!   6. npm install from server directory succeeds
 //!   7. node -e "require('@chatly/shared-types')" from server directory succeeds
-//!   8. generate_lock records shared-types version as "v1.0.0"
+//!   8. generate_lock records shared-types at its commit id, not the tag
 //!
 //! Both tests are skipped gracefully if `npm` is not on PATH.
 
@@ -393,7 +393,7 @@ role = "owned"
     );
 
     // -------------------------------------------------------------------------
-    // Step 8: generate_lock records shared-types version as "v1.0.0"
+    // Step 8: generate_lock records shared-types at its commit id, not the tag
     // -------------------------------------------------------------------------
     let manifest = repoweave::manifest::Manifest::from_path(&project_dir.join("rwv.toml"))
         .expect("manifest should parse");
@@ -408,10 +408,10 @@ role = "owned"
         )
         .expect("lock should contain shared-types entry");
 
+    let head = common::git_in(&shared_types_dir, &["rev-parse", "HEAD"]);
+    let written = serde_json::to_value(shared_types_entry).expect("a lock entry serializes");
     assert_eq!(
-        shared_types_entry.version.display_str(),
-        "v1.0.0",
-        "generate_lock should record the tag name 'v1.0.0' for shared-types, got: {}",
-        shared_types_entry.version.display_str(),
+        written["version"], head,
+        "the lock must record shared-types' commit id even though v1.0.0 names HEAD"
     );
 }

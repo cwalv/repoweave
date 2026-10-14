@@ -32,10 +32,11 @@ pub(crate) mod testing;
 /// public way to mint a `ResolvedRevisionId` from a free string — the
 /// parse boundary lives in [`RawRevisionId`].
 ///
-/// Serde: only `Serialize`. Writes the display form when present, else
-/// the canonical SHA. Deserialization deliberately is not implemented;
-/// lock-file parsing yields [`RawRevisionId`] which must then be
-/// resolved against the on-disk repo.
+/// Serde: only `Serialize`, and it writes the canonical SHA, never the
+/// display form. What is serialized is read back as a pin, and a tag or
+/// branch name can move or vanish after it is written. Deserialization
+/// deliberately is not implemented; lock-file parsing yields
+/// [`RawRevisionId`] which must then be resolved against the on-disk repo.
 #[derive(Debug, Clone)]
 pub struct ResolvedRevisionId {
     canonical: String,
@@ -44,8 +45,7 @@ pub struct ResolvedRevisionId {
 
 impl ResolvedRevisionId {
     /// Construct with a known canonical commit SHA and optional display
-    /// form. When `display` equals `canonical` it is suppressed so
-    /// serialization stays clean.
+    /// form. When `display` equals `canonical` it is suppressed.
     pub fn from_canonical(canonical: impl Into<String>, display: Option<String>) -> Self {
         let canonical = canonical.into();
         let display = display.filter(|d| d != &canonical);
@@ -117,7 +117,7 @@ impl fmt::Display for ResolvedRevisionId {
 
 impl serde::Serialize for ResolvedRevisionId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.display_str())
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -171,6 +171,13 @@ impl RawRevisionId {
     /// Borrow the underlying string.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Whether the recorded string is a full commit id rather than a name
+    /// (a tag, a branch, an abbreviated id) that resolves to wherever it
+    /// points when read.
+    pub fn is_commit_id(&self) -> bool {
+        is_canonical_commit_id(&self.0)
     }
 }
 
@@ -2005,9 +2012,8 @@ pub trait Vcs: Send + Sync {
     /// [`ResolvedRevisionId`] with the canonical commit SHA filled in.
     ///
     /// When the input string differs from the canonical SHA, it is
-    /// preserved as the display form for round-tripping in lock files and
-    /// human-readable output. Returns [`VcsError::RevisionNotFound`] if
-    /// the revision is unknown in this repo.
+    /// preserved as the display form for human-readable output. Returns
+    /// [`VcsError::RevisionNotFound`] if the revision is unknown in this repo.
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError>;
 
     /// Remove a worktree previously created at `worktree_path`.

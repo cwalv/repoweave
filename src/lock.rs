@@ -2,7 +2,7 @@
 
 use crate::manifest::{LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile};
 use crate::refusal::RefusalKind;
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment, ResolvedRevisionId, Vcs};
+use crate::vcs::{project_vcs, vcs_for, HeadAttachment, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -58,11 +58,6 @@ fn build_commit_message(
 /// When `dirty` is false, each repo is checked for uncommitted changes and
 /// an error is returned if any are found. When `dirty` is true, the check
 /// is skipped.
-///
-/// If a tag points at HEAD for a given repo, the tag name is used as the
-/// version instead of the raw SHA — unless the project has asked to forgo
-/// tag names, in which case every entry records the commit id. See
-/// [`crate::manifest::LockConfig`].
 pub fn generate_lock(
     manifest: &Manifest,
     workspace_root: &Path,
@@ -110,26 +105,12 @@ pub fn generate_lock(
             HeadAttachment::Detached(d) => Some(d),
         };
 
-        // `head_revision` resolves to the canonical SHA and, when a tag
-        // points at HEAD, also fills in the tag display form — so the lock
-        // serializes as the tag name when available and the canonical SHA
-        // otherwise.
-        //
         // Unborn HEAD: `head_revision` returns a `CommandFailed` whose stderr
         // contains "unborn HEAD" — return it as-is; the message already names
         // the repo path and the fix.
         let version = vcs
             .head_revision(repo_dir)
             .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?;
-
-        // Applied here rather than inside `head_revision`: which form to
-        // record is a property of the project keeping the lock, not of the
-        // VCS being asked what HEAD is.
-        let version = if manifest.forgo_tag_names() {
-            ResolvedRevisionId::from_canonical(version.as_str(), None)
-        } else {
-            version
-        };
 
         // Detached HEAD: warn but do not refuse. Lock runs inside automation
         // (sync auto-relock) so a hard gate would break legitimate flows.
@@ -158,6 +139,19 @@ pub fn generate_lock(
     }
 
     Ok(ResolvedLockFile { repositories })
+}
+
+/// The warning for a lock entry pinned by name, spelled once for every verb
+/// that reads a lock and proceeds on it.
+pub(crate) fn pinned_by_name_warning(
+    entry: impl std::fmt::Display,
+    version: &crate::vcs::RawRevisionId,
+) -> String {
+    format!(
+        "{entry}: lock pins `{version}`, a name rather than a commit id; it resolves to \
+         wherever that name points now, and to nothing once it is gone. `rwv lock` \
+         records the commit id"
+    )
 }
 
 /// Write a lock file as JSON into `project_dir`.

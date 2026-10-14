@@ -9,14 +9,17 @@ resulting snapshot into the project's `rwv.lock`.
 
 ### What each entry records
 
-A tag pointing at HEAD is recorded by name (`v1.2.3`); everything else is
-recorded as the commit id. A project that would rather not depend on
-upstream tag discipline can set `[lock] forgo-tag-names = true` in its
-`rwv.toml`, which records the commit id for every entry — giving up the
-readable form, and the lock's implicit released-vs-unreleased signal, for a
-lock that resolves to the same tree regardless of where a tag points later.
-The policy is project-wide and applies to every writer of the lock,
-including the `rwv sync` and `rwv fetch` paths that call `lock` internally.
+Every entry is the commit id HEAD is on, never a tag or branch name, even
+when a tag points at HEAD. A name can be moved or deleted after the lock is
+written; a commit id cannot, so the lock resolves to the same tree however
+the names around it change. The same holds for every writer of the lock,
+including the `rwv sync` and `rwv fetch` paths that write it internally.
+
+An older or hand-edited lock may still carry an entry pinned by name.
+Verbs that read the lock resolve such an entry to wherever the name points
+now and warn, naming the entry; the next `rwv lock`, or the relock at the
+end of a sync, records the commit id. An entry whose name no longer resolves
+is refused as an unknown revision.
 
 ### Lock as derived state
 

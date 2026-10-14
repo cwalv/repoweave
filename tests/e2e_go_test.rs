@@ -401,8 +401,8 @@ func Message() string {
     );
 
     // ------------------------------------------------------------------
-    // 11. Generate rwv.lock and verify protocol's version is "v1.0.0"
-    //     (HEAD is tagged, so generate_lock should record the tag name)
+    // 11. Generate rwv.lock and verify protocol is pinned by commit id
+    //     (HEAD is tagged, and the lock still records the commit)
     // ------------------------------------------------------------------
     let manifest = repoweave::manifest::Manifest::from_path(&project_dir.join("rwv.toml"))
         .expect("failed to parse rwv.toml");
@@ -417,12 +417,11 @@ func Message() string {
         )
         .expect("lock should contain github/chatly/protocol");
 
-    // Tag-form is preserved as the display form (round-trips into rwv.lock as
-    // `version: v1.0.0`); `as_str` returns the canonical SHA.
+    let head = common::git_in(&protocol_dir, &["rev-parse", "HEAD"]);
+    let written = serde_json::to_value(protocol_entry).expect("a lock entry serializes");
     assert_eq!(
-        protocol_entry.version.display_str(),
-        "v1.0.0",
-        "rwv.lock should record the tag name 'v1.0.0' for the protocol repo when HEAD is tagged"
+        written["version"], head,
+        "rwv.lock must record protocol's commit id even though v1.0.0 names HEAD"
     );
 }
 

@@ -554,26 +554,22 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Lock records tag name when HEAD is tagged
+// 9. A tag at HEAD changes nothing about what the lock records
 // ---------------------------------------------------------------------------
 
+/// The incident shape: an annotated tag on HEAD, a relock, then the tag
+/// deleted. The entry must be the commit id (not the tag name, and not the
+/// annotated tag object's own id), and the lock must still resolve once the
+/// tag is gone.
 #[test]
-fn lock_records_tag_name_when_head_is_tagged() {
+fn lock_records_the_commit_id_when_head_is_tagged() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let _sha = init_git_repo(&root.join(repo_path));
-
-    // Create a tag at HEAD
+    let sha = init_git_repo(&root.join(repo_path));
     let repo_dir = root.join(repo_path);
-    let _ = common::git()
-        .args(["tag", "v1.0.0"])
-        .current_dir(&repo_dir)
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .unwrap();
+    common::git_in(&repo_dir, &["tag", "-a", "v1.0.0", "-m", "release"]);
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
@@ -589,15 +585,33 @@ fn lock_records_tag_name_when_head_is_tagged() {
 
     let lock_path = project_dir.join("rwv.lock");
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let entry = lock
-        .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
-        .expect("lock should contain repo");
-
-    // Version should be the tag name, not the raw SHA
+    let repo = repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal");
+    let version = lock
+        .get_entry(&repo)
+        .expect("lock should contain repo")
+        .version
+        .as_str()
+        .to_owned();
     assert_eq!(
-        entry.version.as_str(),
-        "v1.0.0",
-        "lock should record tag name when HEAD is tagged"
+        version, sha,
+        "the lock must record the commit HEAD is on, not the tag naming it"
+    );
+    assert!(
+        version.len() == 40 && version.bytes().all(|b| b.is_ascii_hexdigit()),
+        "the entry must be a full commit id, got {version}"
+    );
+
+    common::git_in(&repo_dir, &["tag", "-d", "v1.0.0"]);
+    let (resolved, failures) = repoweave::manifest::LockFile::from_path(&lock_path)
+        .unwrap()
+        .resolve_versions(&root);
+    assert!(
+        failures.is_empty(),
+        "the lock must still resolve once the tag is gone: {failures:?}"
+    );
+    assert_eq!(
+        resolved.get_entry(&repo).unwrap().version.as_str(),
+        sha.as_str()
     );
 }
 
@@ -632,166 +646,6 @@ fn lock_records_sha_when_head_is_not_tagged() {
         entry.version.as_str(),
         &sha,
         "lock should record raw SHA when HEAD is not tagged"
-    );
-}
-
-#[test]
-fn lock_records_tag_per_repo_independently() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_a = "github/acme/server";
-    let repo_b = "github/acme/client";
-    let _sha_a = init_git_repo(&root.join(repo_a));
-    let sha_b = init_git_repo(&root.join(repo_b));
-
-    // Tag only repo A
-    let _ = common::git()
-        .args(["tag", "v2.0.0"])
-        .current_dir(root.join(repo_a))
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .unwrap();
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[
-            (repo_a, "https://github.com/acme/server.git"),
-            (repo_b, "https://github.com/acme/client.git"),
-        ],
-    );
-
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .success();
-
-    let lock_path = project_dir.join("rwv.lock");
-    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-
-    let entry_a =
-        &lock.repo_map()[&repoweave::manifest::RepoPath::new(repo_a).expect("known-safe literal")];
-    assert_eq!(
-        entry_a.version.as_str(),
-        "v2.0.0",
-        "tagged repo should use tag name"
-    );
-
-    let entry_b =
-        &lock.repo_map()[&repoweave::manifest::RepoPath::new(repo_b).expect("known-safe literal")];
-    assert_eq!(
-        entry_b.version.as_str(),
-        &sha_b,
-        "untagged repo should use raw SHA"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 9b. Forgoing tag names — the project-level escape hatch
-// ---------------------------------------------------------------------------
-
-/// Append a `[lock]` policy table to an already-written manifest.
-fn append_lock_policy(project_dir: &Path, body: &str) {
-    let path = project_dir.join("rwv.toml");
-    let mut manifest_toml = std::fs::read_to_string(&path).unwrap();
-    manifest_toml.push_str("\n[lock]\n");
-    manifest_toml.push_str(body);
-    std::fs::write(&path, manifest_toml).unwrap();
-}
-
-/// The escape hatch exists so the lock reproduces the tree by itself, and the
-/// only place that promise is kept or broken is the lock file — nothing rwv
-/// prints reports it. `lock_records_tag_name_when_head_is_tagged` pins the
-/// default from the other side, on the same fixture.
-#[test]
-fn lock_forgoing_tag_names_records_the_commit_id() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
-
-    let _ = common::git()
-        .args(["tag", "v1.0.0"])
-        .current_dir(root.join(repo_path))
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .unwrap();
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-    append_lock_policy(&project_dir, "forgo-tag-names = true\n");
-
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .success();
-
-    let lock = repoweave::manifest::LockFile::from_path(&project_dir.join("rwv.lock")).unwrap();
-    let entry = lock
-        .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
-        .expect("lock should contain repo");
-
-    assert_eq!(
-        entry.version.as_str(),
-        &sha,
-        "a project forgoing tag names must record the commit id even at a tag"
-    );
-}
-
-/// A misspelled policy key is refused, and the refusal names the key.
-///
-/// The failure this prevents is invisible: an operator who typed the key
-/// believes their locks record commit ids, and a lock still full of tag names
-/// looks exactly like a lock they asked for. Driven end to end because the
-/// refusal has to survive to stdout — a parse error that only exists inside
-/// the process is the same as no check at all.
-#[test]
-fn a_misspelled_lock_policy_key_is_refused() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-    append_lock_policy(&project_dir, "forgo-tag-nmaes = true\n");
-
-    let assertion = rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .failure();
-    let out = assertion.get_output();
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-
-    assert!(
-        combined.contains("forgo-tag-nmaes"),
-        "the refusal must quote the key the operator typed, got:\n{combined}"
-    );
-    assert!(
-        combined.contains("forgo-tag-names"),
-        "the refusal must name the spelling that works, got:\n{combined}"
-    );
-    assert!(
-        !project_dir.join("rwv.lock").exists(),
-        "a manifest that did not parse must not produce a lock"
     );
 }
 
@@ -896,52 +750,6 @@ fn lock_all_is_removed_cli_error() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_round_trip_preserves_tag_form_in_json() {
-    // Generate a lock with a tag at HEAD, parse it back, write again — the
-    // tag-form should survive the round-trip (i.e., `"version": "v1.0.0"`,
-    // not the canonical SHA).
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-    let _ = common::git()
-        .args(["tag", "v1.0.0"])
-        .current_dir(root.join(repo_path))
-        .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@test.com")
-        .output()
-        .unwrap();
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .success();
-
-    let lock_path = project_dir.join("rwv.lock");
-    let json_first = std::fs::read_to_string(&lock_path).unwrap();
-    assert!(
-        json_first.contains("\"version\": \"v1.0.0\""),
-        "first lock should serialize tag-form: {json_first}"
-    );
-
-    // Reparse and reserialize via the public LockFile API.
-    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let json_round = serde_json::to_string(&lock).unwrap();
-    assert!(
-        json_round.contains("\"version\":\"v1.0.0\""),
-        "round-tripped JSON should preserve tag-form: {json_round}"
-    );
-}
-
-#[test]
 fn lock_resolve_versions_makes_tag_form_equal_head() {
     // After loading a lock with `version: v1.0.0` and calling
     // `resolve_versions(workspace_dir)`, the entry's ResolvedRevisionId compares equal
@@ -988,8 +796,6 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
         entry.version, head,
         "tag-form lock entry should be == HEAD after resolve_versions"
     );
-    // Display form is preserved post-resolve so writing back keeps the tag.
-    assert_eq!(entry.version.display_str(), "v1.0.0");
 }
 
 #[test]
@@ -1495,22 +1301,16 @@ fn resolve_versions_surfaces_unknown_ref_in_failures() {
     assert_eq!(failures[0].1.as_str(), "deadbeef-not-a-real-ref");
 }
 
+/// A lock read back with a tag-form entry and written again records the
+/// commit the tag resolved to. Every writer holds resolved values, so this is
+/// the one place a name could survive a write.
 #[test]
-fn resolve_versions_roundtrip_raw_then_resolved_json_shape() {
-    // Both LockFile (raw) and ResolvedLockFile (post-resolve) serialize
-    // to a single JSON string per version — the parse-boundary type does
-    // not leak into the on-disk shape. A round-trip through
-    // `from_path` -> `resolve_versions` -> `write_lock` -> `from_path`
-    // preserves the version's display string for a tag-form entry.
+fn a_resolved_tag_form_entry_is_written_back_as_its_commit_id() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
-    init_git_repo(&root.join(repo_path));
-    let _ = common::git()
-        .args(["tag", "v1.0.0"])
-        .current_dir(root.join(repo_path))
-        .output()
-        .unwrap();
+    let sha = init_git_repo(&root.join(repo_path));
+    common::git_in(root.join(repo_path), &["tag", "v1.0.0"]);
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
@@ -1532,16 +1332,15 @@ fn resolve_versions_roundtrip_raw_then_resolved_json_shape() {
     std::fs::create_dir_all(&out_dir).unwrap();
     let out_path = out_dir.join("rwv.lock");
     repoweave::lock::write_lock(&resolved, &out_path).unwrap();
-    let round = std::fs::read_to_string(&out_path).unwrap();
-    assert!(
-        round.contains("\"version\": \"v1.0.0\""),
-        "post-resolve JSON should preserve tag-form display string: {round}"
-    );
-    // And re-parsing through the parse boundary yields the same raw value.
     let reparsed = repoweave::manifest::LockFile::from_path(&out_path).unwrap();
     let entry = &reparsed.repo_map()
         [&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
-    assert_eq!(entry.version, repoweave::vcs::RawRevisionId::new("v1.0.0"));
+    assert_eq!(
+        entry.version,
+        repoweave::vcs::RawRevisionId::new(sha.as_str()),
+        "a resolved entry must be written as its commit id, got: {}",
+        std::fs::read_to_string(&out_path).unwrap()
+    );
 }
 
 // ---------------------------------------------------------------------------

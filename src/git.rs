@@ -1358,9 +1358,9 @@ impl Vcs for GitVcs {
             }
             Err(e) => Err(e),
             Ok(sha) => {
-                // If a tag points at HEAD, preserve it as the display form so callers
-                // get human-readable round-trips (e.g., `v0.3.4`) without an extra
-                // resolve step.
+                // A tag at HEAD becomes the display form, so human-readable output
+                // can name it (e.g. `v0.3.4`) without an extra resolve step. It is
+                // never what a lock records.
                 let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
                 Ok(ResolvedRevisionId::from_canonical(sha, display))
             }

@@ -939,41 +939,6 @@ pub struct WorkweaveConfig {
 }
 
 // ---------------------------------------------------------------------------
-// LockConfig — what `rwv lock` is allowed to record
-// ---------------------------------------------------------------------------
-
-/// Project-level policy for the revision form `rwv lock` records.
-///
-/// Policy rather than a flag on the verb: `rwv lock` also runs from inside
-/// `rwv sync` and `rwv fetch`, and a lock whose form alternates with whoever
-/// invoked it is worse than either form applied consistently.
-///
-/// `deny_unknown_fields` because a key here is set once and then trusted:
-/// a misspelling accepted as "absent" would leave an operator believing a
-/// guarantee they do not have.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LockConfig {
-    /// Record the commit id for every repo, including those a tag names.
-    ///
-    /// The name states what is surrendered. `rwv.lock` stops carrying the
-    /// tag at HEAD, so it no longer reads as `v1.2.3` and no longer says
-    /// which repos sit on a release. What that buys is a lock that
-    /// reproduces the tree by itself: an entry records one revision and no
-    /// SHA beside it, so a tag retargeted upstream moves what the lock
-    /// resolves to, and nothing in the file says it moved.
-    ///
-    /// Whole-project by construction. The point is a lock that stands
-    /// alone, and a lock standing alone for some of its entries does not.
-    #[serde(
-        default,
-        rename = "forgo-tag-names",
-        skip_serializing_if = "std::ops::Not::not"
-    )]
-    pub forgo_tag_names: bool,
-}
-
-// ---------------------------------------------------------------------------
 // Manifest — the parsed `rwv.toml`
 // ---------------------------------------------------------------------------
 
@@ -982,8 +947,7 @@ pub struct LockConfig {
 /// Listed once so that [`nearest_manifest_key`] and serde's
 /// `deny_unknown_fields` error both name the same set. When a new top-level
 /// table is added to [`Manifest`], add its TOML key here too.
-pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] =
-    &["repositories", "integrations", "workweave", "lock"];
+pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["repositories", "integrations", "workweave"];
 
 /// Return the element of [`MANIFEST_TOP_LEVEL_KEYS`] closest (by edit
 /// distance) to `unknown`, or `None` when no element is within the threshold.
@@ -1075,7 +1039,7 @@ fn nearest_manifest_key(unknown: &str) -> Option<&'static str> {
 /// accessor methods above.
 ///
 /// `deny_unknown_fields` because every top-level key is a policy table
-/// (e.g. `[lock]`): a misspelling accepted as "absent" would leave an
+/// (e.g. `[workweave]`): a misspelling accepted as "absent" would leave an
 /// operator believing a guarantee they do not have. The error names the
 /// offending key and its line; [`Manifest::from_toml_str`] appends the
 /// nearest accepted spelling so the operator can fix it immediately.
@@ -1087,8 +1051,6 @@ pub struct Manifest {
     pub integrations: BTreeMap<String, IntegrationConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workweave: Option<WorkweaveConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lock: Option<LockConfig>,
 }
 
 /// Extract the offending key from a TOML `deny_unknown_fields` error message.
@@ -1124,14 +1086,6 @@ impl Manifest {
     /// The manifest text a project starts life with.
     pub const SKELETON: &'static str =
         "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\n[repositories]\n";
-
-    /// Whether `rwv lock` must record a commit id even where a tag names it.
-    ///
-    /// Absent `[lock]` table and absent key both mean no: the readable form
-    /// is the default, and forgoing it is the thing an operator asks for.
-    pub fn forgo_tag_names(&self) -> bool {
-        self.lock.as_ref().is_some_and(|c| c.forgo_tag_names)
-    }
 
     /// Iterate over every [`RepoPath`] in the manifest, in sorted order.
     ///
@@ -1261,8 +1215,7 @@ impl Manifest {
     /// A rejected `role` value carries [`Role::legacy_spelling_hint`] through
     /// [`RoleParseError`], located at the offending line by the TOML parser.
     /// An unknown top-level key carries the offending key name, its line, and
-    /// the nearest accepted spelling — the same quality of refusal
-    /// [`LockConfig`] gives for a misspelled inner key.
+    /// the nearest accepted spelling.
     /// Any failure carries [`Self::unparseable_hint`] as its context, with the
     /// parser's own error kept as the source — the remedy is the same however
     /// the file broke, but only the parser can say where.
@@ -1402,7 +1355,7 @@ impl ResolvedLockEntry {
         LockEntry {
             vcs_type: self.vcs_type,
             url: self.url.clone(),
-            version: crate::vcs::RawRevisionId::new(self.version.display_str()),
+            version: crate::vcs::RawRevisionId::new(self.version.as_str()),
         }
     }
 }
@@ -1458,6 +1411,16 @@ impl LockFile {
     /// Return `true` if the lock file contains an entry for `path`.
     pub fn contains_repo(&self, path: &RepoPath) -> bool {
         self.repositories.contains_key(path)
+    }
+
+    /// Entries whose version is a name rather than a commit id. Such an
+    /// entry is not a pin: it resolves to wherever the name points when the
+    /// lock is read, and to nothing once the name is gone.
+    pub fn entries_pinned_by_name(&self) -> impl Iterator<Item = (&RepoPath, &RawRevisionId)> {
+        self.repositories
+            .iter()
+            .filter(|(_, entry)| !entry.version.is_commit_id())
+            .map(|(path, entry)| (path, &entry.version))
     }
 
     /// Return a reference to the underlying `BTreeMap` of repositories.
@@ -2737,50 +2700,6 @@ role = "owned"
     }
 
     // ========================================================================
-    // LockConfig serde
-    // ========================================================================
-
-    /// Every verb that edits the manifest rewrites the whole file through
-    /// [`Manifest::write`], so a policy that does not survive a rewrite is one
-    /// `rwv add` away from being revoked without anyone touching it.
-    #[test]
-    fn lock_policy_survives_a_manifest_rewrite() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(Manifest::FILE_NAME);
-        std::fs::write(&path, "[repositories]\n\n[lock]\nforgo-tag-names = true\n").unwrap();
-
-        let manifest = Manifest::from_path(&path).unwrap();
-        assert!(manifest.forgo_tag_names());
-
-        manifest.write(&path).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            Manifest::from_path(&path).unwrap().forgo_tag_names(),
-            "the policy must survive a rewrite, got: {text}"
-        );
-    }
-
-    /// The default writes nothing. A project that never asked for the policy
-    /// must not start carrying a `[lock]` table the first time a verb rewrites
-    /// its manifest — an unasked-for key reads as a decision someone made.
-    #[test]
-    fn a_manifest_without_the_policy_writes_no_lock_table() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(Manifest::FILE_NAME);
-        std::fs::write(&path, MINIMAL_MANIFEST).unwrap();
-
-        let manifest = Manifest::from_path(&path).unwrap();
-        assert!(!manifest.forgo_tag_names());
-
-        manifest.write(&path).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(
-            !text.contains("[lock]") && !text.contains("forgo-tag-names"),
-            "an unset policy must not be written back, got: {text}"
-        );
-    }
-
-    // ========================================================================
     // Manifest::write — durable publish
     // ========================================================================
 
@@ -3103,18 +3022,18 @@ copy = [".env"]
     // ========================================================================
 
     /// A misspelled top-level table is rejected with the offending key name,
-    /// its line, and the nearest accepted spelling.  The canonical example:
-    /// `[lokc]` instead of `[lock]`.
+    /// its line, and the nearest accepted spelling: `[integratoins]` instead
+    /// of `[integrations]`.
     ///
     /// Rendered `{err:#}` because that is what surfaces this error to an
     /// operator; `{err}` would read only [`Manifest::unparseable_hint`].
     #[test]
-    fn misspelled_lock_table_is_refused_with_key_line_and_suggestion() {
-        let text = "[repositories]\n\n[lokc]\nforgo-tag-names = true\n";
+    fn misspelled_table_is_refused_with_key_line_and_suggestion() {
+        let text = "[repositories]\n\n[integratoins]\nenabled = true\n";
         let err = Manifest::from_toml_str(text).unwrap_err();
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("lokc"),
+            msg.contains("integratoins"),
             "refusal must name the offending key, got: {msg}"
         );
         assert!(
@@ -3122,7 +3041,7 @@ copy = [".env"]
             "refusal must locate the offending line, got: {msg}"
         );
         assert!(
-            msg.contains("lock"),
+            msg.contains("did you mean `integrations`"),
             "refusal must suggest the nearest accepted spelling, got: {msg}"
         );
     }
@@ -3177,13 +3096,9 @@ enabled = true
 
 [workweave]
 link = ["target/"]
-
-[lock]
-forgo-tag-names = true
 "#;
         let m = Manifest::from_toml_str(text).unwrap();
         assert_eq!(m.len(), 1);
-        assert!(m.forgo_tag_names());
         assert!(m.workweave.is_some());
         assert_eq!(m.integrations.len(), 1);
     }
@@ -3223,21 +3138,19 @@ another-custom-setting = 42
 
     #[test]
     fn nearest_key_exact_match_returns_itself() {
-        assert_eq!(nearest_manifest_key("lock"), Some("lock"));
         assert_eq!(nearest_manifest_key("repositories"), Some("repositories"));
         assert_eq!(nearest_manifest_key("integrations"), Some("integrations"));
         assert_eq!(nearest_manifest_key("workweave"), Some("workweave"));
     }
 
     #[test]
-    fn nearest_key_transposition_lokc_to_lock() {
-        // `lokc` is a transposition of `lock` — OSA counts this as 1 op.
-        assert_eq!(nearest_manifest_key("lokc"), Some("lock"));
+    fn nearest_key_transposition_counts_as_one_edit() {
+        // `wrokweave` is a transposition of `workweave` — OSA counts this as 1 op.
+        assert_eq!(nearest_manifest_key("wrokweave"), Some("workweave"));
     }
 
     #[test]
     fn nearest_key_one_char_typo() {
-        assert_eq!(nearest_manifest_key("loxk"), Some("lock"));
         assert_eq!(nearest_manifest_key("integrationz"), Some("integrations"));
         assert_eq!(nearest_manifest_key("workweve"), Some("workweave"));
     }

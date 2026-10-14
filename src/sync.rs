@@ -3084,6 +3084,23 @@ fn run_preconditions_after_acquire(
             }
         }
     }
+    if emit_text {
+        let sides = [
+            (source_workspace_name, Some(&snapshot.raw_source_lock)),
+            (cwd_workspace_name_str.as_str(), cwd_project.lock.as_ref()),
+        ];
+        for (workspace, lock) in sides {
+            for (repo_path, version) in lock.into_iter().flat_map(|l| l.entries_pinned_by_name()) {
+                eprintln!(
+                    "warning: {}",
+                    crate::lock::pinned_by_name_warning(
+                        format_args!("{workspace}/{repo_path}"),
+                        version
+                    )
+                );
+            }
+        }
+    }
     if matches!(strategy, SyncStrategy::Rebase) {
         verify_replay_exclusion_invariant(project_vcs, cwd_project_dir, source_project_dir)?;
     }

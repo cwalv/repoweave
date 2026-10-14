@@ -502,7 +502,6 @@ mod tests {
             repositories: repos,
             integrations: integration_configs,
             workweave: None,
-            lock: None,
         }
     }
 

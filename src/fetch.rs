@@ -396,6 +396,12 @@ fn fetch_project_repos(
                 );
             }
         }
+        for (repo_path, version) in lock.entries_pinned_by_name() {
+            eprintln!(
+                "rwv fetch: warning: {}",
+                lock::pinned_by_name_warning(repo_path, version)
+            );
+        }
     }
 
     // Snapshot the work list. BTreeMap iteration is deterministic, so the
@@ -622,13 +628,24 @@ fn fetch_project_repos(
             lock::write_lock(&new_lock, &lock_path)?;
             eprintln!("rwv fetch: wrote {}", lock_path.display());
         } else if has_additions {
-            // Preserve existing lock entries as written (do not re-resolve
-            // — that could rewrite tag-form versions as raw SHAs). Append
-            // new entries by snapshotting HEAD for the added repos.
+            // Existing entries keep the commits they pin. One pinned by name
+            // is written as the commit the name resolves to now, which is
+            // where the alignment above left its clone. Added repos are
+            // snapshotted at HEAD.
             let mut merged = existing_lock
                 .as_ref()
                 .expect("existing_lock is Some when !needs_bootstrap")
                 .clone();
+            let named: Vec<RepoPath> = merged
+                .entries_pinned_by_name()
+                .map(|(repo_path, _)| repo_path.clone())
+                .collect();
+            let (resolved, _) = merged.clone().resolve_versions(workspace_root);
+            for repo_path in named {
+                if let Some(entry) = resolved.get_entry(&repo_path) {
+                    merged.insert_entry(repo_path, entry.to_raw());
+                }
+            }
             // Generate a fresh lock for new entries only.
             let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
             for repo_path in &added_to_lock {
@@ -1057,7 +1074,6 @@ mod tests {
             repositories: Default::default(),
             integrations: Default::default(),
             workweave: None,
-            lock: None,
         };
         let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
         let reference = RepoPath::new("github/org/reference").expect("known-safe literal");
@@ -1084,7 +1100,6 @@ mod tests {
             repositories: Default::default(),
             integrations: Default::default(),
             workweave: None,
-            lock: None,
         };
         let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
         let reference = RepoPath::new("github/org/reference").expect("known-safe literal");

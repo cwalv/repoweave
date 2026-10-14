@@ -138,7 +138,7 @@ Anchored by `tests/doc_claims_update_test.rs`.
 
 Checkpoint current local state into `rwv.lock`. No network access.
 
-Reads HEAD from each repo; records the tag name if HEAD is tagged, otherwise the revision ID. Errors on uncommitted changes (use `--dirty` to bypass).
+Reads HEAD from each repo and records its commit id, even where a tag names it. Errors on uncommitted changes (use `--dirty` to bypass).
 
 | Flag | Effect |
 |---|---|

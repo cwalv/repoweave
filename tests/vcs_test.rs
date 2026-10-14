@@ -451,15 +451,17 @@ fn revision_id_equality_compares_canonical() {
     assert_ne!(tag_form, other);
 }
 
+/// What is serialized is read back as a pin, so a resolved revision writes
+/// its commit id even when it carries a name for display.
 #[test]
-fn revision_id_serialize_prefers_display() {
+fn revision_id_serializes_the_commit_id_not_the_display_form() {
     let r = ResolvedRevisionId::from_canonical(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         Some("v1.0.0".to_string()),
     );
     let json = serde_json::to_string(&r).unwrap();
-    // Single transparent string; serializing yields the display form.
-    assert_eq!(json, "\"v1.0.0\"");
+    assert_eq!(json, "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"");
+    assert_eq!(r.display_str(), "v1.0.0");
 }
 
 #[test]
@@ -490,7 +492,11 @@ fn revision_id_round_trip_scalar() {
     // as a single scalar, and re-parsing it lands in `RawRevisionId`
     // (deserialize only ever yields raw — re-resolution requires a repo).
     let restored: repoweave::vcs::RawRevisionId = serde_json::from_str(&json).unwrap();
-    assert_eq!(restored.as_str(), "v1.0.0");
+    assert_eq!(
+        restored.as_str(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert!(restored.is_commit_id());
 }
 
 // ============================================================================
