@@ -106,11 +106,19 @@ impl Weave {
         );
     }
 
-    /// Commit the project's lock, so history can give it back.
-    fn commit_project_lock(&self) {
+    /// Commit the project's `name`, so history can give it back.
+    fn commit_project_file(&self, name: &str) {
         let project = self.ws.join("projects/demo");
-        common::git_in(&project, &["add", "Cargo.lock"]);
-        common::git_in(&project, &["commit", "-qm", "lock"]);
+        common::git_in(&project, &["add", name]);
+        common::git_in(&project, &["commit", "-qm", name]);
+    }
+
+    /// Put a stand-in `name` on the runs' `PATH`, running `script`.
+    fn stand_in(&self, name: &str, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let tool = self.bin.join(name);
+        std::fs::write(&tool, format!("#!/bin/sh\n{script}")).unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     /// Replace the lock's link with a real file holding `bytes`: a tool that
@@ -148,21 +156,14 @@ fn stderr_of(out: &std::process::Output) -> String {
 fn a_lock_renamed_over_its_dangling_link_is_adopted_by_the_verb_that_ran_the_tool() {
     let weave = Weave::new();
     let mv = which::which("mv").expect("mv must be resolvable to run this test");
-    let npm = weave.bin.join("npm");
-    std::fs::write(
-        &npm,
-        format!(
-            "#!/bin/sh\n\
-             printf '{{\"lockfileVersion\": 3}}\\n' > package-lock.json.tmp\n\
+    weave.stand_in(
+        "npm",
+        &format!(
+            "printf '{{\"lockfileVersion\": 3}}\\n' > package-lock.json.tmp\n\
              {} package-lock.json.tmp package-lock.json\n",
             mv.display()
         ),
-    )
-    .unwrap();
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    );
     let web = weave.origin(
         "web",
         &[(
@@ -186,14 +187,13 @@ fn a_lock_renamed_over_its_dangling_link_is_adopted_by_the_verb_that_ran_the_too
     );
 }
 
-/// A tool that ran while the link was missing: history holds the project
-/// copy, so the next intent verb takes the tool's in and relinks, without
-/// stopping on it.
+/// A tool that ran while the link was missing: the project copy is still the
+/// lock rwv recorded, so the next intent verb takes the tool's in and relinks,
+/// without stopping on it.
 #[test]
 fn a_lock_written_where_its_link_was_missing_is_adopted_by_the_next_intent_verb() {
     let weave = Weave::new();
     weave.add_cargo_member();
-    weave.commit_project_lock();
     weave.write_past_the_link("version = 4\n# regenerated\n");
     let plain = weave.origin("plain", &[]);
 
@@ -212,6 +212,61 @@ fn a_lock_written_where_its_link_was_missing_is_adopted_by_the_next_intent_verb(
     assert!(weave.is_linked("Cargo.lock"));
 }
 
+/// `rm package-lock.json && npm install newdep` over a committed lock. Nothing
+/// records an npm lock's generation, but history holds the project's copy, so
+/// the next intent verb takes the tool's in, and the change stands as the
+/// project repo's diff against the commit.
+#[test]
+fn a_lock_written_where_its_link_was_missing_over_a_committed_copy_is_adopted() {
+    let weave = Weave::new();
+    weave.stand_in(
+        "npm",
+        "[ -e package-lock.json ] || printf '{\"lockfileVersion\": 3}\\n' > package-lock.json\n",
+    );
+    let web = weave.origin(
+        "web",
+        &[(
+            "package.json",
+            "{\"name\": \"web\", \"version\": \"1.0.0\"}\n",
+        )],
+    );
+    let add = weave.rwv(&["add", &web]);
+    assert!(add.status.success(), "fixture add: {}", stderr_of(&add));
+    assert_eq!(
+        weave.project_file("package-lock.json").as_deref(),
+        Some("{\"lockfileVersion\": 3}\n"),
+        "fixture: the first lock is written through its link"
+    );
+    weave.commit_project_file("package-lock.json");
+    let root_lock = weave.ws.join("package-lock.json");
+    std::fs::remove_file(&root_lock).unwrap();
+    std::fs::write(&root_lock, "{\"lockfileVersion\": 3, \"newdep\": 1}\n").unwrap();
+    let plain = weave.origin("plain", &[]);
+
+    let add = weave.rwv(&["add", &plain]);
+
+    assert!(add.status.success(), "{}", stderr_of(&add));
+    assert!(weave.is_linked("package-lock.json"), "{}", stderr_of(&add));
+    assert_eq!(
+        weave.project_file("package-lock.json").as_deref(),
+        Some("{\"lockfileVersion\": 3, \"newdep\": 1}\n")
+    );
+    let project = weave.ws.join("projects/demo");
+    assert_eq!(
+        common::git_in(
+            &project,
+            &["diff", "--name-only", "--", "package-lock.json"]
+        ),
+        "package-lock.json",
+        "the adopted lock is the project's uncommitted change"
+    );
+    assert_eq!(
+        common::git_in(&project, &["show", "HEAD:package-lock.json"]),
+        "{\"lockfileVersion\": 3}",
+        "and the copy it replaced is still in history"
+    );
+}
+
 /// The project copy holds an edit no commit has, so neither side may be taken
 /// over the other: the verb names both, leaves both, and carries on without
 /// the link.
@@ -219,7 +274,7 @@ fn a_lock_written_where_its_link_was_missing_is_adopted_by_the_next_intent_verb(
 fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
     let weave = Weave::new();
     weave.add_cargo_member();
-    weave.commit_project_lock();
+    weave.commit_project_file("Cargo.lock");
     weave.write_past_the_link("# the tool's\n");
     std::fs::write(weave.ws.join("projects/demo/Cargo.lock"), "# edited\n").unwrap();
     let plain = weave.origin("plain", &[]);
@@ -232,12 +287,12 @@ fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
         "a conflict is named, not refused: {stderr}"
     );
     assert!(
-        stderr.contains("version control does not hold")
+        stderr.contains("neither version control nor")
             && stderr.contains("projects/demo/Cargo.lock"),
         "the finding must name both copies: {stderr}"
     );
     assert_eq!(
-        stderr.matches("version control does not hold").count(),
+        stderr.matches("neither version control nor").count(),
         1,
         "named once, though surfacing runs before and after the hooks: {stderr}"
     );
@@ -258,7 +313,6 @@ fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
 fn activate_reports_a_lock_written_past_its_link_and_doctor_fix_adopts_it() {
     let weave = Weave::new();
     weave.add_cargo_member();
-    weave.commit_project_lock();
     let recorded = weave.project_file("Cargo.lock").unwrap();
     weave.write_past_the_link("version = 4\n# regenerated\n");
 
@@ -304,7 +358,6 @@ fn activate_reports_a_lock_written_past_its_link_and_doctor_fix_adopts_it() {
 fn materialize_reads_a_lock_written_past_its_link_as_drift_to_settle() {
     let weave = Weave::new();
     weave.add_cargo_member();
-    weave.commit_project_lock();
     weave.write_past_the_link("version = 4\n# out of band\n");
 
     let materialize = weave.rwv(&["materialize"]);

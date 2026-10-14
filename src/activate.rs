@@ -3409,6 +3409,30 @@ mod tests {
     }
 
     #[test]
+    fn a_root_write_over_the_recorded_project_copy_is_adopted() {
+        // No commit holds the project copy, but it is still the generation rwv
+        // recorded, so taking the tool's bytes loses nothing rwv cannot remake.
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# accepted\n");
+        stamp_owned_digest(
+            &root.join("projects/web-app"),
+            "Cargo.lock",
+            b"# accepted\n",
+        )
+        .unwrap();
+        write_root_lock(root, "# regenerated\n");
+
+        surface(root, &project, SurfacingMode::Repair).unwrap();
+
+        assert!(is_lock_link(root, "web-app"));
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("# regenerated\n")
+        );
+    }
+
+    #[test]
     fn a_root_write_over_an_uncommitted_project_copy_leaves_both_and_the_link_out() {
         let (tmp, project) = make_cargo_surfacing_workspace();
         let root = tmp.path();
@@ -3439,7 +3463,7 @@ mod tests {
         );
         let conflict = issues
             .iter()
-            .find(|i| i.message.contains("version control does not hold"))
+            .find(|i| i.message.contains("neither version control nor"))
             .unwrap_or_else(|| panic!("the conflict must be a finding: {issues:?}"));
         assert!(
             !conflict.safe_to_fix,

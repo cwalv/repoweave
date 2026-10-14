@@ -10,6 +10,7 @@
 //! reports it.
 
 use crate::manifest::ProjectName;
+use crate::owned_state::{owned_digest, recorded_digest};
 use crate::vcs::{Vcs, VcsError};
 use crate::workspace::project_dir;
 use std::path::{Path, PathBuf};
@@ -18,10 +19,11 @@ use std::path::{Path, PathBuf};
 /// project's own copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
-    /// The project has no copy, the same bytes, or a copy version control
-    /// holds as it stands.
+    /// The project has no copy, the same bytes, the generation the ledger
+    /// records rwv accepted, or a copy version control holds as it stands.
     Adopt,
-    /// The project's copy differs and version control does not hold it.
+    /// The project's copy differs, and neither the ledger nor version control
+    /// holds it.
     Conflict,
 }
 
@@ -33,6 +35,7 @@ pub(crate) struct RootWrite {
     pub owner: ProjectName,
     pub bytes: Vec<u8>,
     project_copy: Option<Vec<u8>>,
+    recorded: Option<String>,
 }
 
 /// The real file at `name`, if that is what stands there. A link, a directory
@@ -50,7 +53,8 @@ pub(crate) fn read(
         Err(e) => return Err(e),
     }
     let bytes = std::fs::read(&path)?;
-    let project_copy = match std::fs::read(project_dir(root, owner.as_str()).join(name)) {
+    let dir = project_dir(root, owner.as_str());
+    let project_copy = match std::fs::read(dir.join(name)) {
         Ok(copy) => Some(copy),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
@@ -60,16 +64,19 @@ pub(crate) fn read(
         owner: owner.clone(),
         bytes,
         project_copy,
+        recorded: recorded_digest(&dir, name),
     }))
 }
 
 impl RootWrite {
     /// Adopt when taking this file in loses nothing: the project has no copy,
-    /// the same bytes, or a copy `vcs` can give back from history.
+    /// the same bytes, the generation rwv recorded, or a copy `vcs` can give
+    /// back from history.
     pub(crate) fn verdict(&self, vcs: &dyn Vcs, root: &Path) -> Result<Verdict, VcsError> {
         let replaceable = match &self.project_copy {
             None => true,
             Some(copy) if *copy == self.bytes => true,
+            Some(copy) if self.recorded.as_deref() == Some(owned_digest(copy).as_str()) => true,
             Some(_) => held_as_it_stands(vcs, &project_dir(root, self.owner.as_str()), &self.name)?,
         };
         Ok(if replaceable {
@@ -119,9 +126,9 @@ impl RootWrite {
     /// What is said when the root file cannot be taken over the project's copy.
     pub(crate) fn conflict_message(&self) -> String {
         format!(
-            "`{name}` at the weave root and `{project}` differ, and version control does not \
-             hold the project's copy as it stands, so neither is taken over the other and the \
-             link is left out. To keep the root's, commit the project's copy or delete it; to \
+            "`{name}` at the weave root and `{project}` differ, and neither version control nor \
+             rwv's record holds the project's copy as it stands, so neither is taken over the \
+             other and the link is left out. To keep the root's, commit the project's copy or delete it; to \
              keep the project's, delete `{name}` at the weave root. Then re-run `rwv doctor \
              --fix`",
             name = self.name,
@@ -302,6 +309,15 @@ mod tests {
             "the same bytes, though version control holds none of them"
         );
         assert_eq!(
+            verdict_over(|repo| {
+                std::fs::write(repo.join("Cargo.lock"), "# accepted\n").unwrap();
+                crate::owned_state::stamp_owned_digest(repo, "Cargo.lock", b"# accepted\n")
+                    .unwrap();
+            }),
+            Verdict::Adopt,
+            "the generation rwv recorded, though version control holds none of it"
+        );
+        assert_eq!(
             verdict_over(|repo| commit_lock(repo, "# committed\n")),
             Verdict::Adopt,
             "a copy history gives back"
@@ -322,6 +338,15 @@ mod tests {
             verdict_over(|repo| std::fs::write(repo.join("Cargo.lock"), "# untracked\n").unwrap()),
             Verdict::Conflict,
             "untracked"
+        );
+        assert_eq!(
+            verdict_over(|repo| {
+                std::fs::write(repo.join("Cargo.lock"), "# moved\n").unwrap();
+                crate::owned_state::stamp_owned_digest(repo, "Cargo.lock", b"# accepted\n")
+                    .unwrap();
+            }),
+            Verdict::Conflict,
+            "untracked, and moved since rwv recorded it"
         );
         assert_eq!(
             verdict_over(|repo| {

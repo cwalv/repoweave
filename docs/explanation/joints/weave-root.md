@@ -112,8 +112,9 @@ and any writer meeting a link that is missing. That file is the tool's write,
 not something to refuse, and rwv reconciles it: a verb that may write the
 project directory (`add`, `remove`, `update`, `materialize`, `rwv doctor
 --fix`) takes it in and puts the link back, provided the project's own copy is
-absent, identical, or committed with no edit since, so version control can
-give it back. Otherwise rwv names both copies and changes neither. `rwv activate` names the file
+absent, identical, still the generation rwv recorded, or committed with no
+edit since, so version control can give it back. Otherwise rwv names both
+copies and changes neither. `rwv activate` names the file
 and leaves it, except on a project switch, where the outgoing project's file
 goes home first.
 
