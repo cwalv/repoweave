@@ -568,7 +568,7 @@ mod tests {
     use super::testing::FakePrimitives;
     use super::*;
     use crate::git::{git_command_in_test, git_vcs, under_both_line_endings, LineEndings};
-    use crate::vcs::{RawRefName, TrackedFileKind};
+    use crate::vcs::RawRefName;
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = git_command_in_test()
@@ -977,7 +977,10 @@ mod tests {
         assert_checked_out(&dest);
     }
 
+    #[cfg(unix)]
     fn an_executable_is_cloned_only_from_a_copy_with_its_executable_bit(endings: LineEndings) {
+        use crate::vcs::TrackedFileKind;
+
         let w = Weave::with(endings, &[("run.sh", "#!/bin/sh\n")]);
         git(&w.store, &["update-index", "--chmod=+x", "run.sh"]);
         git(&w.store, &["commit", "-q", "-m", "x"]);
@@ -1507,6 +1510,7 @@ mod tests {
         a_source_changed_mid_copy_ends_up_checked_out_again,
         a_source_file_not_holding_its_recorded_content_is_never_cloned,
         a_workspace_at_the_target_revision_covers_the_list_before_the_primary_is_asked,
+        #[cfg(unix)]
         an_executable_is_cloned_only_from_a_copy_with_its_executable_bit,
         a_source_recording_another_mode_for_the_same_content_is_not_cloned_from,
         this_filesystem_clones_exactly_where_it_is_declared_to,
