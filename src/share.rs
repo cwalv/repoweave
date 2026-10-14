@@ -609,7 +609,7 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             // git reports worktree paths resolved, so the fakes must key on the
             // same spelling (macOS temp dirs sit behind the /var symlink).
-            let root = tmp.path().canonicalize().unwrap();
+            let root = dunce::canonicalize(tmp.path()).unwrap();
             let primary = root.join("primary");
             let project = crate::workspace::project_dir(&primary, "app");
             std::fs::create_dir_all(&project).unwrap();
