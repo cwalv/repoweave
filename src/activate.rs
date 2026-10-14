@@ -37,7 +37,9 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::cli::consent::{DriftConsent, RemoveUndeclaredLinksConsent};
-use crate::integration::{Integration, IssueKind, OwnedPath, Severity, SurfacedSource};
+use crate::integration::{
+    Integration, IssueKind, OwnedPath, Severity, SurfacedCopy, SurfacedSource,
+};
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
     run_activate_hooks, run_activations, run_checks, run_deactivations, run_verifications,
@@ -1025,11 +1027,12 @@ fn report_and_check_activate_hook_issues(
 /// record of a sweep that failed partway.
 fn remove_activation_symlinks(
     root: &Path,
+    sites: &SurfacingSites,
     owned_files: &BTreeSet<String>,
     removed: &mut Vec<RemovedLink>,
 ) -> anyhow::Result<()> {
     let skip = sweep_descent_skip(root);
-    remove_activation_symlinks_in(root, root, owned_files, &skip, removed)
+    remove_activation_symlinks_in(root, root, sites, owned_files, &skip, removed)
 }
 
 /// A weave-root link a sweep unlinked, and the target it read.
@@ -1070,11 +1073,12 @@ fn sweep_skips(dir: &Path, skip: &BTreeSet<std::path::PathBuf>) -> bool {
 /// that is a real file, a dangling name, or a link pointing somewhere else is
 /// not counted as surfacing.
 pub fn surfaced_names(root: &Path, names: &[String]) -> Vec<String> {
+    let sites = SurfacingSites::of(root);
     names
         .iter()
         .filter(|name| {
             std::fs::read_link(root.join(name))
-                .is_ok_and(|target| target_resolves_to_projects(Path::new(name), &target))
+                .is_ok_and(|target| target_resolves_to_projects(&sites, Path::new(name), &target))
         })
         .cloned()
         .collect()
@@ -1087,7 +1091,12 @@ pub fn surfaced_names(root: &Path, names: &[String]) -> Vec<String> {
 /// rather than at a whole activation's, and it removes nothing
 /// [`surfaced_names`] would not have counted.
 pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
-    remove_activation_symlinks(root, &names.iter().cloned().collect(), &mut Vec::new())
+    remove_activation_symlinks(
+        root,
+        &SurfacingSites::of(root),
+        &names.iter().cloned().collect(),
+        &mut Vec::new(),
+    )
 }
 
 /// True if `target` (the `read_link` output of a symlink at `link_path`,
@@ -1111,8 +1120,16 @@ pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
 /// instead of assumed: whatever sits under `projects/` beyond the trailing
 /// `rel_from_root` components is the project's own directory, however many
 /// components that takes.
-fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
-    surfacing_owner_dir(rel_from_root, target).is_some()
+///
+/// At a workweave root the absolute target a primary-sourced link reads,
+/// `<primary>/projects/<project>/<rel>`, is the same shape rooted at the
+/// root's own primary — see [`SurfacingSites`] for what keeps it narrow.
+fn target_resolves_to_projects(
+    sites: &SurfacingSites,
+    rel_from_root: &Path,
+    target: &Path,
+) -> bool {
+    surfacing_owner_dir(sites, rel_from_root, target).is_some()
 }
 
 /// The project directory `target` surfaces `rel_from_root` out of, when it has
@@ -1129,7 +1146,14 @@ fn target_resolves_to_projects(rel_from_root: &Path, target: &Path) -> bool {
 /// caller compares it against a project it already holds. Parsing here would
 /// let a name this repo's validator happens to reject narrow a predicate whose
 /// acceptance set is load-bearing elsewhere.
-fn surfacing_owner_dir(rel_from_root: &Path, target: &Path) -> Option<String> {
+fn surfacing_owner_dir(
+    sites: &SurfacingSites,
+    rel_from_root: &Path,
+    target: &Path,
+) -> Option<String> {
+    if target.is_absolute() {
+        return sites.primary_owner_dir(rel_from_root, target);
+    }
     let mut comps = target.components().peekable();
     // Skip any leading parent-dir components (`../../...` for nested links).
     while let Some(c) = comps.peek() {
@@ -1140,7 +1164,13 @@ fn surfacing_owner_dir(rel_from_root: &Path, target: &Path) -> Option<String> {
         }
     }
     let sited: std::path::PathBuf = comps.collect();
-    let under_projects = strip_projects_prefix(&sited)?;
+    owner_dir_under_projects(rel_from_root, strip_projects_prefix(&sited)?)
+}
+
+/// The project directory `under_projects` (a target with its `projects/`
+/// prefix taken off) surfaces `rel_from_root` out of: whatever precedes a
+/// tail equal to `rel_from_root`.
+fn owner_dir_under_projects(rel_from_root: &Path, under_projects: &Path) -> Option<String> {
     let under_components: Vec<_> = under_projects.components().collect();
     let rel_components: Vec<_> = rel_from_root.components().collect();
     if under_components.len() <= rel_components.len() {
@@ -1157,6 +1187,7 @@ fn surfacing_owner_dir(rel_from_root: &Path, target: &Path) -> Option<String> {
 fn remove_activation_symlinks_in(
     dir: &Path,
     root: &Path,
+    sites: &SurfacingSites,
     owned_files: &BTreeSet<String>,
     skip: &BTreeSet<std::path::PathBuf>,
     removed: &mut Vec<RemovedLink>,
@@ -1193,14 +1224,15 @@ fn remove_activation_symlinks_in(
                 // never recognized as owned where the platform writes `\`.
                 let rel_str = rel_from_root.to_string_lossy().replace('\\', "/");
                 let in_owned_set = owned_files.contains(rel_str.as_str());
-                let resolves_to_projects = target_resolves_to_projects(rel_from_root, &target);
+                let resolves_to_projects =
+                    target_resolves_to_projects(sites, rel_from_root, &target);
                 if in_owned_set && resolves_to_projects {
                     crate::symlink::remove(&path)?;
                     removed.push(RemovedLink { link: path, target });
                 }
             }
         } else if meta.file_type().is_dir() && !sweep_skips(&path, skip) {
-            remove_activation_symlinks_in(&path, root, owned_files, skip, removed)?;
+            remove_activation_symlinks_in(&path, root, sites, owned_files, skip, removed)?;
         }
     }
 
@@ -1271,6 +1303,22 @@ fn workweave_intent(project: &str, workweave_dir: &Path) -> Result<(), Activatio
 struct SurfacedEntry {
     integration: String,
     source: SurfacedSource,
+    copy: SurfacedCopy,
+}
+
+impl SurfacedEntry {
+    /// Take in a second declaration of the same path. Written-through wins,
+    /// since suppressing a link a tool needs strands its output; and the
+    /// primary's copy wins, since a declarer asking for shared state is
+    /// asking for the one copy every workweave sees.
+    fn absorb(&mut self, source: SurfacedSource, copy: SurfacedCopy) {
+        if source == SurfacedSource::WrittenThroughLink {
+            self.source = source;
+        }
+        if copy == SurfacedCopy::Primary {
+            self.copy = copy;
+        }
+    }
 }
 
 /// Whether the link for this declaration should not exist yet: its file has to
@@ -1292,7 +1340,7 @@ fn link_waits_for_its_source(entry: &SurfacedEntry, source: &Path) -> bool {
 /// the surfacing primitive ([`surface_symlinks`]) and the framework surfacing
 /// check ([`verify_surfacing`]). When a path is declared by more than one
 /// enabled integration the first declarer wins for the label; the path itself
-/// is coalesced (the set is keyed by path).
+/// is coalesced (the set is keyed by path; see [`SurfacedEntry::absorb`]).
 ///
 /// Returns `(path -> declaring integration and where its write lands)`.
 /// Iteration order is sorted by path (`BTreeMap`), matching the deterministic
@@ -1318,17 +1366,15 @@ fn compute_owned_set(
             .into_iter()
             .chain(integration.managed_files(&int_ctx))
         {
+            let copy = f.copy();
             let (name, source) = f.into_parts();
             owned
                 .entry(name)
-                .and_modify(|held| {
-                    if source == SurfacedSource::WrittenThroughLink {
-                        held.source = source;
-                    }
-                })
+                .and_modify(|held| held.absorb(source, copy))
                 .or_insert_with(|| SurfacedEntry {
                     integration: integration.name().to_string(),
                     source,
+                    copy,
                 });
         }
     }
@@ -1474,7 +1520,8 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 ///     previously-active project's set, each verified to resolve to
 ///     `projects/<some-project>/<rel>`).
 ///  3. Creates the symlinks at `<root>/<file>` pointing at
-///     `projects/<project>/<file>`.
+///     `projects/<project>/<file>`, or for a primary-sourced file in a
+///     workweave at the primary's `projects/<project>/<file>`, absolutely.
 ///
 /// It does **not** write `.rwv-active` (that is step-1 project SELECTION, a
 /// primary-only concept) and does **not** author integration content. Because
@@ -1528,7 +1575,7 @@ fn surface_with_notices(
     manifest: &Manifest,
     mode: SurfacingMode,
 ) -> anyhow::Result<Vec<String>> {
-    let project_dir = project_dir(root, project.as_str());
+    let sites = SurfacingSites::of(root);
     let observed = observe_root(root);
     let presented = observed
         .as_ref()
@@ -1560,12 +1607,12 @@ fn surface_with_notices(
         .iter()
         .filter(|(file, _)| new_owned.contains(file.as_str()))
         .filter_map(|(file, entry)| {
-            let source = project_dir.join(file);
-            (!link_waits_for_its_source(entry, &source)).then(|| WantedLink {
+            let planned = sites.link(root, project, file, entry.copy)?;
+            (!link_waits_for_its_source(entry, &planned.source)).then(|| WantedLink {
                 file: file.clone(),
-                target: relative_symlink_target(project.as_str(), file),
-                kind: LinkTarget::on_disk(&source),
-                written_through: entry.source == SurfacedSource::WrittenThroughLink,
+                kind: LinkTarget::on_disk(&planned.source),
+                written_through: planned.adopts_root_writes(entry),
+                target: planned.target,
             })
         })
         .collect();
@@ -1584,7 +1631,7 @@ fn surface_with_notices(
     let mut occupants = Vec::new();
     let mut root_writes = Vec::new();
     for wanted in &wanted {
-        match link_slot(root, wanted) {
+        match link_slot(root, &sites, wanted) {
             LinkSlot::AlreadyLinked => {
                 already_linked.insert(wanted.file.clone());
             }
@@ -1683,6 +1730,7 @@ fn surface_with_notices(
     let mut journal = SurfacingJournal::default();
     if let Err(failure) = journal.apply(
         root,
+        &sites,
         project,
         &adoption,
         &removal_candidates,
@@ -1742,13 +1790,13 @@ enum LinkSlot {
     Occupied(std::path::PathBuf),
 }
 
-fn link_slot(root: &Path, wanted: &WantedLink) -> LinkSlot {
+fn link_slot(root: &Path, sites: &SurfacingSites, wanted: &WantedLink) -> LinkSlot {
     let link = root.join(&wanted.file);
     match link.symlink_metadata() {
         Err(e) => unreadable_slot(root, &link, e.kind()),
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&link) {
             Ok(target) if target == wanted.target => LinkSlot::AlreadyLinked,
-            Ok(target) if target_resolves_to_projects(Path::new(&wanted.file), &target) => {
+            Ok(target) if target_resolves_to_projects(sites, Path::new(&wanted.file), &target) => {
                 LinkSlot::Clear
             }
             _ => LinkSlot::Occupied(link),
@@ -1783,9 +1831,11 @@ struct SurfacingJournal {
 }
 
 impl SurfacingJournal {
+    #[allow(clippy::too_many_arguments)]
     fn apply(
         &mut self,
         root: &Path,
+        sites: &SurfacingSites,
         project: &ProjectName,
         adoption: &[crate::root_write::Op],
         removal_candidates: &BTreeSet<String>,
@@ -1793,7 +1843,7 @@ impl SurfacingJournal {
         to_create: &[&WantedLink],
     ) -> anyhow::Result<()> {
         self.files.apply(adoption)?;
-        remove_activation_symlinks(root, removal_candidates, &mut self.removed)?;
+        remove_activation_symlinks(root, sites, removal_candidates, &mut self.removed)?;
 
         if let Some(declared) = reclaim_from {
             for (file, _owner) in foreign_shared_name_links(root, project, declared) {
@@ -1880,10 +1930,8 @@ impl SurfacingJournal {
 ///
 /// For top-level files this is `projects/<project>/<file>`. For nested files
 /// like `gita/repos.csv` we prepend `../` once per directory level so the link
-/// remains relative. This is the single source of truth shared by symlink
-/// creation ([`surface_symlinks`]) and the surfacing check
-/// ([`verify_surfacing`]) so the "what target should exist" question has one
-/// answer.
+/// remains relative. Reached only through [`SurfacingSites::link`], which is
+/// what creation and the check both ask.
 fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
     let depth = Path::new(file)
         .parent()
@@ -1896,6 +1944,127 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
     relative_target.push(project_rel_dir(project));
     relative_target.push(file);
     relative_target
+}
+
+/// Where the links at one weave root read from, settled once per pass so every
+/// reader in it judges against the same answer.
+///
+/// The absolute shape is recognised as rwv's surfacing only under the root's
+/// own primary, and never at a `workweave.link` name: that section
+/// canonicalizes its source, and a primary root slot that is itself a
+/// surfacing link canonicalizes to exactly this shape.
+struct SurfacingSites {
+    primary: PrimaryProjects,
+    workweave_links: BTreeSet<String>,
+}
+
+enum PrimaryProjects {
+    /// The root is the primary, so its own `projects/` is the primary's.
+    Here,
+    /// `<primary>/projects`, canonical, for a workweave whose marker witnesses
+    /// its primary.
+    At(std::path::PathBuf),
+    /// A marker that witnesses no primary: nothing can be linked from it.
+    Unknown,
+}
+
+/// One link surfacing makes: what `<root>/<file>` reads, and the file that
+/// reaches.
+struct PlannedLink {
+    target: std::path::PathBuf,
+    source: std::path::PathBuf,
+    own_copy: bool,
+}
+
+impl PlannedLink {
+    /// Whether a real file at the link's path is a tool write to take into the
+    /// source. Only the weave's own copy may take one; the primary's is not
+    /// this weave's to write.
+    fn adopts_root_writes(&self, entry: &SurfacedEntry) -> bool {
+        self.own_copy && entry.source == SurfacedSource::WrittenThroughLink
+    }
+}
+
+impl SurfacingSites {
+    fn of(root: &Path) -> Self {
+        let marker = match observe_root(root) {
+            Some(RootObservation::Workweave { marker })
+            | Some(RootObservation::Disputed { marker, .. }) => marker,
+            Some(RootObservation::MarkerUnverifiable { .. }) => {
+                return Self {
+                    primary: PrimaryProjects::Unknown,
+                    workweave_links: BTreeSet::new(),
+                }
+            }
+            Some(RootObservation::Primary { .. }) | None => {
+                return Self {
+                    primary: PrimaryProjects::Here,
+                    workweave_links: BTreeSet::new(),
+                }
+            }
+        };
+        let manifest_path = project_dir(root, marker.project().as_str()).join(Manifest::FILE_NAME);
+        let Ok(manifest) = Manifest::from_path(&manifest_path) else {
+            return Self {
+                primary: PrimaryProjects::Unknown,
+                workweave_links: BTreeSet::new(),
+            };
+        };
+        Self {
+            primary: PrimaryProjects::At(
+                marker.primary_resolved().into_path_buf().join(PROJECTS_DIR),
+            ),
+            workweave_links: manifest
+                .workweave
+                .iter()
+                .flat_map(|config| &config.link)
+                .map(|name| name.trim_end_matches('/').to_string())
+                .collect(),
+        }
+    }
+
+    /// The link for `copy` of `project`'s `file`, or `None` when that copy
+    /// cannot be located from this root.
+    ///
+    /// The one answer [`surface_symlinks`] creates and [`verify_surfacing`]
+    /// expects.
+    fn link(
+        &self,
+        root: &Path,
+        project: &ProjectName,
+        file: &str,
+        copy: SurfacedCopy,
+    ) -> Option<PlannedLink> {
+        match (copy, &self.primary) {
+            (SurfacedCopy::Weave, _) | (SurfacedCopy::Primary, PrimaryProjects::Here) => {
+                Some(PlannedLink {
+                    target: relative_symlink_target(project.as_str(), file),
+                    source: project_dir(root, project.as_str()).join(file),
+                    own_copy: true,
+                })
+            }
+            (SurfacedCopy::Primary, PrimaryProjects::At(projects)) => {
+                let source = projects.join(project.as_str()).join(file);
+                Some(PlannedLink {
+                    target: source.clone(),
+                    source,
+                    own_copy: false,
+                })
+            }
+            (SurfacedCopy::Primary, PrimaryProjects::Unknown) => None,
+        }
+    }
+
+    fn primary_owner_dir(&self, rel_from_root: &Path, target: &Path) -> Option<String> {
+        let PrimaryProjects::At(projects) = &self.primary else {
+            return None;
+        };
+        let rel = rel_from_root.to_string_lossy().replace('\\', "/");
+        if self.workweave_links.contains(&rel) {
+            return None;
+        }
+        owner_dir_under_projects(rel_from_root, target.strip_prefix(projects).ok()?)
+    }
 }
 
 /// Whether the surfaced path `file` is named for `project` — `<project>`
@@ -1992,8 +2161,9 @@ fn undeclared_project_links(
     let mut exempt = declared.clone();
     exempt.extend(disabled_integration_declarations(root, presented, manifest));
     let skip = sweep_descent_skip(root);
+    let sites = SurfacingSites::of(root);
     let mut found = Vec::new();
-    collect_undeclared_links_in(root, root, presented, &exempt, &skip, &mut found);
+    collect_undeclared_links_in(root, root, &sites, presented, &exempt, &skip, &mut found);
     found.sort_by(|a, b| a.name.cmp(&b.name));
     found
 }
@@ -2048,6 +2218,7 @@ fn disabled_integration_declarations(
 fn collect_undeclared_links_in(
     dir: &Path,
     root: &Path,
+    sites: &SurfacingSites,
     presented: &ProjectName,
     declared: &BTreeSet<String>,
     skip: &BTreeSet<std::path::PathBuf>,
@@ -2063,7 +2234,7 @@ fn collect_undeclared_links_in(
         };
         if meta.file_type().is_dir() {
             if !sweep_skips(&path, skip) {
-                collect_undeclared_links_in(&path, root, presented, declared, skip, found);
+                collect_undeclared_links_in(&path, root, sites, presented, declared, skip, found);
             }
             continue;
         }
@@ -2080,7 +2251,7 @@ fn collect_undeclared_links_in(
         let Ok(target) = std::fs::read_link(&path) else {
             continue;
         };
-        let Some(owner) = surfacing_owner_dir(rel_from_root, &target) else {
+        let Some(owner) = surfacing_owner_dir(sites, rel_from_root, &target) else {
             continue;
         };
         if owner != presented.as_str() {
@@ -2185,7 +2356,8 @@ pub fn member_incompatibilities(
 
 /// Framework-level **Axis-1 surfacing** check: assert that every file in the
 /// owner-scoped surfacing union exists at `<root>/<file>` as a symlink that
-/// resolves to `projects/<project>/<file>`.
+/// resolves to `projects/<project>/<file>` — the primary's, absolutely, for a
+/// primary-sourced file in a workweave.
 ///
 /// It reads the same `generated_files() ∪ managed_files()` union that drives
 /// symlink creation (`compute_owned_set`) — it lives in the
@@ -2220,7 +2392,7 @@ pub fn verify_surfacing(
 ) -> Vec<crate::integration::Issue> {
     use crate::integration::{Issue, IssueKind, Severity};
 
-    let project_dir = project_dir(root, project.as_str());
+    let sites = SurfacingSites::of(root);
     let presents_project = observe_root(root)
         .as_ref()
         .and_then(RootObservation::presented_project)
@@ -2269,12 +2441,15 @@ pub fn verify_surfacing(
         if !presents_project && !is_project_named(file, project) {
             continue;
         }
-        let source = project_dir.join(file);
-        let source_missing = link_waits_for_its_source(entry, &source);
+        let Some(planned) = sites.link(root, project, file, entry.copy) else {
+            continue;
+        };
+        let source = &planned.source;
+        let source_missing = link_waits_for_its_source(entry, source);
         let integration = &entry.integration;
 
         let link = root.join(file);
-        let expected_target = relative_symlink_target(project.as_str(), file);
+        let expected_target = &planned.target;
 
         let link_meta = match link.symlink_metadata() {
             Ok(m) => m,
@@ -2299,7 +2474,7 @@ pub fn verify_surfacing(
             }
         };
 
-        if entry.source == SurfacedSource::WrittenThroughLink && link_meta.is_file() {
+        if planned.adopts_root_writes(entry) && link_meta.is_file() {
             if let Ok(Some(write)) = crate::root_write::read(root, project, file) {
                 let conflict = matches!(
                     write.verdict(project_vcs, root),
@@ -2343,7 +2518,7 @@ pub fn verify_surfacing(
         }
 
         match std::fs::read_link(&link) {
-            Ok(actual) if actual == expected_target => {
+            Ok(actual) if actual == *expected_target => {
                 if source_missing {
                     issues.push(Issue {
                         integration: integration.clone(),
@@ -2359,16 +2534,23 @@ pub fn verify_surfacing(
                 }
             }
             Ok(actual) => {
+                let replaceable = target_resolves_to_projects(&sites, Path::new(file), &actual);
                 issues.push(Issue {
                     integration: integration.clone(),
                     severity: Severity::Warning,
                     message: format!(
-                        "surfacing: `{file}` symlink resolves to `{}` (expected `{}`; safe to --fix)",
+                        "surfacing: `{file}` symlink resolves to `{}` (expected `{}`; {})",
                         actual.display(),
-                        expected_target.display()
+                        expected_target.display(),
+                        if replaceable {
+                            "safe to --fix"
+                        } else {
+                            "not rwv's surfacing link, so not auto-fixed; remove it and \
+                             `rwv doctor --fix` makes the expected one"
+                        }
                     ),
                     kind: IssueKind::Surfacing,
-                safe_to_fix: true,
+                    safe_to_fix: replaceable,
                 });
             }
             Err(e) => {
@@ -4093,5 +4275,62 @@ mod tests {
                  place is content a generator may decline to replace"
             );
         }
+    }
+
+    fn workweave_sites(primary: PrimaryProjects) -> SurfacingSites {
+        SurfacingSites {
+            primary,
+            workweave_links: BTreeSet::new(),
+        }
+    }
+
+    fn written_through(copy: SurfacedCopy) -> SurfacedEntry {
+        SurfacedEntry {
+            integration: "test".into(),
+            source: SurfacedSource::WrittenThroughLink,
+            copy,
+        }
+    }
+
+    #[test]
+    fn a_root_write_is_adopted_into_the_weaves_own_copy_only() {
+        let sites = workweave_sites(PrimaryProjects::At("/primary/projects".into()));
+        let project = ProjectName::new("alpha").unwrap();
+        for (copy, adopts) in [(SurfacedCopy::Weave, true), (SurfacedCopy::Primary, false)] {
+            let entry = written_through(copy);
+            let planned = sites
+                .link(Path::new("/ww"), &project, "x.lock", entry.copy)
+                .unwrap();
+            assert_eq!(planned.adopts_root_writes(&entry), adopts, "{copy:?}");
+        }
+    }
+
+    #[test]
+    fn nothing_is_linked_from_a_primary_the_marker_cannot_witness() {
+        let sites = workweave_sites(PrimaryProjects::Unknown);
+        let project = ProjectName::new("alpha").unwrap();
+        assert!(sites
+            .link(Path::new("/ww"), &project, ".beads", SurfacedCopy::Primary)
+            .is_none());
+        assert!(sites
+            .link(Path::new("/ww"), &project, ".beads", SurfacedCopy::Weave)
+            .is_some());
+    }
+
+    #[test]
+    fn a_second_declaration_coalesces_toward_written_through_and_the_primary() {
+        let mut entry = SurfacedEntry {
+            integration: "test".into(),
+            source: SurfacedSource::WrittenAtSource,
+            copy: SurfacedCopy::Primary,
+        };
+        entry.absorb(SurfacedSource::WrittenThroughLink, SurfacedCopy::Weave);
+        assert_eq!(entry.source, SurfacedSource::WrittenThroughLink);
+        assert_eq!(entry.copy, SurfacedCopy::Primary);
+
+        let mut entry = written_through(SurfacedCopy::Weave);
+        entry.absorb(SurfacedSource::WrittenAtSource, SurfacedCopy::Primary);
+        assert_eq!(entry.source, SurfacedSource::WrittenThroughLink);
+        assert_eq!(entry.copy, SurfacedCopy::Primary);
     }
 }

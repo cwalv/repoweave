@@ -86,11 +86,12 @@ fn the_fields_cannot_be_set_directly() {
         "E0451",
         "a declaration cannot be assembled field by field from outside",
         r#"
-        use repoweave::integration::{SurfacedFile, SurfacedSource};
+        use repoweave::integration::{SurfacedCopy, SurfacedFile, SurfacedSource};
         pub fn declare() -> SurfacedFile {
             SurfacedFile {
                 name: "Cargo.lock".to_string(),
                 source: SurfacedSource::WrittenThroughLink,
+                copy: SurfacedCopy::Weave,
             }
         }
         "#,

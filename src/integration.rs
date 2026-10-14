@@ -280,10 +280,22 @@ pub enum SurfacedSource {
 /// cannot be written without answering the question. That is deliberate: the
 /// wrong answer is silent and costs an untracked file at the weave root, which
 /// is not a mistake a default should be able to make on an author's behalf.
+/// Which weave's project checkout a surfaced link reads from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfacedCopy {
+    /// The checkout under the weave root the link sits in.
+    Weave,
+    /// The primary's checkout, from every workweave of the project. State
+    /// shared across workweaves lives there; at the primary itself the two
+    /// copies are the same one.
+    Primary,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfacedFile {
     name: String,
     source: SurfacedSource,
+    copy: SurfacedCopy,
 }
 
 impl SurfacedFile {
@@ -292,6 +304,7 @@ impl SurfacedFile {
         Self {
             name: name.into(),
             source: SurfacedSource::WrittenThroughLink,
+            copy: SurfacedCopy::Weave,
         }
     }
 
@@ -301,6 +314,16 @@ impl SurfacedFile {
         Self {
             name: name.into(),
             source: SurfacedSource::WrittenAtSource,
+            copy: SurfacedCopy::Weave,
+        }
+    }
+
+    /// Read this path from the primary's project checkout rather than the
+    /// weave's own.
+    pub fn from_primary(self) -> Self {
+        Self {
+            copy: SurfacedCopy::Primary,
+            ..self
         }
     }
 
@@ -311,6 +334,10 @@ impl SurfacedFile {
 
     pub fn source(&self) -> SurfacedSource {
         self.source
+    }
+
+    pub fn copy(&self) -> SurfacedCopy {
+        self.copy
     }
 
     /// Consume the declaration into its two halves, for a consumer building an

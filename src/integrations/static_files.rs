@@ -1,29 +1,32 @@
 //! Static-files integration.
 //!
 //! Symlinks declared files from the project directory to the workspace root on
-//! activate, and removes them on deactivate. Configured in the `integrations:`
-//! section of `rwv.toml` with a list of filenames. Default disabled.
+//! activate, and removes them on deactivate. Configured in the
+//! `[integrations.static-files]` table of `rwv.toml` with a list of entries.
+//! Default disabled.
 //!
 //! Example config:
 //!
-//! ```yaml
-//! integrations:
-//!   static-files:
-//!     enabled: true
-//!     files: [turbo.json, .eslintrc.json, .prettierrc]
+//! ```toml
+//! [integrations.static-files]
+//! enabled = true
+//! files = ["turbo.json", ".prettierrc", { path = ".beads", from = "primary" }]
 //! ```
+//!
+//! A plain entry links the weave's own project checkout. An entry with
+//! `from = "primary"` links the primary's, so every workweave of the project
+//! shares one copy.
 //!
 //! # Collision with `workweave.link`
 //!
-//! A name that appears in BOTH `integrations.static-files.files` AND
-//! `workweave.link` is rejected as a hard `Severity::Error`. The two
-//! sections have incompatible semantics in a workweave:
+//! A name that appears in BOTH `integrations.static-files.files` (in either
+//! form) AND `workweave.link` is rejected as a hard `Severity::Error`. The two
+//! sections give one root name two different answers in a workweave:
 //!
-//! - `workweave.link` creates an **absolute** symlink to the primary's
-//!   canonical path (shared state — same on-disk file from primary's
-//!   perspective).
-//! - `static-files.files` creates a **relative** symlink into the workweave's
-//!   own project checkout (surfacing project content for ecosystem tools).
+//! - `workweave.link` creates an absolute symlink to the canonical path of the
+//!   source weave's root slot, once, at creation.
+//! - `static-files.files` surfaces a project checkout's copy, and the
+//!   surfacing check verifies and repairs it.
 //!
 //! Silently picking one of the two is a footgun. The fix has two layers: the
 //! framework's owner-scoped removal predicate preserves the `workweave.link`
@@ -35,14 +38,92 @@
 use crate::integration::{
     Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
 };
+use crate::workspace::ContainerKind;
 use serde::Deserialize;
+use std::fmt;
 use std::path::Path;
 
 /// Integration-specific settings for the `static-files` integration.
 #[derive(Deserialize, Default)]
 struct StaticFilesConfig {
     #[serde(default)]
-    files: Vec<String>,
+    files: Vec<StaticFileEntry>,
+}
+
+/// One `files` entry: a bare path, or `{ path = "...", from = "primary" }`.
+#[derive(Debug, PartialEq, Eq)]
+struct StaticFileEntry {
+    path: String,
+    from: Option<CopyFrom>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum CopyFrom {
+    Primary,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StaticFileTable {
+    path: String,
+    #[serde(default)]
+    from: Option<CopyFrom>,
+}
+
+impl StaticFileEntry {
+    fn reads_primary(&self) -> bool {
+        self.from == Some(CopyFrom::Primary)
+    }
+
+    fn surfaced(&self) -> SurfacedFile {
+        let file = SurfacedFile::written_at_source(self.path.clone());
+        if self.reads_primary() {
+            file.from_primary()
+        } else {
+            file
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StaticFileEntry {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = StaticFileEntry;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(
+                    f,
+                    "a path string, or a table `{{ path = \"...\", from = \"primary\" }}`"
+                )
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                Ok(StaticFileEntry {
+                    path: v.to_string(),
+                    from: None,
+                })
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let table = StaticFileTable::deserialize(
+                    serde::de::value::MapAccessDeserializer::new(map),
+                )?;
+                Ok(StaticFileEntry {
+                    path: table.path,
+                    from: table.from,
+                })
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
 }
 
 pub struct StaticFiles;
@@ -64,8 +145,8 @@ fn collision_names(cfg: &StaticFilesConfig, ctx: &IntegrationContext) -> Vec<Str
         workweave.link.iter().map(|s| s.as_str()).collect();
     let mut hits: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for f in &cfg.files {
-        if link_set.contains(f.as_str()) {
-            hits.insert(f.clone());
+        if link_set.contains(f.path.as_str()) {
+            hits.insert(f.path.clone());
         }
     }
     hits.into_iter().collect()
@@ -78,6 +159,20 @@ fn collision_message(name: &str) -> String {
         "name '{name}' is declared in both static-files.files and workweave.link; \
          pick one (workweave.link absolutizes to the primary, static-files surfaces project content)"
     )
+}
+
+/// The entries whose copy is the one under `output_dir`. In a workweave a
+/// primary-sourced entry names the primary's checkout instead, which may hold
+/// what the workweave's own checkout does not.
+fn checked_at_output_dir<'c>(
+    cfg: &'c StaticFilesConfig,
+    ctx: &IntegrationContext,
+) -> impl Iterator<Item = &'c str> {
+    let in_workweave = ctx.container_kind == ContainerKind::Workweave;
+    cfg.files
+        .iter()
+        .filter(move |f| !(in_workweave && f.reads_primary()))
+        .map(|f| f.path.as_str())
 }
 
 impl Integration for StaticFiles {
@@ -119,9 +214,8 @@ impl Integration for StaticFiles {
             anyhow::bail!("{}", collision_message(&collisions[0]));
         }
 
-        for file in &cfg.files {
-            let path = ctx.output_dir.join(file);
-            if !path.exists() {
+        for file in checked_at_output_dir(&cfg, ctx) {
+            if !ctx.output_dir.join(file).exists() {
                 eprintln!(
                     "[warning] static-files: declared file '{}' not found in project directory",
                     file
@@ -161,9 +255,8 @@ impl Integration for StaticFiles {
             });
         }
 
-        for file in &cfg.files {
-            let path = ctx.output_dir.join(file);
-            if !path.exists() {
+        for file in checked_at_output_dir(&cfg, ctx) {
+            if !ctx.output_dir.join(file).exists() {
                 issues.push(Issue {
                     integration: self.name().to_string(),
                     severity: Severity::Warning,
@@ -181,8 +274,47 @@ impl Integration for StaticFiles {
             .settings::<StaticFilesConfig>()
             .unwrap_or_default()
             .files
-            .into_iter()
-            .map(SurfacedFile::written_at_source)
+            .iter()
+            .map(StaticFileEntry::surfaced)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::SurfacedCopy;
+    use crate::manifest::IntegrationConfig;
+
+    fn parse(toml: &str) -> Result<StaticFilesConfig, toml::de::Error> {
+        IntegrationConfig::from_toml(toml).settings()
+    }
+
+    #[test]
+    fn a_plain_string_and_a_table_without_from_surface_the_weaves_copy() {
+        let cfg = parse("files = [\"turbo.json\", { path = \"nx.json\" }]").unwrap();
+        let copies: Vec<_> = cfg.files.iter().map(|f| f.surfaced().copy()).collect();
+        assert_eq!(copies, [SurfacedCopy::Weave, SurfacedCopy::Weave]);
+    }
+
+    #[test]
+    fn from_primary_surfaces_the_primarys_copy() {
+        let cfg = parse("files = [{ path = \".beads\", from = \"primary\" }]").unwrap();
+        assert_eq!(
+            cfg.files[0].surfaced(),
+            SurfacedFile::written_at_source(".beads").from_primary()
+        );
+    }
+
+    #[test]
+    fn a_misspelt_key_or_value_is_refused_rather_than_read_as_plain() {
+        let key = parse("files = [{ path = \".beads\", form = \"primary\" }]")
+            .err()
+            .expect("an unknown key must not parse");
+        assert!(key.to_string().contains("form"), "{key}");
+        let value = parse("files = [{ path = \".beads\", from = \"primry\" }]")
+            .err()
+            .expect("an unknown value must not parse");
+        assert!(value.to_string().contains("primry"), "{value}");
     }
 }
