@@ -24,6 +24,13 @@ missing directory).
 `doctor --fix` intentionally does not auto-clone; network side effects stay
 behind this explicit verb.
 
+Run in a workweave, in-place `fetch` aligns the canonical clones and then
+creates the workweave's worktree for every member its `rwv.lock` pins and the
+workweave lacks — nothing at the slot, or a symlink there, which is replaced.
+It is the repair `rwv doctor` names for a `workweave-drift` finding whose
+canonical clone is not on disk; one whose canonical clone holds the pinned
+revision, `rwv doctor --fix` creates without the network.
+
 ### What happens to a clone that is already present
 
 A present clone is not skipped. What `fetch` does to it depends on whether

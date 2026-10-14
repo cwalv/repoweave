@@ -95,7 +95,7 @@
       "description": "Discriminator for [`CheckViolation::BranchDiscipline`] findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch, or on a ref of its own namespace that predates the flat naming: [`SharedBranch`](Self::SharedBranch), [`ForeignEphemeral`](Self::ForeignEphemeral), [`Detached`](Self::Detached), [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch), [`UnrecordedEphemeralBranch`](Self::UnrecordedEphemeralBranch), [`UnbornCheckout`](Self::UnbornCheckout). * (b) canonical-store attachment — what the canonical store's HEAD is: [`CanonicalHoldsLiveWorkweaveRef`](Self::CanonicalHoldsLiveWorkweaveRef), [`CanonicalHoldsLeakedRef`](Self::CanonicalHoldsLeakedRef), [`CanonicalDetached`](Self::CanonicalDetached). * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe), [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive), or [`StaleEphemeralBranchUnowned`](Self::StaleEphemeralBranchUnowned). The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.\n\n# Ownership is by record, never by name shape (R2)\n\nThe (b) grouping and the safe/live/unowned split in (c) both key on whether rwv holds a persisted ownership receipt ([`crate::workweave_index::RefRegistry`]) for the exact ref in the exact store. A branch that merely *looks* like one of rwv's — a hand-made `<a>--<b>/<c>` — is an operator branch: the canonical-store pass leaves it alone, and `--fix` never deletes it.",
       "oneOf": [
         {
-          "description": "(a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).\n\nCaused by `git switch main` inside a workweave or by a bare clone that was never moved to an ephemeral branch. The fixture for this sub-kind exercises the bare-main-in-workweave case from the spec's acceptance criteria: the violation must flag from creation, before any commit lands.\n\nReport-only, deliberately — not a missing arm. The state is operator-made (a `git switch` run by hand), unlike the fetch-written detachments whose repairs are native consented arms, and the remediation prints the exact registry-aware `git switch` (it names an existing recorded branch whenever a receipt exists), which is what keeps hand-running it safe. If measured recurrence reopens the question, the native form is a targeted repair naming one checkout, not a bulk consent flag.\n\nReference-alias carve-out: a symlinked `reference` checkout (a `CheckoutKind::ReferenceAlias`) legitimately shares the canonical store's non-ephemeral branch (e.g. `main`) — it has no per-workweave ephemeral branch by design, because it is the canonical store viewed through a symlink. The I3 branch-discipline scan skips such aliases, so they never fire this finding. A `reference` repo created with `--worktree-references` is a real worktree (`CheckoutKind::Worktree`) on its own ephemeral branch and is checked normally.",
+          "description": "(a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).\n\nCaused by `git switch main` inside a workweave or by a bare clone that was never moved to an ephemeral branch. The fixture for this sub-kind exercises the bare-main-in-workweave case from the spec's acceptance criteria: the violation must flag from creation, before any commit lands.\n\nReport-only, deliberately — not a missing arm. The state is operator-made (a `git switch` run by hand), unlike the fetch-written detachments whose repairs are native consented arms, and the remediation prints the exact registry-aware `git switch` (it names an existing recorded branch whenever a receipt exists), which is what keeps hand-running it safe. If measured recurrence reopens the question, the native form is a targeted repair naming one checkout, not a bulk consent flag.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store, on the canonical store's branch. It is reported as `workweave-drift`.",
           "type": "object",
           "required": [
             "shared-branch"
@@ -536,7 +536,7 @@
       "description": "Discriminator for [`CheckViolation::CloneTopology`] findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack ([clone-topology.md](../../docs/explanation/joints/clone-topology.md)) can break: a manifest repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
       "oneOf": [
         {
-          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case: the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.\n\nReference-alias carve-out: a symlinked `reference` checkout (a `CheckoutKind::ReferenceAlias`, i.e. the workweave path is itself a symlink to the canonical store) is *not* a standalone store — it is the single canonical store viewed through a symlink, which upholds the single-canonical-store invariant by identity. The scan excludes it before this check. A *real* standalone store inside a workweave is a real directory (not a symlink) and still fires this finding.",
+          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case: the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store itself. It is reported as `workweave-drift`.",
           "type": "object",
           "required": [
             "standalone-in-workweave"
@@ -672,10 +672,31 @@
     "DriftKind": {
       "oneOf": [
         {
-          "description": "Manifest lists it, but no worktree exists.",
+          "description": "Nothing at the slot, and the canonical clone holds the pinned revision.",
           "type": "string",
           "enum": [
             "missing"
+          ]
+        },
+        {
+          "description": "Nothing at the slot, and the canonical clone does not hold the pinned revision, or is not on disk.",
+          "type": "string",
+          "enum": [
+            "missing-unfetched"
+          ]
+        },
+        {
+          "description": "A symlink at the slot, dangling or not, and the canonical clone holds the pinned revision.",
+          "type": "string",
+          "enum": [
+            "symlink"
+          ]
+        },
+        {
+          "description": "A symlink at the slot, and the canonical clone does not hold the pinned revision, or is not on disk.",
+          "type": "string",
+          "enum": [
+            "symlink-unfetched"
           ]
         },
         {

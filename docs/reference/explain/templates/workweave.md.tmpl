@@ -4,12 +4,12 @@
 
 Create, delete, or list workweaves for a project. A workweave is a parallel
 working directory that materializes every repo in the project's manifest
-(including the project repo itself). `owned`/`fork`/`dependency` repos become
-`git worktree` checkouts on ephemeral branches named
-`{project}--{name}/{source-branch}`. `reference` repos — read-only study
-material — are instead **symlinked** to the single canonical weave-root clone
-(`<primary_root>/<repo-path>`): zero working-tree duplication, byte-identical
-across workweaves, and no per-workweave branch. Each workweave is fully
+(including the project repo itself). Every repo, whatever its `role`, becomes
+a `git worktree` checkout of the canonical weave-root clone on the ephemeral
+branch `{project}--{name}`. A member slot holding a symlink — the shape older
+releases gave `reference` repos — is not one rwv operates on: verbs that walk
+the workweave's members refuse it (`rwv explain workweave-drift`), and
+`rwv doctor --fix` replaces it with a worktree. Each workweave is fully
 self-describing: it carries `.rwv-workweave`, recording the primary weave,
 project, and parent workspace. That marker is a workweave root's only
 identity file — `.rwv-active` is the primary root's project-selection
@@ -31,7 +31,7 @@ Create a new workweave. Forks from CWD's active workspace by default; use
 `--from` to specify a different source.
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--worktree-references] [--dir <path>]
+rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>]
 ```
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
@@ -51,15 +51,6 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   project worktree. Without this flag, `create` refuses and names the dirty
   files. Default behavior is recommended; use `--capture-dirty` only when you
   intentionally want to continue in-flight edits inside the workweave.
-- `--worktree-references` — cut a real `git worktree` for `role: reference`
-  repos instead of the default symlink to the canonical weave-root clone. This
-  restores the legacy behavior (per-workweave reference refs) at the cost of
-  duplicating each reference repo's full working tree into this workweave. By
-  default, reference repos are symlinked — zero working-tree duplication, and
-  a worktree's per-workweave branch isolation is moot for read-only material.
-  This flag affects only this `create`; it records nothing, so every
-  downstream command keys on the resulting on-disk shape (a worktree'd
-  reference flows through every normal worktree path).
 - `--dir <path>` — per-invocation placement override. Places the workweave at
   exactly `<path>` (absolute; relative paths resolve against the primary
   root). The absolute path is recorded in `.rwv-workweave-index`, so every
@@ -82,11 +73,8 @@ between invocations (`.runtime/`, `.claude/`, etc.) is preserved. Re-invocation
 is the standard "ensure workweave exists" path.
 
 **What `create` writes:**
-1. One `git worktree` per `owned`/`fork`/`dependency` manifest repo (plus the
-   project repo) at `{workweave}/{repo-path}/`, on a fresh ephemeral branch.
-   `role: reference` repos are instead **symlinked** to the canonical
-   weave-root clone (`<primary_root>/{repo-path}`) — no worktree, no ephemeral
-   branch (override with `--worktree-references`).
+1. One `git worktree` per manifest repo, whatever its role (plus the project
+   repo), at `{workweave}/{repo-path}/`, on a fresh ephemeral branch.
 2. A copy of every rwv-owned generated file the source workspace has accepted
    — its lockfiles, plus the `.rwv-owned-digests` record attesting them. These
    are gitignore-eligible, so the worktrees above arrive without them, and
@@ -139,9 +127,7 @@ waives the second. Each names exactly what it destroys; passing both is the
 workweave. The operator must have reviewed the contents (or not care). Once a
 refusal is waived, `delete` removes worktrees, prunes stale `.git/worktrees/` entries,
 force-deletes all ephemeral branches, and removes the workweave directory.
-Reference symlinks are simply unlinked (never followed), so the shared
-canonical clone they alias is left untouched — delete never mutates it,
-deletes no branch in it, and is safe even when that clone is dirty.
+The canonical clones keep everything but this workweave's own branches.
 
 **Child adoption.** Before the workweave is destroyed, any living child
 workweave that records it as `parent:` is re-pointed to the retiree's OWN
@@ -200,7 +186,7 @@ instead of hand-rolling branch-name derivation.
 ## Invocation
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--worktree-references] [--dir <path>]
+rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>]
 rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]
 rwv workweave <project> list
 rwv workweave <project> log [--diff] [--json]

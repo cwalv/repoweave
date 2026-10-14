@@ -29,7 +29,9 @@ CWD, and target is only ever advanced via fast-forward.
    bails with an actionable error. The manifest repos go first and the project
    repo last: the project repo carries the lock, so advancing it while a manifest
    repo failed to land would leave the target's lock naming revisions the target
-   does not hold. A failed manifest repo skips the project advance entirely.
+   does not hold. A failed manifest repo skips the project advance entirely. A
+   member CWD holds and a target workweave lacks is created there, on the
+   target's ephemeral branch, at CWD's tip.
 
 ### End-state semantics
 
@@ -41,14 +43,10 @@ After `rwv sync-to <target> --strategy=rebase`:
 
 ### Reference repos
 
-`role: reference` repos materialized as symlinks (the default; see
-`rwv explain workweave`) are **excluded from every step**: they are
-read-only aliases of the single canonical clone, so no savepoint, rebase,
-FF-advance, or abort touches the shared canonical store through the symlink,
-on either CWD or target. With `--retire`, the merged-check and dirty-check
-skip them, and the workweave's reference symlinks are unlinked (never the
-canonical) on delete. They remain pinned in `rwv.lock`. A `reference` repo
-created with `--worktree-references` is a real worktree and is synced normally.
+`role: reference` repos take every step like any other member: each is a
+worktree on the workweave's ephemeral branch. A workweave holding a member as
+a symlink — the shape older releases gave `reference` repos — on either side
+refuses the op with `workweave-drift`; run `rwv doctor --fix` there first.
 
 ### Strategy semantics
 
@@ -77,8 +75,7 @@ target must be in a state to receive it. Before step 1 begins, `sync-to`
 refuses when any target repo (manifest or project) has uncommitted tracked
 changes step 3 would fast-forward over, or is on a **detached HEAD** — there
 is no branch there to advance, so the landing would be recorded nowhere.
-Reference symlinks are excluded from both checks. `rwv fetch` and `rwv update`
-leave repos detached; check out the receiving branch in the target and re-run.
+`rwv fetch` and `rwv update` leave repos detached; check out the receiving branch in the target and re-run.
 
 Untracked files in the target are not scanned by this preflight — a
 fast-forward only overwrites a path the incoming commits write, so an
