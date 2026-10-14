@@ -5,6 +5,8 @@
 //!     Cargo workspace dropping and regaining the member;
 //!   - a change to `reference` refuses over uncommitted tracked changes;
 //!   - an unchanged role changes nothing, and an unknown role is rejected;
+//!   - a change the regeneration refuses leaves the manifest and the member's
+//!     files as they were;
 //!   - the change lands through sync-to, the target settles on landing, and
 //!     another workweave settles on its next sync.
 #![cfg(unix)]
@@ -39,8 +41,9 @@ fn succeed(args: &[&str], dir: &Path) -> std::process::Output {
     out
 }
 
-/// A bare repo holding a dependency-free library crate named `name`.
-fn crate_origin(tmp: &Path, name: &str) -> String {
+/// A bare repo holding a dependency-free library crate named `name`, whose
+/// `Cargo.toml` ends with `manifest_tail`.
+fn crate_origin(tmp: &Path, name: &str, manifest_tail: &str) -> String {
     let bare = tmp.join("origin").join(format!("{name}.git"));
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
     common::git_in(
@@ -62,7 +65,9 @@ fn crate_origin(tmp: &Path, name: &str) -> String {
     std::fs::create_dir_all(seed.join("src")).unwrap();
     std::fs::write(
         seed.join("Cargo.toml"),
-        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        format!(
+            "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{manifest_tail}"
+        ),
     )
     .unwrap();
     std::fs::write(seed.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
@@ -111,8 +116,8 @@ fn make_weave(tmp: &Path) -> Weave {
     let ws = tmp.join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
     succeed(&["init", "demo"], &ws);
-    let alpha_url = crate_origin(tmp, "alpha");
-    let beta_url = crate_origin(tmp, "beta");
+    let alpha_url = crate_origin(tmp, "alpha", "");
+    let beta_url = crate_origin(tmp, "beta", "");
     succeed(&["add", &alpha_url], &ws);
     succeed(&["add", &beta_url], &ws);
     let project = ws.join("projects/demo");
@@ -122,18 +127,10 @@ fn make_weave(tmp: &Path) -> Weave {
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-qm", "alpha and beta"]);
 
-    let manifest = Manifest::from_path(&project.join("rwv.toml")).unwrap();
-    let path_of = |url: &str| {
-        manifest
-            .iter_entries()
-            .find(|(_, entry)| entry.url.to_string() == url)
-            .map(|(path, _)| path.as_str().to_owned())
-            .unwrap()
-    };
     let weave = Weave {
         tmp: tmp.to_path_buf(),
-        alpha: path_of(&alpha_url),
-        beta: path_of(&beta_url),
+        alpha: path_of(&ws, &alpha_url),
+        beta: path_of(&ws, &beta_url),
         ws,
     };
     assert!(
@@ -141,6 +138,16 @@ fn make_weave(tmp: &Path) -> Weave {
         "fixture: the generated Cargo workspace lists beta as a member"
     );
     weave
+}
+
+/// The path `rwv.toml` in `workspace` lists the repo at `url` under.
+fn path_of(workspace: &Path, url: &str) -> String {
+    Manifest::from_path(&workspace.join("projects/demo/rwv.toml"))
+        .unwrap()
+        .iter_entries()
+        .find(|(_, entry)| entry.url.to_string() == url)
+        .map(|(path, _)| path.as_str().to_owned())
+        .unwrap()
 }
 
 fn tracked_regular_files(checkout: &Path) -> Vec<PathBuf> {
@@ -299,6 +306,32 @@ fn an_unchanged_role_changes_nothing() {
         "rwv.toml is not rewritten"
     );
     assert_eq!(common::git_in(&project, &["status", "--porcelain"]), before);
+}
+
+#[test]
+fn a_change_the_regeneration_refuses_leaves_the_member_as_it_was() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let url = crate_origin(tmp.path(), "nested", "\n[workspace]\nmembers = []\n");
+    succeed(&["add", &url, "--role", "reference"], &weave.ws);
+    let nested = path_of(&weave.ws, &url);
+    let member = weave.ws.join(&nested);
+    assert_read_only(&member, "fixture: a reference member");
+    let manifest = std::fs::read(weave.project_dir(&weave.ws).join("rwv.toml")).unwrap();
+
+    let out = run(&["role", &nested, "owned"], &weave.ws);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{}", describe(&out));
+    assert!(
+        stderr.contains("declares its own [workspace]") && stderr.contains("rwv.toml is unchanged"),
+        "the refusal names its cause and says nothing landed: {stderr}"
+    );
+    assert_eq!(
+        std::fs::read(weave.project_dir(&weave.ws).join("rwv.toml")).unwrap(),
+        manifest
+    );
+    assert_eq!(weave.role_of(&weave.ws, &nested), Role::Reference);
+    assert_read_only(&member, "after the refused change");
 }
 
 #[test]
