@@ -121,3 +121,43 @@ fn sync_reports_how_the_files_it_moved_were_placed() {
         "readme, revised\n"
     );
 }
+
+#[test]
+fn sync_json_carries_the_placement_on_the_members_outcome() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, member, seat) = weave_and_seat(tmp.path());
+    std::fs::write(member.join("NEXT"), "n\n").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "advance"]);
+    common::rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&primary)
+        .assert()
+        .success();
+
+    let output = common::rwv()
+        .args(["sync", "primary", "--json"])
+        .current_dir(&seat)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "sync failed:\n{stdout}");
+
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let outcome = envelope["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == MEMBER)
+        .unwrap_or_else(|| panic!("no outcome for {MEMBER}:\n{stdout}"));
+    let files = &outcome["files"];
+    assert!(files.is_object(), "no placement on the outcome:\n{stdout}");
+    let count = |key: &str| files[key].as_u64().unwrap();
+    assert_eq!(count("reflinked") + count("written"), 1, "{stdout}");
+    assert_eq!(count("hardlinked"), 0);
+    match declared_to_clone(tmp.path()) {
+        Some(true) => assert_eq!(count("reflinked"), 1, "on {}", std::env::consts::OS),
+        Some(false) => assert_eq!(count("written"), 1),
+        None => {}
+    }
+}

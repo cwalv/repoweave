@@ -350,6 +350,35 @@ Schema:
         }
       ]
     },
+    "FilePlacement": {
+      "description": "How a member's tracked files reached a workspace.",
+      "type": "object",
+      "required": [
+        "hardlinked",
+        "reflinked",
+        "written"
+      ],
+      "properties": {
+        "hardlinked": {
+          "description": "Linked to another workspace's read-only copy.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reflinked": {
+          "description": "Cloned from another workspace's copy, sharing its storage until either is written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "written": {
+          "description": "Written by the version control system.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
     "ReplayBaseline": {
       "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
       "type": "string",
@@ -529,6 +558,17 @@ Schema:
                 "type": "string"
               }
             },
+            "files": {
+              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/FilePlacement"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "kind": {
               "type": "string",
               "enum": [
@@ -573,6 +613,17 @@ Schema:
               "anyOf": [
                 {
                   "$ref": "#/definitions/ContainmentOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "files": {
+              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/FilePlacement"
                 },
                 {
                   "type": "null"
@@ -634,6 +685,17 @@ Schema:
                 }
               ]
             },
+            "files": {
+              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/FilePlacement"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "kind": {
               "type": "string",
               "enum": [
@@ -681,6 +743,17 @@ Schema:
             },
             "failure": {
               "$ref": "#/definitions/SyncFailureOutput"
+            },
+            "files": {
+              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/FilePlacement"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "kind": {
               "type": "string",

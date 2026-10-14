@@ -656,6 +656,11 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             derived_content_dropped: Vec::new(),
             containment: Some(c[0]),
+            files: Some(FilePlacement {
+                reflinked: 4,
+                hardlinked: 0,
+                written: 1,
+            }),
         },
         SyncOutcomeOutput::Converged {
             path: REPO.to_owned(),
@@ -663,6 +668,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             derived_content_dropped: vec!["Cargo.lock".to_owned()],
             containment: Some(c[1]),
+            files: None,
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
@@ -671,6 +677,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             containment: Some(c[2]),
             source_position: Some(ContainmentVerdictOutput::Ahead { commits: 5 }),
+            files: None,
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
@@ -679,12 +686,14 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             containment: None,
             source_position: None,
+            files: None,
         },
         SyncOutcomeOutput::NoOp {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             step3_advance: step3.clone(),
             containment: Some(c[3]),
+            files: None,
         },
     ];
     for (n, failure) in sync_failures().into_iter().enumerate() {
@@ -696,6 +705,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             // A failure decided before any pair was read carries no verdict,
             // and that shape has to be sampled too.
             containment: (n > 0).then(|| c[n % c.len()]),
+            files: None,
         });
     }
     outcomes

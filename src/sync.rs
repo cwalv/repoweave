@@ -29,6 +29,7 @@ use crate::workweave::{ensure_registered_workweave, refuse_symlinked_members};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -547,6 +548,12 @@ pub enum SyncOutcomeOutput {
         /// against — `behind` is a fast-forward, `diverged` is a rebase.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
+        /// How this checkout's files were placed when the op created it or
+        /// moved it: cloned from another workspace of the repository, or
+        /// written by the VCS. Absent where nothing was placed or the VCS
+        /// cannot say.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        files: Option<FilePlacement>,
     },
     AlreadyAhead {
         path: String,
@@ -566,6 +573,12 @@ pub enum SyncOutcomeOutput {
         /// source's checkout could not be measured.
         #[serde(skip_serializing_if = "Option::is_none")]
         source_position: Option<ContainmentVerdictOutput>,
+        /// How this checkout's files were placed when the op created it or
+        /// moved it: cloned from another workspace of the repository, or
+        /// written by the VCS. Absent where nothing was placed or the VCS
+        /// cannot say.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        files: Option<FilePlacement>,
     },
     NoOp {
         path: String,
@@ -578,6 +591,12 @@ pub enum SyncOutcomeOutput {
         /// source it was equal to.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
+        /// How this checkout's files were placed when the op created it or
+        /// moved it: cloned from another workspace of the repository, or
+        /// written by the VCS. Absent where nothing was placed or the VCS
+        /// cannot say.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        files: Option<FilePlacement>,
     },
     Failed {
         path: String,
@@ -593,6 +612,12 @@ pub enum SyncOutcomeOutput {
         /// Absent where the outcome was decided before any pair was read.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
+        /// How this checkout's files were placed when the op created it or
+        /// moved it: cloned from another workspace of the repository, or
+        /// written by the VCS. Absent where nothing was placed or the VCS
+        /// cannot say.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        files: Option<FilePlacement>,
     },
 }
 
@@ -615,6 +640,7 @@ impl SyncOutcomeOutput {
                 step3_advance: None,
                 derived_content_dropped: derived_content_dropped.clone(),
                 containment,
+                files: None,
             },
             RepoSyncOutcome::AlreadyAhead {
                 commits_ahead,
@@ -627,12 +653,14 @@ impl SyncOutcomeOutput {
                 step3_advance: None,
                 containment,
                 source_position: source_position.map(ContainmentVerdictOutput::from),
+                files: None,
             },
             RepoSyncOutcome::NoOp => Self::NoOp {
                 path,
                 absolute_path,
                 step3_advance: None,
                 containment,
+                files: None,
             },
             RepoSyncOutcome::Failed(failure) => Self::Failed {
                 path,
@@ -640,12 +668,31 @@ impl SyncOutcomeOutput {
                 failure: SyncFailureOutput::from(failure),
                 step3_advance: None,
                 containment,
+                files: None,
             },
         }
     }
 
     pub fn is_failure(&self) -> bool {
         matches!(self, Self::Failed { .. })
+    }
+
+    fn path(&self) -> &str {
+        match self {
+            Self::Converged { path, .. }
+            | Self::AlreadyAhead { path, .. }
+            | Self::NoOp { path, .. }
+            | Self::Failed { path, .. } => path,
+        }
+    }
+
+    fn files_mut(&mut self) -> &mut Option<FilePlacement> {
+        match self {
+            Self::Converged { files, .. }
+            | Self::AlreadyAhead { files, .. }
+            | Self::NoOp { files, .. }
+            | Self::Failed { files, .. } => files,
+        }
     }
 
     /// Return a mutable reference to the `step3_advance` field regardless of variant.
@@ -1992,6 +2039,14 @@ pub trait OutputHandler: Send + Sync {
     /// plain-sync JSON handlers that do not need step-3 SHAs.
     fn record_step3_advance(&self, _path: &str, _from_sha: &str, _to_sha: &str) {}
 
+    /// Record how a repo's files were placed when the op created it or moved
+    /// it, keyed like `record`'s `path`. It may arrive before or after that
+    /// repo's record.
+    ///
+    /// Default implementation is a no-op: the text handler prints placement
+    /// at the call site.
+    fn record_files(&self, _path: &str, _files: FilePlacement) {}
+
     /// Record a standing advisory raised during cleanup.
     ///
     /// Default implementation is a no-op: text-mode handlers print the
@@ -2109,6 +2164,7 @@ impl OutputHandler for TextHandler<'_> {
 pub struct JsonEnvelopeHandler<'a> {
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     advisories: &'a Mutex<Vec<AdvisoryOutput>>,
+    files: &'a Mutex<HashMap<String, FilePlacement>>,
 }
 
 impl OutputHandler for JsonEnvelopeHandler<'_> {
@@ -2137,6 +2193,11 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
         let mut guard = self.advisories.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(advisory);
     }
+
+    fn record_files(&self, path: &str, files: FilePlacement) {
+        let mut guard = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(path.to_owned(), files);
+    }
 }
 
 /// NDJSON streaming handler: writes one self-describing JSON line per record
@@ -2146,10 +2207,14 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
 ///
 /// `stdout_lock` serialises concurrent writes so parallel workers cannot
 /// interleave bytes. Text chatter is suppressed (`emit_text` returns `false`).
+///
+/// A repo's file placement rides on its line only when it was recorded
+/// before the line was written.
 pub struct JsonNdjsonHandler<'a> {
     stdout_lock: &'a Mutex<()>,
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     schema_url: &'a str,
+    files: &'a Mutex<HashMap<String, FilePlacement>>,
 }
 
 impl OutputHandler for JsonNdjsonHandler<'_> {
@@ -2164,12 +2229,20 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     ) {
-        let out = SyncOutcomeOutput::from_outcome(
+        let mut out = SyncOutcomeOutput::from_outcome(
             path.to_owned(),
             abs_path.to_owned(),
             outcome,
             containment,
         );
+        if let Some(files) = self
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(path)
+        {
+            *out.files_mut() = Some(files);
+        }
         let record = SyncOutcomeNdjsonRecord {
             schema: self.schema_url,
             outcome: &out,
@@ -2211,6 +2284,7 @@ pub struct JsonEnvelopeSyncToHandler<'a> {
     retired: &'a Mutex<Option<WorkweaveName>>,
     /// The phase the resumed op's record stood at, `None` on a fresh run.
     resumed: &'a Mutex<Option<op_state::OpPhase>>,
+    files: &'a Mutex<HashMap<String, FilePlacement>>,
 }
 
 impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
@@ -2260,6 +2334,11 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         guard.insert(path.to_owned(), advance);
+    }
+
+    fn record_files(&self, path: &str, files: FilePlacement) {
+        let mut guard = self.files.lock().unwrap_or_else(|e| e.into_inner());
+        guard.insert(path.to_owned(), files);
     }
 }
 
@@ -4711,6 +4790,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             &ctx.cwd_project_name,
         ) {
             Ok(files) => {
+                if let Some(files) = files {
+                    ctx.handler.record_files(repo_path.as_str(), files);
+                }
                 if emit_text {
                     println!(
                         "  {repo_path}: materialized{}",
@@ -5105,6 +5187,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.cwd_project_dir,
         emit_text,
         &|vcs, member| vcs.resolve_savepoint(member, ctx.op_id.as_str()),
+        Some(ctx.handler),
     );
 
     Ok(())
@@ -5118,12 +5201,14 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// not parse settles nothing here; the phase that needs it next refuses on it.
 ///
 /// `moved_from` answers, for a member's checkout, the revision the op moved
-/// it from; the files that move rewrote are shared again first.
+/// it from; the files that move rewrote are shared again first, and how they
+/// were placed goes to `handler` when there is one.
 fn settle_members(
     workspace: &Path,
     project_dir: &Path,
     emit_text: bool,
     moved_from: &dyn Fn(&dyn Vcs, &Path) -> Option<ResolvedRevisionId>,
+    handler: Option<&dyn OutputHandler>,
 ) {
     let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) else {
         return;
@@ -5131,6 +5216,11 @@ fn settle_members(
     for (repo_path, settled) in
         crate::settle::settle_workspace_moved(workspace, &manifest, moved_from)
     {
+        if let (Ok(settled), Some(handler)) = (&settled, handler) {
+            if let Some(files) = settled.files {
+                handler.record_files(repo_path.as_str(), files);
+            }
+        }
         if !emit_text {
             continue;
         }
@@ -5468,6 +5558,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     )
                 }) {
                     Ok(born) => {
+                        if let Some(files) = born.files {
+                            ctx.handler.record_files(repo_path.as_str(), files);
+                        }
                         if emit_text {
                             println!(
                                 "  {repo_path}: materialized in target at {}{}",
@@ -5584,6 +5677,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.dest_project_dir,
         emit_text,
         &|vcs, member| vcs.resolve_savepoint(member, &target_savepoint),
+        Some(ctx.handler),
     );
 
     Ok(())
@@ -6420,10 +6514,16 @@ pub fn run_abort(
             any_failure = true;
         }
     }
-    settle_members(&workspace_dir, &cwd_project_dir, true, &|vcs, member| {
-        vcs.resolve_pre_abort_ref(member, cwd_restore_id.as_str())
-            .map(|captured| captured.revision)
-    });
+    settle_members(
+        &workspace_dir,
+        &cwd_project_dir,
+        true,
+        &|vcs, member| {
+            vcs.resolve_pre_abort_ref(member, cwd_restore_id.as_str())
+                .map(|captured| captured.revision)
+        },
+        None,
+    );
 
     // For sync-to: also roll back repos in the extra (target) workspaces.
     // The target side does not have its own `converged_tips` entries — the
@@ -6514,10 +6614,16 @@ pub fn run_abort(
                         any_failure = true;
                     }
                 }
-                settle_members(&extra_ws_dir, &extra_project_dir, true, &|vcs, member| {
-                    vcs.resolve_pre_abort_ref(member, extra_restore_id.as_str())
-                        .map(|captured| captured.revision)
-                });
+                settle_members(
+                    &extra_ws_dir,
+                    &extra_project_dir,
+                    true,
+                    &|vcs, member| {
+                        vcs.resolve_pre_abort_ref(member, extra_restore_id.as_str())
+                            .map(|captured| captured.revision)
+                    },
+                    None,
+                );
                 // Clear op-state from the extra workspace only when this side
                 // completed without a foreign-tip refusal — otherwise the
                 // operator may want to re-run abort after reconciling.
@@ -6877,10 +6983,21 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 /// the spec's "non-zero iff at least one repo failed" semantic: when sync
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
+/// Put each recorded file placement on the outcome for its repo.
+fn attach_files(records: &mut [SyncOutcomeOutput], files: Mutex<HashMap<String, FilePlacement>>) {
+    let mut files = files.into_inner().unwrap_or_else(|e| e.into_inner());
+    for record in records {
+        if let Some(placed) = files.remove(record.path()) {
+            *record.files_mut() = Some(placed);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
+    let files: Mutex<HashMap<String, FilePlacement>> = Mutex::new(HashMap::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
@@ -6890,17 +7007,20 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_RECORD_SCHEMA_URL,
+            files: &files,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     } else {
         let handler = JsonEnvelopeHandler {
             records: &records,
             advisories: &advisories,
+            files: &files,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     };
 
-    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    let mut records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    attach_files(&mut records, files);
     let advisories = advisories.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
@@ -7064,6 +7184,7 @@ pub struct SyncToJsonRun {
 /// target is in the op record rather than in `request`.
 pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let files: Mutex<HashMap<String, FilePlacement>> = Mutex::new(HashMap::new());
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
     let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
@@ -7083,6 +7204,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_TO_RECORD_SCHEMA_URL,
+            files: &files,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     } else {
@@ -7092,11 +7214,13 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             coordinates: &coordinates,
             retired: &retired,
             resumed: &resumed,
+            files: &files,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
 
-    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    let mut records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    attach_files(&mut records, files);
     let mut step3_map = step3_advances
         .into_inner()
         .unwrap_or_else(|e| e.into_inner());
