@@ -635,6 +635,24 @@ mod tests {
     }
 
     #[test]
+    fn a_source_whose_probe_fails_is_never_read() {
+        let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n")]);
+        let at = w.head();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::PermissionDenied);
+
+        let (dest, placement) = w.populate("seat", &at, &fs);
+
+        assert_eq!(
+            fs.attempts(),
+            1,
+            "a source whose probe fails is passed over before any of its files is tried"
+        );
+        assert_eq!(placement.reflinked, 0);
+        assert_checked_out(&dest);
+    }
+
+    #[test]
     fn a_source_on_another_device_is_passed_over_for_one_that_can_clone() {
         let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
         let at = w.head();
@@ -908,6 +926,31 @@ mod tests {
 
         assert_eq!(placement.reflinked, 0);
         assert_eq!(file_identity(&member.join("a.txt")), identity_before);
+    }
+
+    #[test]
+    fn a_file_whose_clone_fails_is_left_exactly_as_it_was() {
+        let w = Weave::with(&[("a.txt", "a1\n"), ("b.txt", "b1\n")]);
+        let before = w.head();
+        let after = w.commit(&[("a.txt", "a2\n"), ("b.txt", "b2\n")]);
+        let member = w.seat("member", &before);
+        git(&member, &["checkout", "-q", "--detach", after.as_str()]);
+        let b_before = file_identity(&member.join("b.txt"));
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store.join("b.txt"), io::ErrorKind::PermissionDenied);
+        let changed = vec!["a.txt".to_owned(), "b.txt".to_owned()];
+
+        let placement = reshare(git_vcs().as_ref(), &member, &changed, &fs)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(placement.reflinked, 1);
+        assert_eq!(file_identity(&member.join("b.txt")), b_before);
+        assert_eq!(
+            std::fs::read_to_string(member.join("b.txt")).unwrap(),
+            "b2\n"
+        );
+        assert_eq!(git(&member, &["status", "--porcelain"]), "");
     }
 
     #[cfg(unix)]
