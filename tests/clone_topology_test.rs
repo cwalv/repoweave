@@ -330,26 +330,24 @@ fn lone_canonical_with_no_workweaves_is_clean() {
 }
 
 // ===========================================================================
-// Reference-alias carve-out
+// Symlinked member slots
 //
-// A `reference` repo is materialized as a *symlink* to the single canonical
-// weave-root clone, not a worktree. `git rev-parse --git-common-dir` follows
+// Older releases materialized a `reference` member as a *symlink* to the
+// single canonical weave-root clone. `git rev-parse --git-common-dir` follows
 // the symlink and resolves to `<weave>/<repo>/.git`, so the workweave
 // checkout's self-store equals its resolved store — the exact shape that
-// triggers `standalone-in-workweave`. The scan must exclude the symlink
-// (a `CheckoutKind::ReferenceAlias`) *before* that check, because the symlink
-// IS the canonical store viewed through a link — it upholds the
-// single-canonical-store invariant by identity rather than violating it.
+// triggers `standalone-in-workweave`. The scan must not read through such a
+// link: it is unmigrated state, reported as `workweave-drift`, not a second
+// store.
 //
-// The adversarial requirement: the carve-out must distinguish a symlink-alias
-// (valid) from a *real* standalone store (the genuine inversion case).
-// If the skip is too broad, it blinds the scanner to real corruption.
+// The adversarial requirement: the skip must distinguish a symlink from a
+// *real* standalone store (the genuine inversion case). If the skip is too
+// broad, it blinds the scanner to real corruption.
 // ===========================================================================
 
-/// Create a symlinked reference checkout at `ww_repo` pointing at the
-/// canonical clone `canon` — the on-disk shape `rwv workweave create`
-/// produces for a `role: reference` repo. The parent directory is created
-/// first; the symlink is the leaf.
+/// Create a symlinked member slot at `ww_repo` pointing at the canonical clone
+/// `canon` — the shape older releases gave a `role: reference` member. The
+/// parent directory is created first; the symlink is the leaf.
 fn symlink_reference_checkout(ww_repo: &Path, canon: &Path) {
     std::fs::create_dir_all(ww_repo.parent().unwrap()).unwrap();
     repoweave::symlink::create(canon, ww_repo, repoweave::symlink::LinkTarget::Directory).unwrap();
@@ -360,12 +358,11 @@ fn symlink_reference_checkout(ww_repo: &Path, canon: &Path) {
     );
 }
 
-/// A workweave holding a *symlinked* reference checkout of the manifest repo
-/// produces zero clone-topology violations. The symlink resolves through to
-/// the canonical store (its self-store equals its resolved store), which would
-/// look identical to `standalone-in-workweave` — but it is the canonical store
-/// viewed through a symlink, which upholds I1 by identity. The
-/// `ReferenceAlias` carve-out must skip it.
+/// A workweave holding a *symlinked* member slot produces zero clone-topology
+/// violations. The symlink resolves through to the canonical store (its
+/// self-store equals its resolved store), which would look identical to
+/// `standalone-in-workweave` — but it is unmigrated state, not a second
+/// store, and the scan does not read through it.
 #[test]
 fn symlinked_reference_in_workweave_is_clean() {
     let tmp = common::tempdir().unwrap();
@@ -393,10 +390,9 @@ fn symlinked_reference_in_workweave_is_clean() {
 /// THE CRITICAL ADVERSARIAL TEST: a *real* inversion — an actual
 /// standalone clone (a real `.git` directory, NOT a symlink) living inside a
 /// workweave — STILL fires `standalone-in-workweave`, even with a symlinked
-/// reference present in a sibling workweave. The carve-out must distinguish
-/// the symlink-alias (valid) from the real standalone store (a violation).
-/// If the skip is too broad and blinds the scanner to genuine corruption,
-/// that is a failure of the carve-out.
+/// member present in a sibling workweave. The skip must distinguish the
+/// symlink from the real standalone store (a violation). If it is too broad
+/// and blinds the scanner to genuine corruption, that is its failure.
 #[test]
 fn real_standalone_still_fires_alongside_symlinked_reference() {
     let tmp = common::tempdir().unwrap();

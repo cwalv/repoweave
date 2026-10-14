@@ -1736,22 +1736,21 @@ fn json_output_includes_branch_discipline_kind() {
 }
 
 // ===========================================================================
-// Reference-alias carve-out
+// Symlinked member slots, and reference members as worktrees
 //
-// A `reference` repo is materialized as a symlink to the canonical clone, so
-// it sits on the canonical's shared non-ephemeral branch (e.g. `main`) by
-// design — it has no per-workweave ephemeral branch. `scan_repos_on_disk`
-// discovers it because `is_dir()` follows the symlink; the I3 branch-
-// discipline scan would mis-read it as a `shared-branch` violation. The scan
-// must skip the symlink (a `CheckoutKind::ReferenceAlias`).
+// Older releases materialized a `reference` member as a symlink to the
+// canonical clone, so through the link it sits on the canonical's shared
+// non-ephemeral branch (e.g. `main`). `scan_repos_on_disk` discovers it
+// because `is_dir()` follows the symlink; the I3 branch-discipline scan would
+// mis-read it as a `shared-branch` violation. The scan must not read through
+// it: it is unmigrated state, reported as `workweave-drift`.
 //
-// The escape hatch must still flow through normally: a `reference` repo
-// created with `--worktree-references` is a real worktree on its own
-// ephemeral branch (a `CheckoutKind::Worktree`), checked like any other.
+// A `reference` member is a worktree on the workweave's ephemeral branch like
+// any other member, and is checked like any other.
 // ===========================================================================
 
-/// A symlinked reference checkout must NOT fire a branch-discipline finding,
-/// even though it resolves (through the symlink) to the canonical store on its
+/// A symlinked member slot must NOT fire a branch-discipline finding, even
+/// though it resolves (through the symlink) to the canonical store on its
 /// shared `main` branch. It is the canonical viewed through a link, not a
 /// workweave checkout that wandered onto a shared branch.
 #[test]
@@ -1767,7 +1766,7 @@ fn symlinked_reference_does_not_fire_shared_branch() {
     write_marker(&ww_dir, &ws, "myproj", &ws);
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
-    // Reference-repo materialization: a symlink at the workweave checkout
+    // The old reference-member shape: a symlink at the workweave checkout
     // pointing at the canonical clone (which is on `main`).
     repoweave::symlink::create(
         &canonical,
@@ -1785,18 +1784,16 @@ fn symlinked_reference_does_not_fire_shared_branch() {
             && !stdout.contains("workweave checkout is on")
             && !stdout.contains("detached-HEAD")
             && !stdout.contains("foreign-ephemeral"),
-        "a symlinked reference checkout must not fire any branch-discipline \
-         finding (it shares the canonical's `main` by design); got:\n{stdout}"
+        "a symlinked member slot must not fire any branch-discipline finding \
+         (through the link it is the canonical on its `main`); got:\n{stdout}"
     );
 }
 
-/// THE ESCAPE-HATCH TEST: a `reference` repo materialized via
-/// `--worktree-references` is a *real worktree* on its own ephemeral branch —
-/// a `CheckoutKind::Worktree`, NOT a `ReferenceAlias`. It must flow through
-/// the normal I2/I3 checks unchanged: healthy on its ephemeral branch → clean,
-/// and (the adversarial half) if it wanders onto `main`, it must STILL fire
-/// `shared-branch`. The carve-out keys on alias-ness, never on role, so it
-/// must not skip a worktree'd reference.
+/// A `reference` member is a *real worktree* on its own ephemeral branch, and
+/// flows through the normal I2/I3 checks unchanged: healthy on its ephemeral
+/// branch → clean, and (the adversarial half, below) if it wanders onto
+/// `main`, it must STILL fire `shared-branch`. The skip keys on the slot
+/// being a symlink, never on role.
 #[test]
 fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     let tmp = common::tempdir().unwrap();
@@ -1808,11 +1805,11 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     write_marker(&ww_dir, &ws, "myproj", &ws);
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
-    // The escape hatch: a real worktree on the workweave's ephemeral branch.
+    // A reference member: a real worktree on the workweave's ephemeral branch.
     worktree_add(&canonical, &ww_checkout, "myproj--wtref");
     assert!(
         !ww_checkout.is_symlink(),
-        "a --worktree-references reference must be a real worktree, not a symlink"
+        "a reference member must be a real worktree, not a symlink"
     );
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
@@ -1825,9 +1822,9 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     );
 }
 
-/// The adversarial complement: a worktree'd reference that has wandered onto
-/// the shared `main` branch must STILL fire `shared-branch`. The carve-out
-/// keys on `CheckoutKind` (alias-ness), never on `role`, so a real worktree —
+/// The adversarial complement: a reference member's worktree that has wandered
+/// onto the shared `main` branch must STILL fire `shared-branch`. The skip
+/// keys on the slot being a symlink, never on `role`, so a real worktree —
 /// even of a reference repo — flows through the I3 check and is caught.
 #[test]
 fn worktree_reference_on_shared_branch_still_fires() {

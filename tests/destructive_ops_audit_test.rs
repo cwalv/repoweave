@@ -151,14 +151,12 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "symlink::remove(",
         count: 1,
         callers: &[],
-        justification: "delete_workweave: unlinks a reference-repo SYMLINK \
-            (classify_checkout == ReferenceAlias) before any git call. \
-            symlink::remove unlinks the link itself by its Windows type, \
-            never following it, so the shared canonical store the symlink \
-            aliases is never touched — making explicit the safety the old \
-            code only got accidentally (is_lone_canonical + remove_dir_all \
-            not following symlinks). No waiver needed: removing a read-only \
-            alias destroys no work.",
+        justification: "materialize_member: unlinks a SYMLINK at a member \
+            slot — the shape older releases gave reference members — before \
+            creating the worktree there. symlink::remove unlinks the link \
+            itself by its Windows type, never following it, so the canonical \
+            clone or dangling path it pointed at is never touched. No waiver \
+            needed: a link holds no work.",
     },
     Allowed {
         file: "symlink.rs",
