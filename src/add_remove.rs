@@ -182,12 +182,7 @@ fn settle_manifest(
 
     match activate_intent_for(project.as_str(), ctx) {
         Ok(()) => {
-            // Report at the moment of causation: add-order is what decides
-            // which member's requirement first exceeds a `DefaultOnly` value
-            // (a go.work go-line, say) that an earlier member seeded. Same
-            // predicate and runner `rwv update` reports through, so the two
-            // surfacings cannot diverge. Not a refusal and not a gate — the
-            // manifest change already landed above.
+            // Report only: the manifest change has already landed.
             for issue in crate::activate::member_incompatibilities(root, project, manifest) {
                 eprintln!("[warning] {}: {}", issue.integration, issue.message);
             }
