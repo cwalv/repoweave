@@ -403,6 +403,41 @@ fn init_repo_is_recognized_by_is_repo() {
     );
 }
 
+/// `git rev-parse --git-dir` walks up past any directory to an enclosing
+/// repo's own `.git`, so a directory with no `.git` of its own but sitting
+/// inside one must not read as a repo — the trait promises `path` itself is
+/// the repo or worktree, not merely somewhere underneath one.
+#[test]
+fn a_bare_directory_inside_an_enclosing_repo_is_not_a_repo() {
+    let outer = common::tempdir().unwrap();
+    common::git_in(outer.path(), &["init"]);
+
+    let nested = outer
+        .path()
+        .join("weave")
+        .join("target")
+        .join("release")
+        .join("deps");
+    fs::create_dir_all(&nested).unwrap();
+
+    let vcs = git_vcs();
+    assert!(
+        common::git()
+            .args(["rev-parse", "--git-dir"])
+            .current_dir(&nested)
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "the walk-up itself must still succeed from here, or this test is not exercising it"
+    );
+    assert!(
+        !vcs.is_repo(&nested),
+        "a directory with no .git of its own is not a repo, however deep \
+         inside an enclosing one it sits"
+    );
+}
+
 // ============================================================================
 // ResolvedRevisionId — typed identity, equality, and serialization
 // ============================================================================

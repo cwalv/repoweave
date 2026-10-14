@@ -174,6 +174,28 @@ fn build_output_shaped_directories_with_no_real_repo_are_not_reported() {
     );
 }
 
+/// A weave sitting inside an enclosing git repository (a `$HOME` dotfiles
+/// repo, say) must not read its own build output as a repo: `git rev-parse
+/// --git-dir` succeeds from any directory under the enclosing repo by
+/// walking up to its `.git`, and `Vcs::is_repo` must not mistake that for
+/// the candidate itself being a repo.
+#[test]
+fn build_output_inside_an_enclosing_repo_is_still_not_reported() {
+    let tmp = common::tempdir().unwrap();
+    common::git_in(tmp.path(), &["init"]);
+
+    let ws = bare_weave(&tmp);
+    std::fs::create_dir_all(ws.join("target").join("debug").join("deps")).unwrap();
+    std::fs::create_dir_all(ws.join("node_modules").join("@scope").join("pkg")).unwrap();
+
+    let findings = doctor_findings(&ws, &["--all"]);
+    assert!(
+        !findings.iter().any(|(k, _)| k == "unknown-segment-clone"),
+        "an enclosing repo must not make build output read as a repo at member \
+         depth: {findings:?}"
+    );
+}
+
 /// Once one member under a segment is declared, that segment is known —
 /// `scan_repos_on_disk` already walks it — so a stray sibling in the same
 /// segment is `orphaned-clone`, and declaring the one member must not also
