@@ -1,13 +1,17 @@
 //! Git implementation of the [`Vcs`] trait.
 
 use crate::vcs::{
-    CommitSummary, ConflictOp, DerivedContentPolicy, DerivedContentResolution, ForeignTipPolicy,
-    HeadAttachment, HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName,
-    RawRevisionId, RefName, RemoteDefaultBranch, ReplayExclusionState, ResolvedRevisionId,
-    UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
+    CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
+    ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef, PublishRef,
+    RawRefName, RawRevisionId, RefName, RemoteDefaultBranch, ReplayExclusionState,
+    ResolvedRevisionId, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
+    VerifiedRestoreOutcome, WorkspacePopulation,
 };
+use std::borrow::Cow;
+use std::collections::{BTreeSet, HashMap};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// `GIT_*` environment variables that git itself sets for hooks (and that
 /// other tooling sometimes sets) which silently misdirect any subprocess
@@ -2525,37 +2529,7 @@ impl Vcs for GitVcs {
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
     ) -> Result<bool, VcsError> {
-        let store = Self::work_dir_for_store(store);
-        let dest_str = path_as_git_arg(dest, "worktree path")?;
-        let start = start_point.as_str();
-        let branch = name.as_str();
-        let registered_before = self.is_registered_worktree(&store, dest);
-
-        // Classify BEFORE acting, by asking whether the ref is there. Two
-        // reasons it cannot be done by matching stderr afterwards: git says
-        // "already exists" for a taken destination path as well as for a
-        // taken branch name, and `worktree add -b` creates the branch
-        // before it fails on the destination, so a post-hoc look sees a ref
-        // this very call just made.
-        if self.resolve_local_branch_tip(&store, name)?.is_some() {
-            // ADOPT. The shipped path force-deleted the branch here and
-            // retried with -b, destroying a ref on nothing but a name match
-            // — a DESTROY needs a receipt and a warrant (R2, R3), and this
-            // call holds neither, so it cannot be reached from here.
-            Self::run(&["worktree", "add", dest_str, branch], &store).map_err(|e| {
-                self.classify_worktree_add_failure(e, &store, dest, registered_before)
-            })?;
-            return Ok(false);
-        }
-        // AUTHOR. If this fails after git has already written the ref (a
-        // taken destination is the usual way), the ref is left in place
-        // rather than cleaned up: the receipt was persisted before this
-        // call, so what remains is a recorded ref with no worktree, which
-        // doctor can reconcile. Deleting it here would be an unwarranted
-        // DESTROY, which is the failure mode this path exists to remove.
-        Self::run(&["worktree", "add", "-b", branch, dest_str, start], &store)
-            .map_err(|e| self.classify_worktree_add_failure(e, &store, dest, registered_before))?;
-        Ok(true)
+        self.add_worktree(store, dest, name, start_point, WorktreeFiles::Written)
     }
 
     fn clone_attached_at(
@@ -2778,6 +2752,10 @@ impl Vcs for GitVcs {
             .map(RawRefName::new)
             .collect())
     }
+
+    fn population(&self) -> Option<&dyn WorkspacePopulation> {
+        git_answers_population().then_some(self as &dyn WorkspacePopulation)
+    }
 }
 
 /// The ref namespace savepoints live under.
@@ -2895,6 +2873,586 @@ impl GitVcs {
             .into_iter()
             .map(|entry| entry.path_field)
             .collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Population
+// ---------------------------------------------------------------------------
+
+/// Whether `worktree add` writes the checkout's files.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WorktreeFiles {
+    Written,
+    Unwritten,
+}
+
+/// `git hook run`, which finishing a populated workspace needs to run the
+/// `post-checkout` hook `worktree add` would have, arrived in 2.36.
+const FIRST_RELEASE_ANSWERING_POPULATION: (u32, u32) = (2, 36);
+
+fn git_answers_population() -> bool {
+    static ANSWERS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ANSWERS.get_or_init(|| {
+        git_command()
+            .arg("version")
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .and_then(|version| release_of(&version))
+            .is_some_and(|release| release >= FIRST_RELEASE_ANSWERING_POPULATION)
+    })
+}
+
+/// `(major, minor)` from `git version`, whose tail vendors extend freely
+/// (`2.39.5 (Apple Git-154)`, `2.47.1.windows.1`).
+fn release_of(version_output: &str) -> Option<(u32, u32)> {
+    let mut numbers = version_output
+        .trim()
+        .strip_prefix("git version ")?
+        .split('.')
+        .map(str::parse::<u32>);
+    Some((numbers.next()?.ok()?, numbers.next()?.ok()?))
+}
+
+/// Every attribute git's checkout consults when it writes a file's bytes.
+const CONVERSION_ATTRIBUTES: [&str; 6] = [
+    "text",
+    "eol",
+    "crlf",
+    "ident",
+    "filter",
+    "working-tree-encoding",
+];
+
+/// A path's [`CONVERSION_ATTRIBUTES`] as `check-attr` prints them, in that
+/// order: `set`, `unset`, `unspecified`, or the value.
+type ConversionAttributes = [String; CONVERSION_ATTRIBUTES.len()];
+
+/// The configuration git's checkout consults for line endings, as written.
+#[derive(Debug, Default)]
+struct ConversionConfig {
+    autocrlf: Option<String>,
+    eol: Option<String>,
+}
+
+impl ConversionConfig {
+    /// Whether `text` content checks out with LF line endings. A value git
+    /// would read differently from how it is matched here counts as CRLF.
+    fn text_checks_out_lf(&self) -> bool {
+        match self.autocrlf.as_deref() {
+            Some(v) if v.eq_ignore_ascii_case("input") => true,
+            None => self.eol_is_lf(),
+            Some(v) if v.eq_ignore_ascii_case("false") => self.eol_is_lf(),
+            Some(_) => false,
+        }
+    }
+
+    /// Whether content no attribute calls text checks out unconverted.
+    fn undeclared_checks_out_unconverted(&self) -> bool {
+        match self.autocrlf.as_deref() {
+            None => true,
+            Some(v) => v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("input"),
+        }
+    }
+
+    fn eol_is_lf(&self) -> bool {
+        match self.eol.as_deref() {
+            Some(v) if v.eq_ignore_ascii_case("lf") => true,
+            None => !cfg!(windows),
+            Some(v) if v.eq_ignore_ascii_case("native") => !cfg!(windows),
+            Some(_) => false,
+        }
+    }
+}
+
+/// How an attribute value directs end-of-line conversion.
+enum EolAction {
+    Binary,
+    Text,
+    TextInput,
+    Auto,
+    Undeclared,
+}
+
+fn eol_action(value: &str) -> Option<EolAction> {
+    match value {
+        "set" => Some(EolAction::Text),
+        "unset" => Some(EolAction::Binary),
+        "input" => Some(EolAction::TextInput),
+        "auto" => Some(EolAction::Auto),
+        "unspecified" => Some(EolAction::Undeclared),
+        _ => None,
+    }
+}
+
+/// Whether git's checkout writes a blob's bytes unchanged under these
+/// inputs, whatever the blob holds.
+///
+/// Mirrors git's own end-of-line decision, so it must never answer `true`
+/// where git converts: placing the blob's bytes there would differ from the
+/// checkout, and an unfiltered hash would still call the placed file right.
+/// Every value it does not recognise answers `false`.
+fn checks_out_verbatim(attrs: &ConversionAttributes, config: &ConversionConfig) -> bool {
+    let [text, eol, crlf, ident, filter, encoding] = attrs.each_ref().map(String::as_str);
+    if !matches!(filter, "unspecified" | "unset")
+        || !matches!(ident, "unspecified" | "unset")
+        || encoding != "unspecified"
+    {
+        return false;
+    }
+    let declared = if text == "unspecified" { crlf } else { text };
+    let Some(action) = eol_action(declared) else {
+        return false;
+    };
+    if matches!(action, EolAction::Binary) {
+        return true;
+    }
+    match eol {
+        "lf" => true,
+        "unspecified" => match action {
+            EolAction::Binary | EolAction::TextInput => true,
+            EolAction::Text | EolAction::Auto => config.text_checks_out_lf(),
+            EolAction::Undeclared => config.undeclared_checks_out_unconverted(),
+        },
+        _ => false,
+    }
+}
+
+fn content_identity(
+    blob: &str,
+    attrs: &ConversionAttributes,
+    config: &ConversionConfig,
+) -> ContentIdentity {
+    ContentIdentity::new(format!(
+        "{blob} {attrs:?} {:?} {:?}",
+        config.autocrlf, config.eol
+    ))
+}
+
+/// One merged index entry.
+struct IndexEntry {
+    mode: String,
+    blob: String,
+    path: String,
+}
+
+impl IndexEntry {
+    fn is_regular_file(&self) -> bool {
+        matches!(self.mode.as_str(), "100644" | "100755")
+    }
+}
+
+/// `--stdin-paths` reads a line per path, drops a CR before the newline, and
+/// C-unquotes a line opening with `"`; a path any of that would alter is
+/// sent quoted.
+fn as_stdin_path_line(path: &str) -> Cow<'_, str> {
+    if !(path.starts_with('"') || path.contains('\n') || path.ends_with('\r')) {
+        return Cow::Borrowed(path);
+    }
+    let mut quoted = String::from("\"");
+    for c in path.chars() {
+        match c {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    Cow::Owned(quoted)
+}
+
+fn nul_terminated<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<u8> {
+    paths
+        .into_iter()
+        .flat_map(|p| p.bytes().chain([0]))
+        .collect()
+}
+
+#[cfg(unix)]
+fn executable_bit_matches(meta: &std::fs::Metadata, executable: bool) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    (meta.permissions().mode() & 0o100 != 0) == executable
+}
+
+/// git's checkout writes no executable bit where the filesystem has none.
+#[cfg(not(unix))]
+fn executable_bit_matches(_meta: &std::fs::Metadata, _executable: bool) -> bool {
+    true
+}
+
+impl GitVcs {
+    fn add_worktree(
+        &self,
+        store: &Path,
+        dest: &Path,
+        name: &RawRefName,
+        start_point: &ResolvedRevisionId,
+        files: WorktreeFiles,
+    ) -> Result<bool, VcsError> {
+        let store = Self::work_dir_for_store(store);
+        let dest_str = path_as_git_arg(dest, "worktree path")?;
+        let start = start_point.as_str();
+        let branch = name.as_str();
+        // `--no-checkout` runs no `post-checkout` hook, so a failure after
+        // registration is a hook rejection only when files are written.
+        let registered_before =
+            (files == WorktreeFiles::Written).then(|| self.is_registered_worktree(&store, dest));
+        let classify = |e| match registered_before {
+            Some(before) => self.classify_worktree_add_failure(e, &store, dest, before),
+            None => e,
+        };
+        let add: &[&str] = match files {
+            WorktreeFiles::Written => &["worktree", "add"],
+            WorktreeFiles::Unwritten => &["worktree", "add", "--no-checkout"],
+        };
+
+        // Classify BEFORE acting, by asking whether the ref is there. Two
+        // reasons it cannot be done by matching stderr afterwards: git says
+        // "already exists" for a taken destination path as well as for a
+        // taken branch name, and `worktree add -b` creates the branch
+        // before it fails on the destination, so a post-hoc look sees a ref
+        // this very call just made.
+        if self.resolve_local_branch_tip(&store, name)?.is_some() {
+            // ADOPT. The shipped path force-deleted the branch here and
+            // retried with -b, destroying a ref on nothing but a name match
+            // — a DESTROY needs a receipt and a warrant (R2, R3), and this
+            // call holds neither, so it cannot be reached from here.
+            Self::run(&[add, &[dest_str, branch]].concat(), &store).map_err(classify)?;
+            return Ok(false);
+        }
+        // AUTHOR. If this fails after git has already written the ref (a
+        // taken destination is the usual way), the ref is left in place
+        // rather than cleaned up: the receipt was persisted before this
+        // call, so what remains is a recorded ref with no worktree, which
+        // doctor can reconcile. Deleting it here would be an unwarranted
+        // DESTROY, which is the failure mode this path exists to remove.
+        Self::run(&[add, &["-b", branch, dest_str, start]].concat(), &store).map_err(classify)?;
+        Ok(true)
+    }
+
+    /// [`GitVcs::run`] with `input` on stdin and stdout returned untrimmed,
+    /// which a `-z` stream needs: a first path may begin with whitespace.
+    fn run_with_stdin(args: &[&str], dir: &Path, input: &[u8]) -> Result<String, VcsError> {
+        let mut child = git_command()
+            .args(args)
+            .current_dir(dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        let mut stdin = child.stdin.take().expect("stdin was piped");
+        let (written, output) = std::thread::scope(|s| {
+            let writer = s.spawn(move || stdin.write_all(input));
+            let output = child.wait_with_output();
+            (writer.join().expect("stdin writer panicked"), output)
+        });
+        let output = output.map_err(|e| VcsError::Io {
+            ctx: format!("failed to read git {args:?}"),
+            source: e,
+        })?;
+        if !output.status.success() {
+            return Err(VcsError::CommandFailed {
+                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                repo: dir.to_path_buf(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        written.map_err(|e| VcsError::Io {
+            ctx: format!("failed to feed git {args:?}"),
+            source: e,
+        })?;
+        String::from_utf8(output.stdout).map_err(|_| VcsError::CommandFailed {
+            args: args.iter().map(|s| (*s).to_owned()).collect(),
+            repo: dir.to_path_buf(),
+            stderr: "git output not valid UTF-8".to_string(),
+        })
+    }
+
+    fn index_entries(workspace: &Path) -> Result<Vec<IndexEntry>, VcsError> {
+        let listing = Self::run_with_stdin(&["ls-files", "--stage", "-z"], workspace, &[])?;
+        let malformed = |record: &str| VcsError::CommandFailed {
+            args: vec!["ls-files".to_owned(), "--stage".to_owned(), "-z".to_owned()],
+            repo: workspace.to_path_buf(),
+            stderr: format!("unrecognized index entry {record:?}"),
+        };
+        let mut entries = Vec::new();
+        for record in listing.split_terminator('\0') {
+            let (meta, path) = record.split_once('\t').ok_or_else(|| malformed(record))?;
+            let [mode, blob, stage] = meta
+                .split(' ')
+                .collect::<Vec<_>>()
+                .try_into()
+                .map_err(|_| malformed(record))?;
+            if stage == "0" {
+                entries.push(IndexEntry {
+                    mode: mode.to_owned(),
+                    blob: blob.to_owned(),
+                    path: path.to_owned(),
+                });
+            }
+        }
+        Ok(entries)
+    }
+
+    fn conversion_attributes(
+        workspace: &Path,
+        paths: &[&str],
+    ) -> Result<HashMap<String, ConversionAttributes>, VcsError> {
+        let mut args = vec!["check-attr", "--cached", "-z", "--stdin"];
+        args.extend(CONVERSION_ATTRIBUTES);
+        let report =
+            Self::run_with_stdin(&args, workspace, &nul_terminated(paths.iter().copied()))?;
+        let mut by_path: HashMap<String, ConversionAttributes> = HashMap::new();
+        let fields: Vec<&str> = report.split_terminator('\0').collect();
+        for triple in fields.chunks(3) {
+            let [path, attr, value] = triple else {
+                return Err(VcsError::CommandFailed {
+                    args: args.iter().map(|s| (*s).to_owned()).collect(),
+                    repo: workspace.to_path_buf(),
+                    stderr: format!("unrecognized check-attr record {triple:?}"),
+                });
+            };
+            if let Some(slot) = CONVERSION_ATTRIBUTES.iter().position(|a| a == attr) {
+                by_path.entry((*path).to_owned()).or_default()[slot] = (*value).to_owned();
+            }
+        }
+        Ok(by_path)
+    }
+
+    fn conversion_config(workspace: &Path) -> Result<ConversionConfig, VcsError> {
+        let args = ["config", "--get-regexp", r"^core\.(autocrlf|eol)$"];
+        let out = git_command()
+            .args(args)
+            .current_dir(workspace)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        // `--get-regexp` exits 1 when no key matches.
+        let found = match out.status.code() {
+            Some(0) => String::from_utf8_lossy(&out.stdout).into_owned(),
+            Some(1) if out.stdout.is_empty() => String::new(),
+            _ => {
+                return Err(VcsError::CommandFailed {
+                    args: args.iter().map(|s| (*s).to_owned()).collect(),
+                    repo: workspace.to_path_buf(),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                })
+            }
+        };
+        let mut config = ConversionConfig::default();
+        for line in found.lines() {
+            let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+            match key {
+                "core.autocrlf" => config.autocrlf = Some(value.to_owned()),
+                "core.eol" => config.eol = Some(value.to_owned()),
+                _ => {}
+            }
+        }
+        Ok(config)
+    }
+
+    fn describe(workspace: &Path, entries: &[IndexEntry]) -> Result<Vec<TrackedFile>, VcsError> {
+        let files: Vec<&str> = entries
+            .iter()
+            .filter(|e| e.is_regular_file())
+            .map(|e| e.path.as_str())
+            .collect();
+        let (attrs, config) = if files.is_empty() {
+            (HashMap::new(), ConversionConfig::default())
+        } else {
+            (
+                Self::conversion_attributes(workspace, &files)?,
+                Self::conversion_config(workspace)?,
+            )
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                let identity = || {
+                    let attrs = attrs.get(&entry.path)?;
+                    checks_out_verbatim(attrs, &config)
+                        .then(|| content_identity(&entry.blob, attrs, &config))
+                };
+                let kind = match entry.mode.as_str() {
+                    "100644" => TrackedFileKind::File {
+                        executable: false,
+                        identity: identity(),
+                    },
+                    "100755" => TrackedFileKind::File {
+                        executable: true,
+                        identity: identity(),
+                    },
+                    "120000" => TrackedFileKind::Symlink,
+                    "160000" => TrackedFileKind::NestedRepository,
+                    other => {
+                        return Err(VcsError::CommandFailed {
+                            args: vec!["ls-files".to_owned(), "--stage".to_owned()],
+                            repo: workspace.to_path_buf(),
+                            stderr: format!("unrecognized mode {other} for {}", entry.path),
+                        })
+                    }
+                };
+                Ok(TrackedFile {
+                    path: entry.path.clone(),
+                    kind,
+                })
+            })
+            .collect()
+    }
+
+    /// The object id each file's bytes would have, with no conversion.
+    fn unfiltered_hashes(workspace: &Path, paths: &[&str]) -> Result<Vec<String>, VcsError> {
+        let input: String = paths
+            .iter()
+            .map(|p| format!("{}\n", as_stdin_path_line(p)))
+            .collect();
+        let args = ["hash-object", "--no-filters", "--stdin-paths"];
+        let hashes: Vec<String> = Self::run_with_stdin(&args, workspace, input.as_bytes())?
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        if hashes.len() != paths.len() {
+            return Err(VcsError::CommandFailed {
+                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                repo: workspace.to_path_buf(),
+                stderr: format!("{} hashes for {} paths", hashes.len(), paths.len()),
+            });
+        }
+        Ok(hashes)
+    }
+
+    fn run_post_checkout_hook(workspace: &Path) -> Result<(), VcsError> {
+        let head = Self::run(&["rev-parse", "--verify", "HEAD"], workspace)?;
+        let no_previous_head = "0".repeat(head.len());
+        let args = [
+            "hook",
+            "run",
+            "--ignore-missing",
+            "post-checkout",
+            "--",
+            &no_previous_head,
+            &head,
+            "1",
+        ];
+        let out = git_command()
+            .args(args)
+            .current_dir(workspace)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
+        if out.status.success() {
+            return Ok(());
+        }
+        Err(VcsError::HookRejected {
+            repo: workspace.to_path_buf(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        })
+    }
+}
+
+impl WorkspacePopulation for GitVcs {
+    fn materialize_unpopulated_worktree_on_ref(
+        &self,
+        store: &Path,
+        dest: &Path,
+        name: &RawRefName,
+        start_point: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError> {
+        let authored =
+            self.add_worktree(store, dest, name, start_point, WorktreeFiles::Unwritten)?;
+        // `--no-checkout` leaves no index; reading the tree into one is what
+        // makes the workspace record its revision before any file exists.
+        Self::run(&["read-tree", "HEAD"], dest)?;
+        Ok(authored)
+    }
+
+    fn tracked_files(&self, workspace: &Path) -> Result<Vec<TrackedFile>, VcsError> {
+        Self::describe(workspace, &Self::index_entries(workspace)?)
+    }
+
+    fn files_holding_recorded_content(
+        &self,
+        workspace: &Path,
+        paths: &[String],
+    ) -> Result<Vec<TrackedFile>, VcsError> {
+        let asked: BTreeSet<&str> = paths.iter().map(String::as_str).collect();
+        let entries: Vec<IndexEntry> = Self::index_entries(workspace)?
+            .into_iter()
+            .filter(|e| asked.contains(e.path.as_str()))
+            .collect();
+        let candidates: Vec<(String, TrackedFile)> = entries
+            .iter()
+            .zip(Self::describe(workspace, &entries)?)
+            .filter(|(_, file)| match &file.kind {
+                TrackedFileKind::File {
+                    executable,
+                    identity: Some(_),
+                } => std::fs::symlink_metadata(workspace.join(&file.path)).is_ok_and(|meta| {
+                    meta.file_type().is_file() && executable_bit_matches(&meta, *executable)
+                }),
+                _ => false,
+            })
+            .map(|(entry, file)| (entry.blob.clone(), file))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let paths: Vec<&str> = candidates.iter().map(|(_, f)| f.path.as_str()).collect();
+        let hashes = Self::unfiltered_hashes(workspace, &paths)?;
+        Ok(candidates
+            .into_iter()
+            .zip(hashes)
+            .filter(|((blob, _), hash)| blob == hash)
+            .map(|((_, file), _)| file)
+            .collect())
+    }
+
+    fn finish_checkout(&self, workspace: &Path) -> Result<(), VcsError> {
+        // Only the missing paths are named: `checkout-index -a` exits 1 for
+        // every file already present, so its status cannot tell a placed
+        // file from a failed write.
+        let missing: Vec<String> = Self::index_entries(workspace)?
+            .into_iter()
+            .map(|e| e.path)
+            .filter(|p| std::fs::symlink_metadata(workspace.join(p)).is_err())
+            .collect();
+        if !missing.is_empty() {
+            Self::run_with_stdin(
+                &["checkout-index", "-u", "-z", "--stdin"],
+                workspace,
+                &nul_terminated(missing.iter().map(String::as_str)),
+            )?;
+        }
+        Self::run(&["update-index", "-q", "--refresh"], workspace)?;
+        Self::run_post_checkout_hook(workspace)
+    }
+
+    fn check_out_paths(&self, workspace: &Path, paths: &[String]) -> Result<(), VcsError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        Self::run_with_stdin(
+            &["checkout-index", "-f", "-u", "-z", "--stdin"],
+            workspace,
+            &nul_terminated(paths.iter().map(String::as_str)),
+        )
+        .map(|_| ())
+    }
+
+    fn updates_replace_files(&self) -> bool {
+        false
     }
 }
 
@@ -3931,5 +4489,675 @@ mod git_argument_path_tests {
             path_as_git_arg(Path::new(r"\\?\C:\weave\member"), "path").unwrap(),
             r"C:\weave\member"
         );
+    }
+}
+
+#[cfg(test)]
+mod population_tests {
+    //! Each answer is checked against git's own view of the same files: what
+    //! `ls-tree` lists, what `cat-file` holds, what `checkout-index` writes.
+
+    use super::*;
+    use crate::vcs::OwnedRef;
+    use std::collections::BTreeMap;
+
+    static GIT: GitVcs = GitVcs;
+
+    fn population() -> &'static dyn WorkspacePopulation {
+        GIT.population()
+            .expect("the git under test answers population")
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        String::from_utf8(git_bytes(dir, args))
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+
+    fn git_bytes(dir: &Path, args: &[&str]) -> Vec<u8> {
+        let out = git_command()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed in {}: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out.stdout
+    }
+
+    /// A repo on `main` whose first commit holds `files` and whose second
+    /// adds `attributes` as `.gitattributes`, so no blob was normalized on
+    /// the way in.
+    ///
+    /// Workspaces made from it are its siblings, inside the same temp dir.
+    fn repo_with(files: &[(&str, &[u8])], attributes: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let p = repo.as_path();
+        git(tmp.path(), &["init", "-q", "-b", "main", "repo"]);
+        git(p, &["config", "user.email", "t@t"]);
+        git(p, &["config", "user.name", "T"]);
+        git(p, &["config", "core.autocrlf", "false"]);
+        for (name, bytes) in files {
+            std::fs::write(p.join(name), bytes).unwrap();
+        }
+        git(p, &["add", "."]);
+        git(p, &["commit", "-q", "-m", "content"]);
+        if !attributes.is_empty() {
+            std::fs::write(p.join(".gitattributes"), attributes).unwrap();
+            git(p, &["add", ".gitattributes"]);
+            git(p, &["commit", "-q", "-m", "attributes"]);
+        }
+        git(p, &["config", "--unset", "core.autocrlf"]);
+        (tmp, repo)
+    }
+
+    fn head(repo: &Path) -> ResolvedRevisionId {
+        ResolvedRevisionId::from_canonical(git(repo, &["rev-parse", "HEAD"]), None)
+    }
+
+    fn receipt(repo: &Path, name: &str) -> OwnedRef {
+        OwnedRef::from_receipt(repo.join(".git"), RawRefName::new(name), head(repo))
+    }
+
+    /// A workspace of `repo` with nothing written, on a branch of its own.
+    fn unpopulated(repo: &Path, name: &str) -> PathBuf {
+        let dest = repo.with_file_name(name);
+        population()
+            .create_unpopulated_worktree_on(&receipt(repo, name), &dest)
+            .unwrap();
+        dest
+    }
+
+    /// A workspace of `repo` git checked out itself.
+    fn checked_out(repo: &Path, name: &str) -> PathBuf {
+        let dest = repo.with_file_name(name);
+        GIT.create_worktree_on(&receipt(repo, name), &dest).unwrap();
+        dest
+    }
+
+    fn blob_bytes(repo: &Path, path: &str) -> Vec<u8> {
+        git_bytes(repo, &["cat-file", "blob", &format!("HEAD:{path}")])
+    }
+
+    fn by_path(files: Vec<TrackedFile>) -> BTreeMap<String, TrackedFile> {
+        files.into_iter().map(|f| (f.path.clone(), f)).collect()
+    }
+
+    fn paths(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_owned()).collect()
+    }
+
+    /// Commit a symlink and a nested repository by index entry alone, which
+    /// works where the filesystem can make neither.
+    fn commit_link_and_nested(repo: &Path) {
+        let target =
+            GitVcs::run_with_stdin(&["hash-object", "-w", "--stdin"], repo, b"a.txt").unwrap();
+        let target = target.trim();
+        git(
+            repo,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("120000,{target},link"),
+            ],
+        );
+        let nested = git(repo, &["rev-parse", "HEAD"]);
+        git(
+            repo,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{nested},nested"),
+            ],
+        );
+        git(repo, &["commit", "-q", "-m", "link and nested"]);
+    }
+
+    #[test]
+    fn this_git_answers_population_and_a_release_before_hook_run_would_not() {
+        assert!(GIT.population().is_some());
+        assert_eq!(release_of("git version 2.43.0\n"), Some((2, 43)));
+        assert_eq!(
+            release_of("git version 2.39.5 (Apple Git-154)"),
+            Some((2, 39))
+        );
+        assert_eq!(release_of("git version 2.47.1.windows.1"), Some((2, 47)));
+        assert_eq!(release_of("not git"), None);
+        assert!(release_of("git version 2.35.8").unwrap() < FIRST_RELEASE_ANSWERING_POPULATION);
+        assert!(release_of("git version 2.36.0").unwrap() >= FIRST_RELEASE_ANSWERING_POPULATION);
+    }
+
+    #[test]
+    fn git_declares_no_platform_where_updates_replace_files() {
+        assert!(!population().updates_replace_files());
+    }
+
+    #[test]
+    fn an_unpopulated_worktree_records_its_revision_and_writes_no_file() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n"), ("b.txt", b"b\n")], "");
+        let repo = repo.as_path();
+        let dest = repo.with_file_name("w");
+
+        let born = population()
+            .create_unpopulated_worktree_on(&receipt(repo, "p--w"), &dest)
+            .unwrap();
+
+        assert_eq!(born.map(|b| b.at().clone()), Some(head(repo)));
+        let on_disk: Vec<_> = std::fs::read_dir(&dest)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(on_disk, vec![std::ffi::OsString::from(".git")]);
+        assert_eq!(git(&dest, &["symbolic-ref", "HEAD"]), "refs/heads/p--w");
+        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), head(repo).as_str());
+        assert_eq!(
+            git(&dest, &["ls-files", "--stage"]),
+            git(repo, &["ls-files", "--stage"]),
+            "the new workspace does not record its revision"
+        );
+    }
+
+    #[test]
+    fn an_unpopulated_worktree_adopts_a_branch_that_already_exists() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let repo = repo.as_path();
+        let before = git(repo, &["rev-parse", "HEAD"]);
+        git(repo, &["branch", "p--w", "HEAD"]);
+        std::fs::write(repo.join("a.txt"), "moved\n").unwrap();
+        git(repo, &["commit", "-q", "-am", "moved"]);
+
+        let born = population()
+            .create_unpopulated_worktree_on(&receipt(repo, "p--w"), &repo.with_file_name("w"))
+            .unwrap();
+
+        assert_eq!(born, None);
+        assert_eq!(git(repo, &["rev-parse", "p--w"]), before);
+    }
+
+    #[test]
+    fn tracked_files_are_the_tree_with_its_kinds_and_identities_only_on_files() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n"), ("run.sh", b"#!/bin/sh\n")], "");
+        let repo = repo.as_path();
+        git(repo, &["update-index", "--chmod=+x", "run.sh"]);
+        git(repo, &["commit", "-q", "-m", "executable"]);
+        commit_link_and_nested(repo);
+        let dest = unpopulated(repo, "w");
+
+        let tracked = by_path(population().tracked_files(&dest).unwrap());
+
+        let tree = git(repo, &["ls-tree", "-r", "HEAD"]);
+        assert_eq!(tracked.len(), tree.lines().count());
+        for line in tree.lines() {
+            let (meta, path) = line.split_once('\t').unwrap();
+            let mode = meta.split(' ').next().unwrap();
+            let kind = &tracked[path].kind;
+            match mode {
+                "100644" | "100755" => {
+                    let TrackedFileKind::File {
+                        executable,
+                        identity,
+                    } = kind
+                    else {
+                        panic!("{path} ({mode}) reported as {kind:?}");
+                    };
+                    assert_eq!(*executable, mode == "100755", "{path}");
+                    assert!(identity.is_some(), "{path} has no identity");
+                }
+                "120000" => assert_eq!(*kind, TrackedFileKind::Symlink, "{path}"),
+                "160000" => assert_eq!(*kind, TrackedFileKind::NestedRepository, "{path}"),
+                other => panic!("unexpected mode {other} for {path}"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_identity_names_the_conversion_context_not_just_the_blob() {
+        let same = b"one\ntwo\n".as_slice();
+        let (_tmp, repo) = repo_with(
+            &[
+                ("plain.txt", same),
+                ("plain-too.txt", same),
+                ("auto.txt", same),
+                ("crlf.txt", same),
+                ("filtered.txt", same),
+            ],
+            "auto.txt text=auto\ncrlf.txt eol=crlf\nfiltered.txt filter=upper\n",
+        );
+        let repo = repo.as_path();
+        let dest = unpopulated(repo, "w");
+        let identity =
+            |files: &BTreeMap<String, TrackedFile>, path: &str| files[path].identity().cloned();
+
+        let unset = by_path(population().tracked_files(&dest).unwrap());
+        git(repo, &["config", "core.autocrlf", "input"]);
+        let input = by_path(population().tracked_files(&dest).unwrap());
+        git(repo, &["config", "core.autocrlf", "true"]);
+        let crlf_everywhere = by_path(population().tracked_files(&dest).unwrap());
+
+        assert!(identity(&unset, "plain.txt").is_some());
+        assert_eq!(
+            identity(&unset, "plain.txt"),
+            identity(&unset, "plain-too.txt"),
+            "one blob in one context is one identity"
+        );
+        assert_ne!(
+            identity(&unset, "plain.txt"),
+            identity(&unset, "auto.txt"),
+            "an attribute is not in the identity"
+        );
+        assert!(identity(&unset, "auto.txt").is_some());
+        assert_eq!(identity(&unset, "crlf.txt"), None);
+        assert_eq!(identity(&unset, "filtered.txt"), None);
+        assert!(identity(&input, "plain.txt").is_some());
+        assert_ne!(
+            identity(&unset, "plain.txt"),
+            identity(&input, "plain.txt"),
+            "configuration is not in the identity"
+        );
+        assert_eq!(identity(&crlf_everywhere, "plain.txt"), None);
+    }
+
+    /// The promise an identity makes, checked over every combination of the
+    /// inputs to git's conversion: a path git's checkout transforms must
+    /// carry none. A line or a setting missing here is a combination the
+    /// classifier answers for unchecked.
+    #[test]
+    fn an_identity_is_only_given_where_git_checks_out_the_blob_unchanged() {
+        const ATTRIBUTE_LINES: &[&str] = &[
+            "",
+            "* text",
+            "* -text",
+            "* text=auto",
+            "* text=input",
+            "* binary",
+            "* eol=lf",
+            "* eol=crlf",
+            "* text eol=lf",
+            "* text eol=crlf",
+            "* text=auto eol=lf",
+            "* text=auto eol=crlf",
+            "* crlf",
+            "* -crlf",
+            "* crlf=input",
+            "* ident",
+            "* filter=upper",
+            "* working-tree-encoding=ISO-8859-1",
+        ];
+        const AUTOCRLF: &[Option<&str>] = &[None, Some("false"), Some("true"), Some("input")];
+        const EOL: &[Option<&str>] = &[None, Some("lf"), Some("crlf"), Some("native")];
+        let files: &[(&str, &[u8])] = &[
+            ("lf.txt", "one\ntwo $Id$ \u{e9}\n".as_bytes()),
+            ("crlf.txt", b"one\r\ntwo\r\n"),
+        ];
+
+        struct Outcome {
+            line: &'static str,
+            autocrlf: Option<&'static str>,
+            shareable: bool,
+            unchanged: bool,
+        }
+
+        let outcomes: Vec<Outcome> = std::thread::scope(|s| {
+            let workers: Vec<_> = ATTRIBUTE_LINES
+                .iter()
+                .map(|&line| {
+                    s.spawn(move || {
+                        let (_tmp, repo) = repo_with(files, &format!("{line}\n"));
+                        let repo = repo.as_path();
+                        git(repo, &["config", "filter.upper.smudge", "tr a-z A-Z"]);
+                        git(repo, &["config", "filter.upper.clean", "cat"]);
+                        let dest = unpopulated(repo, "w");
+                        let mut outcomes = Vec::new();
+                        for &autocrlf in AUTOCRLF {
+                            for &eol in EOL {
+                                for (key, value) in [("core.autocrlf", autocrlf), ("core.eol", eol)]
+                                {
+                                    let _ = git_command()
+                                        .args(["config", "--unset", key])
+                                        .current_dir(repo)
+                                        .output();
+                                    if let Some(value) = value {
+                                        git(repo, &["config", key, value]);
+                                    }
+                                }
+                                for (name, _) in files {
+                                    let _ = std::fs::remove_file(dest.join(name));
+                                }
+                                git(&dest, &["checkout-index", "-a", "-f"]);
+                                let tracked = by_path(population().tracked_files(&dest).unwrap());
+                                for (name, _) in files {
+                                    let written = std::fs::read(dest.join(name)).unwrap();
+                                    let unchanged = written == blob_bytes(repo, name);
+                                    let shareable = tracked[*name].identity().is_some();
+                                    assert!(
+                                        unchanged || !shareable,
+                                        "{name} under {line:?}, core.autocrlf={autocrlf:?}, \
+                                         core.eol={eol:?}: carries an identity but git's \
+                                         checkout changed its bytes"
+                                    );
+                                    outcomes.push(Outcome {
+                                        line,
+                                        autocrlf,
+                                        shareable,
+                                        unchanged,
+                                    });
+                                }
+                            }
+                        }
+                        outcomes
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap())
+                .collect()
+        });
+
+        let shareable = outcomes.iter().filter(|o| o.shareable).count();
+        let converted = outcomes.iter().filter(|o| !o.unchanged).count();
+        assert_eq!(
+            outcomes.len(),
+            ATTRIBUTE_LINES.len() * AUTOCRLF.len() * EOL.len() * files.len()
+        );
+        assert!(
+            shareable > 0 && converted > 0,
+            "the matrix exercised one side only: {shareable} shareable, {converted} converted"
+        );
+        let all_shared = |pick: &dyn Fn(&Outcome) -> bool| {
+            let picked: Vec<_> = outcomes.iter().filter(|o| pick(o)).collect();
+            !picked.is_empty() && picked.iter().all(|o| o.shareable)
+        };
+        assert!(
+            all_shared(&|o| o.line.is_empty() && o.autocrlf.is_none()),
+            "a repo with no conversion shares nothing"
+        );
+        assert!(all_shared(&|o| o.line == "* text=auto eol=lf"));
+        assert!(all_shared(&|o| o.line == "* -text"));
+    }
+
+    #[test]
+    fn holding_recorded_content_is_byte_exact() {
+        let (_tmp, repo) = repo_with(
+            &[
+                ("plain.txt", b"plain\n"),
+                ("auto.txt", b"one\ntwo\n"),
+                ("edited.txt", b"edited\n"),
+                ("touched.txt", b"touched\n"),
+                ("gone.txt", b"gone\n"),
+                ("filtered.txt", b"filtered\n"),
+                ("unasked.txt", b"unasked\n"),
+            ],
+            "auto.txt text=auto\nfiltered.txt filter=upper\n",
+        );
+        let repo = repo.as_path();
+        let w = checked_out(repo, "w");
+
+        std::fs::write(w.join("auto.txt"), b"one\r\ntwo\r\n").unwrap();
+        git(&w, &["read-tree", "HEAD"]);
+        git(&w, &["update-index", "-q", "--refresh"]);
+        assert!(
+            !GIT.tracked_dirty_file_names(&w)
+                .unwrap()
+                .contains(&"auto.txt".to_owned()),
+            "git no longer reads a CRLF rewrite of a text=auto file as unchanged"
+        );
+        std::fs::write(w.join("edited.txt"), b"EDITED\n").unwrap();
+        let touched = std::fs::File::options()
+            .write(true)
+            .open(w.join("touched.txt"))
+            .unwrap();
+        touched
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
+            .unwrap();
+        drop(touched);
+        assert!(
+            git(&w, &["diff-files", "--name-only"]).contains("touched.txt"),
+            "the touched file is not stat-dirty, so this case tests nothing"
+        );
+        std::fs::remove_file(w.join("gone.txt")).unwrap();
+
+        let asked = paths(&[
+            "plain.txt",
+            "auto.txt",
+            "edited.txt",
+            "touched.txt",
+            "gone.txt",
+            "filtered.txt",
+            "not-tracked.txt",
+        ]);
+        let holding: Vec<String> = population()
+            .files_holding_recorded_content(&w, &asked)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+
+        assert_eq!(holding, paths(&["plain.txt", "touched.txt"]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn holding_recorded_content_needs_a_regular_file_with_the_recorded_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_tmp, repo) = repo_with(
+            &[
+                ("run.sh", b"#!/bin/sh\n"),
+                ("flipped.sh", b"#!/bin/sh\n"),
+                ("linked.txt", b"same\n"),
+                ("\"quoted", b"q\n"),
+                ("new\nline", b"n\n"),
+                ("ends\r", b"r\n"),
+            ],
+            "",
+        );
+        let repo = repo.as_path();
+        git(
+            repo,
+            &["update-index", "--chmod=+x", "run.sh", "flipped.sh"],
+        );
+        git(repo, &["commit", "-q", "-m", "executable"]);
+        let w = checked_out(repo, "w");
+        std::fs::set_permissions(w.join("flipped.sh"), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        std::fs::write(w.join("elsewhere.txt"), b"same\n").unwrap();
+        std::fs::remove_file(w.join("linked.txt")).unwrap();
+        std::os::unix::fs::symlink("elsewhere.txt", w.join("linked.txt")).unwrap();
+
+        let asked = paths(&[
+            "run.sh",
+            "flipped.sh",
+            "linked.txt",
+            "\"quoted",
+            "new\nline",
+            "ends\r",
+        ]);
+        let holding: Vec<String> = population()
+            .files_holding_recorded_content(&w, &asked)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+
+        assert_eq!(
+            holding,
+            paths(&["\"quoted", "ends\r", "new\nline", "run.sh"])
+        );
+    }
+
+    #[test]
+    fn finishing_writes_only_what_is_missing_and_leaves_a_checkout() {
+        let (_tmp, repo) = repo_with(
+            &[
+                ("a.txt", b"a\n"),
+                ("b.txt", b"b\n"),
+                ("run.sh", b"#!/bin/sh\n"),
+            ],
+            "",
+        );
+        let repo = repo.as_path();
+        git(repo, &["update-index", "--chmod=+x", "run.sh"]);
+        git(repo, &["commit", "-q", "-m", "executable"]);
+        commit_link_and_nested(repo);
+        let source = checked_out(repo, "source");
+        let dest = unpopulated(repo, "w");
+        std::fs::hard_link(source.join("a.txt"), dest.join("a.txt")).unwrap();
+
+        population().finish_checkout(&dest).unwrap();
+
+        assert!(GIT.tracked_dirty_file_names(&dest).unwrap().is_empty());
+        assert_eq!(git(&dest, &["symbolic-ref", "HEAD"]), "refs/heads/w");
+        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), head(repo).as_str());
+        for name in ["a.txt", "b.txt", "run.sh"] {
+            assert_eq!(
+                std::fs::read(dest.join(name)).unwrap(),
+                blob_bytes(repo, name)
+            );
+        }
+        assert!(dest.join("nested").is_dir());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let inode = |p: &Path| std::fs::metadata(p).unwrap().ino();
+            assert_eq!(
+                inode(&dest.join("a.txt")),
+                inode(&source.join("a.txt")),
+                "finishing rewrote a placed file"
+            );
+            let mode = std::fs::metadata(dest.join("run.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_ne!(mode & 0o100, 0);
+            assert_eq!(
+                std::fs::read_link(dest.join("link")).unwrap(),
+                Path::new("a.txt")
+            );
+        }
+    }
+
+    fn record_post_checkout_to(repo: &Path, exit: u8) -> PathBuf {
+        let hooks = repo.join("hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        let log = repo.join("post-checkout.log");
+        let script = hooks.join("post-checkout");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\necho \"$* $(basename \"$(pwd)\")\" >> '{}'\necho refused-by-hook >&2\nexit {exit}\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        git(repo, &["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        log
+    }
+
+    #[test]
+    fn finishing_runs_the_post_checkout_hook_as_worktree_add_does() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let repo = repo.as_path();
+        let log = record_post_checkout_to(repo, 0);
+
+        checked_out(repo, "plain");
+        let populated = unpopulated(repo, "populated");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap().lines().count(),
+            1,
+            "creating without files ran the hook early"
+        );
+        population().finish_checkout(&populated).unwrap();
+
+        let runs: Vec<String> = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        let head = head(repo);
+        let null = "0".repeat(head.as_str().len());
+        assert_eq!(
+            runs,
+            vec![
+                format!("{null} {head} 1 plain"),
+                format!("{null} {head} 1 populated"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failing_post_checkout_hook_rejects_the_finish() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let repo = repo.as_path();
+        let dest = unpopulated(repo, "w");
+        record_post_checkout_to(repo, 1);
+
+        let err = population().finish_checkout(&dest).unwrap_err();
+
+        match err {
+            VcsError::HookRejected { stderr, .. } => assert!(stderr.contains("refused-by-hook")),
+            other => panic!("expected a hook rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn checking_out_a_path_replaces_it_and_leaves_what_shared_it_alone() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n"), ("b.txt", b"b\n")], "");
+        let repo = repo.as_path();
+        let source = checked_out(repo, "source");
+        let dest = unpopulated(repo, "w");
+        std::fs::hard_link(source.join("a.txt"), dest.join("a.txt")).unwrap();
+        population().finish_checkout(&dest).unwrap();
+        std::fs::write(source.join("a.txt"), b"changed under the share\n").unwrap();
+        let b_before = std::fs::read(dest.join("b.txt")).unwrap();
+        assert!(population()
+            .files_holding_recorded_content(&dest, &paths(&["a.txt"]))
+            .unwrap()
+            .is_empty());
+
+        population()
+            .check_out_paths(&dest, &paths(&["a.txt"]))
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read(dest.join("a.txt")).unwrap(),
+            blob_bytes(repo, "a.txt")
+        );
+        assert_eq!(
+            std::fs::read(source.join("a.txt")).unwrap(),
+            b"changed under the share\n",
+            "the check-out wrote through the shared file"
+        );
+        assert_eq!(std::fs::read(dest.join("b.txt")).unwrap(), b_before);
+        assert_eq!(
+            population()
+                .files_holding_recorded_content(&dest, &paths(&["a.txt", "b.txt"]))
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn checking_out_an_untracked_path_is_refused() {
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let dest = unpopulated(&repo, "w");
+
+        assert!(population()
+            .check_out_paths(&dest, &paths(&["nope.txt"]))
+            .is_err());
     }
 }

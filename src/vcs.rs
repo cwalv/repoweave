@@ -392,6 +392,9 @@ pub enum VcsError {
     /// unmeasured gap in the discriminator, not an observed behaviour — so
     /// widen the evidence before relying on this variant to mean a hook
     /// specifically.
+    ///
+    /// From [`WorkspacePopulation::finish_checkout`] the evidence is direct:
+    /// the hook is run on its own and its exit status is the failure.
     HookRejected { repo: PathBuf, stderr: String },
     /// A fast-forward or checkout would overwrite an untracked file that
     /// collides with a path the incoming tree writes.
@@ -1293,7 +1296,7 @@ impl fmt::Display for DetachedHead {
 /// Proof that *this call* created a ref, as opposed to adopting a
 /// pre-existing one.
 ///
-/// Returned by [`Vcs::create_worktree_on`] only on the authoring path. Its
+/// Returned by a worktree creation only on its authoring path. Its
 /// consumer is rollback: a failed create deletes only refs it holds a
 /// `BornRef` for, so it can no longer destroy a branch the create merely
 /// adopted — which is how a create's cleanup used to take a unique commit
@@ -1876,6 +1879,51 @@ pub enum ReplayExclusionState {
     LegacyAlongsideCurrent,
     /// The current assignment, and nothing superseded beside it.
     Current,
+}
+
+/// What a checkout writes at one tracked path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackedFile {
+    /// Relative to the workspace root, `/`-separated.
+    pub path: String,
+    pub kind: TrackedFileKind,
+}
+
+impl TrackedFile {
+    pub fn identity(&self) -> Option<&ContentIdentity> {
+        match &self.kind {
+            TrackedFileKind::File { identity, .. } => identity.as_ref(),
+            TrackedFileKind::Symlink | TrackedFileKind::NestedRepository => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrackedFileKind {
+    /// `identity` is `None` when no file placed here from elsewhere can be
+    /// verified to hold what the checkout writes, so nothing may be.
+    File {
+        executable: bool,
+        identity: Option<ContentIdentity>,
+    },
+    Symlink,
+    /// Another repository's checkout, which this one records only a
+    /// placeholder for.
+    NestedRepository,
+}
+
+/// The bytes a checkout writes for a file, opaque outside the backend that
+/// minted it.
+///
+/// Equal identities from workspaces of one repository check out to equal
+/// bytes. Unequal identities promise nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ContentIdentity(String);
+
+impl ContentIdentity {
+    pub(crate) fn new(minted: impl Into<String>) -> Self {
+        Self(minted.into())
+    }
 }
 
 /// Operations repoweave needs from a version control system.
@@ -3334,6 +3382,111 @@ pub trait Vcs: Send + Sync {
             at,
         })
     }
+
+    // ---- population -------------------------------------------------------
+
+    /// The population questions, when this backend answers them.
+    ///
+    /// `None` is a complete answer, not a degraded one: every workspace is
+    /// still created by [`Vcs::create_worktree_on`], which writes its own
+    /// files.
+    fn population(&self) -> Option<&dyn WorkspacePopulation> {
+        None
+    }
+}
+
+/// Questions that let a workspace's tracked files be written by something
+/// other than the backend's checkout, and then checked.
+///
+/// A caller creates the workspace without its files, learns what a checkout
+/// would write, places what it can, has the backend write the rest, and
+/// checks out again every placed path that does not hold exactly what the
+/// checkout writes. A backend answers all of these or, through
+/// [`Vcs::population`], none.
+pub trait WorkspacePopulation: Send + Sync {
+    /// [`Vcs::create_worktree_on`], writing no tracked file.
+    ///
+    /// The same receipt and branch handling: `Some(BornRef)` iff this call
+    /// authored the ref. The new workspace already records what it is a
+    /// checkout of, so [`WorkspacePopulation::tracked_files`] answers for it
+    /// before anything is written.
+    fn create_unpopulated_worktree_on(
+        &self,
+        owned: &OwnedRef,
+        dest: &Path,
+    ) -> Result<Option<BornRef>, VcsError> {
+        let authored = self.materialize_unpopulated_worktree_on_ref(
+            owned.store(),
+            dest,
+            owned.name(),
+            owned.created_at(),
+        )?;
+        Ok(authored.then(|| BornRef {
+            store: owned.store().to_path_buf(),
+            name: owned.name().clone(),
+            at: owned.created_at().clone(),
+        }))
+    }
+
+    /// VCS-specific half of
+    /// [`WorkspacePopulation::create_unpopulated_worktree_on`], under the
+    /// contract of [`Vcs::materialize_worktree_on_ref`].
+    fn materialize_unpopulated_worktree_on_ref(
+        &self,
+        store: &Path,
+        dest: &Path,
+        name: &RawRefName,
+        start_point: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError>;
+
+    /// Every tracked file `workspace` records, with what a checkout writes
+    /// for it. A path mid-merge records no single content and is omitted.
+    ///
+    /// For git: the index's entries. A regular file carries an identity only
+    /// where checkout writes the blob's bytes unchanged, which rules out a
+    /// `filter`, `ident` or `working-tree-encoding` attribute and conversion
+    /// to CRLF. The identity is the blob plus every input to that decision.
+    fn tracked_files(&self, workspace: &Path) -> Result<Vec<TrackedFile>, VcsError>;
+
+    /// Of `paths`, the files in `workspace` holding exactly the bytes and the
+    /// executable bit a checkout writes for them, right now.
+    ///
+    /// Byte-exact, never a change-detection shortcut: this is the question
+    /// that verifies placed files. A path without an identity is never in the
+    /// answer.
+    ///
+    /// For git: hashes each candidate unfiltered and compares the index's
+    /// blob. [`Vcs::tracked_dirty_file_names`] cannot stand in: git compares
+    /// after normalizing line endings, so a placed CRLF file in a `text=auto`
+    /// path reads as unchanged.
+    fn files_holding_recorded_content(
+        &self,
+        workspace: &Path,
+        paths: &[String],
+    ) -> Result<Vec<TrackedFile>, VcsError>;
+
+    /// Write every tracked file `workspace` records that is missing, leave
+    /// every present one as it is, and leave the workspace as the backend's
+    /// own checkout would, hooks included.
+    ///
+    /// Present files are not checked here; that is
+    /// [`WorkspacePopulation::files_holding_recorded_content`].
+    ///
+    /// For git: a `post-checkout` hook that fails is
+    /// [`VcsError::HookRejected`], as it is for `worktree add`.
+    fn finish_checkout(&self, workspace: &Path) -> Result<(), VcsError>;
+
+    /// Check out `paths` in `workspace` again from what it records, replacing
+    /// what is there. Every path must be tracked.
+    fn check_out_paths(&self, workspace: &Path, paths: &[String]) -> Result<(), VcsError>;
+
+    /// Whether, on this platform, an update in one workspace changes neither
+    /// the content nor the permissions of a file in another workspace that
+    /// shares its storage.
+    ///
+    /// `true` only where a conformance test proves it; nothing may be shared
+    /// by hardlink otherwise.
+    fn updates_replace_files(&self) -> bool;
 }
 
 #[cfg(test)]

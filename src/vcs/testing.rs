@@ -37,6 +37,7 @@ pub(crate) enum VcsCall {
     ListBranchNamesWithPrefix,
     ResolveLocalBranchTip,
     MaterializeWorktreeOnRef,
+    MaterializeUnpopulatedWorktreeOnRef,
     DestroyLocalRef,
 }
 
@@ -58,11 +59,21 @@ pub(crate) struct FakeVcs {
     failures: Mutex<BTreeMap<VcsCall, VecDeque<VcsError>>>,
     hooks: Mutex<BTreeMap<VcsCall, VecDeque<Hook>>>,
     log: Mutex<Vec<VcsCall>>,
+    answers_population: bool,
 }
 
 impl FakeVcs {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A double that answers [`Vcs::population`]. Of those questions only
+    /// the unpopulated create is modelled, in the same ref store a populated
+    /// one uses.
+    pub(crate) fn answering_population() -> Self {
+        let mut fake = Self::default();
+        fake.answers_population = true;
+        fake
     }
 
     /// Put a ref in the store at `at`, as a birth would.
@@ -137,6 +148,16 @@ impl FakeVcs {
 
     fn key(store: &Path, name: &RawRefName) -> (PathBuf, String) {
         (store.to_path_buf(), name.as_str().to_owned())
+    }
+
+    fn author_or_adopt(&self, store: &Path, name: &RawRefName, at: &ResolvedRevisionId) -> bool {
+        let key = Self::key(store, name);
+        let mut branches = self.branches.lock().unwrap();
+        if branches.contains_key(&key) {
+            return false;
+        }
+        branches.insert(key, at.clone());
+        true
     }
 
     fn enter(&self, call: VcsCall) -> Result<(), VcsError> {
@@ -252,13 +273,14 @@ impl Vcs for FakeVcs {
         start_point: &ResolvedRevisionId,
     ) -> Result<bool, VcsError> {
         self.enter(VcsCall::MaterializeWorktreeOnRef)?;
-        let key = Self::key(store, name);
-        let mut branches = self.branches.lock().unwrap();
-        if branches.contains_key(&key) {
-            return Ok(false);
-        }
-        branches.insert(key, start_point.clone());
-        Ok(true)
+        Ok(self.author_or_adopt(store, name, start_point))
+    }
+
+    /// `None` unless built by [`FakeVcs::answering_population`]: a backend
+    /// that answers none of the population questions.
+    fn population(&self) -> Option<&dyn WorkspacePopulation> {
+        self.answers_population
+            .then_some(self as &dyn WorkspacePopulation)
     }
 
     fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
@@ -660,6 +682,43 @@ impl Vcs for FakeVcs {
     }
 }
 
+impl WorkspacePopulation for FakeVcs {
+    fn materialize_unpopulated_worktree_on_ref(
+        &self,
+        store: &Path,
+        _dest: &Path,
+        name: &RawRefName,
+        start_point: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError> {
+        self.enter(VcsCall::MaterializeUnpopulatedWorktreeOnRef)?;
+        Ok(self.author_or_adopt(store, name, start_point))
+    }
+
+    fn tracked_files(&self, _workspace: &Path) -> Result<Vec<TrackedFile>, VcsError> {
+        unsupported("tracked_files")
+    }
+
+    fn files_holding_recorded_content(
+        &self,
+        _workspace: &Path,
+        _paths: &[String],
+    ) -> Result<Vec<TrackedFile>, VcsError> {
+        unsupported("files_holding_recorded_content")
+    }
+
+    fn finish_checkout(&self, _workspace: &Path) -> Result<(), VcsError> {
+        unsupported("finish_checkout")
+    }
+
+    fn check_out_paths(&self, _workspace: &Path, _paths: &[String]) -> Result<(), VcsError> {
+        unsupported("check_out_paths")
+    }
+
+    fn updates_replace_files(&self) -> bool {
+        unsupported("updates_replace_files")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -796,6 +855,77 @@ mod tests {
     fn the_seam_and_the_double_both_cross_threads() {
         fn require<T: Send + Sync + ?Sized>() {}
         require::<dyn Vcs>();
+        require::<dyn WorkspacePopulation>();
         require::<FakeVcs>();
+    }
+
+    fn receipt(name: &str, at: ResolvedRevisionId) -> OwnedRef {
+        OwnedRef::from_receipt(PathBuf::from("/store"), RawRefName::new(name), at)
+    }
+
+    #[test]
+    fn a_double_answers_population_only_when_built_to() {
+        assert!(FakeVcs::new().population().is_none());
+        assert!(FakeVcs::answering_population().population().is_some());
+    }
+
+    #[test]
+    fn an_unpopulated_create_authors_and_adopts_as_a_populated_one_does() {
+        for unpopulated in [false, true] {
+            let fake = FakeVcs::answering_population();
+            let create = |r: &OwnedRef, dest: &str| {
+                let dest = Path::new(dest);
+                if unpopulated {
+                    fake.population()
+                        .unwrap()
+                        .create_unpopulated_worktree_on(r, dest)
+                } else {
+                    fake.create_worktree_on(r, dest)
+                }
+            };
+
+            let born = create(&receipt("p--w", rev('b')), "/one").unwrap();
+            assert_eq!(born.map(|b| b.at().clone()), Some(rev('b')));
+            assert_eq!(create(&receipt("p--w", rev('c')), "/two").unwrap(), None);
+            assert_eq!(
+                fake.branch_tip(Path::new("/store"), &RawRefName::new("p--w")),
+                Some(rev('b')),
+                "adopting moved the ref"
+            );
+
+            let served = if unpopulated {
+                VcsCall::MaterializeUnpopulatedWorktreeOnRef
+            } else {
+                VcsCall::MaterializeWorktreeOnRef
+            };
+            assert_eq!(fake.calls(), vec![served, served]);
+        }
+    }
+
+    #[test]
+    fn a_failed_unpopulated_create_authors_nothing() {
+        let fake = FakeVcs::answering_population();
+        fake.fail_next(
+            VcsCall::MaterializeUnpopulatedWorktreeOnRef,
+            VcsError::NotARepo(PathBuf::from("/store")),
+        );
+
+        let created = fake
+            .population()
+            .unwrap()
+            .create_unpopulated_worktree_on(&receipt("p--w", rev('b')), Path::new("/one"));
+
+        assert!(created.is_err());
+        assert_eq!(
+            fake.branch_tip(Path::new("/store"), &RawRefName::new("p--w")),
+            None
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "`tracked_files`")]
+    fn an_unmodelled_population_question_names_itself() {
+        let fake = FakeVcs::answering_population();
+        let _ = fake.population().unwrap().tracked_files(Path::new("/one"));
     }
 }
