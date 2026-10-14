@@ -37,3 +37,22 @@ Warns if repos with `pyproject.toml` exist but `uv` is not on PATH.
 ## Notes
 
 uv's `workspace = true` silently overrides version constraints, so version mismatches only surface *outside* the workspace. This is different from Cargo/Go/npm, which catch constraint mismatches in-workspace. Test the published artifact in a separate environment before announcing a release.
+
+## Polyglot cargo+uv: a compiled extension can go stale
+
+A repo carrying both `Cargo.toml` and `pyproject.toml` — a maturin/pyo3 bindings crate — is claimed by `cargo-workspace` and `uv-workspace` at once, with no conflict between the generated files. `uv sync` drives maturin, which drives cargo, and the result installs as an editable Python package backed by a compiled extension module.
+
+This install hook reacts to a **resolution event** — a dependency added, removed, or re-pinned — not to Rust source edited inside an already-resolved package (see [install hooks](./index.md#hook-points): the hook's mandate is current membership plus already-recorded pins, nothing else). Editing the crate's `.rs` file and leaving the Python package's own version untouched is not a resolution event, so the compiled extension is not rebuilt: Python keeps running whatever was compiled at the last reinstall, and both `rwv materialize` and a plain `uv sync` report success anyway. Only `uv sync --reinstall-package <name>` forces the rebuild.
+
+The source can advance this way through `rwv sync-to`, a `git pull` inside the member, or hand-editing the file directly — the install hook's contract is identical regardless of how source arrived, so this is not specific to rwv.
+
+The layer that does see every source advance is **import time**, not install time: [`maturin-import-hook`](https://github.com/PyO3/maturin-import-hook) rebuilds an editable-installed maturin package on `import` when its Rust source (or a path dependency, at any depth) has changed since the last build. Enable it once per `uv`-managed environment:
+
+```bash
+uv add --dev maturin_import_hook
+uv run -m maturin_import_hook site install --detect-uv
+```
+
+`site install` writes a `sitecustomize.py`, so the staleness check runs at every interpreter start in that environment with nothing to add per script; `--detect-uv` has the rebuild itself invoked through `uv`. Trade-off: every import of an editable-installed maturin package now pays that check — negligible once the build is current, a rebuild when it is not — so treat it as a development-environment convenience and keep it out of anything shipped: `MATURIN_IMPORT_HOOK_ENABLED=0` disables it without removing the `install()` call or the site hook, for a production image built from a dev virtualenv.
+
+rwv does not run or configure this hook. The install hook's contract is scoped to membership and pins; tracking source edits inside an already-resolved package is import/build-time work the ecosystem's own tooling already does.

@@ -360,3 +360,7 @@ workweave-create) also run the read-only verify pass:
   auto-repaired; the operator either re-runs activation (accepting and
   re-stamping the new content) or restores the file. Workspaces without
   digest state (pre-upgrade) skip this comparison silently.
+
+## Notes
+
+A repo detected by this integration is also claimed by `uv-workspace` when it carries a `pyproject.toml` alongside its `Cargo.toml` (a maturin/pyo3 bindings crate) — both generated files include it, with no conflict. See [uv-workspace: a compiled extension can go stale](./uv-workspace.md#polyglot-cargouv-a-compiled-extension-can-go-stale) for the install hook's one sharp edge in that combination.

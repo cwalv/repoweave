@@ -100,6 +100,7 @@ rwv doctor
 
 - Ecosystem lock files (`package-lock.json`, `uv.lock`, `go.work.sum`, `Cargo.lock`) — those are updated by the ecosystem tool. Where the integration has an install hook, activation runs that step automatically; go-work has none, so `go.work.sum` is written only when the Go tooling itself runs (`go mod download` and friends), through the weave-root link.
 - Files the integration was not configured to manage.
+- A compiled Python extension built by maturin/pyo3. The `uv sync` install hook running automatically does not mean that extension is current: it reacts to a resolution event (a dependency added, removed, or re-pinned), not to Rust source edited inside an already-resolved package, so a `.rs` change can land — via `rwv sync-to`, a `git pull`, or a direct edit — with the compiled `.so` left at the old build and no non-zero exit anywhere. See [uv-workspace: a compiled extension can go stale](../reference/integrations/uv-workspace.md#polyglot-cargouv-a-compiled-extension-can-go-stale) for why, and for the ecosystem-native fix (`maturin-import-hook`).
 
 If you need to regenerate a file that is fully rwv-owned (like a `gita/` CSV), `rwv activate` handles that too; these files are re-derived from scratch on each activation.
 
