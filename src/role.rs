@@ -11,11 +11,10 @@ use anyhow::Context;
 /// Execute `rwv role <repo> <role>`.
 ///
 /// The manifest edit and the regeneration it drives land together or not at
-/// all ([`settle_manifest`]): a role can move a member into or out of an
-/// ecosystem's build graph, since `reference` members are excluded from it.
-/// The member is then settled for whichever role `rwv.toml` holds once that
-/// returns, so a regeneration that put the edit back leaves the files as
-/// they were.
+/// all, since a role can move a member into or out of an ecosystem's build
+/// graph: `reference` members are excluded from it. The member is then
+/// settled for whichever role `rwv.toml` holds afterwards, so a regeneration
+/// that put the edit back leaves the files as they were.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
