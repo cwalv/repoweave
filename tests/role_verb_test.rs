@@ -270,14 +270,34 @@ fn an_unchanged_role_changes_nothing() {
     let project = weave.project_dir(&weave.ws);
     let before = common::git_in(&project, &["status", "--porcelain"]);
     let manifest = std::fs::read(project.join("rwv.toml")).unwrap();
+    let written_at = std::fs::metadata(project.join("rwv.toml"))
+        .unwrap()
+        .modified()
+        .unwrap();
 
     let out = succeed(&["role", &weave.alpha, "owned"], &weave.ws);
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("is already owned; nothing to change"),
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr
+            .lines()
+            .filter(|line| !line.starts_with("target: "))
+            .collect::<Vec<_>>(),
+        vec![format!(
+            "'{}' is already owned; nothing to change",
+            weave.alpha
+        )],
         "{}",
         describe(&out)
     );
     assert_eq!(std::fs::read(project.join("rwv.toml")).unwrap(), manifest);
+    assert_eq!(
+        std::fs::metadata(project.join("rwv.toml"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        written_at,
+        "rwv.toml is not rewritten"
+    );
     assert_eq!(common::git_in(&project, &["status", "--porcelain"]), before);
 }
 
