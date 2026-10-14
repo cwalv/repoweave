@@ -79,7 +79,8 @@ the envelope:
 ```
 {
   "$schema": "<url>",
-  "repos": [ { "path": "...", "kind": "updated", ... }, ... ]
+  "repos": [ { "path": "...", "kind": "updated", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
 }
 ```
 
@@ -97,6 +98,12 @@ Each record carries:
 - `new_sha` — SHA after the advance (omitted when `kind = failed`).
 - `error` — human-readable failure message (only when `kind = failed`).
 
+File counts are never on a record. Each checkout whose files the advance
+rewrote gets a placement record: `path`, `absolute_path`, and `files`
+(`reflinked`, `hardlinked`, `written`). The envelope lists them under
+`placements`, empty when nothing was placed; NDJSON streams each as its own
+line, whose `$schema` names `placement-record.json`.
+
 Schema:
 
 ```json
@@ -107,11 +114,19 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
+    "placements",
     "repos"
   ],
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "placements": {
+      "description": "How the files of each checkout the advance moved were placed. Empty, not absent, when it moved none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
+      }
     },
     "repos": {
       "type": "array",
@@ -161,6 +176,33 @@ Schema:
         }
       }
     },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "type": "string"
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
+        }
+      }
+    },
     "RepoUpdateRecord": {
       "description": "Per-repo record in `rwv update --json` output.\n\n`old_sha` is the tip before the fetch; `new_sha` is the tip after checkout (the new branch HEAD). Both are `null` when the SHA could not be read (e.g. the repo was missing from disk before the advance). For `kind = failed`, `new_sha` is always `null`; `error` carries the human-readable failure message.",
       "type": "object",
@@ -184,17 +226,6 @@ Schema:
           "type": [
             "string",
             "null"
-          ]
-        },
-        "files": {
-          "description": "How the files the advance rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the advance moved nothing or the VCS cannot say.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FilePlacement"
-            },
-            {
-              "type": "null"
-            }
           ]
         },
         "kind": {

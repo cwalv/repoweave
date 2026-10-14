@@ -150,7 +150,8 @@ Under `--json`, output switches to machine-readable format:
   ```
   {
     "$schema": "<url>",
-    "outcomes": [ { "path": "...", ... }, ... ]
+    "outcomes": [ { "path": "...", ... }, ... ],
+    "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
   }
   ```
 
@@ -162,6 +163,15 @@ Each per-repo record in the `outcomes` array (or in each NDJSON line) has the
 shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
 (`ok` / `skipped` / `failed`), and `message` (human-readable detail; absent
 for `ok`, present for `skipped` and `failed`).
+
+File counts are never on an outcome. Each checkout whose files the fetch
+placed gets a placement record: `path`, `absolute_path` (the checkout the
+files are in), and `files` (`reflinked`, `hardlinked`, `written`). A clone
+the fetch realigned gets one, and so, from a workweave, does each worktree
+the fetch creates there for a member the workweave lacks, under the
+workweave's path. The envelope lists them under `placements`, empty when
+nothing was placed; NDJSON streams each as its own line, whose `$schema`
+names `placement-record.json`.
 
 The `$schema` URL points to the committed schema artifact. See the Schema
 section below.
@@ -176,7 +186,8 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
-    "outcomes"
+    "outcomes",
+    "placements"
   ],
   "properties": {
     "$schema": {
@@ -186,6 +197,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/FetchOutcomeOutput"
+      }
+    },
+    "placements": {
+      "description": "How the files of each checkout the fetch moved or created were placed: a canonical clone it realigned, and from a workweave each worktree it created there. Empty, not absent, when it placed none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
       }
     },
     "resolution": {
@@ -212,17 +230,6 @@ Schema:
       "properties": {
         "absolute_path": {
           "type": "string"
-        },
-        "files": {
-          "description": "How the files the fetch rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the fetch moved nothing or the VCS cannot say.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FilePlacement"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "message": {
           "type": [
@@ -273,6 +280,33 @@ Schema:
           "type": "integer",
           "format": "uint",
           "minimum": 0.0
+        }
+      }
+    },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "type": "string"
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
         }
       }
     },

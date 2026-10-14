@@ -5,11 +5,19 @@
   "type": "object",
   "required": [
     "$schema",
+    "placements",
     "repos"
   ],
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "placements": {
+      "description": "How the files of each checkout the advance moved were placed. Empty, not absent, when it moved none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
+      }
     },
     "repos": {
       "type": "array",
@@ -59,6 +67,33 @@
         }
       }
     },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "type": "string"
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
+        }
+      }
+    },
     "RepoUpdateRecord": {
       "description": "Per-repo record in `rwv update --json` output.\n\n`old_sha` is the tip before the fetch; `new_sha` is the tip after checkout (the new branch HEAD). Both are `null` when the SHA could not be read (e.g. the repo was missing from disk before the advance). For `kind = failed`, `new_sha` is always `null`; `error` carries the human-readable failure message.",
       "type": "object",
@@ -82,17 +117,6 @@
           "type": [
             "string",
             "null"
-          ]
-        },
-        "files": {
-          "description": "How the files the advance rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the advance moved nothing or the VCS cannot say.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FilePlacement"
-            },
-            {
-              "type": "null"
-            }
           ]
         },
         "kind": {

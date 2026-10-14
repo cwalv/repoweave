@@ -105,7 +105,8 @@ pretty-printed envelope:
 ```
 {
   "$schema": "<url>",
-  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
 }
 ```
 
@@ -122,12 +123,21 @@ of the source it was measured against. Branch on that rather than on the
 prose in `failure.message`. It is absent only where the outcome was decided
 before any pair could be read, such as a HEAD that would not resolve.
 
+File counts are never on an outcome. Each checkout whose files the sync
+placed — a member it created, or one whose moved files it shared again at
+the end of the op — gets a placement record: `path`, `absolute_path` (the
+checkout the files are in), and `files` (`reflinked`, `hardlinked`,
+`written`). The envelope lists them under `placements`, empty when nothing
+was placed.
+
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
 moment each repo's sync completes. Lines arrive in completion order (not
 input order); consumers demux by `path`. Every line is self-describing:
 each record embeds its own `"$schema"` URL alongside the per-repo fields,
-so a consumer can identify any line without out-of-band context. Lines
+so a consumer can identify any line without out-of-band context. A
+placement is streamed as its own line when it happens, often after its
+repo's outcome line; its `$schema` names `placement-record.json`. Lines
 are mutex-guarded so concurrent workers can't tear a single record's
 bytes. The text-prefix Reporter wrapper (`[<repo>] <line>`) used by
 `fetch`/`update` under `-j > 1` is **bypassed** in JSON mode — workers
@@ -144,7 +154,8 @@ Schema:
   "required": [
     "$schema",
     "advisories",
-    "outcomes"
+    "outcomes",
+    "placements"
   ],
   "properties": {
     "$schema": {
@@ -161,6 +172,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"
+      }
+    },
+    "placements": {
+      "description": "How the files of each checkout the sync created or moved were placed. Empty, not absent, when it placed none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
       }
     },
     "resolution": {
@@ -379,6 +397,33 @@ Schema:
         }
       }
     },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "type": "string"
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
+        }
+      }
+    },
     "ReplayBaseline": {
       "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
       "type": "string",
@@ -558,17 +603,6 @@ Schema:
                 "type": "string"
               }
             },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "kind": {
               "type": "string",
               "enum": [
@@ -613,17 +647,6 @@ Schema:
               "anyOf": [
                 {
                   "$ref": "#/definitions/ContainmentOutput"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
                 },
                 {
                   "type": "null"
@@ -685,17 +708,6 @@ Schema:
                 }
               ]
             },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "kind": {
               "type": "string",
               "enum": [
@@ -743,17 +755,6 @@ Schema:
             },
             "failure": {
               "$ref": "#/definitions/SyncFailureOutput"
-            },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             },
             "kind": {
               "type": "string",

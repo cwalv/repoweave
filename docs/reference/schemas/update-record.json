@@ -29,17 +29,6 @@
         "null"
       ]
     },
-    "files": {
-      "description": "How the files the advance rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the advance moved nothing or the VCS cannot say.",
-      "anyOf": [
-        {
-          "$ref": "#/definitions/FilePlacement"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "kind": {
       "description": "Outcome discriminant.",
       "allOf": [
@@ -68,35 +57,6 @@
     }
   },
   "definitions": {
-    "FilePlacement": {
-      "description": "How a member's tracked files reached a workspace.",
-      "type": "object",
-      "required": [
-        "hardlinked",
-        "reflinked",
-        "written"
-      ],
-      "properties": {
-        "hardlinked": {
-          "description": "Linked to another workspace's read-only copy.",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0.0
-        },
-        "reflinked": {
-          "description": "Cloned from another workspace's copy, sharing its storage until either is written.",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0.0
-        },
-        "written": {
-          "description": "Written by the version control system.",
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0.0
-        }
-      }
-    },
     "UpdateKind": {
       "description": "Per-repo outcome kind for `rwv update --json`.",
       "oneOf": [

@@ -5,7 +5,8 @@
   "type": "object",
   "required": [
     "$schema",
-    "outcomes"
+    "outcomes",
+    "placements"
   ],
   "properties": {
     "$schema": {
@@ -15,6 +16,13 @@
       "type": "array",
       "items": {
         "$ref": "#/definitions/FetchOutcomeOutput"
+      }
+    },
+    "placements": {
+      "description": "How the files of each checkout the fetch moved or created were placed: a canonical clone it realigned, and from a workweave each worktree it created there. Empty, not absent, when it placed none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
       }
     },
     "resolution": {
@@ -41,17 +49,6 @@
       "properties": {
         "absolute_path": {
           "type": "string"
-        },
-        "files": {
-          "description": "How the files the fetch rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the fetch moved nothing or the VCS cannot say.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FilePlacement"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "message": {
           "type": [
@@ -102,6 +99,33 @@
           "type": "integer",
           "format": "uint",
           "minimum": 0.0
+        }
+      }
+    },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "type": "string"
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
         }
       }
     },

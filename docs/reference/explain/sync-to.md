@@ -179,12 +179,17 @@ pretty-printed envelope:
 ```
 {
   "$schema": "<url>",
-  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
 }
 ```
 
 Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
 — only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
+
+`placements` covers both workspaces: a checkout here that replay moved or
+created, and one in the target that advance-target moved or created. Each is
+reported under its own `absolute_path`, so one repo can have two.
 
 `--continue --json` resumes an interrupted op and emits the same envelope, so a
 consumer that drove the op through `--json` can finish it without falling back
@@ -204,11 +209,12 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
     "outcomes",
+    "placements",
     "retired",
     "target"
   ],
@@ -220,6 +226,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"
+      }
+    },
+    "placements": {
+      "description": "How the files of each checkout the op created or moved were placed, in this workspace and in the target, each under its own `absolute_path`. Empty, not absent, when it placed none. Unlike `step3_advance`, a placement a resume makes is reported whatever phase it re-entered at.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
       }
     },
     "project_repo_advance": {
@@ -471,6 +484,33 @@ Schema:
         }
       ]
     },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "type": "string"
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
+        }
+      }
+    },
     "ReplayBaseline": {
       "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
       "type": "string",
@@ -650,17 +690,6 @@ Schema:
                 "type": "string"
               }
             },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "kind": {
               "type": "string",
               "enum": [
@@ -705,17 +734,6 @@ Schema:
               "anyOf": [
                 {
                   "$ref": "#/definitions/ContainmentOutput"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
                 },
                 {
                   "type": "null"
@@ -777,17 +795,6 @@ Schema:
                 }
               ]
             },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
             "kind": {
               "type": "string",
               "enum": [
@@ -835,17 +842,6 @@ Schema:
             },
             "failure": {
               "$ref": "#/definitions/SyncFailureOutput"
-            },
-            "files": {
-              "description": "How this checkout's files were placed when the op created it or moved it: cloned from another workspace of the repository, or written by the VCS. Absent where nothing was placed or the VCS cannot say.",
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/FilePlacement"
-                },
-                {
-                  "type": "null"
-                }
-              ]
             },
             "kind": {
               "type": "string",
