@@ -78,7 +78,7 @@ than a layout decision:
 | Role | What it means | Where it survives |
 |---|---|---|
 | **Lookup key** | A path compared against something that already exists (a manifest entry, a directory on disk); a miss refuses rather than creating. | `rwv add`'s local-path arm (the argument is only reached once already observed as a directory); `rwv remove` (matched against the manifest, a miss is `repo-not-in-manifest`). |
-| **Observed location** | A report of where a checkout already sits, which rwv did not choose and cannot re-choose without moving files. | `run_add_from_local_path` (reads the URL from the clone's own `origin`, keeping the path the operator pointed at); `scan_repos_on_disk` (the containment walk). |
+| **Observed location** | A report of where a checkout already sits, which rwv did not choose and cannot re-choose without moving files. | `run_add_from_local_path` (reads the URL from the clone's own `origin`, keeping the path the operator pointed at); `scan_repos_on_disk` (the containment walk, limited to registry segments a project manifest or a built-in names); `scan_unknown_segment_repos` (the same observed-location role for a top-level directory that walk does not cover, reported as `doctor`'s `unknown-segment-clone` finding rather than compared against a manifest). |
 | **Project path** | The project repo's own path, `projects/<name>/` — not a manifest member, carries no registry segment for `placement` to derive from. | `check.rs`'s project-repo-key builders (`scan_phantom_merge_drivers`, the project-repo arm inside `branch_discipline_in_scope`, `collect_doctor_violations`'s hygiene-target list). |
 
 A pinning test, `tests/derived_repo_path_single_producer_test.rs`, holds this

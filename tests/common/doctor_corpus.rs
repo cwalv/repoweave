@@ -68,6 +68,7 @@ pub fn path(p: &str) -> PathBuf {
 pub fn case_token(v: &CheckViolation) -> String {
     match v {
         CheckViolation::OrphanedClone { .. } => "orphaned-clone".into(),
+        CheckViolation::UnknownSegmentClone { .. } => "unknown-segment-clone".into(),
         CheckViolation::ConfusableSiblings { .. } => "confusable-siblings".into(),
         CheckViolation::DanglingReference { .. } => "dangling-reference".into(),
         CheckViolation::MissingRole { .. } => "missing-role".into(),
@@ -225,6 +226,7 @@ pub fn case_token(v: &CheckViolation) -> String {
 pub fn corpus() -> Vec<CheckViolation> {
     vec![
         CheckViolation::OrphanedClone { path: repo() },
+        CheckViolation::UnknownSegmentClone { path: repo() },
         CheckViolation::DanglingReference {
             project: project(),
             repo: repo(),

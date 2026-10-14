@@ -27,6 +27,14 @@ pub enum CheckViolation {
     /// A directory under a registry path not listed in any project's `rwv.toml`.
     OrphanedClone { path: RepoPath },
 
+    /// A VCS repo under a top-level directory that is neither a built-in
+    /// registry segment nor named by any project manifest under the weave
+    /// root — so it is not just unregistered, it sits somewhere
+    /// [`crate::workspace::scan_repos_on_disk`] never looks, unlike
+    /// [`OrphanedClone`](Self::OrphanedClone), which the same walk does
+    /// reach.
+    UnknownSegmentClone { path: RepoPath },
+
     /// An `rwv.toml` entry pointing to a path not present on disk.
     DanglingReference {
         project: ProjectName,
@@ -673,6 +681,7 @@ impl CheckViolation {
         use FixDisposition::{Auto, Consented, ReportOnly};
         match self {
             CheckViolation::OrphanedClone { .. }
+            | CheckViolation::UnknownSegmentClone { .. }
             | CheckViolation::DanglingReference { .. }
             | CheckViolation::MissingRole { .. }
             | CheckViolation::StaleLock { .. }
@@ -783,6 +792,7 @@ impl CheckViolation {
     pub fn wire_kind(&self) -> &'static str {
         match self {
             CheckViolation::OrphanedClone { .. } => "orphaned-clone",
+            CheckViolation::UnknownSegmentClone { .. } => "unknown-segment-clone",
             CheckViolation::DanglingReference { .. } => "dangling-reference",
             CheckViolation::MissingRole { .. } => "missing-role",
             CheckViolation::StaleLock { .. } => "stale-lock",
@@ -1650,6 +1660,7 @@ pub struct LegacyRefAtTip {
 //
 // The kebab-case tag mapping:
 //     OrphanedClone       -> "orphaned-clone"
+//     UnknownSegmentClone -> "unknown-segment-clone"
 //     DanglingReference   -> "dangling-reference"
 //     MissingRole         -> "missing-role"
 //     StaleLock           -> "stale-lock"
@@ -1665,6 +1676,10 @@ pub struct LegacyRefAtTip {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ViolationOutput {
     OrphanedClone {
+        path: String,
+        absolute_path: String,
+    },
+    UnknownSegmentClone {
         path: String,
         absolute_path: String,
     },
@@ -2001,6 +2016,10 @@ impl ViolationOutput {
 
         match violation {
             CheckViolation::OrphanedClone { path } => Self::OrphanedClone {
+                absolute_path: abs(workspace_dir, &path),
+                path: path.to_string(),
+            },
+            CheckViolation::UnknownSegmentClone { path } => Self::UnknownSegmentClone {
                 absolute_path: abs(workspace_dir, &path),
                 path: path.to_string(),
             },
@@ -6439,6 +6458,13 @@ pub struct CheckInput {
     pub known_repos: BTreeSet<RepoPath>,
     /// All git repos found on disk under registry directories.
     pub repos_on_disk: Vec<RepoPath>,
+    /// Git repos found on disk under a top-level directory
+    /// `scannable_registry_segments` does not cover — see
+    /// [`crate::workspace::scan_unknown_segment_repos`]. Always
+    /// evaluated, unlike `repos_on_disk`'s orphan comparison: which segments
+    /// are unknown is already a fact about every project's manifest under
+    /// the weave root, not about which projects this invocation loaded.
+    pub unknown_segment_repos: Vec<RepoPath>,
     /// Loaded projects.
     pub projects: Vec<Project>,
     /// Resolved HEAD revisions for repos on disk, keyed by RepoPath.
@@ -6477,6 +6503,17 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
                 });
             }
         }
+    }
+
+    // Unknown-segment clones: every entry is already excluded from
+    // `repos_on_disk`'s own walk by construction (its top-level directory
+    // is not one any loaded or unloaded project names), so unlike
+    // `OrphanedClone` above this needs no `known_repos` comparison and no
+    // `check_orphans` gate.
+    for repo_path in &input.unknown_segment_repos {
+        violations.push(CheckViolation::UnknownSegmentClone {
+            path: repo_path.clone(),
+        });
     }
 
     // Per-project checks
@@ -6797,6 +6834,15 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     format!(
                         "orphaned clone: {path} — not listed in any project's rwv.toml; \
                          run `rwv add <url>` to register it, or remove the directory manually"
+                    ),
+                ),
+                CheckViolation::UnknownSegmentClone { path } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "unknown-segment clone: {path} — sits under a top-level directory no \
+                         built-in registry and no project's rwv.toml names, so no scan compares \
+                         it against anything; run `rwv add <url>` to register it, or remove the \
+                         directory manually"
                     ),
                 ),
                 // `rwv fetch` (no SOURCE) re-clones missing manifest
@@ -9402,9 +9448,13 @@ fn load_doctor_world(
     // if it belongs to *no* project, which a partial load cannot establish.
     let check_orphans = scope_all || active_project.is_none();
 
+    let unknown_segment_repos =
+        crate::workspace::scan_unknown_segment_repos(&workspace_dir, vcs.as_ref());
+
     let input = CheckInput {
         known_repos,
         repos_on_disk: session.repos_on_disk().to_vec(),
+        unknown_segment_repos,
         projects,
         head_revisions,
         resolved_locks,

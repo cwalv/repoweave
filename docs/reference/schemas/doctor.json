@@ -1119,6 +1119,28 @@
           "required": [
             "absolute_path",
             "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unknown-segment-clone"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
             "path",
             "project"
           ],

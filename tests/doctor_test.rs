@@ -1577,6 +1577,10 @@ mod doctor_json {
             path: String,
             absolute_path: String,
         },
+        UnknownSegmentClone {
+            path: String,
+            absolute_path: String,
+        },
         DanglingReference {
             path: String,
             absolute_path: String,

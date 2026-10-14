@@ -120,6 +120,18 @@ yourself. Note that without `--all`, orphan detection is skipped entirely — a
 repo missing from the active project may belong to another one, and reporting
 it would be a false positive.
 
+### `unknown-segment-clone`
+
+**Error. Report-only.** A repo under a top-level directory that is neither a
+built-in registry (`github/`, `gitlab/`, `bitbucket/`, `local/`) nor named by
+any project's `rwv.toml` — so unlike `orphaned-clone`, nothing ever walked
+that directory to find it. Always checked, with or without `--all`: which
+top-level directories count as registry segments is already a fact about
+every project's manifest, not about which ones this invocation loaded.
+
+**What to do:** `rwv add <url>` to register it, or remove the directory
+yourself.
+
 ### `dangling-reference`
 
 **Error. Report-only.** An `rwv.toml` entry whose path is not on disk.

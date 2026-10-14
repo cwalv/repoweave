@@ -733,6 +733,50 @@ pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTre
     segments
 }
 
+/// VCS repos directly under `root/{segment}/{owner}/{repo}`, filtered by
+/// `vcs.is_repo()` and returned as paths relative to `root`.
+fn repos_under_segment(root: &Path, segment: &str, vcs: &dyn Vcs) -> Vec<RepoPath> {
+    let mut repos = Vec::new();
+
+    let reg_dir = root.join(segment);
+    let owners = match std::fs::read_dir(&reg_dir) {
+        Ok(entries) => entries,
+        Err(_) => return repos,
+    };
+    for owner_entry in owners.flatten() {
+        let owner_path = owner_entry.path();
+        if !owner_path.is_dir() {
+            continue;
+        }
+        let repo_entries = match std::fs::read_dir(&owner_path) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for repo_entry in repo_entries.flatten() {
+            let repo_path = repo_entry.path();
+            if !repo_path.is_dir() {
+                continue;
+            }
+            if !vcs.is_repo(&repo_path) {
+                continue;
+            }
+            if let Ok(rel) = repo_path.strip_prefix(root) {
+                // Normalize to forward slashes before constructing a RepoPath
+                // so the invariant holds on all platforms. On Windows,
+                // Path::to_string_lossy() produces backslashes; replace them
+                // here at the OS boundary before the validated constructor runs.
+                let fwd = rel.to_string_lossy().replace('\\', "/");
+                repos.push(
+                    RepoPath::new(fwd)
+                        .expect("path after backslash-to-slash normalization cannot fail"),
+                );
+            }
+        }
+    }
+
+    repos
+}
+
 /// Scan registry directories under `root` for VCS repos on disk.
 ///
 /// Walks the `{registry}/{owner}/{repo}` directory structure of every registry
@@ -744,50 +788,45 @@ pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTre
 /// holding a narrower set than the manifests name is the shape that hides
 /// members from every disk-keyed scan at once.
 pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
-    let mut repos = Vec::new();
+    scannable_registry_segments(root)
+        .iter()
+        .flat_map(|segment| repos_under_segment(root, segment, vcs))
+        .collect()
+}
 
-    for segment in scannable_registry_segments(root) {
-        let reg_dir = root.join(&segment);
-        if !reg_dir.is_dir() {
-            continue;
-        }
-        let owners = match std::fs::read_dir(&reg_dir) {
-            Ok(entries) => entries,
-            Err(_) => continue,
-        };
-        for owner_entry in owners.flatten() {
-            let owner_path = owner_entry.path();
-            if !owner_path.is_dir() {
-                continue;
-            }
-            let repo_entries = match std::fs::read_dir(&owner_path) {
-                Ok(entries) => entries,
-                Err(_) => continue,
-            };
-            for repo_entry in repo_entries.flatten() {
-                let repo_path = repo_entry.path();
-                if !repo_path.is_dir() {
-                    continue;
-                }
-                if !vcs.is_repo(&repo_path) {
-                    continue;
-                }
-                if let Ok(rel) = repo_path.strip_prefix(root) {
-                    // Normalize to forward slashes before constructing a RepoPath
-                    // so the invariant holds on all platforms. On Windows,
-                    // Path::to_string_lossy() produces backslashes; replace them
-                    // here at the OS boundary before the validated constructor runs.
-                    let fwd = rel.to_string_lossy().replace('\\', "/");
-                    repos.push(
-                        RepoPath::new(fwd)
-                            .expect("path after backslash-to-slash normalization cannot fail"),
-                    );
-                }
-            }
-        }
-    }
+/// VCS repos at member depth under a top-level directory of `root` that
+/// `scannable_registry_segments` does not cover — the segment-shaped but
+/// unscanned directories [`scan_repos_on_disk`] walks past entirely, so a
+/// clone sitting there is dangling-reference-silent: not orphan-reported,
+/// its lock and HEAD never compared against anything.
+///
+/// A name alone can't tell a registry segment from `target/` (cargo build
+/// output can land at `root` because `Cargo.toml` surfaces there) or
+/// `node_modules/@scope/pkg` (same three-segment shape as a registry path,
+/// also reachable if a weave root hosts an npm member) — neither holds a
+/// real repo at the leaf, so requiring `vcs.is_repo()` there, the same test
+/// [`scan_repos_on_disk`] applies, is what tells them apart from a stray
+/// clone rather than guessing from the directory name. `projects/` is
+/// excluded by name rather than by that test: a project repo legitimately
+/// holds its own nested checkouts (a submodule), and those belong to the
+/// project, not to this scan. A dot-prefixed name is excluded the same way
+/// — every registry segment this tree mints is a bare host or `local`, never
+/// dot-prefixed, so a dot-dir is never a candidate worth descending into.
+pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
+    let known = scannable_registry_segments(root);
 
-    repos
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    entries
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| !name.starts_with('.') && name != PROJECTS_DIR && !known.contains(name))
+        .flat_map(|segment| repos_under_segment(root, &segment, vcs))
+        .collect()
 }
 
 /// A project directory whose path below `projects/` is not a name
