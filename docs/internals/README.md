@@ -71,6 +71,8 @@ backstop unnecessary.
 
 ## Where else to look
 
+- [`CLAUDE.md`](../../CLAUDE.md) — source comment discipline, citation rules,
+  document surface map, and operator prose register.
 - [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — module map, process model, the
   sync phase machine, the trait seams, and the plugin dispatch path.
 - [`../explanation/joints/`](../explanation/joints/) — the normative contracts.

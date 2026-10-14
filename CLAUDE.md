@@ -1,10 +1,11 @@
-# repoweave — source conventions
+# repoweave — source and documentation conventions
 
-House rules for anyone editing `src/`, human or agent. They are not Rust
-community consensus; the first one runs against common advice deliberately.
+House rules for anyone editing `src/` or `docs/`, human or agent. They are not
+Rust community consensus; the first one runs against common advice deliberately.
 
 `CONTRIBUTING.md` covers whether to send a change at all. This file covers how
-the code reads once you do.
+the code and documentation read once you do.
+
 
 ## Comments are extremely sparse
 
@@ -383,3 +384,80 @@ When you widen a matcher, measure before you commit to the predicate. Run it,
 read every site it reports, and separate the ones it is right about from the
 ones it is merely loud about — the precision work is the design, and a matcher
 that reports correct code will be turned off.
+
+## Document surfaces and prose register
+
+Markdown in this repository divides into four surfaces with distinct audiences
+and register rules:
+
+1. **Maintainer and architecture surfaces (`CLAUDE.md`, `ARCHITECTURE.md`,
+   `docs/internals/*.md`)** — excluded from `docs/SUMMARY.md` and exempt from
+   `check_no_internals_on_operator_surfaces` (except
+   `docs/internals/writing-integrations.md`, which is also linked under
+   Reference in `docs/SUMMARY.md` with an explicit gate carve-out).
+   - `ARCHITECTURE.md` carries the public rigor signal on the GitHub landing
+     page: module ownership map, process model, sync phase machine, trait seams,
+     and plugin dispatch. It links out to `docs/` for user-facing contracts
+     rather than restating them, cites symbol + file (never `file:line`), and
+     dates any counts or file lengths to a commit SHA.
+   - `docs/internals/*.md` (`docs/internals/README.md` indexes them) holds
+     single-subsystem maintainer contracts. Every file opens verbatim with the
+     `> **Implementation, not interface.**` banner.
+2. **Repo-root public gates (`README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`)**
+   — read on GitHub and crates.io outside mdBook. `README.md` is the front-door
+   pitch, install, quickstart, command table, and entry links into `docs/`
+   (overlapping intentionally with `docs/introduction.md`). `CONTRIBUTING.md`
+   routes verb proposals to `docs/reference/plugin-protocol.md` and unsolicited
+   PRs to issues. `CHANGELOG.md` is the release-by-release record.
+3. **Published operator book (`docs/` pages listed in `docs/SUMMARY.md`)** —
+   rendered by mdBook (`docs/introduction.md`, `docs/tutorial.md`,
+   `docs/how-to/**`, `docs/reference/**`, `docs/explanation/**`). Strictly
+   operator-observable contract, policed by
+   `check_no_internals_on_operator_surfaces`.
+4. **Generated operator reference (`docs/reference/explain/*.md`,
+   `docs/reference/schemas/*.json`, `docs/reference/prime/overview.md`)** —
+   committed outputs of `cargo run --bin generate-explain` derived from
+   `src/explain.rs`, `src/prime.rs`, and `#[derive(JsonSchema)]`. Edit the
+   generator inputs and re-run `cargo run --bin generate-explain`; never
+   hand-edit the generated files.
+
+### Operator prose register (`README.md` and `docs/SUMMARY.md` pages)
+
+- **Direct, concrete, timeless present tense.** State the invariant or mechanism
+  without throat-clearing. Strip `was/now` repair narration ("previously…",
+  "each integration now gets…"), point-in-time status caveats ("today there is
+  only one backend", "current coverage: 51 of 54"), and marketing clichés ("hero
+  moments", "antidote to manual wiring hell").
+- **No leaked maintainer internals.** Rust trait definitions, private struct or
+  enum names, internal JSON state plumbing (`SurfacedSource`,
+  `written_through_link`), and field-level state schemas (`.rwv-op`,
+  `.rwv-owned`) belong in `ARCHITECTURE.md` or `docs/internals/*.md`. Operator
+  pages describe observable behavior, CLI flags, exit codes, and `rwv doctor`
+  findings.
+
+### Diátaxis boundaries inside `docs/SUMMARY.md`
+
+- **`docs/how-to/*.md`** — task-shaped recipes for a reader who already knows
+  what they want to do. Open with a 1–2 sentence goal statement, then go
+  straight to commands and verification. Do not open a recipe with an
+  architectural essay; link to `docs/explanation/joints/` in a closing
+  `## Related` section instead.
+- **`docs/reference/*.md`** — austere, lookup-shaped tables and specifications.
+  No motivational pitch, no repeated paragraphs across sections, and a uniform
+  heading template across sibling pages (`docs/reference/integrations/*.md`).
+- **`docs/explanation/joints/*.md` and `docs/explanation/lenses/*.md`** —
+  architectural rationale and trade-off analysis: why a seam or invariant holds
+  and what breaks without it. Do not duplicate exhaustive CLI flag tables or
+  JSON schemas that belong in `docs/reference/cli.md` or
+  `docs/reference/formats.md`.
+
+### Canonical vocabulary (`docs/reference/glossary.md`)
+
+Use **weave root** (not "weave directory" or "workspace root") for the
+top-level directory containing `projects/` and canonical member clones; **member
+repo** (not "manifest repo" or "constituent repo") for an `rwv.toml` `[repos]`
+entry; **project repo** for `projects/<name>/`; **workweave** (or **seat** when
+referring to an agent's persistent checkout) for an isolated parallel
+workspace; and distinguish **materialize** (populating member checkouts via
+`rwv sync` or `rwv workweave create`) from **activate** (switching `.rwv-active`
+and root-level ecosystem symlinks via `rwv activate`).
