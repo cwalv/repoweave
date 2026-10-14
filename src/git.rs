@@ -61,6 +61,65 @@ pub(crate) fn git_command_in_test() -> Command {
     git_command()
 }
 
+/// The two line-ending configurations a checkout meets in practice. A fixture
+/// pins one in its repository's own config, so the global config of the
+/// machine running the test cannot choose for it.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LineEndings {
+    /// `core.autocrlf=false` and `core.eol=lf`: text checks out as committed.
+    Verbatim,
+    /// `core.autocrlf=true`, Git for Windows' default: text checks out with
+    /// CRLF line endings, whatever `core.eol` says.
+    Converted,
+}
+
+#[cfg(test)]
+impl LineEndings {
+    pub(crate) fn pin(self, repo: &Path) {
+        let settings: &[(&str, &str)] = match self {
+            Self::Verbatim => &[("core.autocrlf", "false"), ("core.eol", "lf")],
+            Self::Converted => &[("core.autocrlf", "true")],
+        };
+        for (key, value) in settings {
+            let out = git_command()
+                .args(["config", key, value])
+                .current_dir(repo)
+                .output()
+                .expect("run git config");
+            assert!(out.status.success(), "git config {key} {value} failed");
+        }
+    }
+}
+
+/// Each named test function, which takes a [`LineEndings`], runs as one test
+/// under each configuration: `verbatim::<name>` and `converted::<name>`.
+#[cfg(test)]
+macro_rules! under_both_line_endings {
+    ($($(#[$attr:meta])* $name:ident),* $(,)?) => {
+        mod verbatim {
+            $(
+                $(#[$attr])*
+                #[test]
+                fn $name() {
+                    super::$name($crate::git::LineEndings::Verbatim)
+                }
+            )*
+        }
+        mod converted {
+            $(
+                $(#[$attr])*
+                #[test]
+                fn $name() {
+                    super::$name($crate::git::LineEndings::Converted)
+                }
+            )*
+        }
+    };
+}
+#[cfg(test)]
+pub(crate) use under_both_line_endings;
+
 /// The one conversion from a path to a `git` argument, and the reason it is
 /// one: on Windows `std::fs::canonicalize` always answers in the `\\?\`
 /// extended-length form, and git refuses an argument spelled that way —
@@ -4540,10 +4599,14 @@ mod population_tests {
 
     /// A repo on `main` whose first commit holds `files` and whose second
     /// adds `attributes` as `.gitattributes`, so no blob was normalized on
-    /// the way in.
+    /// the way in, and which checks out under `endings`.
     ///
     /// Workspaces made from it are its siblings, inside the same temp dir.
-    fn repo_with(files: &[(&str, &[u8])], attributes: &str) -> (tempfile::TempDir, PathBuf) {
+    fn repo_with(
+        files: &[(&str, &[u8])],
+        attributes: &str,
+        endings: LineEndings,
+    ) -> (tempfile::TempDir, PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         let p = repo.as_path();
@@ -4561,8 +4624,17 @@ mod population_tests {
             git(p, &["add", ".gitattributes"]);
             git(p, &["commit", "-q", "-m", "attributes"]);
         }
-        git(p, &["config", "--unset", "core.autocrlf"]);
+        endings.pin(p);
         (tmp, repo)
+    }
+
+    /// What git's own checkout writes at `path` in `workspace`, conversions
+    /// included.
+    fn checked_out_bytes(workspace: &Path, path: &str) -> Vec<u8> {
+        git_bytes(
+            workspace,
+            &["cat-file", "--filters", &format!("HEAD:{path}")],
+        )
     }
 
     fn head(repo: &Path) -> ResolvedRevisionId {
@@ -4655,7 +4727,11 @@ mod population_tests {
 
     #[test]
     fn an_unpopulated_worktree_records_its_revision_and_writes_no_file() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n"), ("b.txt", b"b\n")], "");
+        let (_tmp, repo) = repo_with(
+            &[("a.txt", b"a\n"), ("b.txt", b"b\n")],
+            "",
+            LineEndings::Verbatim,
+        );
         let repo = repo.as_path();
         let dest = repo.with_file_name("w");
 
@@ -4680,7 +4756,7 @@ mod population_tests {
 
     #[test]
     fn an_unpopulated_worktree_adopts_a_branch_that_already_exists() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "", LineEndings::Verbatim);
         let repo = repo.as_path();
         let before = git(repo, &["rev-parse", "HEAD"]);
         git(repo, &["branch", "p--w", "HEAD"]);
@@ -4695,9 +4771,18 @@ mod population_tests {
         assert_eq!(git(repo, &["rev-parse", "p--w"]), before);
     }
 
-    #[test]
-    fn tracked_files_are_the_tree_with_its_kinds_and_identities_only_on_files() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n"), ("run.sh", b"#!/bin/sh\n")], "");
+    fn tracked_files_are_the_tree_with_its_kinds_and_identities_only_on_files(
+        endings: LineEndings,
+    ) {
+        let (_tmp, repo) = repo_with(
+            &[
+                ("a.txt", b"a\n"),
+                ("run.sh", b"#!/bin/sh\n"),
+                ("data.bin", b"\x00\x01\n"),
+            ],
+            "*.bin -text\n",
+            endings,
+        );
         let repo = repo.as_path();
         git(repo, &["update-index", "--chmod=+x", "run.sh"]);
         git(repo, &["commit", "-q", "-m", "executable"]);
@@ -4722,7 +4807,13 @@ mod population_tests {
                         panic!("{path} ({mode}) reported as {kind:?}");
                     };
                     assert_eq!(*executable, mode == "100755", "{path}");
-                    assert!(identity.is_some(), "{path} has no identity");
+                    let converted = endings == LineEndings::Converted && path != "data.bin";
+                    assert_eq!(
+                        identity.is_some(),
+                        !converted,
+                        "{path}: a file has an identity exactly where its checkout is \
+                         not converted"
+                    );
                 }
                 "120000" => assert_eq!(*kind, TrackedFileKind::Symlink, "{path}"),
                 "160000" => assert_eq!(*kind, TrackedFileKind::NestedRepository, "{path}"),
@@ -4743,35 +4834,36 @@ mod population_tests {
                 ("filtered.txt", same),
             ],
             "auto.txt text=auto\ncrlf.txt eol=crlf\nfiltered.txt filter=upper\n",
+            LineEndings::Verbatim,
         );
         let repo = repo.as_path();
         let dest = unpopulated(repo, "w");
         let identity =
             |files: &BTreeMap<String, TrackedFile>, path: &str| files[path].identity().cloned();
 
-        let unset = by_path(population().tracked_files(&dest).unwrap());
+        let verbatim = by_path(population().tracked_files(&dest).unwrap());
         git(repo, &["config", "core.autocrlf", "input"]);
         let input = by_path(population().tracked_files(&dest).unwrap());
         git(repo, &["config", "core.autocrlf", "true"]);
         let crlf_everywhere = by_path(population().tracked_files(&dest).unwrap());
 
-        assert!(identity(&unset, "plain.txt").is_some());
+        assert!(identity(&verbatim, "plain.txt").is_some());
         assert_eq!(
-            identity(&unset, "plain.txt"),
-            identity(&unset, "plain-too.txt"),
+            identity(&verbatim, "plain.txt"),
+            identity(&verbatim, "plain-too.txt"),
             "one blob in one context is one identity"
         );
         assert_ne!(
-            identity(&unset, "plain.txt"),
-            identity(&unset, "auto.txt"),
+            identity(&verbatim, "plain.txt"),
+            identity(&verbatim, "auto.txt"),
             "an attribute is not in the identity"
         );
-        assert!(identity(&unset, "auto.txt").is_some());
-        assert_eq!(identity(&unset, "crlf.txt"), None);
-        assert_eq!(identity(&unset, "filtered.txt"), None);
+        assert!(identity(&verbatim, "auto.txt").is_some());
+        assert_eq!(identity(&verbatim, "crlf.txt"), None);
+        assert_eq!(identity(&verbatim, "filtered.txt"), None);
         assert!(identity(&input, "plain.txt").is_some());
         assert_ne!(
-            identity(&unset, "plain.txt"),
+            identity(&verbatim, "plain.txt"),
             identity(&input, "plain.txt"),
             "configuration is not in the identity"
         );
@@ -4814,6 +4906,7 @@ mod population_tests {
         struct Outcome {
             line: &'static str,
             autocrlf: Option<&'static str>,
+            eol: Option<&'static str>,
             shareable: bool,
             unchanged: bool,
         }
@@ -4823,7 +4916,8 @@ mod population_tests {
                 .iter()
                 .map(|&line| {
                     s.spawn(move || {
-                        let (_tmp, repo) = repo_with(files, &format!("{line}\n"));
+                        let (_tmp, repo) =
+                            repo_with(files, &format!("{line}\n"), LineEndings::Verbatim);
                         let repo = repo.as_path();
                         git(repo, &["config", "filter.upper.smudge", "tr a-z A-Z"]);
                         git(repo, &["config", "filter.upper.clean", "cat"]);
@@ -4859,6 +4953,7 @@ mod population_tests {
                                     outcomes.push(Outcome {
                                         line,
                                         autocrlf,
+                                        eol,
                                         shareable,
                                         unchanged,
                                     });
@@ -4890,26 +4985,36 @@ mod population_tests {
             !picked.is_empty() && picked.iter().all(|o| o.shareable)
         };
         assert!(
-            all_shared(&|o| o.line.is_empty() && o.autocrlf.is_none()),
+            all_shared(&|o| o.line.is_empty()
+                && o.autocrlf == Some("false")
+                && o.eol == Some("lf")),
             "a repo with no conversion shares nothing"
+        );
+        assert!(
+            outcomes
+                .iter()
+                .filter(|o| o.line.is_empty() && o.autocrlf == Some("true"))
+                .all(|o| !o.shareable),
+            "Git for Windows' default shares an undeclared file"
         );
         assert!(all_shared(&|o| o.line == "* text=auto eol=lf"));
         assert!(all_shared(&|o| o.line == "* -text"));
     }
 
-    #[test]
-    fn holding_recorded_content_is_byte_exact() {
+    fn holding_recorded_content_is_byte_exact(endings: LineEndings) {
         let (_tmp, repo) = repo_with(
             &[
                 ("plain.txt", b"plain\n"),
+                ("plain.bin", b"plain\n"),
                 ("auto.txt", b"one\ntwo\n"),
-                ("edited.txt", b"edited\n"),
-                ("touched.txt", b"touched\n"),
-                ("gone.txt", b"gone\n"),
+                ("edited.bin", b"edited\n"),
+                ("touched.bin", b"touched\n"),
+                ("gone.bin", b"gone\n"),
                 ("filtered.txt", b"filtered\n"),
-                ("unasked.txt", b"unasked\n"),
+                ("unasked.bin", b"unasked\n"),
             ],
-            "auto.txt text=auto\nfiltered.txt filter=upper\n",
+            "*.bin -text\nauto.txt text=auto\nfiltered.txt filter=upper\n",
+            endings,
         );
         let repo = repo.as_path();
         let w = checked_out(repo, "w");
@@ -4923,27 +5028,28 @@ mod population_tests {
                 .contains(&"auto.txt".to_owned()),
             "git no longer reads a CRLF rewrite of a text=auto file as unchanged"
         );
-        std::fs::write(w.join("edited.txt"), b"EDITED\n").unwrap();
+        std::fs::write(w.join("edited.bin"), b"EDITED\n").unwrap();
         let touched = std::fs::File::options()
             .write(true)
-            .open(w.join("touched.txt"))
+            .open(w.join("touched.bin"))
             .unwrap();
         touched
             .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
             .unwrap();
         drop(touched);
         assert!(
-            git(&w, &["diff-files", "--name-only"]).contains("touched.txt"),
+            git(&w, &["diff-files", "--name-only"]).contains("touched.bin"),
             "the touched file is not stat-dirty, so this case tests nothing"
         );
-        std::fs::remove_file(w.join("gone.txt")).unwrap();
+        std::fs::remove_file(w.join("gone.bin")).unwrap();
 
         let asked = paths(&[
             "plain.txt",
+            "plain.bin",
             "auto.txt",
-            "edited.txt",
-            "touched.txt",
-            "gone.txt",
+            "edited.bin",
+            "touched.bin",
+            "gone.bin",
             "filtered.txt",
             "not-tracked.txt",
         ]);
@@ -4954,12 +5060,17 @@ mod population_tests {
             .map(|f| f.path)
             .collect();
 
-        assert_eq!(holding, paths(&["plain.txt", "touched.txt"]));
+        let expected: &[&str] = match endings {
+            LineEndings::Verbatim => &["plain.bin", "plain.txt", "touched.bin"],
+            LineEndings::Converted => &["plain.bin", "touched.bin"],
+        };
+        assert_eq!(holding, paths(expected));
     }
 
     #[cfg(unix)]
-    #[test]
-    fn holding_recorded_content_needs_a_regular_file_with_the_recorded_executable_bit() {
+    fn holding_recorded_content_needs_a_regular_file_with_the_recorded_executable_bit(
+        endings: LineEndings,
+    ) {
         use std::os::unix::fs::PermissionsExt;
         let (_tmp, repo) = repo_with(
             &[
@@ -4970,7 +5081,8 @@ mod population_tests {
                 ("new\nline", b"n\n"),
                 ("ends\r", b"r\n"),
             ],
-            "",
+            "*.sh text eol=lf\n",
+            endings,
         );
         let repo = repo.as_path();
         git(
@@ -5000,14 +5112,14 @@ mod population_tests {
             .map(|f| f.path)
             .collect();
 
-        assert_eq!(
-            holding,
-            paths(&["\"quoted", "ends\r", "new\nline", "run.sh"])
-        );
+        let expected: &[&str] = match endings {
+            LineEndings::Verbatim => &["\"quoted", "ends\r", "new\nline", "run.sh"],
+            LineEndings::Converted => &["run.sh"],
+        };
+        assert_eq!(holding, paths(expected));
     }
 
-    #[test]
-    fn finishing_writes_only_what_is_missing_and_leaves_a_checkout() {
+    fn finishing_writes_only_what_is_missing_and_leaves_a_checkout(endings: LineEndings) {
         let (_tmp, repo) = repo_with(
             &[
                 ("a.txt", b"a\n"),
@@ -5015,6 +5127,7 @@ mod population_tests {
                 ("run.sh", b"#!/bin/sh\n"),
             ],
             "",
+            endings,
         );
         let repo = repo.as_path();
         git(repo, &["update-index", "--chmod=+x", "run.sh"]);
@@ -5032,7 +5145,8 @@ mod population_tests {
         for name in ["a.txt", "b.txt", "run.sh"] {
             assert_eq!(
                 std::fs::read(dest.join(name)).unwrap(),
-                blob_bytes(repo, name)
+                checked_out_bytes(&dest, name),
+                "{name} is not what git's checkout writes"
             );
         }
         assert!(dest.join("nested").is_dir());
@@ -5081,7 +5195,7 @@ mod population_tests {
 
     #[test]
     fn finishing_runs_the_post_checkout_hook_as_worktree_add_does() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "", LineEndings::Verbatim);
         let repo = repo.as_path();
         let log = record_post_checkout_to(repo, 0);
 
@@ -5112,7 +5226,7 @@ mod population_tests {
 
     #[test]
     fn a_failing_post_checkout_hook_rejects_the_finish() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "", LineEndings::Verbatim);
         let repo = repo.as_path();
         let dest = unpopulated(repo, "w");
         record_post_checkout_to(repo, 1);
@@ -5125,51 +5239,71 @@ mod population_tests {
         }
     }
 
-    #[test]
-    fn checking_out_a_path_replaces_it_and_leaves_what_shared_it_alone() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n"), ("b.txt", b"b\n")], "");
+    fn checking_out_a_path_replaces_it_and_leaves_what_shared_it_alone(endings: LineEndings) {
+        let (_tmp, repo) = repo_with(
+            &[("a.bin", b"a\n"), ("b.bin", b"b\n"), ("c.txt", b"c\n")],
+            "*.bin -text\n",
+            endings,
+        );
         let repo = repo.as_path();
         let source = checked_out(repo, "source");
         let dest = unpopulated(repo, "w");
-        std::fs::hard_link(source.join("a.txt"), dest.join("a.txt")).unwrap();
+        std::fs::hard_link(source.join("a.bin"), dest.join("a.bin")).unwrap();
         population().finish_checkout(&dest).unwrap();
-        std::fs::write(source.join("a.txt"), b"changed under the share\n").unwrap();
-        let b_before = std::fs::read(dest.join("b.txt")).unwrap();
+        std::fs::write(source.join("a.bin"), b"changed under the share\n").unwrap();
+        std::fs::write(dest.join("c.txt"), b"edited\n").unwrap();
+        let b_before = std::fs::read(dest.join("b.bin")).unwrap();
         assert!(population()
-            .files_holding_recorded_content(&dest, &paths(&["a.txt"]))
+            .files_holding_recorded_content(&dest, &paths(&["a.bin"]))
             .unwrap()
             .is_empty());
 
         population()
-            .check_out_paths(&dest, &paths(&["a.txt"]))
+            .check_out_paths(&dest, &paths(&["a.bin", "c.txt"]))
             .unwrap();
 
+        for name in ["a.bin", "c.txt"] {
+            assert_eq!(
+                std::fs::read(dest.join(name)).unwrap(),
+                checked_out_bytes(&dest, name),
+                "{name} is not what git's checkout writes"
+            );
+        }
         assert_eq!(
-            std::fs::read(dest.join("a.txt")).unwrap(),
-            blob_bytes(repo, "a.txt")
-        );
-        assert_eq!(
-            std::fs::read(source.join("a.txt")).unwrap(),
+            std::fs::read(source.join("a.bin")).unwrap(),
             b"changed under the share\n",
             "the check-out wrote through the shared file"
         );
-        assert_eq!(std::fs::read(dest.join("b.txt")).unwrap(), b_before);
+        assert_eq!(std::fs::read(dest.join("b.bin")).unwrap(), b_before);
+        let shareable = match endings {
+            LineEndings::Verbatim => 3,
+            LineEndings::Converted => 2,
+        };
         assert_eq!(
             population()
-                .files_holding_recorded_content(&dest, &paths(&["a.txt", "b.txt"]))
+                .files_holding_recorded_content(&dest, &paths(&["a.bin", "b.bin", "c.txt"]))
                 .unwrap()
                 .len(),
-            2
+            shareable
         );
     }
 
     #[test]
     fn checking_out_an_untracked_path_is_refused() {
-        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "");
+        let (_tmp, repo) = repo_with(&[("a.txt", b"a\n")], "", LineEndings::Verbatim);
         let dest = unpopulated(&repo, "w");
 
         assert!(population()
             .check_out_paths(&dest, &paths(&["nope.txt"]))
             .is_err());
     }
+
+    under_both_line_endings!(
+        tracked_files_are_the_tree_with_its_kinds_and_identities_only_on_files,
+        holding_recorded_content_is_byte_exact,
+        #[cfg(unix)]
+        holding_recorded_content_needs_a_regular_file_with_the_recorded_executable_bit,
+        finishing_writes_only_what_is_missing_and_leaves_a_checkout,
+        checking_out_a_path_replaces_it_and_leaves_what_shared_it_alone,
+    );
 }

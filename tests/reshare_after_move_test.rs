@@ -9,6 +9,31 @@ mod common;
 const MEMBER: &str = "github/org/reference";
 const PROJECT: &str = "app";
 
+/// How the member's checkouts write line endings, pinned in its own config
+/// so the global config of the machine running the test cannot choose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LineEndings {
+    /// `core.autocrlf=false` and `core.eol=lf`: text checks out as committed.
+    Verbatim,
+    /// `core.autocrlf=true`, Git for Windows' default: text checks out with
+    /// CRLF line endings, so no text file can be placed from elsewhere.
+    Converted,
+}
+
+impl LineEndings {
+    fn pin(self, repo: &Path) {
+        match self {
+            Self::Verbatim => {
+                common::git_in(repo, &["config", "core.autocrlf", "false"]);
+                common::git_in(repo, &["config", "core.eol", "lf"]);
+            }
+            Self::Converted => {
+                common::git_in(repo, &["config", "core.autocrlf", "true"]);
+            }
+        }
+    }
+}
+
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
     common::git_in(path, &["init", "-b", "main"]);
@@ -18,12 +43,14 @@ fn init_repo(path: &Path) -> String {
     common::git_in(path, &["rev-parse", "HEAD"])
 }
 
-/// A primary whose one project holds [`MEMBER`] as a reference member, and
-/// a seat created from it. Returns `(primary, member's canonical clone, seat)`.
-fn weave_and_seat(parent: &Path) -> (PathBuf, PathBuf, PathBuf) {
+/// A primary whose one project holds [`MEMBER`] as a reference member
+/// checked out under `endings`, and a seat created from it. Returns
+/// `(primary, member's canonical clone, seat)`.
+fn weave_and_seat(parent: &Path, endings: LineEndings) -> (PathBuf, PathBuf, PathBuf) {
     let ws = parent.join("primary");
     let member = ws.join(MEMBER);
     let sha = init_repo(&member);
+    endings.pin(&member);
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
     std::fs::write(
@@ -75,10 +102,9 @@ fn declared_to_clone(dir: &Path) -> Option<bool> {
     }
 }
 
-#[test]
-fn sync_reports_how_the_files_it_moved_were_placed() {
+fn sync_reports_how_the_files_it_moved_were_placed(endings: LineEndings) {
     let tmp = common::tempdir().unwrap();
-    let (primary, member, seat) = weave_and_seat(tmp.path());
+    let (primary, member, seat) = weave_and_seat(tmp.path(), endings);
     for (file, body) in [("NEXT", "n\n"), ("README", "readme, revised\n")] {
         std::fs::write(member.join(file), body).unwrap();
     }
@@ -106,26 +132,31 @@ fn sync_reports_how_the_files_it_moved_were_placed() {
         .lines()
         .find_map(|l| l.trim().strip_prefix(&format!("{MEMBER}: files ")))
         .unwrap_or_else(|| panic!("sync reported no file placement for {MEMBER}:\n{stdout}"));
-    let expected = match declared_to_clone(tmp.path()) {
-        Some(true) => Some("2 reflinked, 0 hardlinked, 0 written"),
-        Some(false) => Some("0 reflinked, 0 hardlinked, 2 written"),
-        None => None,
+    let expected = match (endings, declared_to_clone(tmp.path())) {
+        (LineEndings::Converted, _) | (_, Some(false)) => {
+            Some("0 reflinked, 0 hardlinked, 2 written")
+        }
+        (LineEndings::Verbatim, Some(true)) => Some("2 reflinked, 0 hardlinked, 0 written"),
+        (LineEndings::Verbatim, None) => None,
     };
     if let Some(expected) = expected {
         assert_eq!(line, expected, "on {}", std::env::consts::OS);
     }
     let checkout = seat.join(MEMBER);
     assert_eq!(common::git_in(&checkout, &["status", "--porcelain"]), "");
+    let readme = match endings {
+        LineEndings::Verbatim => "readme, revised\n",
+        LineEndings::Converted => "readme, revised\r\n",
+    };
     assert_eq!(
         std::fs::read_to_string(checkout.join("README")).unwrap(),
-        "readme, revised\n"
+        readme
     );
 }
 
-#[test]
-fn sync_json_reports_the_placement_as_its_own_record() {
+fn sync_json_reports_the_placement_as_its_own_record(endings: LineEndings) {
     let tmp = common::tempdir().unwrap();
-    let (primary, member, seat) = weave_and_seat(tmp.path());
+    let (primary, member, seat) = weave_and_seat(tmp.path(), endings);
     std::fs::write(member.join("NEXT"), "n\n").unwrap();
     common::git_in(&member, &["add", "."]);
     common::git_in(&member, &["commit", "-m", "advance"]);
@@ -163,9 +194,39 @@ fn sync_json_reports_the_placement_as_its_own_record() {
     let count = |key: &str| files[key].as_u64().unwrap();
     assert_eq!(count("reflinked") + count("written"), 1, "{stdout}");
     assert_eq!(count("hardlinked"), 0);
-    match declared_to_clone(tmp.path()) {
-        Some(true) => assert_eq!(count("reflinked"), 1, "on {}", std::env::consts::OS),
-        Some(false) => assert_eq!(count("written"), 1),
-        None => {}
+    match (endings, declared_to_clone(tmp.path())) {
+        (LineEndings::Converted, _) | (_, Some(false)) => assert_eq!(count("written"), 1),
+        (LineEndings::Verbatim, Some(true)) => {
+            assert_eq!(count("reflinked"), 1, "on {}", std::env::consts::OS)
+        }
+        (LineEndings::Verbatim, None) => {}
+    }
+}
+
+mod verbatim {
+    use super::LineEndings;
+
+    #[test]
+    fn sync_reports_how_the_files_it_moved_were_placed() {
+        super::sync_reports_how_the_files_it_moved_were_placed(LineEndings::Verbatim)
+    }
+
+    #[test]
+    fn sync_json_reports_the_placement_as_its_own_record() {
+        super::sync_json_reports_the_placement_as_its_own_record(LineEndings::Verbatim)
+    }
+}
+
+mod converted {
+    use super::LineEndings;
+
+    #[test]
+    fn sync_reports_how_the_files_it_moved_were_placed() {
+        super::sync_reports_how_the_files_it_moved_were_placed(LineEndings::Converted)
+    }
+
+    #[test]
+    fn sync_json_reports_the_placement_as_its_own_record() {
+        super::sync_json_reports_the_placement_as_its_own_record(LineEndings::Converted)
     }
 }

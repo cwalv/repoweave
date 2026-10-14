@@ -567,7 +567,7 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::FakePrimitives;
     use super::*;
-    use crate::git::{git_command_in_test, git_vcs};
+    use crate::git::{git_command_in_test, git_vcs, under_both_line_endings, LineEndings};
     use crate::vcs::{RawRefName, TrackedFileKind};
 
     fn git(dir: &Path, args: &[&str]) -> String {
@@ -599,13 +599,31 @@ mod tests {
         store: PathBuf,
     }
 
+    /// What the repository declares beyond its tracked `.gitattributes`: a
+    /// `*.bin` or `*.sh` file checks out as committed under either
+    /// [`LineEndings`], so it can be placed from another workspace under both.
+    const DECLARED_UNCONVERTED: &str = "*.bin -text\n*.sh text eol=lf\n";
+
+    /// Of `paths`, those a checkout under `endings` writes exactly as
+    /// committed, which are the ones a copy elsewhere can be placed for.
+    fn unconverted(endings: LineEndings, paths: &[&str]) -> Vec<String> {
+        paths
+            .iter()
+            .filter(|p| {
+                endings == LineEndings::Verbatim || p.ends_with(".bin") || p.ends_with(".sh")
+            })
+            .map(|p| (*p).to_owned())
+            .collect()
+    }
+
     impl Weave {
-        fn with(files: &[(&str, &str)]) -> Self {
-            Self::listing(files, Role::Owned)
+        fn with(endings: LineEndings, files: &[(&str, &str)]) -> Self {
+            Self::listing(endings, files, Role::Owned)
         }
 
-        /// A primary whose project gives [`REPO`] the role `role`.
-        fn listing(files: &[(&str, &str)], role: Role) -> Self {
+        /// A primary whose project gives [`REPO`] the role `role`, and whose
+        /// checkouts write line endings as `endings` says.
+        fn listing(endings: LineEndings, files: &[(&str, &str)], role: Role) -> Self {
             let tmp = tempfile::tempdir().unwrap();
             // git reports worktree paths resolved, so the fakes must key on the
             // same spelling (macOS temp dirs sit behind the /var symlink).
@@ -625,6 +643,8 @@ mod tests {
             let store = primary.join(REPO);
             std::fs::create_dir_all(&store).unwrap();
             git(&store, &["init", "-q", "-b", "main"]);
+            std::fs::write(store.join(".git/info/attributes"), DECLARED_UNCONVERTED).unwrap();
+            endings.pin(&store);
             let w = Self { tmp, root, store };
             w.commit(files);
             w
@@ -695,6 +715,18 @@ mod tests {
         git(dir, &["ls-files"]).lines().map(str::to_owned).collect()
     }
 
+    /// What git's own checkout writes at `path` in `workspace`, conversions
+    /// included.
+    fn checked_out_bytes(workspace: &Path, path: &str) -> Vec<u8> {
+        let out = git_command_in_test()
+            .args(["cat-file", "--filters", &format!("HEAD:{path}")])
+            .current_dir(workspace)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "cat-file --filters {path}");
+        out.stdout
+    }
+
     /// Every tracked file holds exactly what a checkout writes.
     fn assert_checked_out(dest: &Path) {
         let population = git_vcs();
@@ -713,6 +745,13 @@ mod tests {
             shareable.len(),
             "{shareable:?} vs {holding:?}"
         );
+        for path in files_in(dest) {
+            assert_eq!(
+                std::fs::read(dest.join(&path)).unwrap(),
+                checked_out_bytes(dest, &path),
+                "{path} is not what git's checkout writes"
+            );
+        }
         assert_eq!(git(dest, &["status", "--porcelain"]), "");
     }
 
@@ -748,14 +787,17 @@ mod tests {
         v
     }
 
-    #[test]
-    fn every_file_another_workspace_holds_is_cloned_and_the_rest_written() {
-        let w = Weave::with(&[
-            ("a.txt", "a\n"),
-            ("dir/b.txt", "b\n"),
-            ("filtered.txt", "f\n"),
-            (".gitattributes", "filtered.txt filter=upper\n"),
-        ]);
+    fn every_file_another_workspace_holds_is_cloned_and_the_rest_written(endings: LineEndings) {
+        let w = Weave::with(
+            endings,
+            &[
+                ("a.txt", "a\n"),
+                ("dir/b.txt", "b\n"),
+                ("c.bin", "c\n"),
+                ("filtered.txt", "f\n"),
+                (".gitattributes", "filtered.txt filter=upper\n"),
+            ],
+        );
         let at = w.head();
         let fs = FakePrimitives::default();
 
@@ -768,17 +810,19 @@ mod tests {
                 path
             })
             .collect();
+        let expected = unconverted(endings, &[".gitattributes", "a.txt", "c.bin", "dir/b.txt"]);
         assert_eq!(
             sorted(cloned),
-            vec![".gitattributes", "a.txt", "dir/b.txt"],
-            "the filtered file has no identity and must be written by the backend"
+            expected,
+            "the filtered file, and a file the checkout converts, has no identity and must \
+             be written by the backend"
         );
         assert_eq!(
             placement,
             FilePlacement {
-                reflinked: 3,
+                reflinked: expected.len(),
                 hardlinked: 0,
-                written: 1
+                written: 5 - expected.len()
             }
         );
         assert_checked_out(&dest);
@@ -792,9 +836,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_filesystem_that_cannot_clone_leaves_every_file_to_the_backend() {
-        let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    fn a_filesystem_that_cannot_clone_leaves_every_file_to_the_backend(endings: LineEndings) {
+        let w = Weave::with(endings, &[("a.txt", "a\n"), ("b.bin", "b\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
@@ -818,9 +861,11 @@ mod tests {
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn a_source_whose_probe_fails_is_never_read() {
-        let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n")]);
+    fn a_source_whose_probe_fails_is_never_read(endings: LineEndings) {
+        let w = Weave::with(
+            endings,
+            &[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.bin", "c\n")],
+        );
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::PermissionDenied);
@@ -836,9 +881,8 @@ mod tests {
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn a_source_on_another_device_is_passed_over_for_one_that_can_clone() {
-        let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    fn a_source_on_another_device_is_passed_over_for_one_that_can_clone(endings: LineEndings) {
+        let w = Weave::with(endings, &[("a.txt", "a\n"), ("b.bin", "b\n")]);
         let at = w.head();
         let near = w.seat("near", &at);
         let fs = FakePrimitives::default();
@@ -851,13 +895,15 @@ mod tests {
             .map(|(source, _)| source)
             .collect();
         assert_eq!(sources, BTreeSet::from([near]));
-        assert_eq!(placement.reflinked, 2);
+        assert_eq!(
+            placement.reflinked,
+            unconverted(endings, &["a.txt", "b.bin"]).len()
+        );
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn a_source_changed_mid_copy_ends_up_checked_out_again() {
-        let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    fn a_source_changed_mid_copy_ends_up_checked_out_again(endings: LineEndings) {
+        let w = Weave::with(endings, &[("a.bin", "a\n"), ("b.txt", "b\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.before_place(|from, to| {
@@ -866,30 +912,33 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .starts_with(".rwv");
-            if !probe && from.ends_with("a.txt") {
+            if !probe && from.ends_with("a.bin") {
                 std::fs::write(from, "changed under the clone\n").unwrap();
             }
         });
 
         let (dest, placement) = w.populate("seat", &at, &fs);
 
-        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "a\n");
+        assert_eq!(std::fs::read_to_string(dest.join("a.bin")).unwrap(), "a\n");
+        let cloned = unconverted(endings, &["b.txt"]).len();
         assert_eq!(
             placement,
             FilePlacement {
-                reflinked: 1,
+                reflinked: cloned,
                 hardlinked: 0,
-                written: 1
+                written: 2 - cloned
             }
         );
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn a_source_file_not_holding_its_recorded_content_is_never_cloned() {
-        let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    fn a_source_file_not_holding_its_recorded_content_is_never_cloned(endings: LineEndings) {
+        let w = Weave::with(
+            endings,
+            &[("a.bin", "a\n"), ("b.txt", "b\n"), ("c.bin", "c\n")],
+        );
         let at = w.head();
-        std::fs::write(w.store.join("a.txt"), "a\r\n").unwrap();
+        std::fs::write(w.store.join("a.bin"), "a\r\n").unwrap();
         let fs = FakePrimitives::default();
 
         let (dest, placement) = w.populate("seat", &at, &fs);
@@ -898,16 +947,18 @@ mod tests {
             .into_iter()
             .map(|(_, path)| path)
             .collect();
-        assert_eq!(cloned, vec!["b.txt"]);
-        assert_eq!(placement.reflinked, 1);
-        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "a\n");
+        let expected = unconverted(endings, &["b.txt", "c.bin"]);
+        assert_eq!(sorted(cloned), expected);
+        assert_eq!(placement.reflinked, expected.len());
+        assert_eq!(std::fs::read_to_string(dest.join("a.bin")).unwrap(), "a\n");
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn a_workspace_at_the_target_revision_covers_the_list_before_the_primary_is_asked() {
-        let w = Weave::with(&[("a.txt", "old\n"), ("b.txt", "b\n")]);
-        let target = w.commit(&[("a.txt", "new\n")]);
+    fn a_workspace_at_the_target_revision_covers_the_list_before_the_primary_is_asked(
+        endings: LineEndings,
+    ) {
+        let w = Weave::with(endings, &[("a.bin", "old\n"), ("b.txt", "b\n")]);
+        let target = w.commit(&[("a.bin", "new\n")]);
         let at_target = w.seat("at-target", &target);
         git(&w.store, &["checkout", "-q", "--detach", "HEAD~1"]);
         let fs = FakePrimitives::default();
@@ -919,13 +970,15 @@ mod tests {
             .map(|(source, _)| source)
             .collect();
         assert_eq!(sources, BTreeSet::from([at_target]));
-        assert_eq!(placement.reflinked, 2);
+        assert_eq!(
+            placement.reflinked,
+            unconverted(endings, &["a.bin", "b.txt"]).len()
+        );
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn an_executable_is_cloned_only_from_a_copy_with_its_executable_bit() {
-        let w = Weave::with(&[("run.sh", "#!/bin/sh\n")]);
+    fn an_executable_is_cloned_only_from_a_copy_with_its_executable_bit(endings: LineEndings) {
+        let w = Weave::with(endings, &[("run.sh", "#!/bin/sh\n")]);
         git(&w.store, &["update-index", "--chmod=+x", "run.sh"]);
         git(&w.store, &["commit", "-q", "-m", "x"]);
         let at = w.head();
@@ -955,9 +1008,10 @@ mod tests {
         assert_checked_out(&dest);
     }
 
-    #[test]
-    fn a_source_recording_another_mode_for_the_same_content_is_not_cloned_from() {
-        let w = Weave::with(&[("run.sh", "#!/bin/sh\n")]);
+    fn a_source_recording_another_mode_for_the_same_content_is_not_cloned_from(
+        endings: LineEndings,
+    ) {
+        let w = Weave::with(endings, &[("run.sh", "#!/bin/sh\n")]);
         let plain = w.head();
         git(&w.store, &["update-index", "--chmod=+x", "run.sh"]);
         git(&w.store, &["commit", "-q", "-m", "x"]);
@@ -999,21 +1053,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn this_filesystem_clones_exactly_where_it_is_declared_to() {
-        let w = Weave::with(&[("a.txt", "a\n"), ("dir/b.txt", "b\n")]);
+    fn this_filesystem_clones_exactly_where_it_is_declared_to(endings: LineEndings) {
+        let w = Weave::with(endings, &[("a.txt", "a\n"), ("dir/b.bin", "b\n")]);
         let at = w.head();
 
         let (dest, placement) = w.populate("seat", &at, &Filesystem);
 
         let tracked = files_in(&dest).len();
+        let cloneable = unconverted(endings, &["a.txt", "dir/b.bin"]).len();
         match declared_to_clone(w.tmp.path()) {
             Some(true) => assert_eq!(
                 placement,
                 FilePlacement {
-                    reflinked: tracked,
+                    reflinked: cloneable,
                     hardlinked: 0,
-                    written: 0
+                    written: tracked - cloneable
                 },
                 "declared able to clone, on {}",
                 std::env::consts::OS
@@ -1056,14 +1110,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rewritten_files_are_shared_again_and_a_local_change_is_kept() {
-        let w = Weave::with(&[("a.txt", "a1\n"), ("c.txt", "c1\n"), ("b.txt", "b\n")]);
+    fn rewritten_files_are_shared_again_and_a_local_change_is_kept(endings: LineEndings) {
+        let w = Weave::with(
+            endings,
+            &[
+                ("a.bin", "a1\n"),
+                ("c.bin", "c1\n"),
+                ("d.txt", "d1\n"),
+                ("b.txt", "b\n"),
+            ],
+        );
         let before = w.head();
-        let after = w.commit(&[("a.txt", "a2\n"), ("c.txt", "c2\n")]);
+        let after = w.commit(&[("a.bin", "a2\n"), ("c.bin", "c2\n"), ("d.txt", "d2\n")]);
         let member = w.seat("member", &before);
         git(&member, &["checkout", "-q", "--detach", after.as_str()]);
-        std::fs::write(member.join("c.txt"), "edited here\n").unwrap();
+        std::fs::write(member.join("c.bin"), "edited here\n").unwrap();
         let changed = git_vcs()
             .changed_paths_between(&member, &before, &after)
             .unwrap();
@@ -1073,35 +1134,44 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let cloned: Vec<(PathBuf, String)> = placements(&fs, &[&w.store]);
-        assert_eq!(cloned, vec![(w.store.clone(), "a.txt".to_owned())]);
+        let cloned: Vec<String> = placements(&fs, &[&w.store])
+            .into_iter()
+            .map(|(source, path)| {
+                assert_eq!(source, w.store);
+                path
+            })
+            .collect();
+        let expected = unconverted(endings, &["a.bin", "d.txt"]);
+        assert_eq!(sorted(cloned), expected);
+        for path in ["a.bin", "d.txt"] {
+            assert_eq!(
+                std::fs::read(member.join(path)).unwrap(),
+                checked_out_bytes(&member, path),
+                "{path} is not what git's checkout writes"
+            );
+        }
         assert_eq!(
-            std::fs::read_to_string(member.join("a.txt")).unwrap(),
-            "a2\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(member.join("c.txt")).unwrap(),
+            std::fs::read_to_string(member.join("c.bin")).unwrap(),
             "edited here\n",
             "re-sharing replaced a file holding a local change"
         );
         assert_eq!(
             placement,
             FilePlacement {
-                reflinked: 1,
+                reflinked: expected.len(),
                 hardlinked: 0,
-                written: 1
+                written: 3 - expected.len()
             }
         );
     }
 
-    #[test]
-    fn nothing_is_replaced_where_nothing_can_be_cloned() {
-        let w = Weave::with(&[("a.txt", "a1\n")]);
+    fn nothing_is_replaced_where_nothing_can_be_cloned(endings: LineEndings) {
+        let w = Weave::with(endings, &[("a.bin", "a1\n")]);
         let before = w.head();
-        let after = w.commit(&[("a.txt", "a2\n")]);
+        let after = w.commit(&[("a.bin", "a2\n")]);
         let member = w.seat("member", &before);
         git(&member, &["checkout", "-q", "--detach", after.as_str()]);
-        let identity_before = file_identity(&member.join("a.txt"));
+        let identity_before = file_identity(&member.join("a.bin"));
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
 
@@ -1109,36 +1179,35 @@ mod tests {
             git_vcs().as_ref(),
             &member,
             Role::Owned,
-            &["a.txt".to_owned()],
+            &["a.bin".to_owned()],
             &fs,
         )
         .unwrap()
         .unwrap();
 
         assert_eq!(placement.reflinked, 0);
-        assert_eq!(file_identity(&member.join("a.txt")), identity_before);
+        assert_eq!(file_identity(&member.join("a.bin")), identity_before);
     }
 
-    #[test]
-    fn a_file_whose_clone_fails_is_left_exactly_as_it_was() {
-        let w = Weave::with(&[("a.txt", "a1\n"), ("b.txt", "b1\n")]);
+    fn a_file_whose_clone_fails_is_left_exactly_as_it_was(endings: LineEndings) {
+        let w = Weave::with(endings, &[("a.bin", "a1\n"), ("b.bin", "b1\n")]);
         let before = w.head();
-        let after = w.commit(&[("a.txt", "a2\n"), ("b.txt", "b2\n")]);
+        let after = w.commit(&[("a.bin", "a2\n"), ("b.bin", "b2\n")]);
         let member = w.seat("member", &before);
         git(&member, &["checkout", "-q", "--detach", after.as_str()]);
-        let b_before = file_identity(&member.join("b.txt"));
+        let b_before = file_identity(&member.join("b.bin"));
         let fs = FakePrimitives::default();
-        fs.fail_from(&w.store.join("b.txt"), io::ErrorKind::PermissionDenied);
-        let changed = vec!["a.txt".to_owned(), "b.txt".to_owned()];
+        fs.fail_from(&w.store.join("b.bin"), io::ErrorKind::PermissionDenied);
+        let changed = vec!["a.bin".to_owned(), "b.bin".to_owned()];
 
         let placement = reshare(git_vcs().as_ref(), &member, Role::Owned, &changed, &fs)
             .unwrap()
             .unwrap();
 
         assert_eq!(placement.reflinked, 1);
-        assert_eq!(file_identity(&member.join("b.txt")), b_before);
+        assert_eq!(file_identity(&member.join("b.bin")), b_before);
         assert_eq!(
-            std::fs::read_to_string(member.join("b.txt")).unwrap(),
+            std::fs::read_to_string(member.join("b.bin")).unwrap(),
             "b2\n"
         );
         assert_eq!(git(&member, &["status", "--porcelain"]), "");
@@ -1186,8 +1255,8 @@ mod tests {
 
     /// A primary whose reference member holds `files`, settled read-only.
     #[cfg(unix)]
-    fn read_only_reference(files: &[(&str, &str)]) -> Weave {
-        let w = Weave::listing(files, Role::Reference);
+    fn read_only_reference(endings: LineEndings, files: &[(&str, &str)]) -> Weave {
+        let w = Weave::listing(endings, files, Role::Reference);
         crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
         w
     }
@@ -1203,9 +1272,10 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_reference_file_no_clone_can_place_is_linked_to_a_read_only_reference_copy() {
-        let w = read_only_reference(&[("a.txt", "a\n"), ("dir/b.txt", "b\n")]);
+    fn a_reference_file_no_clone_can_place_is_linked_to_a_read_only_reference_copy(
+        endings: LineEndings,
+    ) {
+        let w = read_only_reference(endings, &[("a.txt", "a\n"), ("dir/b.bin", "b\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
@@ -1213,16 +1283,17 @@ mod tests {
         let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
 
         let tracked = files_in(&dest).len();
+        let linkable = unconverted(endings, &["a.txt", "dir/b.bin"]);
         if declared() {
             assert_eq!(
                 placement,
                 FilePlacement {
                     reflinked: 0,
-                    hardlinked: tracked,
-                    written: 0
+                    hardlinked: linkable.len(),
+                    written: tracked - linkable.len()
                 }
             );
-            for path in files_in(&dest) {
+            for path in linkable {
                 assert_eq!(
                     file_identity(&dest.join(&path)),
                     file_identity(&w.store.join(&path)),
@@ -1247,12 +1318,11 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_writable_source_file_is_never_linked() {
-        let w = read_only_reference(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    fn a_writable_source_file_is_never_linked(endings: LineEndings) {
+        let w = read_only_reference(endings, &[("a.bin", "a\n"), ("b.bin", "b\n")]);
         let at = w.head();
         crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Owned).unwrap();
-        let read_only = w.store.join("b.txt");
+        let read_only = w.store.join("b.bin");
         let meta = std::fs::metadata(&read_only).unwrap();
         let mut perms = meta.permissions();
         perms.set_readonly(true);
@@ -1264,20 +1334,19 @@ mod tests {
 
         let linked = linked_from(&fs, &w.store);
         assert!(
-            !linked.contains(&"a.txt".to_owned()),
+            !linked.contains(&"a.bin".to_owned()),
             "linked a writable file: {linked:?}"
         );
         if declared() {
-            assert_eq!(linked, vec!["b.txt".to_owned()]);
+            assert_eq!(linked, vec!["b.bin".to_owned()]);
             assert_eq!(placement.hardlinked, 1);
         }
         assert_checked_out(&dest);
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_member_that_is_not_reference_never_shares_a_file() {
-        let w = read_only_reference(&[("a.txt", "a\n")]);
+    fn a_member_that_is_not_reference_never_shares_a_file(endings: LineEndings) {
+        let w = read_only_reference(endings, &[("a.bin", "a\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
@@ -1290,16 +1359,15 @@ mod tests {
         );
         assert_eq!(placement.hardlinked, 0);
         assert_ne!(
-            file_identity(&dest.join("a.txt")),
-            file_identity(&w.store.join("a.txt"))
+            file_identity(&dest.join("a.bin")),
+            file_identity(&w.store.join("a.bin"))
         );
         assert_checked_out(&dest);
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_source_not_checked_out_as_reference_is_never_linked_from() {
-        let w = Weave::listing(&[("a.txt", "a\n")], Role::Owned);
+    fn a_source_not_checked_out_as_reference_is_never_linked_from(endings: LineEndings) {
+        let w = Weave::listing(endings, &[("a.bin", "a\n")], Role::Owned);
         crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
         let at = w.head();
         let fs = FakePrimitives::default();
@@ -1316,9 +1384,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_clone_is_preferred_to_a_link() {
-        let w = read_only_reference(&[("a.txt", "a\n")]);
+    fn a_clone_is_preferred_to_a_link(endings: LineEndings) {
+        let w = read_only_reference(endings, &[("a.bin", "a\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
 
@@ -1327,16 +1394,15 @@ mod tests {
         assert_eq!(placement.reflinked, 1);
         assert_eq!(placement.hardlinked, 0);
         assert_ne!(
-            file_identity(&dest.join("a.txt")),
-            file_identity(&w.store.join("a.txt"))
+            file_identity(&dest.join("a.bin")),
+            file_identity(&w.store.join("a.bin"))
         );
         assert_checked_out(&dest);
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_link_across_devices_leaves_the_file_to_the_backend() {
-        let w = read_only_reference(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    fn a_link_across_devices_leaves_the_file_to_the_backend(endings: LineEndings) {
+        let w = read_only_reference(endings, &[("a.txt", "a\n"), ("b.bin", "b\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
@@ -1350,10 +1416,9 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_source_made_writable_as_it_is_linked_is_not_left_sharing() {
+    fn a_source_made_writable_as_it_is_linked_is_not_left_sharing(endings: LineEndings) {
         use std::os::unix::fs::PermissionsExt;
-        let w = read_only_reference(&[("a.txt", "a\n")]);
+        let w = read_only_reference(endings, &[("a.bin", "a\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
@@ -1372,19 +1437,22 @@ mod tests {
 
         assert_eq!(placement.hardlinked, 0);
         assert_ne!(
-            file_identity(&dest.join("a.txt")),
-            file_identity(&w.store.join("a.txt")),
+            file_identity(&dest.join("a.bin")),
+            file_identity(&w.store.join("a.bin")),
             "a file that gained write bits was left with two names"
         );
         assert_checked_out(&dest);
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_reference_member_moved_shares_its_rewritten_files_by_link() {
-        let w = Weave::listing(&[("a.txt", "a1\n"), ("b.txt", "b\n")], Role::Reference);
+    fn a_reference_member_moved_shares_its_rewritten_files_by_link(endings: LineEndings) {
+        let w = Weave::listing(
+            endings,
+            &[("a.bin", "a1\n"), ("b.txt", "b\n")],
+            Role::Reference,
+        );
         let before = w.head();
-        let after = w.commit(&[("a.txt", "a2\n")]);
+        let after = w.commit(&[("a.bin", "a2\n")]);
         crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
         let member = w.seat("member", &before);
         git(&member, &["checkout", "-q", "--detach", after.as_str()]);
@@ -1395,7 +1463,7 @@ mod tests {
             git_vcs().as_ref(),
             &member,
             Role::Reference,
-            &["a.txt".to_owned()],
+            &["a.bin".to_owned()],
             &fs,
         )
         .unwrap()
@@ -1404,14 +1472,14 @@ mod tests {
         if declared() {
             assert_eq!(placement.hardlinked, 1);
             assert_eq!(
-                file_identity(&member.join("a.txt")),
-                file_identity(&w.store.join("a.txt"))
+                file_identity(&member.join("a.bin")),
+                file_identity(&w.store.join("a.bin"))
             );
         } else {
             assert_eq!(placement.hardlinked, 0);
         }
         assert_eq!(
-            std::fs::read_to_string(member.join("a.txt")).unwrap(),
+            std::fs::read_to_string(member.join("a.bin")).unwrap(),
             "a2\n"
         );
         assert_eq!(git(&member, &["status", "--porcelain"]), "");
@@ -1430,4 +1498,36 @@ mod tests {
     fn file_identity(path: &Path) -> std::time::SystemTime {
         std::fs::metadata(path).unwrap().modified().unwrap()
     }
+
+    under_both_line_endings!(
+        every_file_another_workspace_holds_is_cloned_and_the_rest_written,
+        a_filesystem_that_cannot_clone_leaves_every_file_to_the_backend,
+        a_source_whose_probe_fails_is_never_read,
+        a_source_on_another_device_is_passed_over_for_one_that_can_clone,
+        a_source_changed_mid_copy_ends_up_checked_out_again,
+        a_source_file_not_holding_its_recorded_content_is_never_cloned,
+        a_workspace_at_the_target_revision_covers_the_list_before_the_primary_is_asked,
+        an_executable_is_cloned_only_from_a_copy_with_its_executable_bit,
+        a_source_recording_another_mode_for_the_same_content_is_not_cloned_from,
+        this_filesystem_clones_exactly_where_it_is_declared_to,
+        rewritten_files_are_shared_again_and_a_local_change_is_kept,
+        nothing_is_replaced_where_nothing_can_be_cloned,
+        a_file_whose_clone_fails_is_left_exactly_as_it_was,
+        #[cfg(unix)]
+        a_reference_file_no_clone_can_place_is_linked_to_a_read_only_reference_copy,
+        #[cfg(unix)]
+        a_writable_source_file_is_never_linked,
+        #[cfg(unix)]
+        a_member_that_is_not_reference_never_shares_a_file,
+        #[cfg(unix)]
+        a_source_not_checked_out_as_reference_is_never_linked_from,
+        #[cfg(unix)]
+        a_clone_is_preferred_to_a_link,
+        #[cfg(unix)]
+        a_link_across_devices_leaves_the_file_to_the_backend,
+        #[cfg(unix)]
+        a_source_made_writable_as_it_is_linked_is_not_left_sharing,
+        #[cfg(unix)]
+        a_reference_member_moved_shares_its_rewritten_files_by_link,
+    );
 }
