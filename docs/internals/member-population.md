@@ -206,12 +206,14 @@ included. Text reports name the member on `workweave create`, `add`, `fetch`,
 
 Under `--json`, counts live only in placement records,
 `{path, absolute_path, files}`, each naming the checkout it describes, in
-`fetch`, `update`, `sync` and `sync-to`: the envelope carries a `placements`
-array, and NDJSON mode emits a placement line, with its own `$schema`, as each
-placement happens. Outcome records never carry counts, because one verb can
-place files in more than one checkout of the same repo path — `sync-to`
-re-shares in the seat and in the target — and only the record's own
-`absolute_path` says which.
+`fetch`, `update`, `sync` and `sync-to`. The envelope carries a `placements`
+array, empty rather than absent when nothing was placed; NDJSON mode emits a
+placement line as each placement happens, under a `$schema` of its own that
+every verb shares. Outcome records never carry counts, because a placement need
+not be of the checkout an outcome names: `sync-to` re-shares a repo in the seat
+and in the target, and `fetch` in a workweave creates the seat's worktree while
+its outcome names the canonical clone. Only the placement's own
+`absolute_path` says which checkout it was.
 
 ## 5. Settle
 
