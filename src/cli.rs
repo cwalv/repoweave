@@ -162,6 +162,17 @@ pub enum Commands {
         #[arg(long)]
         adopt: bool,
     },
+    /// Change a repo's role in the active project, and settle its files for it
+    Role {
+        /// Path of the repo, as `rwv.toml` lists it
+        repo: String,
+        /// The role to give it
+        #[arg(value_enum)]
+        role: manifest::Role,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Remove a repo from the active project
     Remove {
         /// Path of the repo to remove

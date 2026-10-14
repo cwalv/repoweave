@@ -13,7 +13,7 @@ src/add_remove.rs	no-matching-registry	-	1
 src/add_remove.rs	no-remote-default-branch	-	2
 src/add_remove.rs	no-remote-url	-	1
 src/add_remove.rs	occupied-placement	tests/refusal_arrival_test.rs	1
-src/add_remove.rs	repo-not-in-manifest	-	1
+src/add_remove.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/add_remove.rs	shared-clone-referenced	-	1
 src/add_remove.rs	store-claims-unreadable	-	2
 src/add_remove.rs	store-still-claimed	-	1
@@ -71,6 +71,8 @@ src/push.rs	project-repo-off-canonical-branch	-	1
 src/push.rs	push-from-workweave	tests/refusal_arrival_test.rs	1
 src/push.rs	unpushable-repo-branch	-	1
 src/registry.rs	unresolvable-repo-source	-	1
+src/role.rs	dirty-checkout	tests/refusal_arrival_test.rs	1
+src/role.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	2
 src/sync.rs	(untokened:internal-invariant)	-	11

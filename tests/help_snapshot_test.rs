@@ -36,6 +36,7 @@ Commands:
   add          Add a repo to the active project
   fetch        Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references)
   init         Initialize a new project
+  role         Change a repo's role in the active project, and settle its files for it
   remove       Remove a repo from the active project
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking

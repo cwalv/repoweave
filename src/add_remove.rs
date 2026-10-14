@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 /// separator (`chatly/web-app`); recovering it from the directory's last
 /// component would silently collapse that to `web-app` and load a different
 /// project's manifest.
-fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)> {
+pub(crate) fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)> {
     let name = ctx.require_active_project_on_disk()?.clone();
     let dir = project_dir(ctx.active_path(), name.as_str());
     Ok((name, dir))
@@ -152,7 +152,7 @@ fn place_member(
 /// over a partial member set they would be rewritten without the rest. The
 /// manifest change still lands, and `rwv doctor --fix` regenerates once the
 /// member set is whole.
-fn settle_manifest(
+pub(crate) fn settle_manifest(
     ctx: &WorkspaceContext,
     project: &ProjectName,
     edited: Option<&Manifest>,

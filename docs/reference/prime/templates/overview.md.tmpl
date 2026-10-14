@@ -48,6 +48,7 @@ Run `rwv --help` for the full command reference. Workspace and project are infer
 | `rwv init PROJECT [--provider REG/OWNER]` | Create a new project directory with empty `rwv.toml` |
 | `rwv add URL [--role ROLE\|--new]` | Clone and register a repo; `--new` initializes a brand-new repo at the canonical path |
 | `rwv remove PATH [--delete]` | Unregister a repo; `--delete` also removes the clone |
+| `rwv role PATH ROLE` | Change a repo's role; `reference` makes its tracked files read-only |
 | `rwv lock [--dirty]` | Snapshot repo revisions to the project's `rwv.lock`. Pure git SHA snapshot — no integration hooks fire; run `rwv activate` afterward if membership changed |
 | `rwv workweave PROJECT create NAME` | Spin up a worktree-based isolated workspace |
 | `rwv workweave PROJECT delete NAME` | Tear down a workweave (worktrees + ephemeral branches) |

@@ -474,6 +474,12 @@ fn verbs() -> Vec<Verb> {
             schema_record: None,
         },
         Verb {
+            name: "role",
+            summary: "change a repo's role in the active project manifest and settle its files",
+            schema: None,
+            schema_record: None,
+        },
+        Verb {
             name: "lock",
             summary: "snapshot current repo HEADs into rwv.lock (pure local; no network)",
             schema: None,

@@ -851,6 +851,16 @@ pub fn run() -> anyhow::Result<()> {
                 init::init(&project, provider.as_deref(), &origin_dir)?;
             }
         }
+        Some(Commands::Role {
+            repo,
+            role,
+            project,
+        }) => {
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            refuse_symlinked_members_here(&ctx)?;
+            crate::role::run_role(&repo, role, &ctx)?;
+        }
         Some(Commands::Remove {
             path,
             delete,

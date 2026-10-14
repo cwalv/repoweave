@@ -71,6 +71,7 @@ pub mod prime;
 pub mod push;
 pub mod refusal;
 pub mod registry;
+pub mod role;
 pub mod root_write;
 mod schema_url;
 pub mod selector;

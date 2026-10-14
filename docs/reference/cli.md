@@ -230,6 +230,14 @@ Remove from `rwv.toml`, re-run activation (regenerates ecosystem workspace files
 | `--delete-shared-clone` | With `--delete`, remove the clone even if other projects still reference it |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
+### `rwv role <path> <role>`
+
+Change the repo's `role` in `rwv.toml`, re-run activation (a `reference` repo leaves every ecosystem's build graph), and settle the repo's files: a `reference` repo's tracked files lose their write bits; any other role gets the owner's back. Refuses a change to `reference` while the repo has uncommitted changes to tracked files. Does nothing when the repo already has the role.
+
+| Flag | Effect |
+|---|---|
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
 ### `rwv sync <source> [...]`
 
 Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspace name (`primary`, a workweave name) or a path. Bare `rwv sync` (no `<source>`) is an error with a hint pointing at `rwv sync-to`.
