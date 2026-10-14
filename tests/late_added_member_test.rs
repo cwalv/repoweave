@@ -49,15 +49,27 @@ fn add_to_project(project_dir: &Path, path: &str, url: &Path, role: &str, pin: &
         format!("{manifest}\n{}", manifest_entry(path, url, role)),
     )
     .unwrap();
-    let lock_path = project_dir.join("rwv.lock");
-    let mut lock: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&lock_path).unwrap()).unwrap();
-    lock["repositories"][path] = serde_json::json!({
-        "type": "git",
-        "url": common::file_url(url),
-        "version": pin,
-    });
-    std::fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap())
+            .unwrap();
+    let mut rows: Vec<(String, String, String)> = lock["repositories"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(p, e)| {
+            (
+                p.clone(),
+                e["url"].as_str().unwrap().to_owned(),
+                e["version"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    rows.push((path.to_owned(), common::file_url(url), pin.to_owned()));
+    let rows: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|(p, u, v)| (p.as_str(), u.as_str(), v.as_str()))
+        .collect();
+    common::fixture_lock(project_dir, &rows);
     common::git_in(project_dir, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(project_dir, &["commit", "-m", &format!("add {path}")]);
 }
