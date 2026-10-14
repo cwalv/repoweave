@@ -23,6 +23,7 @@ rwv explain <verb>
 - **abort** — restore CWD workspace to its pre-sync state using savepoint refs
 - **add** — clone a repo and register it in the active project manifest
 - **remove** — remove a repo from the active project manifest
+- **role** — change a repo's role in the active project manifest and settle its files
 - **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
 - **activate** — set the active project, create symlinks, run integration install hooks
 - **materialize** — run the integration install hooks for the presented project, without selecting anything
