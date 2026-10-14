@@ -1745,14 +1745,7 @@ enum LinkSlot {
 fn link_slot(root: &Path, wanted: &WantedLink) -> LinkSlot {
     let link = root.join(&wanted.file);
     match link.symlink_metadata() {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => LinkSlot::Clear,
-        Err(_) => LinkSlot::Occupied(
-            link.ancestors()
-                .take_while(|path| *path != root)
-                .find(|path| path.symlink_metadata().is_ok_and(|m| !m.is_dir()))
-                .unwrap_or(&link)
-                .to_path_buf(),
-        ),
+        Err(e) => unreadable_slot(root, &link, e.kind()),
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&link) {
             Ok(target) if target == wanted.target => LinkSlot::AlreadyLinked,
             Ok(target) if target_resolves_to_projects(Path::new(&wanted.file), &target) => {
@@ -1762,6 +1755,21 @@ fn link_slot(root: &Path, wanted: &WantedLink) -> LinkSlot {
         },
         Ok(meta) if wanted.written_through && meta.is_file() => LinkSlot::RootWrite,
         Ok(_) => LinkSlot::Occupied(link),
+    }
+}
+
+/// The slot at `link`, whose metadata could not be read for an error of
+/// `kind`. A file standing where a directory belongs is the occupant whatever
+/// the error: Unix reports it as `NotADirectory`, Windows as `NotFound`.
+fn unreadable_slot(root: &Path, link: &Path, kind: std::io::ErrorKind) -> LinkSlot {
+    let file_ancestor = link
+        .ancestors()
+        .take_while(|path| *path != root)
+        .find(|path| path.metadata().is_ok_and(|m| !m.is_dir()));
+    match (file_ancestor, kind) {
+        (Some(ancestor), _) => LinkSlot::Occupied(ancestor.to_path_buf()),
+        (None, std::io::ErrorKind::NotFound) => LinkSlot::Clear,
+        (None, _) => LinkSlot::Occupied(link.to_path_buf()),
     }
 }
 
@@ -2789,6 +2797,50 @@ mod tests {
             msg.contains(&format!("{} (a regular file)", root.join("gita").display())),
             "the refusal must name the file standing where a directory belongs: {msg}"
         );
+    }
+
+    #[test]
+    fn a_file_ancestor_is_the_occupant_whichever_error_the_platform_reports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("gita"), "a file\n").unwrap();
+        let link = root.join("gita/repos.csv");
+
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::NotADirectory,
+        ] {
+            assert!(
+                matches!(
+                    unreadable_slot(root, &link, kind),
+                    LinkSlot::Occupied(ref at) if *at == root.join("gita")
+                ),
+                "{kind:?} under a file did not name the file"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_missing_under_directories_is_clear() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("projects/old/.claude")).unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("projects/old/.claude", root.join(".claude")).unwrap();
+            std::os::unix::fs::symlink("projects/gone/.agents", root.join(".agents")).unwrap();
+        }
+
+        for missing in ["notes.md", "sub/notes.md", ".claude/x.md", ".agents/x.md"] {
+            assert!(
+                matches!(
+                    unreadable_slot(root, &root.join(missing), std::io::ErrorKind::NotFound),
+                    LinkSlot::Clear
+                ),
+                "{missing} was read as occupied"
+            );
+        }
     }
 
     /// Mode bits only obstruct an unprivileged process, and these tests assert
