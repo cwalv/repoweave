@@ -63,6 +63,14 @@ struct Routed {
 /// stated per entry too — there is no global count standing in for one.
 const ROUTED: &[Routed] = &[
     Routed {
+        file: "integrations/cargo_workspace.rs",
+        scope: "",
+        needle: r#""[warning] cargo-workspace: cargo {subcommand} wrote {}, a real file where \"#,
+        renders: 2,
+        prints: "the cargo hook's notice that its lock landed past the link, naming the \
+                 root file and the canonical lock it is not yet taken into",
+    },
+    Routed {
         file: "activate.rs",
         scope: "fn settle_arrived_drift(",
         needle: r#""\n  {}","#,

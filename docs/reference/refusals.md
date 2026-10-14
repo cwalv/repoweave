@@ -790,7 +790,9 @@ the claimants.
 ### `surfacing-path-occupied`
 
 **Condition.** Something rwv did not create sits where a surfacing link
-belongs.
+belongs. A real file at a lock file's path (`Cargo.lock`, `package-lock.json`,
+`pnpm-lock.yaml`, `uv.lock`, `go.work.sum`) is not one: it is the tool's own
+write that missed its link, and is taken into the project rather than refused.
 
 **Why.** rwv replaces links it authored, never files it did not. An occupant
 with no provenance may be an operator's real file, and overwriting it would be

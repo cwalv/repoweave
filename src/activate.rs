@@ -663,7 +663,7 @@ fn activate_in_phases(
     let ctx_base =
         session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
 
-    let surfaced = author_and_surface(
+    let Some(noticed) = author_and_surface(
         root,
         &project_name,
         &manifest,
@@ -671,16 +671,17 @@ fn activate_in_phases(
         &ctx_base,
         mode,
     )
-    .map_err(ActivationFailure::BeforeHooks)?;
-    if !surfaced {
+    .map_err(ActivationFailure::BeforeHooks)?
+    else {
         return Ok(());
-    }
-    run_hooks(&integrations, &manifest, &ctx_base, opts, mode).map_err(ActivationFailure::AtHooks)
+    };
+    run_hooks(&integrations, &manifest, &ctx_base, opts, mode, &noticed)
+        .map_err(ActivationFailure::AtHooks)
 }
 
-/// The integration content step for `mode`, then the weave root's surfacing.
-/// False when the root presents a different project, which leaves it, and the
-/// hooks that act through it, untouched.
+/// The integration content step for `mode`, then the weave root's surfacing,
+/// returning what surfacing reported. `None` when the root presents a different
+/// project, which leaves it, and the hooks that act through it, untouched.
 fn author_and_surface(
     root: &Path,
     project_name: &ProjectName,
@@ -688,7 +689,7 @@ fn author_and_surface(
     integrations: &[&dyn Integration],
     ctx_base: &IntegrationContextBase,
     mode: ActivationMode,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<Vec<String>>> {
     match mode {
         ActivationMode::Intent => {
             let issues = run_activations(integrations, manifest, ctx_base);
@@ -726,6 +727,10 @@ fn author_and_surface(
         ActivationMode::Materialize(consent) => {
             strip_disabled_integrations(root, integrations, manifest, ctx_base)?;
             forget_unproduced_attestations(integrations, manifest, ctx_base)?;
+            // Before the drift check, so a tool's write that missed its link is
+            // judged in the project copy the check reads, as one that went
+            // through the link always is.
+            surface_with_notices(root, project_name, manifest, SurfacingMode::Repair)?;
             settle_arrived_drift(&ctx_base.output_dir, consent)?;
         }
     }
@@ -749,7 +754,7 @@ fn author_and_surface(
             .and_then(RootObservation::presented_project)
             != Some(project_name)
         {
-            return Ok(false);
+            return Ok(None);
         }
     }
 
@@ -768,8 +773,11 @@ fn author_and_surface(
         ActivationMode::Context => SurfacingMode::Select,
         ActivationMode::Intent | ActivationMode::Materialize(_) => SurfacingMode::Repair,
     };
-    surface_symlinks(root, project_name, manifest, surfacing_mode)?;
-    Ok(true)
+    let notices = surface_with_notices(root, project_name, manifest, surfacing_mode)?;
+    for notice in &notices {
+        eprintln!("[warning] core: surfacing: {notice}");
+    }
+    Ok(Some(notices))
 }
 
 /// Run integration activate hooks (install commands). They operate on the
@@ -783,11 +791,31 @@ fn run_hooks(
     ctx_base: &IntegrationContextBase,
     opts: ActivateOptions,
     mode: ActivationMode,
+    noticed: &[String],
 ) -> anyhow::Result<()> {
     if !opts.no_materialize && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
         refuse_hooks_over_malformed_settings(integrations, manifest, ctx_base)?;
         let hook_issues = run_activate_hooks(integrations, manifest, ctx_base);
         report_and_check_activate_hook_issues(&hook_issues)?;
+        // A tool the hooks ran may have written past its link — a first
+        // generation by a renaming writer replaces the link that dangled.
+        let after_hooks = match mode {
+            ActivationMode::Intent | ActivationMode::Materialize(_) => surface_with_notices(
+                ctx_base.workspace_root,
+                ctx_base.project,
+                manifest,
+                SurfacingMode::Repair,
+            )?,
+            ActivationMode::Context => {
+                root_write_notices(ctx_base.workspace_root, ctx_base.project, manifest)
+            }
+        };
+        for notice in after_hooks
+            .iter()
+            .filter(|notice| !noticed.contains(notice))
+        {
+            eprintln!("[warning] core: surfacing: {notice}");
+        }
     }
 
     if matches!(mode, ActivationMode::Materialize(_)) {
@@ -1449,13 +1477,35 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 /// All or nothing. Every path a link is wanted at is read before any link
 /// moves, so an occupant refuses with the root as it was; a link that already
 /// reads its wanted target is left in place rather than re-made; and a failure
-/// partway through puts back every link this call had removed or made.
+/// partway through puts back every link and file this call had changed.
+///
+/// A real file where a tool writes through its link is not an occupant but the
+/// tool's write that missed the link. [`SurfacingMode::Repair`] takes it into
+/// the project directory and makes the link — when the project's copy loses
+/// nothing by it — and otherwise names both copies and leaves the link out. A
+/// selection names it and leaves it, since a context verb writes no project
+/// content; the one exception is the outgoing project's file on a switch, which
+/// goes home before the incoming project's link can take its path.
 pub fn surface_symlinks(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
     mode: SurfacingMode,
 ) -> anyhow::Result<()> {
+    for notice in surface_with_notices(root, project, manifest, mode)? {
+        eprintln!("[warning] core: surfacing: {notice}");
+    }
+    Ok(())
+}
+
+/// [`surface_symlinks`], returning what it has to say about root writes it left
+/// rather than printing it.
+fn surface_with_notices(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+    mode: SurfacingMode,
+) -> anyhow::Result<Vec<String>> {
     let project_dir = project_dir(root, project.as_str());
     let observed = observe_root(root);
     let presented = observed
@@ -1493,19 +1543,45 @@ pub fn surface_symlinks(
                 file: file.clone(),
                 target: relative_symlink_target(project.as_str(), file),
                 kind: LinkTarget::on_disk(&source),
+                written_through: entry.source == SurfacedSource::WrittenThroughLink,
             })
         })
         .collect();
 
+    // Selecting a project in place of another: what the outgoing one's tools
+    // left at the root is that project's, and goes home before anything of
+    // the incoming one's takes its path.
+    let outgoing = match (&presented, mode) {
+        (Some(previous), SurfacingMode::Select) if previous != project => {
+            Some((previous.clone(), written_through_names(root, previous)?))
+        }
+        _ => None,
+    };
+
     let mut already_linked: BTreeSet<String> = BTreeSet::new();
     let mut occupants = Vec::new();
+    let mut root_writes = Vec::new();
     for wanted in &wanted {
         match link_slot(root, wanted) {
             LinkSlot::AlreadyLinked => {
                 already_linked.insert(wanted.file.clone());
             }
             LinkSlot::Clear => {}
+            LinkSlot::RootWrite => {
+                let owner = match &outgoing {
+                    Some((previous, names)) if names.contains(&wanted.file) => previous,
+                    _ => project,
+                };
+                root_writes.extend(crate::root_write::read(root, owner, &wanted.file)?);
+            }
             LinkSlot::Occupied(occupant) => occupants.push(occupant),
+        }
+    }
+    if let Some((previous, names)) = &outgoing {
+        for name in names {
+            if !wanted.iter().any(|wanted| &wanted.file == name) {
+                root_writes.extend(crate::root_write::read(root, previous, name)?);
+            }
         }
     }
     if !occupants.is_empty() {
@@ -1548,6 +1624,27 @@ pub fn surface_symlinks(
     };
     removal_candidates.retain(|file| !already_linked.contains(file));
 
+    // A root write is adopted where the verb may write — a repair, or taking
+    // the outgoing project's file home — and otherwise named and left, with its
+    // link left out rather than made over it.
+    let mut adoption = Vec::new();
+    let mut left_unlinked: BTreeSet<String> = BTreeSet::new();
+    let mut notices = Vec::new();
+    for write in &root_writes {
+        let may_adopt = mode == SurfacingMode::Repair || &write.owner != project;
+        match (may_adopt, write.verdict) {
+            (true, crate::root_write::Verdict::Adopt) => adoption.extend(write.adoption(root)),
+            (true, crate::root_write::Verdict::Conflict) => {
+                left_unlinked.insert(write.name.clone());
+                notices.push(write.conflict_message());
+            }
+            (false, _) => {
+                left_unlinked.insert(write.name.clone());
+                notices.push(write.unadopted_message());
+            }
+        }
+    }
+
     // 2b. Shared names surfaced out of some other project — left behind by a
     //     project switch, or taken by a repair that predates the rule. The
     //     presented project's declarations never reach them, so the removal
@@ -1555,14 +1652,49 @@ pub fn surface_symlinks(
     let reclaim_from = presents_project.then_some(&new_owned);
     let to_create: Vec<&WantedLink> = wanted
         .iter()
-        .filter(|wanted| !already_linked.contains(&wanted.file))
+        .filter(|wanted| {
+            !already_linked.contains(&wanted.file) && !left_unlinked.contains(&wanted.file)
+        })
         .collect();
 
     let mut journal = SurfacingJournal::default();
-    match journal.apply(root, project, &removal_candidates, reclaim_from, &to_create) {
-        Ok(()) => Ok(()),
-        Err(failure) => Err(journal.roll_back(failure)),
+    if let Err(failure) = journal.apply(
+        root,
+        project,
+        &adoption,
+        &removal_candidates,
+        reclaim_from,
+        &to_create,
+    ) {
+        return Err(journal.roll_back(failure));
     }
+    Ok(notices)
+}
+
+/// The names `project` declares as written through their link, from its own
+/// manifest.
+fn written_through_names(root: &Path, project: &ProjectName) -> anyhow::Result<BTreeSet<String>> {
+    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    if !manifest_path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let manifest = Manifest::from_path(&manifest_path)?;
+    Ok(compute_owned_set(root, project, &manifest)
+        .into_iter()
+        .filter(|(_, entry)| entry.source == SurfacedSource::WrittenThroughLink)
+        .map(|(name, _)| name)
+        .collect())
+}
+
+/// What a verb that may not adopt says about every root write among
+/// `project`'s names: what its own hooks left at the weave root.
+fn root_write_notices(root: &Path, project: &ProjectName, manifest: &Manifest) -> Vec<String> {
+    compute_owned_set(root, project, manifest)
+        .into_iter()
+        .filter(|(_, entry)| entry.source == SurfacedSource::WrittenThroughLink)
+        .filter_map(|(name, _)| crate::root_write::read(root, project, &name).ok().flatten())
+        .map(|write| write.unadopted_message())
+        .collect()
 }
 
 /// A link surfacing wants at `<root>/<file>`, reading `target`.
@@ -1570,6 +1702,7 @@ struct WantedLink {
     file: String,
     target: std::path::PathBuf,
     kind: LinkTarget,
+    written_through: bool,
 }
 
 /// What stands at the path a wanted link takes, read before anything moves.
@@ -1578,6 +1711,9 @@ enum LinkSlot {
     AlreadyLinked,
     /// Nothing, or a link of rwv's surfacing shape, which the sweep removes.
     Clear,
+    /// A real file where a tool writes through the link: the tool's output,
+    /// judged in `crate::root_write` rather than refused.
+    RootWrite,
     /// Something no sweep removes, at the path carried — which is an ancestor
     /// of the link's path when that ancestor is not a directory.
     Occupied(std::path::PathBuf),
@@ -1601,6 +1737,7 @@ fn link_slot(root: &Path, wanted: &WantedLink) -> LinkSlot {
             }
             _ => LinkSlot::Occupied(link),
         },
+        Ok(meta) if wanted.written_through && meta.is_file() => LinkSlot::RootWrite,
         Ok(_) => LinkSlot::Occupied(link),
     }
 }
@@ -1608,6 +1745,7 @@ fn link_slot(root: &Path, wanted: &WantedLink) -> LinkSlot {
 /// Every weave-root change one surfacing pass made, in the order it made them.
 #[derive(Default)]
 struct SurfacingJournal {
+    files: crate::root_write::FileJournal,
     removed: Vec<RemovedLink>,
     created: Vec<std::path::PathBuf>,
     created_dirs: Vec<std::path::PathBuf>,
@@ -1618,10 +1756,12 @@ impl SurfacingJournal {
         &mut self,
         root: &Path,
         project: &ProjectName,
+        adoption: &[crate::root_write::Op],
         removal_candidates: &BTreeSet<String>,
         reclaim_from: Option<&BTreeSet<String>>,
         to_create: &[&WantedLink],
     ) -> anyhow::Result<()> {
+        self.files.apply(adoption)?;
         remove_activation_symlinks(root, removal_candidates, &mut self.removed)?;
 
         if let Some(declared) = reclaim_from {
@@ -1660,18 +1800,23 @@ impl SurfacingJournal {
 
     /// Put back what this pass changed, after `failure` stopped it.
     fn roll_back(self, failure: anyhow::Error) -> anyhow::Error {
+        let SurfacingJournal {
+            files,
+            removed,
+            created,
+            mut created_dirs,
+        } = self;
         let mut unrestored: Vec<String> = Vec::new();
-        for link in self.created.iter().rev() {
+        for link in created.iter().rev() {
             if crate::symlink::remove(link).is_err() {
                 unrestored.push(link.display().to_string());
             }
         }
-        let mut created_dirs = self.created_dirs;
         created_dirs.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
         for dir in &created_dirs {
             let _ = std::fs::remove_dir(dir);
         }
-        for removed in self.removed.iter().rev() {
+        for removed in removed.iter().rev() {
             let parent = removed.link.parent().unwrap_or(Path::new(""));
             let kind = LinkTarget::on_disk(&parent.join(&removed.target));
             let restored = std::fs::create_dir_all(parent)
@@ -1681,14 +1826,18 @@ impl SurfacingJournal {
                 unrestored.push(removed.link.display().to_string());
             }
         }
+        unrestored.extend(
+            files
+                .roll_back()
+                .iter()
+                .map(|path| path.display().to_string()),
+        );
         if unrestored.is_empty() {
-            failure.context(
-                "surfacing stopped; every weave-root link it had changed is back as it was",
-            )
+            failure.context("surfacing stopped; everything it had changed is back as it was")
         } else {
             failure.context(format!(
-                "surfacing stopped, and these weave-root links could not be put back as they \
-                 were: {}. `rwv doctor` reports what is left",
+                "surfacing stopped, and these could not be put back as they were: {}. \
+                 `rwv doctor` reports what is left",
                 unrestored.join(", ")
             ))
         }
@@ -2117,6 +2266,27 @@ pub fn verify_surfacing(
                 continue;
             }
         };
+
+        if entry.source == SurfacedSource::WrittenThroughLink && link_meta.is_file() {
+            if let Ok(Some(write)) = crate::root_write::read(root, project, file) {
+                let adoptable = write.verdict == crate::root_write::Verdict::Adopt;
+                issues.push(Issue {
+                    integration: integration.clone(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "surfacing: {}",
+                        if adoptable {
+                            write.unadopted_message()
+                        } else {
+                            write.conflict_message()
+                        }
+                    ),
+                    kind: IssueKind::Surfacing,
+                    safe_to_fix: adoptable,
+                });
+                continue;
+            }
+        }
 
         if !link_meta.file_type().is_symlink() {
             // A regular file/dir sits where the surfacing symlink should be.
@@ -3008,6 +3178,261 @@ mod tests {
                  report, which is the loop: {issues:?}"
             );
         }
+    }
+
+    fn write_root_lock(root: &Path, bytes: &str) {
+        std::fs::write(root.join("Cargo.lock"), bytes).unwrap();
+    }
+
+    fn write_project_lock(root: &Path, project: &str, bytes: &str, recorded: Option<&str>) {
+        let dir = root.join("projects").join(project);
+        std::fs::write(dir.join("Cargo.lock"), bytes).unwrap();
+        if let Some(recorded) = recorded {
+            stamp_owned_digest(&dir, "Cargo.lock", recorded.as_bytes()).unwrap();
+        }
+    }
+
+    fn read(path: &Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+
+    fn is_lock_link(root: &Path, project: &str) -> bool {
+        std::fs::read_link(root.join("Cargo.lock")).ok()
+            == Some(std::path::PathBuf::from(format!(
+                "projects/{project}/Cargo.lock"
+            )))
+    }
+
+    fn surface(root: &Path, project: &ProjectName, mode: SurfacingMode) -> anyhow::Result<()> {
+        surface_symlinks(root, project, &load_manifest(root, project), mode)
+    }
+
+    #[test]
+    fn a_first_lock_written_past_its_dangling_link_is_adopted_and_relinked() {
+        // What `pnpm install` leaves on a first generation: the link dangled,
+        // pnpm renamed its file over it, and the project has no lock.
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_root_lock(root, "version = 4\n");
+
+        surface(root, &project, SurfacingMode::Repair).unwrap();
+
+        assert!(is_lock_link(root, "web-app"));
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("version = 4\n")
+        );
+    }
+
+    #[test]
+    fn a_root_write_identical_to_the_projects_is_relinked() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "version = 4\n", None);
+        write_root_lock(root, "version = 4\n");
+
+        surface(root, &project, SurfacingMode::Repair).unwrap();
+
+        assert!(is_lock_link(root, "web-app"));
+    }
+
+    #[test]
+    fn a_root_write_over_the_recorded_project_copy_is_adopted() {
+        // A tool ran where the link was missing: the project copy is still the
+        // generation rwv recorded, so taking the tool's bytes loses nothing.
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# accepted\n", Some("# accepted\n"));
+        write_root_lock(root, "# regenerated\n");
+
+        surface(root, &project, SurfacingMode::Repair).unwrap();
+
+        assert!(is_lock_link(root, "web-app"));
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("# regenerated\n")
+        );
+    }
+
+    #[test]
+    fn a_root_write_over_a_project_copy_that_moved_leaves_both_and_the_link_out() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# pulled\n", Some("# accepted\n"));
+        write_root_lock(root, "# the tool's\n");
+
+        surface(root, &project, SurfacingMode::Repair).expect("a conflict is named, not refused");
+
+        assert_eq!(
+            read(&root.join("Cargo.lock")).as_deref(),
+            Some("# the tool's\n")
+        );
+        assert!(root
+            .join("Cargo.lock")
+            .symlink_metadata()
+            .unwrap()
+            .is_file());
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("# pulled\n")
+        );
+        let issues = verify_surfacing(root, &project, &load_manifest(root, &project));
+        let conflict = issues
+            .iter()
+            .find(|i| i.message.contains("both changed"))
+            .unwrap_or_else(|| panic!("the conflict must be a finding: {issues:?}"));
+        assert!(
+            !conflict.safe_to_fix,
+            "neither side may be chosen for the operator"
+        );
+        assert!(
+            conflict.message.contains("projects/web-app/Cargo.lock"),
+            "both paths are named: {}",
+            conflict.message
+        );
+    }
+
+    #[test]
+    fn a_verb_that_may_not_write_leaves_a_root_write_and_its_link_out() {
+        // `rwv activate` of the project the root already presents.
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_root_lock(root, "version = 4\n");
+
+        surface(root, &project, SurfacingMode::Select)
+            .expect("an unadopted lock is reported, not refused");
+
+        assert!(root
+            .join("Cargo.lock")
+            .symlink_metadata()
+            .unwrap()
+            .is_file());
+        assert!(!root.join("projects/web-app/Cargo.lock").exists());
+        let issues = verify_surfacing(root, &project, &load_manifest(root, &project));
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.safe_to_fix && i.message.contains("not yet taken into")),
+            "the check names it as something --fix adopts: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn a_directory_where_a_lock_link_belongs_still_refuses() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        std::fs::create_dir(root.join("Cargo.lock")).unwrap();
+
+        let err = surface(root, &project, SurfacingMode::Repair).unwrap_err();
+
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::SurfacingPathOccupied),
+            "{err:#}"
+        );
+    }
+
+    /// A second project with a cargo member, its lock written, for switching to.
+    fn add_cargo_project(root: &Path, name: &str, lock: &str) -> ProjectName {
+        let dir = root.join("projects").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(Manifest::FILE_NAME),
+            std::fs::read_to_string(root.join("projects/web-app").join(Manifest::FILE_NAME))
+                .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.join("Cargo.lock"), lock).unwrap();
+        ProjectName::new(name).unwrap()
+    }
+
+    #[test]
+    fn switching_projects_takes_the_outgoing_root_write_home_first() {
+        let (tmp, _web) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# web\n", Some("# web\n"));
+        write_root_lock(root, "# web, written past its link\n");
+        let api = add_cargo_project(root, "api", "# api\n");
+
+        surface(root, &api, SurfacingMode::Select).unwrap();
+
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("# web, written past its link\n"),
+            "the outgoing project's tool write must not be stranded or discarded"
+        );
+        assert!(is_lock_link(root, "api"));
+    }
+
+    #[test]
+    fn switching_away_from_a_conflicting_root_write_keeps_it_and_the_incoming_link_out() {
+        let (tmp, _web) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# pulled\n", Some("# web\n"));
+        write_root_lock(root, "# the tool's\n");
+        let api = add_cargo_project(root, "api", "# api\n");
+
+        surface(root, &api, SurfacingMode::Select).expect("a conflict is named, not refused");
+
+        assert_eq!(
+            read(&root.join("Cargo.lock")).as_deref(),
+            Some("# the tool's\n")
+        );
+        assert!(root
+            .join("Cargo.lock")
+            .symlink_metadata()
+            .unwrap()
+            .is_file());
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("# pulled\n")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_failure_after_an_adoption_puts_both_files_back() {
+        // The lock is adopted, then the link under the read-only `sub/` cannot
+        // be made.
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# accepted\n", Some("# accepted\n"));
+        write_root_lock(root, "# regenerated\n");
+        let manifest_path = root.join("projects/web-app").join(Manifest::FILE_NAME);
+        let text = std::fs::read_to_string(&manifest_path).unwrap();
+        std::fs::write(
+            &manifest_path,
+            text.replace(
+                "[integrations.vscode-workspace]",
+                "[integrations.static-files]\nenabled = true\nfiles = [\"sub/notes.md\"]\n\n\
+                 [integrations.vscode-workspace]",
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("projects/web-app/sub")).unwrap();
+        std::fs::write(root.join("projects/web-app/sub/notes.md"), "n").unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        let writable = read_only(&root.join("sub"));
+
+        let result = surface(root, &project, SurfacingMode::Repair);
+        std::fs::set_permissions(root.join("sub"), writable).unwrap();
+
+        assert!(result.is_err(), "the obstruction must stop the pass");
+        assert_eq!(
+            read(&root.join("Cargo.lock")).as_deref(),
+            Some("# regenerated\n"),
+            "the root write the pass had taken in must be put back"
+        );
+        assert!(root
+            .join("Cargo.lock")
+            .symlink_metadata()
+            .unwrap()
+            .is_file());
+        assert_eq!(
+            read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+            Some("# accepted\n"),
+            "and the project copy it had overwritten"
+        );
     }
 
     #[test]

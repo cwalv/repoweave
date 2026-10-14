@@ -898,7 +898,11 @@ impl Integration for CargoWorkspace {
         // are in place so cargo sees the workspace the user sees. output_dir
         // (project_dir) is where the canonical Cargo.toml lives, but the member
         // paths in it are resolved relative to the symlink at workspace_root.
-        let subcommand = if Self::lock_records_a_resolve(&lock_path) {
+        // Asked of the lock cargo reads, which is the root's: through the link
+        // that is the project's, and where a tool left a real file there, it is
+        // that file whose resolve would otherwise be discarded.
+        let surfaced = ctx.workspace_root.join("Cargo.lock");
+        let subcommand = if Self::lock_records_a_resolve(&surfaced) {
             "fetch"
         } else {
             "generate-lockfile"
@@ -923,39 +927,24 @@ impl Integration for CargoWorkspace {
             );
         }
 
-        // Stamp the accepted generation's digest (recorded-digest verify,
-        // R34). This is the ACCEPT moment: rwv just ran the generator, so
-        // whatever cargo wrote is by definition the rwv-accepted content.
-        // `verify()` later compares on-disk bytes against this record; an
-        // out-of-band cargo rewrite (valid TOML — invisible to the parse
-        // check) then surfaces as a digest-mismatch WARNING. cargo wrote
-        // through the workspace-root symlink into the file at output_dir (the
-        // surfacing step precedes hooks and intentionally creates dangling
-        // lockfile symlinks so generated content flows back into the project
-        // directory).
-
-        // "cargo wrote through the symlink" is the happy path, not a
-        // guarantee: a bare `cargo build` run in a weave whose lock has
-        // never been generated leaves a REAL `Cargo.lock` sitting on the
-        // surfacing path, and rwv never clobbers a real file there (the
-        // same rule `verify_surfacing` applies). The generation above then
-        // rewrote that orphan and the canonical file is still absent, so
-        // name the orphan and the one-line repair rather than reporting a
-        // bare "no such file" for the path this hook was meant to produce.
-        let surfaced = ctx.workspace_root.join("Cargo.lock");
-        let surfaced_is_real_file = std::fs::symlink_metadata(&surfaced)
-            .map(|m| m.file_type().is_file())
-            .unwrap_or(false);
-        if !lock_path.exists() && surfaced_is_real_file {
-            anyhow::bail!(
-                "cargo {subcommand} wrote {} but the canonical {} is still missing: \
-                 a real file occupies the surfacing path, so the generation could not \
-                 flow back into the project directory. rwv does not overwrite a real \
-                 file at a surfacing path — remove {} and re-run `rwv doctor --fix`",
-                surfaced.display(),
-                lock_path.display(),
-                surfaced.display()
+        // The ACCEPT moment: rwv just ran the generator, so what cargo wrote is
+        // by definition the rwv-accepted content, and `verify()` compares later
+        // bytes against this record. It is recorded only when cargo's write
+        // reached the project copy. A real file at the root path is a write that
+        // missed its link — one this weave held before the hook ran — and
+        // recording the project copy beside it would attest bytes cargo did not
+        // produce; the next verb that may write adopts it instead.
+        if surfaced != lock_path
+            && std::fs::symlink_metadata(&surfaced).is_ok_and(|m| m.file_type().is_file())
+        {
+            eprintln!(
+                "[warning] cargo-workspace: cargo {subcommand} wrote {}, a real file where \
+                 its link belongs, so the generation is not recorded until it is taken \
+                 into {} — run `rwv doctor --fix`",
+                crate::path_spelling::operator_path(&surfaced),
+                crate::path_spelling::operator_path(&lock_path)
             );
+            return Ok(());
         }
 
         let lock_bytes = std::fs::read(&lock_path).with_context(|| {

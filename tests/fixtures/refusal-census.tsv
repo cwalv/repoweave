@@ -42,7 +42,7 @@ src/init.rs	project-dir-occupied	-	2
 src/init.rs	provider-cannot-mint-url	tests/refusal_arrival_test.rs	1
 src/init.rs	unknown-registry	-	1
 src/integration_runner.rs	(untokened:integration-channel)	-	6
-src/integrations/cargo_workspace.rs	(untokened:integration-channel)	-	7
+src/integrations/cargo_workspace.rs	(untokened:integration-channel)	-	6
 src/integrations/go_work.rs	(untokened:integration-channel)	-	3
 src/integrations/merge.rs	(untokened:integration-channel)	-	1
 src/integrations/npm_workspaces.rs	(untokened:integration-channel)	-	1

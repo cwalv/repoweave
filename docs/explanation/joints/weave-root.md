@@ -104,6 +104,19 @@ why a dangling link is deliberately created for a file that does not exist yet
 path is a correctness failure — a second copy of a tracked file that nothing
 reconciles.
 
+The link keeps that write for every tool measured: they write in place
+through it, or resolve it and rename over its target. Two cases still leave
+a real file at a lock file's path — a renaming writer (`pnpm`, npm's
+`write-file-atomic`) meeting a link that dangles, so on a first generation,
+and any writer meeting a link that is missing. That file is the tool's write,
+not something to refuse, and rwv reconciles it: a verb that may write the
+project directory (`add`, `remove`, `update`, `materialize`, `rwv doctor
+--fix`) takes it in and puts the link back, provided the project's own copy is
+absent, identical, or still the generation rwv recorded. Otherwise both copies
+changed, and rwv names them and changes neither. `rwv activate` names the file
+and leaves it, except on a project switch, where the outgoing project's file
+goes home first.
+
 Links are also the cheapest honest mechanism for a view. Minting one moves no
 data; removing one destroys no data; the set of links is recomputable at any
 time by diffing the presented project's declared names against the root. That

@@ -39,7 +39,12 @@ previous state.
    path a link is wanted at is read: a real file, a directory, or a link of
    any other shape standing there refuses with every such path named and no
    link changed (`surfacing-path-occupied`). A link that already points where
-   it should is left in place.
+   it should is left in place. A real file at a lock file's path is not
+   refused: it is the tool's write that missed its link. `activate` names it
+   ("not yet taken into …; run `rwv doctor --fix`") and leaves it, with its
+   link left out — except the outgoing project's on a switch, which is taken
+   into that project first. `add`, `remove`, `update`, `materialize` and
+   `rwv doctor --fix` take it in and restore the link.
 3. **Symlink creation:** new symlinks are created at the weave root pointing
    to `projects/<project>/<file>` for each file in the active integrations'
    union of `generated_files()` and `managed_files()` (Axis-1 surfacing). If

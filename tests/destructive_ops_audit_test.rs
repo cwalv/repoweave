@@ -462,6 +462,35 @@ const ALLOWLIST: &[Allowed] = &[
             the verb makes the link again.",
     },
     Allowed {
+        file: "root_write.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "remove_entry, unlinking a real file at the weave-root path of a \
+            lock an ecosystem tool writes through its link (Cargo.lock, package-lock.json, \
+            pnpm-lock.yaml, uv.lock, go.work.sum). Two routes. (1) An adoption op: the \
+            file's bytes have just been written to the project copy in the same journal — \
+            the Write op precedes the Remove — or already equal it, and the verdict that \
+            allowed it is that the project copy was absent, identical, or still the \
+            generation the owned-digest ledger records; any other state is a conflict, \
+            reported, and both files are left. Only a verb that may write reaches it \
+            (SurfacingMode::Repair, or taking the outgoing project's file home on a \
+            switch). (2) FileJournal::roll_back of a path the same pass created. No \
+            consent: nothing removed here exists nowhere else. Recoverable: the project \
+            copy holds the bytes, and the link now standing at the path reads them.",
+    },
+    Allowed {
+        file: "root_write.rs",
+        pattern: "symlink::remove(",
+        count: 1,
+        callers: &[],
+        justification: "remove_entry's other arm, reached only from \
+            FileJournal::roll_back: a failed pass putting a path back to what it held, \
+            removing whatever stands there before restoring the prior file or link. The \
+            adoption ops it undoes only ever remove regular files, so a link here is one \
+            the same pass's rollback is replacing. Unlinking destroys no content.",
+    },
+    Allowed {
         file: "activate.rs",
         pattern: "remove_file",
         count: 3,

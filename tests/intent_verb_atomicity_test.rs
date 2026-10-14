@@ -155,8 +155,8 @@ fn an_add_refused_by_activation_leaves_the_project_as_it_was() {
 
 #[test]
 fn an_add_stopped_by_a_surfacing_occupant_moves_no_link_and_lands_nothing() {
-    // A real file where the new member's lock link belongs: the shape a tool
-    // leaves when it replaces a surfaced link instead of writing through it.
+    // A directory where the new member's lock link belongs: something no
+    // verb may take over, unlike a lock file a tool left there.
     let (tmp, ws) = weave();
     let plain = origin_with(&tmp.path().join("origin/acme/plain.git"), &[]);
     let added = add(&ws, &plain);
@@ -175,7 +175,8 @@ fn an_add_stopped_by_a_surfacing_occupant_moves_no_link_and_lands_nothing() {
             ("src/lib.rs", ""),
         ],
     );
-    std::fs::write(ws.join("Cargo.lock"), "# not rwv's\n").unwrap();
+    std::fs::create_dir(ws.join("Cargo.lock")).unwrap();
+    std::fs::write(ws.join("Cargo.lock/mine"), "# not rwv's\n").unwrap();
     let project = ws.join("projects/demo");
     let project_before = tree(&project);
     let links_before = root_links(&ws);
@@ -196,7 +197,7 @@ fn an_add_stopped_by_a_surfacing_occupant_moves_no_link_and_lands_nothing() {
     assert_eq!(tree(&project), project_before);
     assert_eq!(root_links(&ws), links_before);
     assert_eq!(
-        std::fs::read_to_string(ws.join("Cargo.lock")).unwrap(),
+        std::fs::read_to_string(ws.join("Cargo.lock/mine")).unwrap(),
         "# not rwv's\n"
     );
 }

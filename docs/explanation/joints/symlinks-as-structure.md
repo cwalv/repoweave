@@ -131,7 +131,10 @@ rule:
 
 The absent case is not a guess about the unknown. Surfacing deliberately
 creates dangling links so that a lock file an ecosystem tool has not written
-yet lands in the project directory when it appears, and those are files. What
+yet lands in the project directory when it appears, and those are files. (A
+tool that renames its first lock over the dangling link leaves a real file
+instead, which the next verb that may write takes into the project — see
+[the weave root](./weave-root.md).) What
 the rule genuinely cannot cover is a target that changes kind after the link
 was made; that is a broken link on Windows and a working one on Unix, and no
 creation-time rule reaches it.

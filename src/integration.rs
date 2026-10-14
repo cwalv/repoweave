@@ -257,13 +257,15 @@ impl IssueKind {
 /// ecosystem tool's output reaches `projects/<project>/`: the tool runs at the
 /// weave root, opens the declared name, and the kernel follows the symlink to
 /// the canonical file. Take the link away and the tool creates a real file at
-/// the weave root instead, where no repo tracks it and no later pass can see
-/// it.
+/// the weave root instead, where no repo tracks it; so does a tool that renames
+/// a temporary file over a link that dangles. That real file is the tool's
+/// output, and surfacing takes it into the project directory rather than
+/// refusing on it (`crate::root_write`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SurfacedSource {
     /// A tool writes this path at the weave root. The link may precede the
     /// file, and a link over an absent file is the pending state rather than a
-    /// stale one.
+    /// stale one. A real file at the path is a write that missed the link.
     WrittenThroughLink,
     /// The file is in the project directory before the link is — rwv's own
     /// `activate()` put it there, or the operator committed it. The link

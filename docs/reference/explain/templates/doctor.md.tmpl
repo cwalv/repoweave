@@ -292,6 +292,13 @@ rwv doctor --fix
   occupying file, then rerun `--fix`). Until then `--fix` re-surfaces
   nothing for that project: surfacing changes no link while any path it
   needs is occupied.
+- *surfacing: `<lock>` at the weave root is a real file a tool wrote where its
+  link belongs* — a lock file's write that missed its link (a tool renaming
+  over a link that dangled, or writing where the link was missing). Safe to
+  `--fix`, which takes it into `projects/<project>/` and restores the link.
+  When the project's copy changed as well, the finding says both changed and
+  is not auto-fixed: copy the root's over the project's, or delete the
+  root's, then re-run `--fix`.
 - *surfacing: `<file>` resolves into project `<other>`* — a weave-root
   symlink surfaces a SHARED name out of a project other than the one the
   weave root presents. Shared names — every surfaced name except

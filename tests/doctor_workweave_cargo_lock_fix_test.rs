@@ -325,70 +325,44 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
     );
 }
 
-/// A real file sitting on the surfacing path is user-held: rwv will not
-/// overwrite it, so the generation cannot reach the canonical location.
+/// A lock a tool wrote at the weave root where its link was missing — a
+/// `cargo build` after a hand `rm` of the link — is that tool's output, and
+/// `--fix` takes it into the canonical location and puts the link back.
 ///
-/// Reaching that state now takes a deliberate unlink. A fresh workweave
-/// carries the lock's surfacing link from creation, and a `cargo build`
-/// through it writes to the canonical file rather than beside it — which is
-/// the point of declaring the lock as written through its link. What stays
-/// reachable, and is what this pins, is the same weave after someone removes
-/// the link by hand and then builds.
+/// This was a refusal: a real file on the surfacing path read as user-held, so
+/// the generation could not reach the canonical lock until the operator removed
+/// it. With no canonical lock to lose, adopting it loses nothing.
 ///
-/// Pinned because the honest failure is the whole point: `--fix`
-/// must not report success when the file it names is still missing.
-///
-/// The refusal arrives from link creation, which reaches the orphan before
-/// the generator does. What is pinned is that it arrives at all, with the
-/// path and the repair in it — not which site minted it.
-///
-/// What is pinned is rwv's refusal text and the path in it, so the generator's
-/// output is not the subject and the run gets a stand-in `cargo` and no other
-/// tool. The final arm asserts only that removing the orphan lets the
-/// generation LAND — that the write reaches the canonical path — which is
-/// rwv's half of it; what the resolve contains is the neighbouring test's
-/// subject and it keeps the real tool.
+/// What is pinned is rwv's adoption, so the generator's output is not the
+/// subject and the run gets a stand-in `cargo` and no other tool.
 ///
 /// Unix only, since the stand-in is a script resolved off `PATH` —
 /// `common::cargo_stand_in_path` states why that does not port.
 #[cfg(unix)]
 #[test]
-fn doctor_fix_names_the_orphan_when_a_real_file_blocks_the_surfacing_path() {
+fn doctor_fix_adopts_a_lock_written_where_its_link_was_missing() {
     let f = fixture();
     let path = common::cargo_stand_in_path(&f.beside_the_weave("stand-in-bin"));
     let path = Some(path.as_os_str());
 
-    // The link create leaves is the route the generation takes, so the orphan
-    // has to be built by removing it first — writing over it would write
-    // THROUGH it and produce the canonical lock this arm needs absent. That
-    // unlink is what a `cargo build` after a hand `rm` of the link amounts to.
+    // The link create leaves is the route the generation takes, so the root
+    // write has to be built by removing it first — writing over it would write
+    // THROUGH it.
     std::fs::remove_file(f.ww_surfaced_lock()).unwrap();
-    std::fs::write(f.ww_surfaced_lock(), "# not a symlink\n").unwrap();
+    std::fs::write(f.ww_surfaced_lock(), "# written by a bare cargo run\n").unwrap();
 
     let fix_output = f.rwv_with_path(&["doctor", "--fix"], &f.ww_dir, path);
 
-    assert!(
-        !f.ww_canonical_lock().exists(),
-        "precondition for this arm: the canonical lock stays missing"
+    assert_eq!(
+        std::fs::read_to_string(f.ww_canonical_lock())
+            .ok()
+            .as_deref(),
+        Some("# written by a bare cargo run\n"),
+        "the root write must be taken into the canonical lock.\noutput:\n{fix_output}"
     );
-    assert!(
-        fix_output.contains("does not overwrite what is already at"),
-        "the failure must name why the generation could not land.\noutput:\n{fix_output}"
-    );
-    assert!(
-        fix_output.contains("remove it and re-run"),
-        "the failure must name the repair, not just the obstruction.\noutput:\n{fix_output}"
-    );
-    assert!(
-        fix_output.contains(&f.ww_surfaced_lock().display().to_string()),
-        "the failure must name the orphan to remove.\noutput:\n{fix_output}"
-    );
-
-    // The named remedy works.
-    std::fs::remove_file(f.ww_surfaced_lock()).unwrap();
-    let retry = f.rwv_with_path(&["doctor", "--fix"], &f.ww_dir, path);
-    assert!(
-        f.ww_canonical_lock().is_file(),
-        "removing the orphan and re-running --fix should produce the lock.\noutput:\n{retry}"
+    assert_eq!(
+        std::fs::read_link(f.ww_surfaced_lock()).ok(),
+        Some(PathBuf::from("projects/web-app/Cargo.lock")),
+        "and the surfacing link must stand again.\noutput:\n{fix_output}"
     );
 }

@@ -226,31 +226,18 @@ fn cargo_activate_hook_failure_names_exclude_and_members_hints() {
     );
 }
 
-/// `cargo_workspace.rs`'s post-hook guard: cargo can report success and
-/// still leave the surfacing path holding a real file with the canonical
-/// lock still missing, if whatever it wrote replaced the dangling
-/// symlink `surface_symlinks` put there rather than writing through it.
+/// A `cargo` that replaces the lock's path rather than writing through the
+/// link `surface_symlinks` put there — the shape `pnpm` and npm's
+/// `write-file-atomic` take on a first generation, when the link dangles —
+/// leaves a real file at the weave root with the canonical lock still missing.
+/// The verb that ran the hook takes that file into the project and puts the
+/// link back, instead of stopping on an "orphan".
 ///
-/// `activate_at` always runs `surface_symlinks` immediately before any
-/// hook fires, and cargo-workspace declares `Cargo.lock` with
-/// `SurfacedFile::written_through_link`, so its link is created whether or
-/// not the source is there — on a first-ever activation the hook is always
-/// handed a freshly-created dangling symlink at this path. Real `cargo generate-lockfile` currently writes through it
-/// rather than replacing it (see
-/// `doctor_fix_in_a_workweave_generates_the_missing_cargo_lock`), but
-/// nothing in cargo's interface guarantees that, which is what the
-/// guard's own comment says. This shim reproduces the failure shape
-/// directly — deleting the symlink and writing a real file in its place
-/// before exiting 0 — to prove the check downstream of that state is
-/// still live, independent of whether today's cargo happens to trigger
-/// it on this host.
-///
-/// Gated on the fixture, not the subject: the orphan check is portable,
-/// but a `cargo` that replaces the symlink on cue is a shebang shim on
-/// `PATH`, which Windows will neither find nor spawn.
+/// Gated on the fixture, not the subject: a `cargo` that replaces the path on
+/// cue is a shebang shim on `PATH`, which Windows will neither find nor spawn.
 #[cfg(unix)]
 #[test]
-fn cargo_activate_hook_names_the_orphan_when_cargo_replaces_the_symlink() {
+fn cargo_activate_hook_whose_tool_replaces_the_link_has_its_lock_adopted() {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = common::tempdir().unwrap();
@@ -277,10 +264,8 @@ fn cargo_activate_hook_names_the_orphan_when_cargo_replaces_the_symlink() {
     .unwrap();
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
-    // A `cargo` that reports success but replaces whatever
-    // `surface_symlinks` just put at the surfacing path with a real
-    // file — reproducing the exact state the post-hook guard checks
-    // for, regardless of whether real cargo does this today.
+    // A `cargo` that reports success after replacing whatever stands at the
+    // lock's root path with a new file.
     let fake_cargo = bin.join("cargo");
     std::fs::write(
         &fake_cargo,
@@ -306,27 +291,17 @@ fn cargo_activate_hook_names_the_orphan_when_cargo_replaces_the_symlink() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    assert!(
-        !ws.join("projects/app/Cargo.lock").exists(),
-        "precondition for this arm: the canonical lock stays missing:\n{report}"
+    assert_eq!(
+        std::fs::read_to_string(ws.join("projects/app/Cargo.lock"))
+            .ok()
+            .as_deref(),
+        Some("# fake lock\n"),
+        "the lock the tool wrote must reach the project copy:\n{report}"
     );
-    assert!(
-        ws.join("Cargo.lock")
-            .symlink_metadata()
-            .map(|m| m.file_type().is_file())
-            .unwrap_or(false),
-        "precondition: the surfacing path should now be a real file, not the symlink \
-             surface_symlinks created (symlink_metadata does not follow, so is_file() here \
-             is already false for a symlink):\n{report}"
-    );
-    assert!(
-        report.contains("wrote") && report.contains("but the canonical"),
-        "the orphan guard should name what cargo wrote and that the canonical is still \
-             missing:\n{report}"
-    );
-    assert!(
-        report.contains("remove") && report.contains("re-run"),
-        "the guard should name the repair:\n{report}"
+    assert_eq!(
+        std::fs::read_link(ws.join("Cargo.lock")).ok(),
+        Some(std::path::PathBuf::from("projects/app/Cargo.lock")),
+        "and the link must stand again:\n{report}"
     );
 }
 
