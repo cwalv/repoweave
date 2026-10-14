@@ -595,6 +595,7 @@ mod tests {
     /// clone, whose own checkout is the primary's.
     struct Weave {
         tmp: tempfile::TempDir,
+        root: PathBuf,
         store: PathBuf,
     }
 
@@ -606,7 +607,10 @@ mod tests {
         /// A primary whose project gives [`REPO`] the role `role`.
         fn listing(files: &[(&str, &str)], role: Role) -> Self {
             let tmp = tempfile::tempdir().unwrap();
-            let primary = tmp.path().join("primary");
+            // git reports worktree paths resolved, so the fakes must key on the
+            // same spelling (macOS temp dirs sit behind the /var symlink).
+            let root = tmp.path().canonicalize().unwrap();
+            let primary = root.join("primary");
             let project = crate::workspace::project_dir(&primary, "app");
             std::fs::create_dir_all(&project).unwrap();
             std::fs::write(
@@ -621,7 +625,7 @@ mod tests {
             let store = primary.join(REPO);
             std::fs::create_dir_all(&store).unwrap();
             git(&store, &["init", "-q", "-b", "main"]);
-            let w = Self { tmp, store };
+            let w = Self { tmp, root, store };
             w.commit(files);
             w
         }
@@ -643,7 +647,7 @@ mod tests {
 
         /// A workspace git checked out itself.
         fn seat(&self, name: &str, at: &ResolvedRevisionId) -> PathBuf {
-            let dest = self.tmp.path().join(name);
+            let dest = self.root.join(name);
             git(
                 &self.store,
                 &[
@@ -675,7 +679,7 @@ mod tests {
             role: Role,
             fs: &dyn FilePrimitives,
         ) -> (PathBuf, FilePlacement) {
-            let dest = self.tmp.path().join(name);
+            let dest = self.root.join(name);
             let owned =
                 OwnedRef::from_receipt(self.store.join(".git"), RawRefName::new(name), at.clone());
             let populated = create_worktree_populated(git_vcs().as_ref(), &owned, &dest, role, fs);
