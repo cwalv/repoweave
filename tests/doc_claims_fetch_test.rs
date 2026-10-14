@@ -667,6 +667,13 @@ fn fetch_json_ndjson_under_parallel_jobs() {
             .get("$schema")
             .and_then(serde_json::Value::as_str)
             .expect("each NDJSON record must have $schema");
+        if schema_val.ends_with("/docs/reference/schemas/placement-record.json") {
+            assert!(
+                obj.contains_key("files"),
+                "placement line missing files: {line}"
+            );
+            continue;
+        }
         assert!(
             schema_val.ends_with("/docs/reference/schemas/fetch-record.json"),
             "NDJSON $schema must end with /docs/reference/schemas/fetch-record.json; got: {schema_val}"

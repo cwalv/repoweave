@@ -26,6 +26,7 @@
 //! reason this file exists at all.
 
 use assert_cmd::Command;
+use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
 use repoweave::update::{UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -515,8 +516,13 @@ fn update_json_emits_ndjson_under_j_gt_1() {
         let v: Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("NDJSON line not valid JSON ({e}): {line}"));
         let obj = v.as_object().unwrap();
+        let schema = obj.get("$schema").and_then(Value::as_str);
+        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
+            assert!(obj.contains_key("files"), "missing files: {line}");
+            continue;
+        }
         assert_eq!(
-            obj.get("$schema").and_then(Value::as_str),
+            schema,
             Some(UPDATE_RECORD_SCHEMA_URL),
             "every NDJSON record must embed $schema: {line}"
         );

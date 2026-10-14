@@ -12,6 +12,7 @@ use repoweave::fetch::{
     FetchJsonOutput, FetchOutcomeNdjsonRecord, FetchOutcomeOutput, FetchOutcomeStatus,
     FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
 };
+use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
 use serde_json::Value;
 use std::path::Path;
 use std::process;
@@ -360,8 +361,13 @@ fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
 
         // Every NDJSON record must carry $schema pointing at the per-record
         // artifact, not the serial envelope.
+        let schema = obj.get("$schema").and_then(Value::as_str);
+        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
+            assert!(obj.contains_key("files"), "missing `files`: {line}");
+            continue;
+        }
         assert_eq!(
-            obj.get("$schema").and_then(Value::as_str),
+            schema,
             Some(FETCH_RECORD_SCHEMA_URL),
             "every NDJSON record must embed $schema: {line}"
         );

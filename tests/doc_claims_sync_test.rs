@@ -141,6 +141,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
 const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync.json";
 /// Schema fragment for NDJSON per-repo records (`-j N`, `N > 1`).
 const RECORD_SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-record.json";
+const PLACEMENT_SCHEMA_FRAGMENT: &str = "docs/reference/schemas/placement-record.json";
 
 // ===========================================================================
 // 1. Envelope shape under serial mode
@@ -355,6 +356,10 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         let schema = obj["$schema"]
             .as_str()
             .unwrap_or_else(|| panic!("line missing `$schema`: {line}"));
+        if schema.contains(PLACEMENT_SCHEMA_FRAGMENT) {
+            assert!(obj.contains_key("files"), "line missing `files`: {line}");
+            continue;
+        }
         assert!(
             schema.contains(RECORD_SCHEMA_FRAGMENT),
             "per-line $schema must point at {RECORD_SCHEMA_FRAGMENT}; got: {schema}"
