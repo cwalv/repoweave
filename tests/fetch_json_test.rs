@@ -36,16 +36,15 @@ fn fetch_json_envelope_round_trips() {
                 absolute_path: "/abs/github/org/alpha".into(),
                 status: FetchOutcomeStatus::Ok,
                 message: None,
-                files: None,
             },
             FetchOutcomeOutput {
                 path: "github/org/beta".into(),
                 absolute_path: "/abs/github/org/beta".into(),
                 status: FetchOutcomeStatus::Skipped,
                 message: Some("skipped github/org/beta".into()),
-                files: None,
             },
         ],
+        placements: Vec::new(),
         resolution: None,
     };
 
@@ -90,7 +89,6 @@ fn fetch_outcome_failed_serializes() {
         absolute_path: "/abs/github/org/repo".into(),
         status: FetchOutcomeStatus::Failed,
         message: Some("clone failed: connection refused".into()),
-        files: None,
     };
     let v = serde_json::to_value(&record).expect("serializes");
     assert_eq!(v["status"], "failed");
@@ -106,7 +104,6 @@ fn fetch_ndjson_record_embeds_schema_and_flattens_outcome() {
         absolute_path: "/abs/github/org/repo".into(),
         status: FetchOutcomeStatus::Ok,
         message: None,
-        files: None,
     };
     let record = FetchOutcomeNdjsonRecord {
         schema: FETCH_RECORD_SCHEMA_URL,

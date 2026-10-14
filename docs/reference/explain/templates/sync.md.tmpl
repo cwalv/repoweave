@@ -105,7 +105,8 @@ pretty-printed envelope:
 ```
 {
   "$schema": "<url>",
-  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
 }
 ```
 
@@ -122,12 +123,21 @@ of the source it was measured against. Branch on that rather than on the
 prose in `failure.message`. It is absent only where the outcome was decided
 before any pair could be read, such as a HEAD that would not resolve.
 
+File counts are never on an outcome. Each checkout whose files the sync
+placed — a member it created, or one whose moved files it shared again at
+the end of the op — gets a placement record: `path`, `absolute_path` (the
+checkout the files are in), and `files` (`reflinked`, `hardlinked`,
+`written`). The envelope lists them under `placements`, empty when nothing
+was placed.
+
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
 moment each repo's sync completes. Lines arrive in completion order (not
 input order); consumers demux by `path`. Every line is self-describing:
 each record embeds its own `"$schema"` URL alongside the per-repo fields,
-so a consumer can identify any line without out-of-band context. Lines
+so a consumer can identify any line without out-of-band context. A
+placement is streamed as its own line when it happens, often after its
+repo's outcome line; its `$schema` names `placement-record.json`. Lines
 are mutex-guarded so concurrent workers can't tear a single record's
 bytes. The text-prefix Reporter wrapper (`[<repo>] <line>`) used by
 `fetch`/`update` under `-j > 1` is **bypassed** in JSON mode — workers

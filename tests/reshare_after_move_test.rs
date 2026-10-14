@@ -123,7 +123,7 @@ fn sync_reports_how_the_files_it_moved_were_placed() {
 }
 
 #[test]
-fn sync_json_carries_the_placement_on_the_members_outcome() {
+fn sync_json_reports_the_placement_as_its_own_record() {
     let tmp = common::tempdir().unwrap();
     let (primary, member, seat) = weave_and_seat(tmp.path());
     std::fs::write(member.join("NEXT"), "n\n").unwrap();
@@ -150,8 +150,16 @@ fn sync_json_carries_the_placement_on_the_members_outcome() {
         .iter()
         .find(|o| o["path"] == MEMBER)
         .unwrap_or_else(|| panic!("no outcome for {MEMBER}:\n{stdout}"));
-    let files = &outcome["files"];
-    assert!(files.is_object(), "no placement on the outcome:\n{stdout}");
+    assert!(outcome.get("files").is_none(), "{stdout}");
+    let placements = envelope["placements"].as_array().unwrap();
+    assert_eq!(placements.len(), 1, "{stdout}");
+    let placement = &placements[0];
+    assert_eq!(placement["path"], MEMBER);
+    assert_eq!(
+        std::fs::canonicalize(placement["absolute_path"].as_str().unwrap()).unwrap(),
+        std::fs::canonicalize(seat.join(MEMBER)).unwrap()
+    );
+    let files = &placement["files"];
     let count = |key: &str| files[key].as_u64().unwrap();
     assert_eq!(count("reflinked") + count("written"), 1, "{stdout}");
     assert_eq!(count("hardlinked"), 0);

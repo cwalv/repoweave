@@ -13,6 +13,7 @@ use crate::manifest::{
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
+use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
 use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
@@ -29,7 +30,6 @@ use crate::workweave::{ensure_registered_workweave, refuse_symlinked_members};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -548,12 +548,6 @@ pub enum SyncOutcomeOutput {
         /// against — `behind` is a fast-forward, `diverged` is a rebase.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
-        /// How this checkout's files were placed when the op created it or
-        /// moved it: cloned from another workspace of the repository, or
-        /// written by the VCS. Absent where nothing was placed or the VCS
-        /// cannot say.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        files: Option<FilePlacement>,
     },
     AlreadyAhead {
         path: String,
@@ -573,12 +567,6 @@ pub enum SyncOutcomeOutput {
         /// source's checkout could not be measured.
         #[serde(skip_serializing_if = "Option::is_none")]
         source_position: Option<ContainmentVerdictOutput>,
-        /// How this checkout's files were placed when the op created it or
-        /// moved it: cloned from another workspace of the repository, or
-        /// written by the VCS. Absent where nothing was placed or the VCS
-        /// cannot say.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        files: Option<FilePlacement>,
     },
     NoOp {
         path: String,
@@ -591,12 +579,6 @@ pub enum SyncOutcomeOutput {
         /// source it was equal to.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
-        /// How this checkout's files were placed when the op created it or
-        /// moved it: cloned from another workspace of the repository, or
-        /// written by the VCS. Absent where nothing was placed or the VCS
-        /// cannot say.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        files: Option<FilePlacement>,
     },
     Failed {
         path: String,
@@ -612,12 +594,6 @@ pub enum SyncOutcomeOutput {
         /// Absent where the outcome was decided before any pair was read.
         #[serde(skip_serializing_if = "Option::is_none")]
         containment: Option<ContainmentOutput>,
-        /// How this checkout's files were placed when the op created it or
-        /// moved it: cloned from another workspace of the repository, or
-        /// written by the VCS. Absent where nothing was placed or the VCS
-        /// cannot say.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        files: Option<FilePlacement>,
     },
 }
 
@@ -640,7 +616,6 @@ impl SyncOutcomeOutput {
                 step3_advance: None,
                 derived_content_dropped: derived_content_dropped.clone(),
                 containment,
-                files: None,
             },
             RepoSyncOutcome::AlreadyAhead {
                 commits_ahead,
@@ -653,14 +628,12 @@ impl SyncOutcomeOutput {
                 step3_advance: None,
                 containment,
                 source_position: source_position.map(ContainmentVerdictOutput::from),
-                files: None,
             },
             RepoSyncOutcome::NoOp => Self::NoOp {
                 path,
                 absolute_path,
                 step3_advance: None,
                 containment,
-                files: None,
             },
             RepoSyncOutcome::Failed(failure) => Self::Failed {
                 path,
@@ -668,31 +641,12 @@ impl SyncOutcomeOutput {
                 failure: SyncFailureOutput::from(failure),
                 step3_advance: None,
                 containment,
-                files: None,
             },
         }
     }
 
     pub fn is_failure(&self) -> bool {
         matches!(self, Self::Failed { .. })
-    }
-
-    fn path(&self) -> &str {
-        match self {
-            Self::Converged { path, .. }
-            | Self::AlreadyAhead { path, .. }
-            | Self::NoOp { path, .. }
-            | Self::Failed { path, .. } => path,
-        }
-    }
-
-    fn files_mut(&mut self) -> &mut Option<FilePlacement> {
-        match self {
-            Self::Converged { files, .. }
-            | Self::AlreadyAhead { files, .. }
-            | Self::NoOp { files, .. }
-            | Self::Failed { files, .. } => files,
-        }
     }
 
     /// Return a mutable reference to the `step3_advance` field regardless of variant.
@@ -712,6 +666,9 @@ pub struct SyncJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<SyncOutcomeOutput>,
+    /// How the files of each checkout the sync created or moved were placed.
+    /// Empty, not absent, when it placed none.
+    pub placements: Vec<PlacementOutput>,
     /// Standing advisories raised during this sync (e.g. delivered changes
     /// touching a materialized input). Empty, not absent, when there are
     /// none — a consumer branches on length rather than presence.
@@ -739,6 +696,7 @@ pub struct SyncJsonOutput {
 ///   omitted when the project repo was already at CWD's tip (no-op advance).
 /// - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest
 ///   repo; omitted on a no-op advance.
+/// - `placements` — file placements in both workspaces, the target's included.
 ///
 /// Kept as a separate type so the generated schema artifact
 /// (`docs/reference/schemas/sync-to.json`) has its own title/description.
@@ -773,6 +731,11 @@ pub struct SyncToJsonOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resumed: Option<op_state::OpPhase>,
     pub outcomes: Vec<SyncOutcomeOutput>,
+    /// How the files of each checkout the op created or moved were placed, in
+    /// this workspace and in the target, each under its own `absolute_path`.
+    /// Empty, not absent, when it placed none. Unlike `step3_advance`, a
+    /// placement a resume makes is reported whatever phase it re-entered at.
+    pub placements: Vec<PlacementOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2039,13 +2002,13 @@ pub trait OutputHandler: Send + Sync {
     /// plain-sync JSON handlers that do not need step-3 SHAs.
     fn record_step3_advance(&self, _path: &str, _from_sha: &str, _to_sha: &str) {}
 
-    /// Record how a repo's files were placed when the op created it or moved
-    /// it, keyed like `record`'s `path`. It may arrive before or after that
-    /// repo's record.
+    /// Record how one checkout's files were placed when the op created or
+    /// moved it. A checkout of the target is not the one its repo's record
+    /// names, and a placement can arrive after that record.
     ///
     /// Default implementation is a no-op: the text handler prints placement
     /// at the call site.
-    fn record_files(&self, _path: &str, _files: FilePlacement) {}
+    fn record_placement(&self, _placement: PlacementOutput) {}
 
     /// Record a standing advisory raised during cleanup.
     ///
@@ -2164,7 +2127,7 @@ impl OutputHandler for TextHandler<'_> {
 pub struct JsonEnvelopeHandler<'a> {
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     advisories: &'a Mutex<Vec<AdvisoryOutput>>,
-    files: &'a Mutex<HashMap<String, FilePlacement>>,
+    placements: &'a Mutex<Vec<PlacementOutput>>,
 }
 
 impl OutputHandler for JsonEnvelopeHandler<'_> {
@@ -2194,9 +2157,9 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
         guard.push(advisory);
     }
 
-    fn record_files(&self, path: &str, files: FilePlacement) {
-        let mut guard = self.files.lock().unwrap_or_else(|e| e.into_inner());
-        guard.insert(path.to_owned(), files);
+    fn record_placement(&self, placement: PlacementOutput) {
+        let mut guard = self.placements.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(placement);
     }
 }
 
@@ -2208,13 +2171,11 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
 /// `stdout_lock` serialises concurrent writes so parallel workers cannot
 /// interleave bytes. Text chatter is suppressed (`emit_text` returns `false`).
 ///
-/// A repo's file placement rides on its line only when it was recorded
-/// before the line was written.
+/// A placement is streamed as its own line when it is recorded.
 pub struct JsonNdjsonHandler<'a> {
     stdout_lock: &'a Mutex<()>,
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     schema_url: &'a str,
-    files: &'a Mutex<HashMap<String, FilePlacement>>,
 }
 
 impl OutputHandler for JsonNdjsonHandler<'_> {
@@ -2229,20 +2190,12 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     ) {
-        let mut out = SyncOutcomeOutput::from_outcome(
+        let out = SyncOutcomeOutput::from_outcome(
             path.to_owned(),
             abs_path.to_owned(),
             outcome,
             containment,
         );
-        if let Some(files) = self
-            .files
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(path)
-        {
-            *out.files_mut() = Some(files);
-        }
         let record = SyncOutcomeNdjsonRecord {
             schema: self.schema_url,
             outcome: &out,
@@ -2259,6 +2212,10 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
         }
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(out);
+    }
+
+    fn record_placement(&self, placement: PlacementOutput) {
+        placement.stream(self.stdout_lock);
     }
 }
 
@@ -2284,7 +2241,7 @@ pub struct JsonEnvelopeSyncToHandler<'a> {
     retired: &'a Mutex<Option<WorkweaveName>>,
     /// The phase the resumed op's record stood at, `None` on a fresh run.
     resumed: &'a Mutex<Option<op_state::OpPhase>>,
-    files: &'a Mutex<HashMap<String, FilePlacement>>,
+    placements: &'a Mutex<Vec<PlacementOutput>>,
 }
 
 impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
@@ -2336,9 +2293,9 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
         guard.insert(path.to_owned(), advance);
     }
 
-    fn record_files(&self, path: &str, files: FilePlacement) {
-        let mut guard = self.files.lock().unwrap_or_else(|e| e.into_inner());
-        guard.insert(path.to_owned(), files);
+    fn record_placement(&self, placement: PlacementOutput) {
+        let mut guard = self.placements.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(placement);
     }
 }
 
@@ -4791,7 +4748,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         ) {
             Ok(files) => {
                 if let Some(files) = files {
-                    ctx.handler.record_files(repo_path.as_str(), files);
+                    ctx.handler
+                        .record_placement(PlacementOutput::new(repo_path, &abs, files));
                 }
                 if emit_text {
                     println!(
@@ -5218,7 +5176,11 @@ fn settle_members(
     {
         if let (Ok(settled), Some(handler)) = (&settled, handler) {
             if let Some(files) = settled.files {
-                handler.record_files(repo_path.as_str(), files);
+                handler.record_placement(PlacementOutput::new(
+                    &repo_path,
+                    &workspace.join(repo_path.as_path()),
+                    files,
+                ));
             }
         }
         if !emit_text {
@@ -5559,7 +5521,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 }) {
                     Ok(born) => {
                         if let Some(files) = born.files {
-                            ctx.handler.record_files(repo_path.as_str(), files);
+                            ctx.handler.record_placement(PlacementOutput::new(
+                                repo_path,
+                                &target_repo,
+                                files,
+                            ));
                         }
                         if emit_text {
                             println!(
@@ -6983,21 +6949,11 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 /// the spec's "non-zero iff at least one repo failed" semantic: when sync
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
-/// Put each recorded file placement on the outcome for its repo.
-fn attach_files(records: &mut [SyncOutcomeOutput], files: Mutex<HashMap<String, FilePlacement>>) {
-    let mut files = files.into_inner().unwrap_or_else(|e| e.into_inner());
-    for record in records {
-        if let Some(placed) = files.remove(record.path()) {
-            *record.files_mut() = Some(placed);
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
-    let files: Mutex<HashMap<String, FilePlacement>> = Mutex::new(HashMap::new());
+    let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
@@ -7007,26 +6963,26 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_RECORD_SCHEMA_URL,
-            files: &files,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     } else {
         let handler = JsonEnvelopeHandler {
             records: &records,
             advisories: &advisories,
-            files: &files,
+            placements: &placements,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     };
 
-    let mut records = records.into_inner().unwrap_or_else(|e| e.into_inner());
-    attach_files(&mut records, files);
+    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
     let advisories = advisories.into_inner().unwrap_or_else(|e| e.into_inner());
+    let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
         ndjson,
         records,
         advisories,
+        placements,
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
         false,
@@ -7072,10 +7028,12 @@ fn json_exit_tail(
 /// array is emitted even when `records` is empty (used by sync-to where
 /// step 1 may be skipped for ff-clean with no per-repo manifest outcomes).
 /// When false (sync's behavior), empty records propagates the error.
+#[allow(clippy::too_many_arguments)]
 fn run_sync_json_impl(
     ndjson: bool,
     records: Vec<SyncOutcomeOutput>,
     advisories: Vec<AdvisoryOutput>,
+    placements: Vec<PlacementOutput>,
     schema_url: &str,
     project_level_result: anyhow::Result<()>,
     emit_empty_envelope: bool,
@@ -7097,6 +7055,7 @@ fn run_sync_json_impl(
         let payload = SyncJsonOutput {
             schema: schema_url.to_owned(),
             outcomes: records,
+            placements,
             advisories,
             resolution,
         };
@@ -7184,7 +7143,7 @@ pub struct SyncToJsonRun {
 /// target is in the op record rather than in `request`.
 pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
-    let files: Mutex<HashMap<String, FilePlacement>> = Mutex::new(HashMap::new());
+    let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
     let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
@@ -7204,7 +7163,6 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_TO_RECORD_SCHEMA_URL,
-            files: &files,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     } else {
@@ -7214,13 +7172,13 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             coordinates: &coordinates,
             retired: &retired,
             resumed: &resumed,
-            files: &files,
+            placements: &placements,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
 
-    let mut records = records.into_inner().unwrap_or_else(|e| e.into_inner());
-    attach_files(&mut records, files);
+    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
     let mut step3_map = step3_advances
         .into_inner()
         .unwrap_or_else(|e| e.into_inner());
@@ -7267,6 +7225,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             retired: retired.is_some(),
             resumed,
             outcomes,
+            placements,
             project_repo_advance,
             resolution: ctx.resolution(),
         })

@@ -76,6 +76,7 @@ use repoweave::fetch::{
 use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::op_state::{OpPhase, OpVerb, Override};
+use repoweave::placement::{PlacementNdjsonRecord, PlacementOutput, PLACEMENT_RECORD_SCHEMA_URL};
 use repoweave::push::{
     PushJsonOutput, PushOutcomeNdjsonRecord, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL,
     PUSH_SCHEMA_URL,
@@ -175,6 +176,11 @@ fn cases() -> Vec<VerbCase> {
             schema_url: SYNC_TO_RECORD_SCHEMA_URL,
             corpus: sync_to_record_corpus,
         },
+        VerbCase {
+            verb: "placement-record",
+            schema_url: PLACEMENT_RECORD_SCHEMA_URL,
+            corpus: placement_record_corpus,
+        },
     ]
 }
 
@@ -224,6 +230,30 @@ fn advance() -> Step3AdvanceOutput {
         from_sha: sha('a'),
         to_sha: sha('b'),
     }
+}
+
+/// A checkout in this workspace and one in another, as sync-to places both.
+fn placements() -> Vec<PlacementOutput> {
+    vec![
+        PlacementOutput {
+            path: REPO.to_owned(),
+            absolute_path: ABS.to_owned(),
+            files: FilePlacement {
+                reflinked: 4,
+                hardlinked: 2,
+                written: 1,
+            },
+        },
+        PlacementOutput {
+            path: REPO.to_owned(),
+            absolute_path: "/target/github/acme/repo".to_owned(),
+            files: FilePlacement {
+                reflinked: 0,
+                hardlinked: 0,
+                written: 3,
+            },
+        },
+    ]
 }
 
 fn advisories() -> Vec<AdvisoryOutput> {
@@ -322,17 +352,11 @@ fn fetch_outcomes() -> Vec<FetchOutcomeOutput> {
             FetchOutcomeStatus::Skipped => Some("role: reference".to_owned()),
             FetchOutcomeStatus::Failed => Some("remote unreachable".to_owned()),
         };
-        let files = (status == FetchOutcomeStatus::Ok).then_some(FilePlacement {
-            reflinked: 3,
-            hardlinked: 0,
-            written: 2,
-        });
         FetchOutcomeOutput {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             status,
             message,
-            files,
         }
     })
     .collect()
@@ -345,6 +369,7 @@ fn fetch_corpus() -> Vec<(&'static str, Value)> {
             value(FetchJsonOutput {
                 schema: FETCH_SCHEMA_URL.to_owned(),
                 outcomes: fetch_outcomes(),
+                placements: placements(),
                 resolution: Some(resolution()),
             }),
         ),
@@ -353,6 +378,7 @@ fn fetch_corpus() -> Vec<(&'static str, Value)> {
             value(FetchJsonOutput {
                 schema: FETCH_SCHEMA_URL.to_owned(),
                 outcomes: Vec::new(),
+                placements: Vec::new(),
                 resolution: None,
             }),
         ),
@@ -656,11 +682,6 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             derived_content_dropped: Vec::new(),
             containment: Some(c[0]),
-            files: Some(FilePlacement {
-                reflinked: 4,
-                hardlinked: 0,
-                written: 1,
-            }),
         },
         SyncOutcomeOutput::Converged {
             path: REPO.to_owned(),
@@ -668,7 +689,6 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             derived_content_dropped: vec!["Cargo.lock".to_owned()],
             containment: Some(c[1]),
-            files: None,
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
@@ -677,7 +697,6 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             containment: Some(c[2]),
             source_position: Some(ContainmentVerdictOutput::Ahead { commits: 5 }),
-            files: None,
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
@@ -686,14 +705,12 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             step3_advance: step3.clone(),
             containment: None,
             source_position: None,
-            files: None,
         },
         SyncOutcomeOutput::NoOp {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             step3_advance: step3.clone(),
             containment: Some(c[3]),
-            files: None,
         },
     ];
     for (n, failure) in sync_failures().into_iter().enumerate() {
@@ -705,7 +722,6 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
             // A failure decided before any pair was read carries no verdict,
             // and that shape has to be sampled too.
             containment: (n > 0).then(|| c[n % c.len()]),
-            files: None,
         });
     }
     outcomes
@@ -718,6 +734,7 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
             value(SyncJsonOutput {
                 schema: SYNC_JSON_SCHEMA_URL.to_owned(),
                 outcomes: sync_outcomes(false),
+                placements: placements(),
                 advisories: advisories(),
                 resolution: Some(resolution()),
             }),
@@ -727,6 +744,7 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
             value(SyncJsonOutput {
                 schema: SYNC_JSON_SCHEMA_URL.to_owned(),
                 outcomes: sync_outcomes(true),
+                placements: Vec::new(),
                 advisories: Vec::new(),
                 resolution: None,
             }),
@@ -746,6 +764,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 // Fresh run: the absent shape of the `resumed` disclosure.
                 resumed: None,
                 outcomes: sync_outcomes(true),
+                placements: placements(),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
             }),
@@ -761,6 +780,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 // conflict): replay re-ran, so outcomes carries every repo.
                 resumed: Some(OpPhase::Replay),
                 outcomes: sync_outcomes(false),
+                placements: Vec::new(),
                 project_repo_advance: None,
                 resolution: None,
             }),
@@ -778,6 +798,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 retired: false,
                 resumed: Some(OpPhase::Relock),
                 outcomes: Vec::new(),
+                placements: Vec::new(),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
             }),
@@ -791,6 +812,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 retired: false,
                 resumed: Some(OpPhase::AdvanceTarget),
                 outcomes: Vec::new(),
+                placements: placements(),
                 project_repo_advance: None,
                 resolution: Some(resolution()),
             }),
@@ -804,6 +826,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 retired: true,
                 resumed: Some(OpPhase::Retire),
                 outcomes: Vec::new(),
+                placements: Vec::new(),
                 project_repo_advance: None,
                 resolution: Some(resolution()),
             }),
@@ -828,11 +851,6 @@ fn update_records() -> Vec<RepoUpdateRecord> {
             UpdateKind::UpToDate => (Some(sha('a')), Some(sha('a')), None),
             UpdateKind::Failed => (None, None, Some("not a fast-forward".to_owned())),
         };
-        let files = (kind == UpdateKind::Updated).then_some(FilePlacement {
-            reflinked: 2,
-            hardlinked: 0,
-            written: 1,
-        });
         RepoUpdateRecord {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
@@ -841,7 +859,6 @@ fn update_records() -> Vec<RepoUpdateRecord> {
             old_sha,
             new_sha,
             error,
-            files,
         }
     })
     .collect()
@@ -854,6 +871,7 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
             value(UpdateJsonOutput {
                 schema_url: UPDATE_SCHEMA_URL.to_owned(),
                 repos: update_records(),
+                placements: placements(),
                 resolution: Some(primary_resolution()),
             }),
         ),
@@ -862,6 +880,7 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
             value(UpdateJsonOutput {
                 schema_url: UPDATE_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
+                placements: Vec::new(),
                 resolution: None,
             }),
         ),
@@ -979,6 +998,20 @@ fn sync_to_record_corpus() -> Vec<(&'static str, Value)> {
         .collect()
 }
 
+fn placement_record_corpus() -> Vec<(&'static str, Value)> {
+    placements()
+        .iter()
+        .zip(["this-workspace", "the-target"])
+        .map(|(placement, label)| {
+            let v = value(PlacementNdjsonRecord {
+                schema: PLACEMENT_RECORD_SCHEMA_URL,
+                placement,
+            });
+            (label, v)
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // The pins
 // ---------------------------------------------------------------------------
@@ -1084,9 +1117,24 @@ fn every_corpus_carries_every_envelope_field_its_schema_declares() {
 /// cannot fall behind it.
 #[test]
 fn every_corpus_exercises_every_member_its_schema_declares() {
+    fn declares_a_wire_value(schema: &Value) -> bool {
+        match schema {
+            Value::Object(map) => {
+                map.contains_key("enum")
+                    || map.contains_key("const")
+                    || map.values().any(declares_a_wire_value)
+            }
+            Value::Array(items) => items.iter().any(declares_a_wire_value),
+            _ => false,
+        }
+    }
     for case in cases() {
         let schema = json_schema::committed_schema(case.verb);
         let declared = json_schema::declared_enum_values(&schema);
+        if !declares_a_wire_value(&schema) {
+            assert!(declared.is_empty(), "{}: {declared:?}", case.verb);
+            continue;
+        }
         assert!(
             !declared.is_empty(),
             "{}: no declared enum members were read — the coverage check is vacuous",

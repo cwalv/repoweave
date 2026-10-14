@@ -8,6 +8,7 @@
 //!    through the binary, parse stdout, assert envelope / NDJSON shape.
 
 use assert_cmd::Command;
+use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
 use repoweave::update::{
     RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL,
 };
@@ -182,7 +183,6 @@ fn update_json_envelope_round_trips() {
                 old_sha: Some("abc123".into()),
                 new_sha: Some("def456".into()),
                 error: None,
-                files: None,
             },
             RepoUpdateRecord {
                 path: "github/org/other".into(),
@@ -192,9 +192,9 @@ fn update_json_envelope_round_trips() {
                 old_sha: Some("aaa111".into()),
                 new_sha: Some("aaa111".into()),
                 error: None,
-                files: None,
             },
         ],
+        placements: Vec::new(),
         resolution: None,
     };
 
@@ -238,7 +238,6 @@ fn update_json_error_field_omitted_when_not_failed() {
         old_sha: Some("abc".into()),
         new_sha: Some("def".into()),
         error: None,
-        files: None,
     };
     let v = serde_json::to_value(&record).unwrap();
     assert!(
@@ -258,7 +257,6 @@ fn update_json_failed_record_serializes() {
         old_sha: Some("abc".into()),
         new_sha: None,
         error: Some("git fetch failed".into()),
-        files: None,
     };
     let v = serde_json::to_value(&record).unwrap();
     assert_eq!(v["kind"], "failed");
@@ -364,8 +362,13 @@ fn update_json_ndjson_emitted_under_j_gt_1() {
         let v: Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("line not valid JSON ({e}): {line}"));
         let obj = v.as_object().unwrap();
+        let schema = obj.get("$schema").and_then(Value::as_str);
+        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
+            assert!(obj.contains_key("files"), "missing files: {line}");
+            continue;
+        }
         assert_eq!(
-            obj.get("$schema").and_then(Value::as_str),
+            schema,
             Some(UPDATE_RECORD_SCHEMA_URL),
             "every NDJSON record must embed $schema: {line}"
         );

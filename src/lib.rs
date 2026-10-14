@@ -66,6 +66,7 @@ pub mod op_state;
 pub mod owned_state;
 pub mod parallel;
 pub mod path_spelling;
+pub mod placement;
 pub mod plugins;
 pub mod prime;
 pub mod push;

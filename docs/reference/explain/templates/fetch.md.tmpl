@@ -150,7 +150,8 @@ Under `--json`, output switches to machine-readable format:
   ```
   {
     "$schema": "<url>",
-    "outcomes": [ { "path": "...", ... }, ... ]
+    "outcomes": [ { "path": "...", ... }, ... ],
+    "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
   }
   ```
 
@@ -162,6 +163,15 @@ Each per-repo record in the `outcomes` array (or in each NDJSON line) has the
 shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
 (`ok` / `skipped` / `failed`), and `message` (human-readable detail; absent
 for `ok`, present for `skipped` and `failed`).
+
+File counts are never on an outcome. Each checkout whose files the fetch
+placed gets a placement record: `path`, `absolute_path` (the checkout the
+files are in), and `files` (`reflinked`, `hardlinked`, `written`). A clone
+the fetch realigned gets one, and so, from a workweave, does each worktree
+the fetch creates there for a member the workweave lacks, under the
+workweave's path. The envelope lists them under `placements`, empty when
+nothing was placed; NDJSON streams each as its own line, whose `$schema`
+names `placement-record.json`.
 
 The `$schema` URL points to the committed schema artifact. See the Schema
 section below.

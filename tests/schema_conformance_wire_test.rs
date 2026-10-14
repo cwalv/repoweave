@@ -602,7 +602,8 @@ fn emit_ndjson(cwd: &Path, args: &[&str]) -> Vec<Value> {
 }
 
 /// Validate each NDJSON record against the committed artifact its own
-/// `$schema` URL names, asserting that artifact is `expected_record_artifact`.
+/// `$schema` URL names, asserting that artifact is `expected_record_artifact`
+/// or the placement record every file-placing verb streams beside its own.
 ///
 /// A record URL pointing at a different artifact causes the `assert_eq` to
 /// fire, naming both the expected and the actual artifact path so the failure
@@ -625,9 +626,8 @@ fn assert_ndjson_conforms(verb: &str, records: &[Value], expected_record_artifac
                     "rwv {verb} --json -j 2 record[{i}] embedded `{url}`, which names no artifact"
                 )
             });
-        assert_eq!(
-            named,
-            expected_record_artifact,
+        assert!(
+            named == expected_record_artifact || named == "placement-record",
             "rwv {verb} --json -j 2 record[{i}] points consumers at {}, expected {}",
             json_schema::schema_path(named),
             json_schema::schema_path(expected_record_artifact),

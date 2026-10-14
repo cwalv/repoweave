@@ -93,6 +93,7 @@ use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::explain;
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeNdjsonRecord, FETCH_RECORD_SCHEMA_URL};
+use repoweave::placement::{PlacementNdjsonRecord, PLACEMENT_RECORD_SCHEMA_URL};
 use repoweave::plugins::envelope_vars;
 use repoweave::push::{
     PushJsonOutput, PushOutcomeNdjsonRecord, PUSH_RECORD_SCHEMA_URL, PUSH_SCHEMA_URL,
@@ -294,6 +295,11 @@ fn schema_push() -> String {
 fn schema_fetch_record() -> String {
     let schema = schema_for!(FetchOutcomeNdjsonRecord<'static>);
     serde_json::to_string_pretty(&schema).expect("fetch-record schema serializes")
+}
+
+fn schema_placement_record() -> String {
+    let schema = schema_for!(PlacementNdjsonRecord<'static>);
+    serde_json::to_string_pretty(&schema).expect("placement-record schema serializes")
 }
 
 fn schema_update_record() -> String {
@@ -3231,6 +3237,15 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // The placement line every file-placing verb streams beside its own
+    // records belongs to no one verb.
+    let mut placement_record = schema_placement_record();
+    placement_record.push('\n');
+    write_if_changed(
+        &schemas_dir.join("placement-record.json"),
+        &placement_record,
+    )?;
+
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
@@ -3281,6 +3296,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         PUSH_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/push-record.json"),
         "PUSH_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        PLACEMENT_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/placement-record.json"),
+        "PLACEMENT_RECORD_SCHEMA_URL no longer points at the committed artifact"
     );
 
     let index = render_index(&verbs);

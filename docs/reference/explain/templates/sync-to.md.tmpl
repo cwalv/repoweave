@@ -179,12 +179,17 @@ pretty-printed envelope:
 ```
 {
   "$schema": "<url>",
-  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
 }
 ```
 
 Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
 — only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
+
+`placements` covers both workspaces: a checkout here that replay moved or
+created, and one in the target that advance-target moved or created. Each is
+reported under its own `absolute_path`, so one repo can have two.
 
 `--continue --json` resumes an interrupted op and emits the same envelope, so a
 consumer that drove the op through `--json` can finish it without falling back

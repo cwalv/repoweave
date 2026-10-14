@@ -10,6 +10,7 @@ use crate::cli::consent::DetachConsent;
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
+use crate::placement::PlacementOutput;
 use crate::selector::RepoFilter;
 use crate::vcs::{
     vcs_for, HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
@@ -72,11 +73,6 @@ pub struct RepoUpdateRecord {
     /// Human-readable error message, only present when `kind = failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// How the files the advance rewrote were placed: cloned from another
-    /// workspace of the repository, or written by the VCS. Absent when the
-    /// advance moved nothing or the VCS cannot say.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub files: Option<crate::share::FilePlacement>,
 }
 
 /// Top-level envelope for `rwv update --json` (serial / `-j 1` mode).
@@ -86,6 +82,9 @@ pub struct UpdateJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub repos: Vec<RepoUpdateRecord>,
+    /// How the files of each checkout the advance moved were placed. Empty,
+    /// not absent, when it moved none.
+    pub placements: Vec<PlacementOutput>,
     /// Resolved workspace coordinates (workspace root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -289,14 +288,17 @@ fn update_for_project(
     let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
     let stdout_lock: Mutex<()> = Mutex::new(());
     let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
+    let mut placements: Vec<PlacementOutput> = Vec::new();
 
     for (item, outcome) in work_items.iter().zip(outcomes) {
         let branch = item.entry.version.as_str().to_owned();
         let abs_str = crate::path_spelling::wire_path(item.checkout.path());
 
         let old_sha = item.old.as_ref().map(|r| r.display_str().to_owned());
+        let mut placed = None;
         let record = match outcome {
             Ok((new_sha, files)) => {
+                placed = files;
                 // "advanced N repo(s)" counts SHA deltas, not non-`Err`
                 // outcomes: a repo that was already at the target was
                 // visited successfully but advanced nothing.
@@ -314,7 +316,6 @@ fn update_for_project(
                     old_sha,
                     new_sha: Some(new_sha),
                     error: None,
-                    files,
                 }
             }
             Err(msg) => {
@@ -327,17 +328,21 @@ fn update_for_project(
                     old_sha,
                     new_sha: None,
                     error: Some(msg),
-                    files: None,
                 }
             }
         };
 
-        if let (false, Some(files)) = (json, record.files) {
+        if let (false, Some(files)) = (json, placed) {
             println!("  {}: files {files}", record.path);
         }
+        let placement =
+            placed.map(|files| PlacementOutput::new(&item.repo_path, item.checkout.path(), files));
 
         if json {
             if ndjson {
+                if let Some(placement) = &placement {
+                    placement.stream(&stdout_lock);
+                }
                 // Stream one line per record to stdout as we build.
                 let line_record = UpdateNdjsonRecord {
                     schema: UPDATE_RECORD_SCHEMA_URL,
@@ -352,6 +357,7 @@ fn update_for_project(
                 }
             }
             json_records.push(record);
+            placements.extend(placement);
         }
     }
 
@@ -380,6 +386,7 @@ fn update_for_project(
             let envelope = UpdateJsonOutput {
                 schema_url: UPDATE_SCHEMA_URL.to_string(),
                 repos: json_records,
+                placements,
                 resolution: ctx.resolution(),
             };
             let out = serde_json::to_string_pretty(&envelope)
@@ -463,6 +470,7 @@ fn update_for_project(
         let envelope = UpdateJsonOutput {
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,
+            placements,
             resolution: ctx.resolution(),
         };
         let out =

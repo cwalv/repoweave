@@ -8,6 +8,7 @@
 //!    and field names are pinned independent of the live sync path.
 
 use assert_cmd::Command as AssertCommand;
+use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
 use repoweave::sync::{
     Containment, ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome,
     SyncFailure, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL,
@@ -708,8 +709,13 @@ fn sync_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
         let obj = v
             .as_object()
             .unwrap_or_else(|| panic!("line not an object: {line}"));
+        let schema = obj.get("$schema").and_then(Value::as_str);
+        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
+            assert!(obj.contains_key("files"), "missing `files`: {line}");
+            continue;
+        }
         assert_eq!(
-            obj.get("$schema").and_then(Value::as_str),
+            schema,
             Some(SYNC_RECORD_SCHEMA_URL),
             "every NDJSON record must embed `$schema`: {line}"
         );
@@ -846,6 +852,7 @@ fn sync_json_envelope_round_trips() {
                 }),
             ),
         ],
+        placements: Vec::new(),
         advisories: Vec::new(),
         resolution: None,
     };

@@ -79,7 +79,8 @@ the envelope:
 ```
 {
   "$schema": "<url>",
-  "repos": [ { "path": "...", "kind": "updated", ... }, ... ]
+  "repos": [ { "path": "...", "kind": "updated", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
 }
 ```
 
@@ -96,6 +97,12 @@ Each record carries:
 - `old_sha` — SHA before the advance (omitted if unreadable).
 - `new_sha` — SHA after the advance (omitted when `kind = failed`).
 - `error` — human-readable failure message (only when `kind = failed`).
+
+File counts are never on a record. Each checkout whose files the advance
+rewrote gets a placement record: `path`, `absolute_path`, and `files`
+(`reflinked`, `hardlinked`, `written`). The envelope lists them under
+`placements`, empty when nothing was placed; NDJSON streams each as its own
+line, whose `$schema` names `placement-record.json`.
 
 Schema:
 

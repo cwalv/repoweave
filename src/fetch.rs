@@ -6,7 +6,8 @@
 use crate::cli::consent::DetachConsent;
 use crate::lock;
 use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
-use crate::parallel::{run_in_parallel, Reporter};
+use crate::parallel::{run_in_parallel, OutputMode, Reporter};
+use crate::placement::PlacementOutput;
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry;
 use crate::selector::RepoFilter;
@@ -43,11 +44,6 @@ pub struct FetchOutcomeOutput {
     pub status: FetchOutcomeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// How the files the fetch rewrote were placed: cloned from another
-    /// workspace of the repository, or written by the VCS. Absent when the
-    /// fetch moved nothing or the VCS cannot say.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub files: Option<crate::share::FilePlacement>,
 }
 
 impl FetchOutcomeOutput {
@@ -73,10 +69,22 @@ pub struct FetchJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<FetchOutcomeOutput>,
+    /// How the files of each checkout the fetch moved or created were placed:
+    /// a canonical clone it realigned, and from a workweave each worktree it
+    /// created there. Empty, not absent, when it placed none.
+    pub placements: Vec<PlacementOutput>,
     /// Resolved workspace coordinates (workspace root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+}
+
+impl FetchJsonOutput {
+    fn print(&self) -> anyhow::Result<()> {
+        let out = serde_json::to_string_pretty(self).context("failed to serialize fetch output")?;
+        println!("{out}");
+        Ok(())
+    }
 }
 
 /// One NDJSON record emitted by `rwv fetch --json -j N` with `N > 1`.
@@ -234,7 +242,7 @@ pub fn run_fetch(
             .with_context(|| format!("failed to clone project source '{}'", url))?;
     }
 
-    fetch_project_repos(
+    let envelope = fetch_project_repos(
         &name,
         &project_dir,
         workspace_root,
@@ -248,7 +256,11 @@ pub fn run_fetch(
         // Source-mode fetch runs before any WorkspaceContext is resolved; no
         // resolution block is available at this point.
         None,
-    )
+    )?;
+    if OutputMode::resolve(json, jobs) == OutputMode::JsonEnvelope {
+        envelope.print()?;
+    }
+    Ok(())
 }
 
 /// In-place mode: re-materialize missing manifest members for the active
@@ -303,7 +315,7 @@ pub fn run_fetch_in_place(
     // workweave. See docs/explanation/joints/clone-topology.md.
     let workspace_root = ctx.primary_path();
 
-    fetch_project_repos(
+    let mut envelope = fetch_project_repos(
         name.as_str(),
         &project_dir,
         workspace_root,
@@ -317,7 +329,8 @@ pub fn run_fetch_in_place(
         ctx.resolution(),
     )?;
 
-    match &ctx.checkout {
+    let output = OutputMode::resolve(json, jobs);
+    let created = match &ctx.checkout {
         Checkout::Workweave {
             name: workweave,
             dir,
@@ -330,15 +343,23 @@ pub fn run_fetch_in_place(
             &project_dir,
             no_reference,
             filter,
-            json,
+            output,
+            &mut envelope.placements,
         ),
         Checkout::Primary { .. } => Ok(()),
+    };
+    if output == OutputMode::JsonEnvelope {
+        envelope.print()?;
     }
+    created
 }
 
 /// Create the worktree for each member the workweave's `rwv.lock` pins and the
 /// workweave lacks — nothing at the slot, or a symlink — once the fetch above
-/// has put the pinned revisions in the canonical clones.
+/// has put the pinned revisions in the canonical clones. How each one's files
+/// were placed is streamed under NDJSON, and added to `placements` for the
+/// envelope.
+#[allow(clippy::too_many_arguments)]
 fn materialize_workweave_members(
     ctx: &WorkspaceContext,
     project: &crate::manifest::ProjectName,
@@ -346,7 +367,8 @@ fn materialize_workweave_members(
     project_dir: &Path,
     no_reference: bool,
     filter: &RepoFilter,
-    json: bool,
+    output: OutputMode,
+    placements: &mut Vec<PlacementOutput>,
 ) -> anyhow::Result<()> {
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
     let lock_path = project_dir.join(LockFile::FILE_NAME);
@@ -383,10 +405,18 @@ fn materialize_workweave_members(
                     &born.at.as_str()[..born.at.as_str().len().min(12)],
                     crate::share::files_note(born.files),
                 );
-                if json {
-                    eprintln!("{line}");
-                } else {
+                if output == OutputMode::Text {
                     println!("{line}");
+                } else {
+                    eprintln!("{line}");
+                }
+                if let Some(files) = born.files {
+                    let placement = PlacementOutput::new(repo_path, &slot, files);
+                    match output {
+                        OutputMode::Text => {}
+                        OutputMode::JsonEnvelope => placements.push(placement),
+                        OutputMode::Ndjson => placement.stream(&Mutex::new(())),
+                    }
                 }
             }
             Err(e) => failures.push(format!("{repo_path}: {e:#}")),
@@ -417,6 +447,10 @@ fn materialize_workweave_members(
 /// `resolution` is the resolved workspace coordinate block for the
 /// `--json` envelope. `None` when no `WorkspaceContext` is available (the
 /// SOURCE-mode bootstrap path runs before a context is resolved).
+///
+/// Returns the `--json` envelope for the caller to print once it has placed
+/// anything else, so it is populated only in envelope mode. A run with
+/// failures prints it here, before refusing.
 #[allow(clippy::too_many_arguments)]
 fn fetch_project_repos(
     name: &str,
@@ -430,7 +464,7 @@ fn fetch_project_repos(
     json: bool,
     auto_activate_on_bootstrap: bool,
     resolution: Option<Resolution>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<FetchJsonOutput> {
     // Read the manifest
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)
@@ -562,29 +596,28 @@ fn fetch_project_repos(
 
             // NDJSON mode: emit one line per repo as soon as it finishes.
             if ndjson {
-                let abs_path =
-                    crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
+                if let Some(files) = files {
+                    PlacementOutput::new(repo_path, &member, files).stream(&write_lock);
+                }
+                let abs_path = crate::path_spelling::wire_path(&member);
                 let record = match &outcome {
                     FetchOutcome::Ok { .. } => FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Ok,
                         message: None,
-                        files,
                     },
                     FetchOutcome::Skipped => FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Skipped,
                         message: Some(format!("skipped {}", repo_path.as_str())),
-                        files: None,
                     },
                     FetchOutcome::Failed { msg } => FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Failed,
                         message: Some(msg.clone()),
-                        files: None,
                     },
                 };
                 let ndjson_line = FetchOutcomeNdjsonRecord {
@@ -611,10 +644,17 @@ fn fetch_project_repos(
     let mut added_to_lock: Vec<RepoPath> = Vec::new();
 
     // For envelope mode (json && !ndjson), collect records in work_items order.
-    let mut envelope_records: Vec<FetchOutcomeOutput> = Vec::new();
+    let mut envelope = FetchJsonOutput {
+        schema: FETCH_SCHEMA_URL.to_owned(),
+        outcomes: Vec::new(),
+        placements: Vec::new(),
+        resolution,
+    };
+    let envelope_records = &mut envelope.outcomes;
 
     for ((outcome, files), (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
-        let abs_path = crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
+        let member = workspace_root.join(repo_path.as_path());
+        let abs_path = crate::path_spelling::wire_path(&member);
         match outcome {
             FetchOutcome::Ok { add_to_lock } => {
                 succeeded += 1;
@@ -630,8 +670,12 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Ok,
                         message: None,
-                        files: *files,
                     });
+                    if let Some(files) = files {
+                        envelope
+                            .placements
+                            .push(PlacementOutput::new(repo_path, &member, *files));
+                    }
                 }
             }
             FetchOutcome::Skipped => {
@@ -641,7 +685,6 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Skipped,
                         message: Some(format!("skipped {}", repo_path.as_str())),
-                        files: None,
                     });
                 }
             }
@@ -656,7 +699,6 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Failed,
                         message: Some(msg.clone()),
-                        files: None,
                     });
                 }
             }
@@ -670,14 +712,7 @@ fn fetch_project_repos(
             // In JSON mode, emit the envelope/NDJSON before exiting so
             // consumers always get parseable output even on partial failure.
             if !ndjson {
-                let payload = FetchJsonOutput {
-                    schema: FETCH_SCHEMA_URL.to_owned(),
-                    outcomes: envelope_records,
-                    resolution: resolution.clone(),
-                };
-                if let Ok(out) = serde_json::to_string_pretty(&payload) {
-                    println!("{out}");
-                }
+                let _ = envelope.print();
             }
             // NDJSON records were already streamed; nothing extra to emit.
             crate::refuse!(
@@ -700,20 +735,7 @@ fn fetch_project_repos(
         )
     }
 
-    if json {
-        if !ndjson {
-            // Envelope mode: emit after all repos complete.
-            let payload = FetchJsonOutput {
-                schema: FETCH_SCHEMA_URL.to_owned(),
-                outcomes: envelope_records,
-                resolution,
-            };
-            let out = serde_json::to_string_pretty(&payload)
-                .context("failed to serialize fetch output")?;
-            println!("{out}");
-        }
-        // NDJSON mode: all records streamed by workers; nothing more to emit.
-    } else {
+    if !json {
         println!("rwv fetch: done ({succeeded} repo(s) ready)");
     }
 
@@ -810,7 +832,7 @@ fn fetch_project_repos(
         }
     }
 
-    Ok(())
+    Ok(envelope)
 }
 
 /// Realign a clone that is already on disk to `target`.
