@@ -1716,6 +1716,64 @@ fn materialize_missing_repo(
     Ok(())
 }
 
+/// Why the source's lock lacks a path CWD's lock names.
+///
+/// Replay prunes the checkout only when the op ends with CWD's lock no
+/// longer naming the path: the source dropped it, or CWD is discarding its
+/// own commits. A replay applies CWD's commits on top of the source's, so a
+/// path CWD added survives into CWD's next lock and its checkout is kept.
+#[derive(Debug, PartialEq, Eq)]
+enum SourceLockAbsence {
+    /// The lock CWD and the source last shared names it.
+    DroppedBySource,
+    /// `--discard-local-commits` hands CWD the source's lock as it stands.
+    DiscardedHere,
+    /// CWD added it after the lock both sides last shared.
+    AddedHere,
+    /// No lock both sides shared could be read; the string says why.
+    Undetermined(String),
+}
+
+impl SourceLockAbsence {
+    fn classify(shared: &anyhow::Result<LockFile>, repo_path: &RepoPath) -> Self {
+        match shared {
+            Ok(lock) if lock.contains_repo(repo_path) => Self::DroppedBySource,
+            Ok(_) => Self::AddedHere,
+            Err(e) => Self::Undetermined(format!("{e:#}")),
+        }
+    }
+}
+
+/// The lock committed at the common ancestor of CWD's and the source's
+/// project tips.
+fn shared_lock(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    cwd_tip: &ResolvedRevisionId,
+    source_tip: &ResolvedRevisionId,
+) -> anyhow::Result<LockFile> {
+    let base = vcs
+        .common_ancestor(project_dir, cwd_tip, source_tip)
+        .context("the common ancestor of the two project tips could not be read")?
+        .ok_or_else(|| anyhow::anyhow!("the two project histories share no commit"))?;
+    let content = vcs
+        .read_file_at_revision(project_dir, &base, Path::new(LockFile::FILE_NAME))
+        .with_context(|| {
+            format!(
+                "no {} readable at their common ancestor {}",
+                LockFile::FILE_NAME,
+                short_sha(base.as_str())
+            )
+        })?;
+    LockFile::from_json_str(&content).with_context(|| {
+        format!(
+            "the {} at their common ancestor {} does not parse",
+            LockFile::FILE_NAME,
+            short_sha(base.as_str())
+        )
+    })
+}
+
 /// R4: refuse to destroy `store` while anything still claims it.
 ///
 /// A store-level destroy takes out every ref and every object at once, so
@@ -4748,6 +4806,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     if let Some(ref cwd_lock) = cwd_project.lock {
+        let mut shared: Option<anyhow::Result<LockFile>> = None;
         for repo_path in cwd_lock.iter_repo_paths() {
             if snapshot.raw_source_lock.contains_repo(repo_path) {
                 continue;
@@ -4758,6 +4817,38 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
             if checkout_syncability(&abs) == CheckoutSyncability::ReferenceAlias {
                 continue;
+            }
+            let absence = if ctx.discard_local_commits {
+                SourceLockAbsence::DiscardedHere
+            } else {
+                let shared = shared.get_or_insert_with(|| {
+                    shared_lock(
+                        ctx.project_vcs.as_ref(),
+                        &ctx.cwd_project_dir,
+                        &cwd_project_tip,
+                        &snapshot.source_project_tip,
+                    )
+                });
+                SourceLockAbsence::classify(shared, repo_path)
+            };
+            let report_kept = emit_text && abs.exists();
+            match absence {
+                SourceLockAbsence::DroppedBySource | SourceLockAbsence::DiscardedHere => {}
+                SourceLockAbsence::AddedHere => {
+                    if report_kept {
+                        println!("  {repo_path}: kept (added here; not in the source's lock yet)");
+                    }
+                    continue;
+                }
+                SourceLockAbsence::Undetermined(why) => {
+                    if report_kept {
+                        println!(
+                            "  {repo_path}: kept (not in the source's lock, and nothing shows \
+                             the source dropped it: {why})"
+                        );
+                    }
+                    continue;
+                }
             }
             // The lock named this path and no longer does, so there is no
             // entry to resolve a backend from unless the manifest still
@@ -8428,6 +8519,81 @@ mod tests {
             !checkout_is_syncable(&link),
             "a dangling reference symlink must NOT be syncable"
         );
+    }
+
+    fn commit_lock(dir: &Path, paths: &[&str]) -> ResolvedRevisionId {
+        let entries: Vec<String> = paths
+            .iter()
+            .map(|p| {
+                format!(
+                    "{p:?}: {{\"type\": \"git\", \"url\": \"file:///x\", \"version\": \"{}\"}}",
+                    "a".repeat(40)
+                )
+            })
+            .collect();
+        let lock =
+            LockFile::from_json_str(&format!("{{\"repositories\": {{{}}}}}", entries.join(",")))
+                .unwrap();
+        crate::lock::write_lock(&lock, &dir.join(LockFile::FILE_NAME)).unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "lock"]);
+        git_vcs().head_revision(dir).unwrap()
+    }
+
+    fn absence(
+        dir: &Path,
+        cwd: &ResolvedRevisionId,
+        source: &ResolvedRevisionId,
+    ) -> SourceLockAbsence {
+        let shared = shared_lock(git_vcs().as_ref(), dir, cwd, source);
+        SourceLockAbsence::classify(&shared, &dropped())
+    }
+
+    #[test]
+    fn the_lock_at_the_common_ancestor_tells_a_drop_from_an_add() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let base = commit_lock(&repo, &[dropped().as_str()]);
+        let source = commit_lock(&repo, &[]);
+        git(&repo, &["checkout", "-b", "cwd", base.as_str()]);
+        assert_eq!(
+            absence(&repo, &base, &source),
+            SourceLockAbsence::DroppedBySource
+        );
+
+        let added_repo = tmp.path().join("a");
+        init_repo(&added_repo);
+        let base = commit_lock(&added_repo, &[]);
+        let cwd = commit_lock(&added_repo, &[dropped().as_str()]);
+        git(&added_repo, &["checkout", "-b", "source", base.as_str()]);
+        let source = commit(&added_repo, "source-work");
+        assert_eq!(
+            absence(&added_repo, &cwd, &source),
+            SourceLockAbsence::AddedHere
+        );
+    }
+
+    #[test]
+    fn without_a_lock_both_sides_shared_the_absence_is_undetermined() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let unlocked_base = git_vcs().head_revision(&repo).unwrap();
+        let cwd = commit_lock(&repo, &[dropped().as_str()]);
+        git(&repo, &["checkout", "-b", "source", unlocked_base.as_str()]);
+        let source = commit_lock(&repo, &[]);
+        let SourceLockAbsence::Undetermined(why) = absence(&repo, &cwd, &source) else {
+            panic!("a common ancestor with no lock must leave the absence undetermined");
+        };
+        assert!(why.contains("no rwv.lock readable"), "{why}");
+
+        git(&repo, &["checkout", "--orphan", "disjoint"]);
+        let disjoint = commit_lock(&repo, &[]);
+        let SourceLockAbsence::Undetermined(why) = absence(&repo, &cwd, &disjoint) else {
+            panic!("disjoint histories must leave the absence undetermined");
+        };
+        assert!(why.contains("share no commit"), "{why}");
     }
 
     #[test]
