@@ -1,8 +1,7 @@
 # Symlinks as structure
 
-rwv creates symbolic links in three places: a `role: reference` repo
-materialized into a workweave, a workweave `link:` entry, and the surfacing of
-a project's owned files at a workspace root. None of the three is a
+rwv creates symbolic links in two places: a workweave `link:` entry, and the
+surfacing of a project's owned files at a workspace root. Neither is a
 space-saving convenience. In each, the link *is* the fact some other part of
 rwv later reads off the disk, and a link that failed to appear is not a
 degraded workspace — it is a workspace that lies about what it contains.
@@ -14,28 +13,13 @@ question has one answer rather than a menu.
 
 ## The link is the classification
 
-[Clone topology](./clone-topology.md) states the reference-repo carve-out to
-invariant I2: a `role: reference` checkout satisfies "one canonical store" by
-*identity* — the workweave path is a symlink onto `<weave>/<repo_path>`, so
-there is no second store to keep coherent. Nothing records that fact anywhere
-else. `classify_checkout` reads `is_symlink()` at the checkout path and returns
-`ReferenceAlias` or `Worktree`, and every downstream command routes on the
-answer. There is no field, no marker file, and no manifest entry to consult;
-`role` is read once, at creation, to pick what to write.
+A surfaced file is a link because rwv reads it back as one: doctor's surfacing
+check asks the filesystem what is at each weave-root name, and activation's
+cleanup removes exactly the links that point into `projects/`. There is no
+field, no marker file, and no manifest entry to consult; the link is the
+record.
 
-So the question "is this a shared read-only alias" is answered by asking the
-filesystem what kind of thing is at that path. Five behaviours hang off the
-answer:
-
-| Reads `ReferenceAlias` and | If the path were not a symlink |
-|---|---|
-| sync's mutating phases skip it | savepoint, rebase/ff and abort's `reset --hard` all run against it |
-| orphan pruning skips it | its path is handed to `git worktree remove` |
-| dirty/divergence scans skip it | it acquires per-workweave dirty state and a HEAD that can diverge |
-| workweave delete unlinks it with `remove_file` | delete takes the worktree-removal path |
-| doctor's topology scan skips it | it is a second standalone store: I1 and I3 findings fire against it |
-
-The surfacing links are structural in a second sense. A surfaced file is a
+The surfacing links are structural in a second sense too. A surfaced file is a
 write-through path: an ecosystem tool that writes `Cargo.lock` at the weave
 root must land those bytes in `projects/<project>/Cargo.lock`, which is the
 copy under version control. Something other than a link at that path is a
@@ -50,16 +34,9 @@ convenience/cost trade-off, and it closes three of them outright.
 
 ### Copies are closed
 
-A copied reference checkout is a real directory, so `classify_checkout` returns
-`Worktree` for it and it enters every path in the table above. It is not a
-degraded reference repo; it is structurally indistinguishable from a repo the
-user asked to work in. `rwv sync` will advance it, `rwv workweave delete` will
-try to remove it as a worktree, and `rwv doctor` will report it as a standalone
-store inside a workweave — correctly, because that is what it is.
-
-A copied *surfacing* link is the same defect in the other direction: writes
-land in the copy, the tracked file under `projects/` never sees them, and
-nothing tells the operator which of the two is real.
+A copy at a surfacing path takes the writes meant for the tracked file under
+`projects/`, which never sees them, and nothing tells the operator which of
+the two is real.
 
 ### Hardlinks are closed
 
@@ -72,24 +49,30 @@ the old inode keeps pointing at the *previous* contents, silently and with no
 error anywhere. rwv would orphan its own links as a routine consequence of
 writing a file correctly.
 
-Second, hardlinks cannot name directories at all, so the reference alias and
-any directory-valued surfacing entry are out of reach by construction. A
-hardlink strategy could at best cover part of the sites, which means shipping
-two mechanisms and two behaviours to test.
+Second, hardlinks cannot name directories at all, so any directory-valued
+surfacing entry is out of reach by construction. A hardlink strategy could at
+best cover part of the sites, which means shipping two mechanisms and two
+behaviours to test.
 
 (`durable_file::create_new` does call `hard_link`, and that is not an exception
 to this. It links a staged temp into place to get an atomic exclusive publish
 and immediately removes the temp, so the link exists for the duration of one
 call and no second name survives it.)
 
+That orphaning is exactly what makes a hardlink safe where rwv does use one:
+sharing a `reference` repo's read-only files between two workspaces' checkouts
+of it. There nothing reads the link as a fact, and an update in one workspace
+must *not* reach the other. rwv shares files that way only on a platform where
+the VCS is known to replace a file rather than write into it, so the other
+name keeps the old contents, as it should.
+
 ### Warn-and-continue is closed
 
 A link that could not be created is a missing structural fact, and every
 consumer reads its absence as a different, well-formed state: an absent
-reference checkout looks like a manifest that grew since the workweave was
-made, an absent surfacing link looks like a project that does not declare that
-file. A warning on stderr, followed by a success exit, hands the operator a
-workspace that will misbehave later somewhere else.
+surfacing link looks like a project that does not declare that file. A warning
+on stderr, followed by a success exit, hands the operator a workspace that will
+misbehave later somewhere else.
 
 The rule is refusal at the first failed link, carrying what to do about it.
 
@@ -122,12 +105,9 @@ directory does not resolve as a directory.
 
 So **every place rwv creates a symlink is a place where a directory-vs-file
 decision is being made**, whether or not the code that makes it is visible. The
-rule:
-
-- The reference alias always names a directory — the canonical clone.
-- Every other site classifies the source path on disk: a directory yields a
-  directory link, and anything else — including a path that does not exist yet
-  — yields a file link.
+rule: every site classifies the source path on disk. A directory yields a
+directory link, and anything else — including a path that does not exist yet —
+yields a file link.
 
 The absent case is not a guess about the unknown. Surfacing deliberately
 creates dangling links so that a lock file an ecosystem tool has not written
@@ -155,10 +135,9 @@ it.
 - **Directory links become junctions.** A junction is a reparse point, and its
   tag `IO_REPARSE_TAG_MOUNT_POINT` carries the name-surrogate bit that Rust's
   `FileType::is_symlink` tests. So a junction reports as a symlink through
-  `Path::is_symlink`, and `classify_checkout` classifies it as
-  `ReferenceAlias` with no change — the detectability the table above depends
-  on survives. Junctions need no privilege and no Developer Mode. They are
-  absolute-only and local-volume-only, which the reference alias already is.
+  `Path::is_symlink`, and every check that reads a link off the disk sees one
+  with no change. Junctions need no privilege and no Developer Mode. They are
+  absolute-only and local-volume-only.
 - **File links become attested copies.** A copy that is registered in the
   owned-file digest ledger is not the structurally-invisible copy this joint
   closes: drift between the copy and its source becomes a `doctor` staleness

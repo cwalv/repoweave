@@ -144,10 +144,8 @@ migration step.
 Under `patch: derived`, rwv:
 
 1. Builds a package-name index over every in-weave crate — active
-   workspace members *and* `reference`-role repos. Reference-role repos
-   are read-only study material in workweaves, symlinked to the
-   canonical clone; their symlinked paths keep logical identity in
-   `cargo metadata`, so patching against them adds no rebuild churn.
+   workspace members *and* `reference`-role repos, which are read-only
+   study material and never workspace members.
 2. Scans each active member's `[dependencies]`, `[dev-dependencies]`,
    and `[build-dependencies]`, resolving `workspace = true` through the
    member's ancestor `[workspace.dependencies]` table.

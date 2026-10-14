@@ -36,43 +36,18 @@ guard → mark → savepoint → replay → relock → advance-target → retire
                                               (sync-to only)   (--retire only)
 ```
 
-### Reference repos exit the sync graph
+### Reference repos sync like any other repo
 
-A `role: reference` repo is materialized as a **symlink** aliasing the
-single canonical weave-root clone shared by every workweave (see
-[`clone-topology.md`](clone-topology.md)). Such a checkout classifies as
-`CheckoutKind::ReferenceAlias`. Every phase above — savepoint, replay,
-advance-target, abort, plus materialize/prune — would otherwise operate
-*through the symlink onto that shared canonical store*: writing
-`refs/rwv/pre-op/*` into it (cross-workweave ref collisions), rebasing or
-fast-forwarding its branch, `reset --hard`-ing it on abort, or
-worktree-adding/removing against it. That mutates a store every workweave
-reads.
+A `role: reference` repo is a worktree on the workweave's ephemeral branch,
+like every other repo, and every phase above treats it the same way. When
+the phases are done, each workspace the op touched settles
+every repo for the role its project's manifest gives it, so a `reference`
+repo's tracked files are read-only again whatever was written, and a role
+change that arrived with the manifest takes effect on landing.
 
-A reference symlink is read-only, lock-pinned, and byte-identical across
-workweaves, so **there is nothing to sync** — exactly as reference repos
-are already excluded from `rwv push`, the integration/build graph
-(`Role::is_active()`), and `update`. Sync therefore **excludes
-`ReferenceAlias` checkouts from its per-repo phase set by construction**:
-every mutating phase computes the on-disk checkout path and gates it
-through a single predicate (`checkout_is_syncable` — true iff the path is
-an existing, non-symlink worktree), so the shared canonical store is
-*unreachable* from all of them. Unreachable beats guarded: a per-call-site
-guard can be forgotten at the next site; an absent element cannot be
-operated on.
-
-The exclusion keys on **alias-ness, never on role**. A reference repo
-created with `--worktree-references` is a real worktree on its own
-ephemeral branch — sync only ever moves *that* branch, never the
-canonical's shared `main`, so it is safe and syncs exactly like any
-`owned`/`fork` worktree. Keying the skip on `role == Reference` would
-silently break that escape hatch.
-
-`rwv lock` is unaffected: it reads HEAD through the symlink (which
-resolves to the canonical) and correctly pins the shared SHA. Reference
-repos **stay in the lock** for reproducibility and `rwv fetch`; only
-sync's advancement/mutation skips them, and they remain in any
-informational status/reporting.
+A workweave holding a repo as a symlink is refused before any phase runs
+([`workweave-drift`](../../reference/doctor-findings.md#workweave-drift));
+`rwv doctor --fix` replaces the link with a worktree.
 
 ### State diagram
 

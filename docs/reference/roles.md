@@ -50,34 +50,23 @@ Cloned for reading or study, not as a build input. Examples: a sibling project's
 
 - **Visible** in the workspace (so editors and grep see them).
 - **Excluded** from generated ecosystem workspace files (`go.work`, `package.json` workspaces, Cargo workspace members) — they don't appear as build-graph nodes.
-- **Read-only** by convention. `rwv doctor` will eventually warn on local changes; for now the convention is operator discipline.
+- **Read-only.** Every tracked regular file of a `reference` repo has no write bits, in the weave and in every workweave. Directories stay writable, so untracked files (build output, editor swap files) can still be created and the VCS can still replace files when the repo moves. `rwv doctor` reports a `reference` repo with writable tracked files as [`member-permissions`](./doctor-findings.md#member-permissions).
 
 `rwv doctor` reports untracked clones in registry directories as **orphans**. Tracking a clone as `reference` is how you tell `rwv` "I cloned this on purpose, leave it alone."
 
-#### Workweave materialization: symlink, not worktree
+#### In a workweave
 
-When `rwv workweave create` materializes a workweave, `reference` repos
-are created as a **symlink** at `<workweave>/<repo_path>` pointing to
-the single canonical weave-root clone `<weave>/<repo_path>` — not as a
-per-workweave `git worktree`. Every workweave therefore shares the same
-on-disk files for reference repos; `git fetch` on the canonical clone is
-immediately visible in all workweaves without updating N worktrees.
+A workweave holds a `reference` repo the way it holds every other repo: as a
+worktree of the canonical weave-root clone, on the workweave's own ephemeral
+branch. Where the filesystem supports copy-on-write cloning, a new
+workweave's files are cloned from another workspace's copy, so it costs disk
+only where its files differ. On Linux, a `reference` repo's read-only files
+can instead be hard links to another workspace's read-only copy of the same
+file. Neither changes what the repo holds: its files have the same bytes and
+the same permissions however they were placed.
 
-This is why reference repos are safe to share: they are read-only by
-definition, so no per-workweave branch divergence needs to be isolated.
-The symlink satisfies clone-topology invariant I1 (single canonical
-store) by identity, and I2/I3's worktree and ephemeral-branch
-requirements do not apply to symlinked references — see
-[clone-topology](../explanation/joints/clone-topology.md) for the
-precise carve-out.
-
-**Escape hatch.** Pass **`--worktree-references`** to `rwv workweave
-create` to restore the old behavior and cut a proper `git worktree` for
-reference repos in that workweave. The resulting checkout is treated
-identically to any other worktree (it has its own ephemeral branch, is
-eligible for sync, and flows through all normal paths); only the default
-materialization changes. This flag records nothing — the on-disk
-`is_symlink()` test is the sole authority for downstream commands.
+Changing a repo's role — with `rwv role` (`rwv explain role`) or by editing
+`rwv.toml` — changes only its files' permissions; the checkout stays as it is.
 
 ## Per-project, not per-repo
 

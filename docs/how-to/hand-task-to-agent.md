@@ -76,9 +76,8 @@ Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a si
 
 The agent runs in this directory:
 
-- has its own worktrees on ephemeral branches for `owned`, `fork`, and
-  `dependency` repos; `reference` repos are symlinks to the canonical
-  weave-root clone shared with every other workweave (read-only)
+- has its own worktree on an ephemeral branch for every repo; a
+  `reference` repo's tracked files are read-only
 - has its own `node_modules/`, `.venv/`, `target/`
 - can `rwv lock` without touching primary's lock
 - has `.rwv-workweave` recording primary as its parent
