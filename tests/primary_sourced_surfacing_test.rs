@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 const MANIFEST: &str = "[repositories]\n\n\
 [integrations.static-files]\n\
 enabled = true\n\
-files = [\"notes.md\", { path = \".shared\", from = \"primary\" }]\n\n\
+files = [\"notes.md\", { path = \".shared\", from = \"primary\" }, \
+{ path = \"shared.db\", from = \"primary\" }, \"local.db\"]\n\n\
 [integrations.vscode-workspace]\nenabled = false\n\n\
 [integrations.go-work]\nenabled = false\n";
 
@@ -81,8 +82,14 @@ fn primary() -> Weaves {
     std::fs::create_dir_all(&alpha).unwrap();
     std::fs::write(alpha.join("rwv.toml"), MANIFEST).unwrap();
     std::fs::write(alpha.join("notes.md"), "notes\n").unwrap();
-    std::fs::write(alpha.join(".gitignore"), "/.shared/\n").unwrap();
+    std::fs::write(
+        alpha.join(".gitignore"),
+        "/.shared/\n/shared.db\n/local.db\n",
+    )
+    .unwrap();
     git_init_with_commit(&alpha);
+    std::fs::write(alpha.join("shared.db"), "primary db\n").unwrap();
+    std::fs::write(alpha.join("local.db"), "local db\n").unwrap();
     std::fs::create_dir_all(alpha.join(".shared")).unwrap();
     std::fs::write(alpha.join(".shared/state"), "primary state\n").unwrap();
 
@@ -427,5 +434,29 @@ fn deleting_a_workweave_leaves_the_primarys_copy_intact() {
     assert_eq!(
         std::fs::read_to_string(weaves.primary.join("projects/alpha/.shared/state")).unwrap(),
         "primary state\n"
+    );
+}
+
+#[test]
+fn an_untracked_primary_sourced_file_is_not_copied_into_a_workweave() {
+    let weaves = primary();
+    let ww = weaves.create("one", None);
+
+    assert!(
+        !ww.join("projects/alpha/shared.db").exists(),
+        "the workweave links the primary's copy, so its own checkout gets none"
+    );
+    assert_eq!(
+        link(&ww, "shared.db"),
+        weaves
+            .primary
+            .canonicalize()
+            .unwrap()
+            .join("projects/alpha/shared.db")
+    );
+    assert_eq!(
+        std::fs::read_to_string(ww.join("projects/alpha/local.db")).unwrap(),
+        "local db\n",
+        "control: an untracked plain entry is still carried"
     );
 }

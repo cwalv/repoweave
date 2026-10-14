@@ -1395,6 +1395,21 @@ pub(crate) fn owned_paths(
         .collect()
 }
 
+/// The owned paths whose link reads the weave's own checkout. A
+/// primary-sourced path is absent: every workweave links the primary's copy,
+/// so one placed in a workweave's checkout is a copy nothing reads.
+pub(crate) fn own_copy_owned_paths(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> BTreeSet<String> {
+    compute_owned_set(root, project, manifest)
+        .into_iter()
+        .filter(|(_, entry)| entry.copy == SurfacedCopy::Weave)
+        .map(|(name, _)| name)
+        .collect()
+}
+
 /// Every file in `project`'s directory that an intent verb's manifest write
 /// and its regeneration may change, as it stood before either ran.
 ///

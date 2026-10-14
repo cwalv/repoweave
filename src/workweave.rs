@@ -1326,7 +1326,7 @@ fn carry_untracked_managed_files(
     source_project_dir: &Path,
     dest_project_dir: &Path,
 ) -> anyhow::Result<()> {
-    for name in crate::activate::owned_paths(source_root, project, manifest) {
+    for name in crate::activate::own_copy_owned_paths(source_root, project, manifest) {
         let dest_file = dest_project_dir.join(&name);
         if dest_file.exists() {
             continue;
