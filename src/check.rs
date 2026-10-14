@@ -5574,15 +5574,16 @@ fn repair_member_gaps(
             revision.as_str(),
         ) {
             Ok(born) => println!(
-                "[fixed] core: created the worktree for {repo} in workweave {ww} at {at}{was}",
+                "[fixed] core: created the worktree for {repo} in workweave {ww} at {at}{was}{files}",
                 repo = gap.repo,
                 ww = gap.workweave,
-                at = &born.as_str()[..born.as_str().len().min(12)],
+                at = &born.at.as_str()[..born.at.as_str().len().min(12)],
                 was = if gap.symlinked {
                     ", replacing its symlink"
                 } else {
                     ""
                 },
+                files = crate::share::files_note(born.files),
             ),
             Err(e) => fix_errors.push(format!(
                 "workweave-drift fix failed for {}/{}: {e:#}",

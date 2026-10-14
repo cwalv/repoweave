@@ -80,6 +80,7 @@ use repoweave::push::{
     PushJsonOutput, PushOutcomeNdjsonRecord, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL,
     PUSH_SCHEMA_URL,
 };
+use repoweave::share::FilePlacement;
 use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
@@ -321,11 +322,17 @@ fn fetch_outcomes() -> Vec<FetchOutcomeOutput> {
             FetchOutcomeStatus::Skipped => Some("role: reference".to_owned()),
             FetchOutcomeStatus::Failed => Some("remote unreachable".to_owned()),
         };
+        let files = (status == FetchOutcomeStatus::Ok).then_some(FilePlacement {
+            reflinked: 3,
+            hardlinked: 0,
+            written: 2,
+        });
         FetchOutcomeOutput {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
             status,
             message,
+            files,
         }
     })
     .collect()
@@ -811,6 +818,11 @@ fn update_records() -> Vec<RepoUpdateRecord> {
             UpdateKind::UpToDate => (Some(sha('a')), Some(sha('a')), None),
             UpdateKind::Failed => (None, None, Some("not a fast-forward".to_owned())),
         };
+        let files = (kind == UpdateKind::Updated).then_some(FilePlacement {
+            reflinked: 2,
+            hardlinked: 0,
+            written: 1,
+        });
         RepoUpdateRecord {
             path: REPO.to_owned(),
             absolute_path: ABS.to_owned(),
@@ -819,6 +831,7 @@ fn update_records() -> Vec<RepoUpdateRecord> {
             old_sha,
             new_sha,
             error,
+            files,
         }
     })
     .collect()

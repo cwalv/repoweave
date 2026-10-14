@@ -42,6 +42,17 @@
         "absolute_path": {
           "type": "string"
         },
+        "files": {
+          "description": "How the files the fetch rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the fetch moved nothing or the VCS cannot say.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "message": {
           "type": [
             "string",
@@ -64,6 +75,35 @@
         "skipped",
         "failed"
       ]
+    },
+    "FilePlacement": {
+      "description": "How a member's tracked files reached a workspace.",
+      "type": "object",
+      "required": [
+        "hardlinked",
+        "reflinked",
+        "written"
+      ],
+      "properties": {
+        "hardlinked": {
+          "description": "Linked to another workspace's read-only copy.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reflinked": {
+          "description": "Cloned from another workspace's copy, sharing its storage until either is written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "written": {
+          "description": "Written by the version control system.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
     },
     "Resolution": {
       "description": "Resolved workspace coordinates for `--json` output and the plugin env-var envelope.\n\nCarries `workspace` (primary root abs path), `workweave` (the `<project>--<name>` identity the registry records), `project` (resolved project name), and `workweave_unregistered`. No `kind` or `location` field: the checkout is one of three states, and two of them are already carried by `workweave`'s presence.\n\nThe third state needs a field of its own. A workweave whose directory no registry entry names has no identity, so `workweave` is absent for it — and absent is what the primary looks like. Without `workweave_unregistered` the two serialize identically, and a consumer reading the documented meaning of that absence is told, positively, that it is at the primary checkout.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`): both surfaces are pure projections of [`WorkspaceContext::resolution`], never independently computed.",

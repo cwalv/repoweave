@@ -182,6 +182,17 @@ const ALLOWLIST: &[Allowed] = &[
             name for it are untouched.",
     },
     Allowed {
+        file: "share.rs",
+        pattern: "remove_file",
+        count: 2,
+        callers: &[],
+        justification: "placement's own scratch files, each minted by the \
+            same call that removes it: the probe clone that asks whether a \
+            source can be cloned from at all, and a staged clone whose rename \
+            over a member file failed. Neither path holds anything but that \
+            clone; the member file it would have replaced is untouched.",
+    },
+    Allowed {
         file: "add_remove.rs",
         pattern: "remove_dir_all",
         count: 1,

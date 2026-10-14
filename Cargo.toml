@@ -52,6 +52,10 @@ csv = "1"
 # `sha2` is the canonical RustCrypto implementation; pure compute, no I/O or
 # network.
 sha2 = "0.10"
+# Copy-on-write clones for files shared between a member's workspaces: Linux
+# FICLONE, macOS clonefile and Windows block cloning behind one call, which
+# fails rather than copying where the filesystem cannot clone.
+reflink-copy = "0.1.30"
 # Reads pnpm-workspace.yaml's `packages:` key — a foreign, user-authored file
 # whose shape rwv does not control, unlike rwv's own YAML. Chosen over the
 # serde_yaml forks: serde_yaml_ng still sits on unsafe-libyaml, and serde_yml

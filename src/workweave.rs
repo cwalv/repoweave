@@ -33,6 +33,7 @@ use crate::manifest::{
     project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, WorkweaveName,
 };
 use crate::refusal::RefusalKind;
+use crate::share::{FilePlacement, FilePrimitives, Filesystem};
 use crate::symlink::LinkTarget;
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
@@ -1014,6 +1015,18 @@ pub(crate) struct BirthOutcome {
     owned: OwnedRef,
     birth: RefBirth,
     pub(crate) failure: Option<anyhow::Error>,
+    /// How the born worktree's files were placed, when they were shared and
+    /// the backend could say.
+    pub(crate) placement: Option<FilePlacement>,
+}
+
+/// Where a born worktree's tracked files come from.
+pub(crate) enum WorktreeFiles<'a> {
+    /// The VCS writes every one.
+    Written,
+    /// Cloned from the repository's other workspaces wherever the filesystem
+    /// allows; the VCS writes the rest.
+    Shared(&'a dyn FilePrimitives),
 }
 
 impl BirthOutcome {
@@ -1062,13 +1075,19 @@ pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
     resolved_worktree_parent(vcs, checkout, checkout)
 }
 
+/// A member worktree [`materialize_member`] gave a workweave.
+pub(crate) struct Materialized {
+    /// The revision it was born at.
+    pub(crate) at: ResolvedRevisionId,
+    /// How its files were placed, when the backend could say.
+    pub(crate) files: Option<FilePlacement>,
+}
+
 /// Give the workweave at `workweave_dir` the workspace it lacks for
 /// `repo_path`: an ephemeral worktree of the canonical clone under
-/// `primary_root`, born at `start` and settled for `role`. A symlink in the
-/// slot, dangling or not, is unlinked first; what it pointed at is never
-/// touched.
-///
-/// Returns the revision the worktree was born at.
+/// `primary_root`, born at `start` with its files shared where they can be,
+/// and settled for `role`. A symlink in the slot, dangling or not, is
+/// unlinked first; what it pointed at is never touched.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn materialize_member(
     vcs: &dyn Vcs,
@@ -1079,7 +1098,7 @@ pub(crate) fn materialize_member(
     repo_path: &RepoPath,
     role: Role,
     start: &str,
-) -> anyhow::Result<ResolvedRevisionId> {
+) -> anyhow::Result<Materialized> {
     let canonical = primary_root.join(repo_path.as_path());
     if !canonical.exists() {
         crate::refuse!(
@@ -1102,19 +1121,22 @@ pub(crate) fn materialize_member(
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     let mut registry = RefRegistry::for_project(primary_root, project);
-    birth_ephemeral_worktree(
+    let outcome = birth_ephemeral_worktree(
         vcs,
         &mut registry,
         &canonical,
         &dest,
         &EphemeralRefName::mint(project, workweave),
         start.clone(),
+        WorktreeFiles::Shared(&Filesystem),
     )
-    .with_context(|| format!("cannot materialize {repo_path}"))?
-    .into_authored(&mut registry)
-    .with_context(|| format!("worktree add for {repo_path} failed"))?;
+    .with_context(|| format!("cannot materialize {repo_path}"))?;
+    let files = outcome.placement;
+    outcome
+        .into_authored(&mut registry)
+        .with_context(|| format!("worktree add for {repo_path} failed"))?;
     crate::settle::settle(vcs, &dest, role)?;
-    Ok(start)
+    Ok(Materialized { at: start, files })
 }
 
 /// Whether a hook refused the operation this error reports.
@@ -1170,6 +1192,7 @@ pub(crate) fn birth_ephemeral_worktree(
     dest: &Path,
     ephemeral: &EphemeralRefName,
     start: ResolvedRevisionId,
+    files: WorktreeFiles<'_>,
 ) -> anyhow::Result<BirthOutcome> {
     let store = receipt_store_for(vcs, source_repo);
     let raw = ephemeral.to_raw();
@@ -1248,23 +1271,28 @@ pub(crate) fn birth_ephemeral_worktree(
     // never an unreceipted ref (permanently disowned under R2).
     let owned = registry.record_created(&store, ephemeral.clone(), start)?;
 
-    match vcs.create_worktree_on(&owned, dest) {
-        Ok(Some(born)) => Ok(BirthOutcome {
-            owned,
-            birth: RefBirth::Authored(born),
-            failure: None,
-        }),
-        Ok(None) => Ok(BirthOutcome {
-            owned,
-            birth: RefBirth::Adopted,
-            failure: None,
-        }),
-        Err(e) => Ok(BirthOutcome {
-            owned,
-            birth: RefBirth::AuthoredOrAbsent,
-            failure: Some(e.into()),
-        }),
-    }
+    let populated = match files {
+        WorktreeFiles::Written => crate::share::Populated {
+            created: vcs.create_worktree_on(&owned, dest),
+            filled: Ok(None),
+        },
+        WorktreeFiles::Shared(fs) => crate::share::create_worktree_populated(vcs, &owned, dest, fs),
+    };
+    let (placement, filling_failed) = match populated.filled {
+        Ok(placement) => (placement, None),
+        Err(e) => (None, Some(e)),
+    };
+    let (birth, failure) = match populated.created {
+        Ok(Some(born)) => (RefBirth::Authored(born), filling_failed),
+        Ok(None) => (RefBirth::Adopted, filling_failed),
+        Err(e) => (RefBirth::AuthoredOrAbsent, Some(e.into())),
+    };
+    Ok(BirthOutcome {
+        owned,
+        birth,
+        failure,
+        placement,
+    })
 }
 
 /// Copy, byte for byte, an enabled integration's managed or generated file
@@ -1673,6 +1701,7 @@ pub fn create_workweave(
             .parent()
             .map(|p| std::fs::create_dir_all(p).map_err(anyhow::Error::from))
             .unwrap_or(Ok(()));
+        let mut placement: Option<FilePlacement> = None;
 
         if result.is_ok() {
             // Record the repo for the post-rollback prune pass BEFORE the
@@ -1696,9 +1725,11 @@ pub fn create_workweave(
                         &worktree_dest,
                         &ephemeral,
                         start,
+                        WorktreeFiles::Shared(&Filesystem),
                     )
                 }) {
                 Ok(outcome) => {
+                    placement = outcome.placement;
                     rollback.record_ref_attempt(outcome.owned, outcome.birth);
                     if let Some(e) = outcome.failure {
                         result = Err(e);
@@ -1716,6 +1747,9 @@ pub fn create_workweave(
         }
         match result {
             Ok(()) => {
+                if let Some(placement) = placement {
+                    eprintln!("rwv workweave create: {repo_path}: {placement}");
+                }
                 // R23 GAP: init submodules in the new worktree. Only runs
                 // when `.gitmodules` exists (no per-repo overhead otherwise).
                 // Failure is warn-and-continue: network may be down or
@@ -1810,6 +1844,7 @@ pub fn create_workweave(
                     &project_wt_dest,
                     &ephemeral,
                     start,
+                    WorktreeFiles::Written,
                 )
             }) {
             Ok(outcome) => {
@@ -4161,6 +4196,7 @@ mod tests {
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
+            WorktreeFiles::Written,
         )
         .unwrap();
 
@@ -4203,6 +4239,7 @@ mod tests {
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
+            WorktreeFiles::Written,
         ) {
             Err(e) => e,
             Ok(_) => panic!("a ref rwv holds no receipt for must refuse, not be adopted"),
@@ -4243,6 +4280,7 @@ mod tests {
             &primary.join("wt"),
             &ephemeral,
             fake_rev('a'),
+            WorktreeFiles::Written,
         )
         .unwrap();
         assert!(outcome.failure.is_some());

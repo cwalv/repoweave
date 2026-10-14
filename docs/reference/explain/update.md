@@ -132,6 +132,35 @@ Schema:
     }
   },
   "definitions": {
+    "FilePlacement": {
+      "description": "How a member's tracked files reached a workspace.",
+      "type": "object",
+      "required": [
+        "hardlinked",
+        "reflinked",
+        "written"
+      ],
+      "properties": {
+        "hardlinked": {
+          "description": "Linked to another workspace's read-only copy.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reflinked": {
+          "description": "Cloned from another workspace's copy, sharing its storage until either is written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "written": {
+          "description": "Written by the version control system.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
     "RepoUpdateRecord": {
       "description": "Per-repo record in `rwv update --json` output.\n\n`old_sha` is the tip before the fetch; `new_sha` is the tip after checkout (the new branch HEAD). Both are `null` when the SHA could not be read (e.g. the repo was missing from disk before the advance). For `kind = failed`, `new_sha` is always `null`; `error` carries the human-readable failure message.",
       "type": "object",
@@ -155,6 +184,17 @@ Schema:
           "type": [
             "string",
             "null"
+          ]
+        },
+        "files": {
+          "description": "How the files the advance rewrote were placed: cloned from another workspace of the repository, or written by the VCS. Absent when the advance moved nothing or the VCS cannot say.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "kind": {

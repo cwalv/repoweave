@@ -43,6 +43,11 @@ pub struct FetchOutcomeOutput {
     pub status: FetchOutcomeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// How the files the fetch rewrote were placed: cloned from another
+    /// workspace of the repository, or written by the VCS. Absent when the
+    /// fetch moved nothing or the VCS cannot say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<crate::share::FilePlacement>,
 }
 
 impl FetchOutcomeOutput {
@@ -374,8 +379,9 @@ fn materialize_workweave_members(
         ) {
             Ok(born) => {
                 let line = format!(
-                    "rwv fetch: created the worktree for {repo_path} in this workweave at {}",
-                    &born.as_str()[..born.as_str().len().min(12)]
+                    "rwv fetch: created the worktree for {repo_path} in this workweave at {}{}",
+                    &born.at.as_str()[..born.at.as_str().len().min(12)],
+                    crate::share::files_note(born.files),
                 );
                 if json {
                     eprintln!("{line}");
@@ -507,85 +513,95 @@ fn fetch_project_repos(
 
     let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
 
-    let outcomes: Vec<FetchOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
-        let (repo_path, entry, vcs) = item;
-        let reporter = if parallel && !json {
-            // Text parallel mode: use prefixed reporter.
-            Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
-        } else if parallel {
-            // JSON parallel mode: suppress text output entirely; JSON is
-            // emitted below. Use a no-op serial reporter so fetch_one's
-            // reporter.out() calls do nothing visible.
-            Reporter::serial()
-        } else {
-            Reporter::serial()
-        };
-        let outcome = fetch_one(
-            vcs.as_ref(),
-            repo_path,
-            entry,
-            workspace_root,
-            existing_lock.as_ref(),
-            no_reference,
-            detach_checkouts,
-            &reporter,
-            json,
-        );
-        let outcome = match outcome {
-            FetchOutcome::Ok { .. } => {
-                match crate::settle::settle(
-                    vcs.as_ref(),
-                    &workspace_root.join(repo_path.as_path()),
-                    entry.role,
-                ) {
-                    Ok(_) => outcome,
-                    Err(e) => FetchOutcome::Failed {
-                        msg: format!("{}: {e:#}", repo_path.as_str()),
+    let outcomes: Vec<(FetchOutcome, Option<crate::share::FilePlacement>)> =
+        run_in_parallel(&work_items, jobs, |_idx, item| {
+            let (repo_path, entry, vcs) = item;
+            let reporter = if parallel && !json {
+                // Text parallel mode: use prefixed reporter.
+                Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
+            } else if parallel {
+                // JSON parallel mode: suppress text output entirely; JSON is
+                // emitted below. Use a no-op serial reporter so fetch_one's
+                // reporter.out() calls do nothing visible.
+                Reporter::serial()
+            } else {
+                Reporter::serial()
+            };
+            let member = workspace_root.join(repo_path.as_path());
+            let before = vcs.head_revision(&member).ok();
+            let outcome = fetch_one(
+                vcs.as_ref(),
+                repo_path,
+                entry,
+                workspace_root,
+                existing_lock.as_ref(),
+                no_reference,
+                detach_checkouts,
+                &reporter,
+                json,
+            );
+            let (outcome, files) = match outcome {
+                FetchOutcome::Ok { .. } => {
+                    match crate::settle::settle_moved(
+                        vcs.as_ref(),
+                        &member,
+                        entry.role,
+                        before.as_ref(),
+                    ) {
+                        Ok(settled) => (outcome, settled.files),
+                        Err(e) => (
+                            FetchOutcome::Failed {
+                                msg: format!("{}: {e:#}", repo_path.as_str()),
+                            },
+                            None,
+                        ),
+                    }
+                }
+                other => (other, None),
+            };
+
+            // NDJSON mode: emit one line per repo as soon as it finishes.
+            if ndjson {
+                let abs_path =
+                    crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
+                let record = match &outcome {
+                    FetchOutcome::Ok { .. } => FetchOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: FetchOutcomeStatus::Ok,
+                        message: None,
+                        files,
                     },
+                    FetchOutcome::Skipped => FetchOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: FetchOutcomeStatus::Skipped,
+                        message: Some(format!("skipped {}", repo_path.as_str())),
+                        files: None,
+                    },
+                    FetchOutcome::Failed { msg } => FetchOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: FetchOutcomeStatus::Failed,
+                        message: Some(msg.clone()),
+                        files: None,
+                    },
+                };
+                let ndjson_line = FetchOutcomeNdjsonRecord {
+                    schema: FETCH_RECORD_SCHEMA_URL,
+                    outcome: &record,
+                };
+                if let Ok(line) = serde_json::to_string(&ndjson_line) {
+                    let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+                    let stdout = std::io::stdout();
+                    let mut handle = stdout.lock();
+                    let _ = writeln!(handle, "{line}");
+                    let _ = handle.flush();
                 }
             }
-            other => other,
-        };
 
-        // NDJSON mode: emit one line per repo as soon as it finishes.
-        if ndjson {
-            let abs_path =
-                crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
-            let record = match &outcome {
-                FetchOutcome::Ok { .. } => FetchOutcomeOutput {
-                    path: repo_path.to_string(),
-                    absolute_path: abs_path,
-                    status: FetchOutcomeStatus::Ok,
-                    message: None,
-                },
-                FetchOutcome::Skipped => FetchOutcomeOutput {
-                    path: repo_path.to_string(),
-                    absolute_path: abs_path,
-                    status: FetchOutcomeStatus::Skipped,
-                    message: Some(format!("skipped {}", repo_path.as_str())),
-                },
-                FetchOutcome::Failed { msg } => FetchOutcomeOutput {
-                    path: repo_path.to_string(),
-                    absolute_path: abs_path,
-                    status: FetchOutcomeStatus::Failed,
-                    message: Some(msg.clone()),
-                },
-            };
-            let ndjson_line = FetchOutcomeNdjsonRecord {
-                schema: FETCH_RECORD_SCHEMA_URL,
-                outcome: &record,
-            };
-            if let Ok(line) = serde_json::to_string(&ndjson_line) {
-                let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                let _ = writeln!(handle, "{line}");
-                let _ = handle.flush();
-            }
-        }
-
-        outcome
-    });
+            (outcome, files)
+        });
 
     // Aggregate outcomes serially in input order — preserves the existing
     // error-report shape and gives the lock-write step a deterministic
@@ -597,7 +613,7 @@ fn fetch_project_repos(
     // For envelope mode (json && !ndjson), collect records in work_items order.
     let mut envelope_records: Vec<FetchOutcomeOutput> = Vec::new();
 
-    for (outcome, (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
+    for ((outcome, files), (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
         let abs_path = crate::path_spelling::wire_path(&workspace_root.join(repo_path.as_path()));
         match outcome {
             FetchOutcome::Ok { add_to_lock } => {
@@ -605,12 +621,16 @@ fn fetch_project_repos(
                 if let Some(rp) = add_to_lock {
                     added_to_lock.push(rp.clone());
                 }
+                if let (false, Some(files)) = (json, files) {
+                    println!("rwv fetch: {repo_path}: files {files}");
+                }
                 if json && !ndjson {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Ok,
                         message: None,
+                        files: *files,
                     });
                 }
             }
@@ -621,6 +641,7 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Skipped,
                         message: Some(format!("skipped {}", repo_path.as_str())),
+                        files: None,
                     });
                 }
             }
@@ -635,6 +656,7 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Failed,
                         message: Some(msg.clone()),
+                        files: None,
                     });
                 }
             }

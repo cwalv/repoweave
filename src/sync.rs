@@ -14,6 +14,7 @@ use crate::manifest::{
 use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
 use crate::refusal::RefusalKind;
+use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
@@ -1585,12 +1586,12 @@ fn materialize_missing_repo(
     entry: &crate::manifest::RepoEntry,
     start: &str,
     project_name: &ProjectName,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<FilePlacement>> {
     match &ctx.checkout {
         Checkout::Workweave {
             name, dir, project, ..
         } => {
-            crate::workweave::materialize_member(
+            return Ok(crate::workweave::materialize_member(
                 vcs,
                 ctx.primary_path(),
                 ctx.active_path(),
@@ -1599,7 +1600,8 @@ fn materialize_missing_repo(
                 repo_path,
                 entry.role,
                 start,
-            )?;
+            )?
+            .files);
         }
         Checkout::Primary { .. } => {
             let dest = ctx.active_path().join(repo_path.as_path());
@@ -1612,7 +1614,7 @@ fn materialize_missing_repo(
             crate::settle::settle(vcs, &dest, entry.role)?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Why the source's lock lacks a path CWD's lock names.
@@ -4708,9 +4710,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             start,
             &ctx.cwd_project_name,
         ) {
-            Ok(()) => {
+            Ok(files) => {
                 if emit_text {
-                    println!("  {repo_path}: materialized");
+                    println!(
+                        "  {repo_path}: materialized{}",
+                        crate::share::files_note(files)
+                    );
                 }
             }
             Err(e) => {
@@ -5095,7 +5100,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .context("failed to write advanced_tips after Phase 1'")?;
     }
 
-    settle_members(&ctx.cwd_workspace_dir, &ctx.cwd_project_dir, emit_text);
+    settle_members(
+        &ctx.cwd_workspace_dir,
+        &ctx.cwd_project_dir,
+        emit_text,
+        &|vcs, member| vcs.resolve_savepoint(member, ctx.op_id.as_str()),
+    );
 
     Ok(())
 }
@@ -5106,16 +5116,34 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// A member that cannot be settled is named, not fatal — the op's own work
 /// stands, and `rwv doctor --fix` settles what is left. A manifest that does
 /// not parse settles nothing here; the phase that needs it next refuses on it.
-fn settle_members(workspace: &Path, project_dir: &Path, emit_text: bool) {
+///
+/// `moved_from` answers, for a member's checkout, the revision the op moved
+/// it from; the files that move rewrote are shared again first.
+fn settle_members(
+    workspace: &Path,
+    project_dir: &Path,
+    emit_text: bool,
+    moved_from: &dyn Fn(&dyn Vcs, &Path) -> Option<ResolvedRevisionId>,
+) {
     let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) else {
         return;
     };
-    for (repo_path, e) in crate::settle::settle_workspace(workspace, &manifest) {
-        if emit_text {
-            eprintln!(
+    for (repo_path, settled) in
+        crate::settle::settle_workspace_moved(workspace, &manifest, moved_from)
+    {
+        if !emit_text {
+            continue;
+        }
+        match settled {
+            Ok(settled) => {
+                if let Some(files) = settled.files {
+                    println!("  {repo_path}: files {files}");
+                }
+            }
+            Err(e) => eprintln!(
                 "  {repo_path}: warning: could not settle its files for its role ({e:#}); \
                  `rwv doctor --fix` retries"
-            );
+            ),
         }
     }
 }
@@ -5439,11 +5467,12 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         cwd_tip.as_str(),
                     )
                 }) {
-                    Ok(_) => {
+                    Ok(born) => {
                         if emit_text {
                             println!(
-                                "  {repo_path}: materialized in target at {}",
-                                short_sha(cwd_tip.as_str())
+                                "  {repo_path}: materialized in target at {}{}",
+                                short_sha(cwd_tip.as_str()),
+                                crate::share::files_note(born.files)
                             );
                         }
                     }
@@ -5549,7 +5578,13 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    settle_members(&ctx.dest_workspace_dir, &ctx.dest_project_dir, emit_text);
+    let target_savepoint = target_savepoint_id(&ctx.op_id);
+    settle_members(
+        &ctx.dest_workspace_dir,
+        &ctx.dest_project_dir,
+        emit_text,
+        &|vcs, member| vcs.resolve_savepoint(member, &target_savepoint),
+    );
 
     Ok(())
 }
@@ -6385,7 +6420,10 @@ pub fn run_abort(
             any_failure = true;
         }
     }
-    settle_members(&workspace_dir, &cwd_project_dir, true);
+    settle_members(&workspace_dir, &cwd_project_dir, true, &|vcs, member| {
+        vcs.resolve_pre_abort_ref(member, cwd_restore_id.as_str())
+            .map(|captured| captured.revision)
+    });
 
     // For sync-to: also roll back repos in the extra (target) workspaces.
     // The target side does not have its own `converged_tips` entries — the
@@ -6476,7 +6514,10 @@ pub fn run_abort(
                         any_failure = true;
                     }
                 }
-                settle_members(&extra_ws_dir, &extra_project_dir, true);
+                settle_members(&extra_ws_dir, &extra_project_dir, true, &|vcs, member| {
+                    vcs.resolve_pre_abort_ref(member, extra_restore_id.as_str())
+                        .map(|captured| captured.revision)
+                });
                 // Clear op-state from the extra workspace only when this side
                 // completed without a foreign-tip refusal — otherwise the
                 // operator may want to re-run abort after reconciling.

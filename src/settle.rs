@@ -9,7 +9,8 @@
 //! untracked file still be created in a `reference` member.
 
 use crate::manifest::{Manifest, RepoPath, Role};
-use crate::vcs::{vcs_for, TrackedFileKind, Vcs};
+use crate::share::FilePlacement;
+use crate::vcs::{vcs_for, ResolvedRevisionId, TrackedFileKind, Vcs};
 use anyhow::Context;
 use std::fs::Metadata;
 use std::path::Path;
@@ -45,6 +46,44 @@ pub fn settle(vcs: &dyn Vcs, member: &Path, role: Role) -> anyhow::Result<usize>
     Ok(changed)
 }
 
+/// What settling a member did.
+#[derive(Debug)]
+pub struct Settled {
+    /// Tracked files whose permissions changed.
+    pub permissions: usize,
+    /// How the files a move rewrote were placed, where the backend could say.
+    pub files: Option<FilePlacement>,
+}
+
+/// [`settle`] the member at `member` after the backend moved it from `from`
+/// to its current revision: each file the move rewrote is first cloned again
+/// from the repository's other workspaces where it can be, since the backend
+/// writes every replaced file as a new, unshared one.
+pub fn settle_moved(
+    vcs: &dyn Vcs,
+    member: &Path,
+    role: Role,
+    from: Option<&ResolvedRevisionId>,
+) -> anyhow::Result<Settled> {
+    let files = match from {
+        Some(from) => {
+            let to = vcs.head_revision(member)?;
+            if *from == to {
+                None
+            } else {
+                let changed = vcs.changed_paths_between(member, from, &to)?;
+                crate::share::reshare(vcs, member, &changed, &crate::share::Filesystem)
+                    .with_context(|| format!("failed to share files in {}", member.display()))?
+            }
+        }
+        None => None,
+    };
+    Ok(Settled {
+        permissions: settle(vcs, member, role)?,
+        files,
+    })
+}
+
 /// How many tracked regular files of the member at `member` do not hold the
 /// permissions `role` asks for.
 pub fn unsettled(vcs: &dyn Vcs, member: &Path, role: Role) -> anyhow::Result<usize> {
@@ -63,6 +102,19 @@ pub fn unsettled(vcs: &dyn Vcs, member: &Path, role: Role) -> anyhow::Result<usi
 ///
 /// Returns the members that failed, with why.
 pub fn settle_workspace(workspace: &Path, manifest: &Manifest) -> Vec<(RepoPath, anyhow::Error)> {
+    settle_workspace_moved(workspace, manifest, &|_, _| None)
+        .into_iter()
+        .filter_map(|(repo, settled)| settled.err().map(|e| (repo, e)))
+        .collect()
+}
+
+/// [`settle_moved`] every member of `manifest` checked out under
+/// `workspace`, each from the revision `moved_from` answers for its checkout.
+pub fn settle_workspace_moved(
+    workspace: &Path,
+    manifest: &Manifest,
+    moved_from: &dyn Fn(&dyn Vcs, &Path) -> Option<ResolvedRevisionId>,
+) -> Vec<(RepoPath, anyhow::Result<Settled>)> {
     manifest
         .iter_entries()
         .filter_map(|(repo, entry)| {
@@ -70,9 +122,12 @@ pub fn settle_workspace(workspace: &Path, manifest: &Manifest) -> Vec<(RepoPath,
             if member.is_symlink() || !member.is_dir() {
                 return None;
             }
-            settle(vcs_for(entry.vcs_type).as_ref(), &member, entry.role)
-                .err()
-                .map(|e| (repo.clone(), e))
+            let vcs = vcs_for(entry.vcs_type);
+            let from = moved_from(vcs.as_ref(), &member);
+            Some((
+                repo.clone(),
+                settle_moved(vcs.as_ref(), &member, entry.role, from.as_ref()),
+            ))
         })
         .collect()
 }

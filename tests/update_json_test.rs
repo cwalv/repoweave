@@ -182,6 +182,7 @@ fn update_json_envelope_round_trips() {
                 old_sha: Some("abc123".into()),
                 new_sha: Some("def456".into()),
                 error: None,
+                files: None,
             },
             RepoUpdateRecord {
                 path: "github/org/other".into(),
@@ -191,6 +192,7 @@ fn update_json_envelope_round_trips() {
                 old_sha: Some("aaa111".into()),
                 new_sha: Some("aaa111".into()),
                 error: None,
+                files: None,
             },
         ],
         resolution: None,
@@ -236,6 +238,7 @@ fn update_json_error_field_omitted_when_not_failed() {
         old_sha: Some("abc".into()),
         new_sha: Some("def".into()),
         error: None,
+        files: None,
     };
     let v = serde_json::to_value(&record).unwrap();
     assert!(
@@ -255,6 +258,7 @@ fn update_json_failed_record_serializes() {
         old_sha: Some("abc".into()),
         new_sha: None,
         error: Some("git fetch failed".into()),
+        files: None,
     };
     let v = serde_json::to_value(&record).unwrap();
     assert_eq!(v["kind"], "failed");

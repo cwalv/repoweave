@@ -72,6 +72,11 @@ pub struct RepoUpdateRecord {
     /// Human-readable error message, only present when `kind = failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// How the files the advance rewrote were placed: cloned from another
+    /// workspace of the repository, or written by the VCS. Absent when the
+    /// advance moved nothing or the VCS cannot say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<crate::share::FilePlacement>,
 }
 
 /// Top-level envelope for `rwv update --json` (serial / `-j 1` mode).
@@ -173,10 +178,11 @@ pub fn run_update(
 
 /// Outcome of advancing a single repo.
 ///
-/// `Ok(new_sha)` means fetch + resolve + checkout ran cleanly and the repo
-/// is now at `new_sha`. `Err(msg)` means one of those steps failed and
-/// `msg` is the human-readable failure to surface in the aggregated summary.
-type RepoOutcome = Result<String, String>;
+/// `Ok((new_sha, files))` means fetch + resolve + checkout ran cleanly, the
+/// repo is now at `new_sha`, and `files` says how the files it rewrote were
+/// placed. `Err(msg)` means one of those steps failed and `msg` is the
+/// human-readable failure to surface in the aggregated summary.
+type RepoOutcome = Result<(String, Option<crate::share::FilePlacement>), String>;
 
 /// Extended work item: repo path + manifest entry + old tip SHA captured
 /// before the advance loop runs.
@@ -184,9 +190,9 @@ struct WorkItem {
     repo_path: RepoPath,
     entry: RepoEntry,
     checkout: MemberCheckout,
-    /// HEAD SHA before the advance (`None` if unreadable — e.g. repo
-    /// missing or git error).
-    old_sha: Option<String>,
+    /// HEAD before the advance (`None` if unreadable — e.g. repo missing or
+    /// git error).
+    old: Option<ResolvedRevisionId>,
     /// The backend resolved from this entry's `vcs_type`, resolved once here
     /// and borrowed by the worker rather than re-resolved per repo.
     vcs: Box<dyn Vcs>,
@@ -230,15 +236,12 @@ fn update_for_project(
         .map(|(rp, entry)| {
             let checkout = member_checkout_dir(rp, primary_root, workweave_dir);
             let vcs = vcs_for(entry.vcs_type);
-            let old_sha = vcs
-                .head_revision(checkout.path())
-                .ok()
-                .map(|r| r.display_str().to_owned());
+            let old = vcs.head_revision(checkout.path()).ok();
             WorkItem {
                 repo_path: rp.clone(),
                 entry: entry.clone(),
                 checkout,
-                old_sha,
+                old,
                 vcs,
             }
         })
@@ -266,9 +269,14 @@ fn update_for_project(
             use_reporter,
         )
         .and_then(|new_sha| {
-            crate::settle::settle(item.vcs.as_ref(), item.checkout.path(), item.entry.role)
-                .map(|_| new_sha)
-                .map_err(|e| format!("{}: {e:#}", item.repo_path))
+            crate::settle::settle_moved(
+                item.vcs.as_ref(),
+                item.checkout.path(),
+                item.entry.role,
+                item.old.as_ref(),
+            )
+            .map(|settled| (new_sha, settled.files))
+            .map_err(|e| format!("{}: {e:#}", item.repo_path))
         })
     });
 
@@ -286,12 +294,13 @@ fn update_for_project(
         let branch = item.entry.version.as_str().to_owned();
         let abs_str = crate::path_spelling::wire_path(item.checkout.path());
 
+        let old_sha = item.old.as_ref().map(|r| r.display_str().to_owned());
         let record = match outcome {
-            Ok(new_sha) => {
+            Ok((new_sha, files)) => {
                 // "advanced N repo(s)" counts SHA deltas, not non-`Err`
                 // outcomes: a repo that was already at the target was
                 // visited successfully but advanced nothing.
-                let kind = if item.old_sha.as_deref() == Some(new_sha.as_str()) {
+                let kind = if old_sha.as_deref() == Some(new_sha.as_str()) {
                     UpdateKind::UpToDate
                 } else {
                     updated += 1;
@@ -302,9 +311,10 @@ fn update_for_project(
                     absolute_path: abs_str,
                     branch,
                     kind,
-                    old_sha: item.old_sha.clone(),
+                    old_sha,
                     new_sha: Some(new_sha),
                     error: None,
+                    files,
                 }
             }
             Err(msg) => {
@@ -314,12 +324,17 @@ fn update_for_project(
                     absolute_path: abs_str,
                     branch,
                     kind: UpdateKind::Failed,
-                    old_sha: item.old_sha.clone(),
+                    old_sha,
                     new_sha: None,
                     error: Some(msg),
+                    files: None,
                 }
             }
         };
+
+        if let (false, Some(files)) = (json, record.files) {
+            println!("  {}: files {files}", record.path);
+        }
 
         if json {
             if ndjson {
@@ -477,7 +492,7 @@ fn advance_one(
     detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
     use_reporter: bool,
-) -> RepoOutcome {
+) -> Result<String, String> {
     let repo_dir = checkout.path();
     // Which checkout this member is advancing decides which ref is the legal
     // object of the MOVE — the canonical's tracking counterpart, or the

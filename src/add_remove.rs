@@ -80,7 +80,7 @@ fn create_worktree_in_workweave(
         }
     };
 
-    crate::workweave::materialize_member(
+    let born = crate::workweave::materialize_member(
         vcs,
         primary_root,
         workweave_dir,
@@ -97,6 +97,9 @@ fn create_worktree_in_workweave(
             canonical_clone.display()
         )
     })?;
+    if let Some(files) = born.files {
+        eprintln!("Created the worktree for '{repo_path}' in this workweave ({files})");
+    }
     Ok(())
 }
 
