@@ -74,7 +74,7 @@ pub enum OwnedDigestCheck {
 
 /// SHA-256 of `content`, in the `"sha256:<hex>"` self-describing form the
 /// state file records.
-pub(crate) fn owned_digest(content: &[u8]) -> String {
+fn owned_digest(content: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content);
@@ -755,13 +755,6 @@ pub fn reset_unreadable_ledger(dir: &Path) -> anyhow::Result<Option<String>> {
 /// The files `dir`'s ledger attests, in ledger order.
 pub fn attested_owned_files(dir: &Path) -> Vec<String> {
     read_owned_digests(dir).into_keys().collect()
-}
-
-/// The digest `dir`'s ledger records for `file_name`, if any.
-pub(crate) fn recorded_digest(dir: &Path, file_name: &str) -> Option<String> {
-    read_owned_digests(dir)
-        .get(file_name)
-        .map(|entry| entry.digest().to_string())
 }
 
 /// Compare `content` against the digest `dir`'s state file records for

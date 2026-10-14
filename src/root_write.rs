@@ -10,7 +10,7 @@
 //! reports it.
 
 use crate::manifest::ProjectName;
-use crate::owned_state::{owned_digest, recorded_digest};
+use crate::vcs::{Vcs, VcsError};
 use crate::workspace::project_dir;
 use std::path::{Path, PathBuf};
 
@@ -18,38 +18,25 @@ use std::path::{Path, PathBuf};
 /// project's own copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
-    /// The project has no copy, the same bytes, or still the bytes the ledger
-    /// records rwv accepted.
+    /// The project has no copy, the same bytes, or a copy version control
+    /// holds as it stands.
     Adopt,
-    /// The project's copy moved since rwv recorded it, or nothing records it,
-    /// and it differs from the root file.
+    /// The project's copy differs and version control does not hold it.
     Conflict,
 }
 
-pub(crate) fn verdict(root: &[u8], project: Option<&[u8]>, recorded: Option<&str>) -> Verdict {
-    match project {
-        None => Verdict::Adopt,
-        Some(project) if project == root => Verdict::Adopt,
-        Some(project) if recorded == Some(owned_digest(project).as_str()) => Verdict::Adopt,
-        Some(_) => Verdict::Conflict,
-    }
-}
-
-/// A real file found at `name` under the weave root, read against the project
-/// it belongs to.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A real file found at `name` under the weave root, with the project copy
+/// taking it in would replace.
+#[derive(Debug, Clone)]
 pub(crate) struct RootWrite {
     pub name: String,
     pub owner: ProjectName,
     pub bytes: Vec<u8>,
-    pub verdict: Verdict,
-    /// Whether the ledger records a generation of this lock, which is what
-    /// tells a project copy that moved from one that did not.
-    pub recorded: bool,
+    project_copy: Option<Vec<u8>>,
 }
 
-/// The real file at `name`, if that is what stands there, judged against
-/// `owner`'s copy. A link, a directory or nothing is not a root write.
+/// The real file at `name`, if that is what stands there. A link, a directory
+/// or nothing is not a root write.
 pub(crate) fn read(
     root: &Path,
     owner: &ProjectName,
@@ -63,24 +50,35 @@ pub(crate) fn read(
         Err(e) => return Err(e),
     }
     let bytes = std::fs::read(&path)?;
-    let dir = project_dir(root, owner.as_str());
-    let project = match std::fs::read(dir.join(name)) {
-        Ok(project) => Some(project),
+    let project_copy = match std::fs::read(project_dir(root, owner.as_str()).join(name)) {
+        Ok(copy) => Some(copy),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
-    let recorded = recorded_digest(&dir, name);
-    let verdict = verdict(&bytes, project.as_deref(), recorded.as_deref());
     Ok(Some(RootWrite {
         name: name.to_string(),
         owner: owner.clone(),
         bytes,
-        verdict,
-        recorded: recorded.is_some(),
+        project_copy,
     }))
 }
 
 impl RootWrite {
+    /// Adopt when taking this file in loses nothing: the project has no copy,
+    /// the same bytes, or a copy `vcs` can give back from history.
+    pub(crate) fn verdict(&self, vcs: &dyn Vcs, root: &Path) -> Result<Verdict, VcsError> {
+        let replaceable = match &self.project_copy {
+            None => true,
+            Some(copy) if *copy == self.bytes => true,
+            Some(_) => held_as_it_stands(vcs, &project_dir(root, self.owner.as_str()), &self.name)?,
+        };
+        Ok(if replaceable {
+            Verdict::Adopt
+        } else {
+            Verdict::Conflict
+        })
+    }
+
     /// The file changes that take this root file into its project: the
     /// project copy takes its bytes, and the root file goes so the link can
     /// stand there again.
@@ -120,20 +118,26 @@ impl RootWrite {
 
     /// What is said when the root file cannot be taken over the project's copy.
     pub(crate) fn conflict_message(&self) -> String {
-        let why = if self.recorded {
-            "both changed since rwv last recorded the lock"
-        } else {
-            "differ, and rwv records no generation of this lock to tell which one changed"
-        };
         format!(
-            "`{name}` at the weave root and `{project}` {why}, so neither is taken over the \
-             other and the link is left out. To keep the root's, copy it over `{project}`; \
-             to keep the project's, delete `{name}` at the weave root. Then re-run `rwv \
-             doctor --fix`",
+            "`{name}` at the weave root and `{project}` differ, and version control does not \
+             hold the project's copy as it stands, so neither is taken over the other and the \
+             link is left out. To keep the root's, commit the project's copy or delete it; to \
+             keep the project's, delete `{name}` at the weave root. Then re-run `rwv doctor \
+             --fix`",
             name = self.name,
             project = self.in_project()
         )
     }
+}
+
+/// Whether `vcs` holds `name` in `repo` byte for byte as the working copy has
+/// it.
+fn held_as_it_stands(vcs: &dyn Vcs, repo: &Path, name: &str) -> Result<bool, VcsError> {
+    Ok(vcs.is_tracked(repo, Path::new(name))?
+        && !vcs
+            .tracked_dirty_file_names(repo)?
+            .iter()
+            .any(|dirty| dirty == name))
 }
 
 /// One file change, in order.
@@ -235,45 +239,106 @@ fn remove_entry(path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    fn git(repo: &Path, args: &[&str]) {
+        let out = crate::git::git_command_in_test()
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn commit(repo: &Path) {
+        git(
+            repo,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=T",
+                "commit",
+                "-qm",
+                "c",
+            ],
+        );
+    }
+
+    fn commit_lock(repo: &Path, bytes: &str) {
+        std::fs::write(repo.join("Cargo.lock"), bytes).unwrap();
+        git(repo, &["add", "Cargo.lock"]);
+        commit(repo);
+    }
+
+    /// The verdict on a root `Cargo.lock` over a project repo `stage` left in
+    /// some state.
+    fn verdict_over(stage: impl FnOnce(&Path)) -> Verdict {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let repo = root.join("projects/demo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        std::fs::write(repo.join("rwv.toml"), "").unwrap();
+        git(&repo, &["add", "rwv.toml"]);
+        commit(&repo);
+        stage(&repo);
+        std::fs::write(root.join("Cargo.lock"), "# the tool's\n").unwrap();
+        read(root, &ProjectName::new("demo").unwrap(), "Cargo.lock")
+            .unwrap()
+            .unwrap()
+            .verdict(crate::vcs::project_vcs().as_ref(), root)
+            .unwrap()
+    }
+
     #[test]
     fn a_root_write_is_adopted_when_the_project_loses_nothing() {
-        assert_eq!(verdict(b"new", None, None), Verdict::Adopt);
-        assert_eq!(verdict(b"same", Some(b"same"), None), Verdict::Adopt);
+        assert_eq!(verdict_over(|_| {}), Verdict::Adopt, "no project copy");
         assert_eq!(
-            verdict(b"new", Some(b"accepted"), Some(&owned_digest(b"accepted"))),
+            verdict_over(|repo| std::fs::write(repo.join("Cargo.lock"), "# the tool's\n").unwrap()),
             Verdict::Adopt,
-            "the project still holds what rwv recorded, so nothing of its own is lost"
+            "the same bytes, though version control holds none of them"
+        );
+        assert_eq!(
+            verdict_over(|repo| commit_lock(repo, "# committed\n")),
+            Verdict::Adopt,
+            "a copy history gives back"
+        );
+        assert_eq!(
+            verdict_over(|repo| {
+                commit_lock(repo, "# committed\n");
+                std::fs::write(repo.join("rwv.toml"), "# edited\n").unwrap();
+            }),
+            Verdict::Adopt,
+            "another file's edit does not make the lock unrecoverable"
         );
     }
 
     #[test]
-    fn a_conflict_says_whether_anything_records_which_side_moved() {
-        let write = |recorded| RootWrite {
-            name: "package-lock.json".to_string(),
-            owner: ProjectName::new("demo").unwrap(),
-            bytes: Vec::new(),
-            verdict: Verdict::Conflict,
-            recorded,
-        };
-        assert!(write(true).conflict_message().contains("both changed"));
-        assert!(
-            write(false)
-                .conflict_message()
-                .contains("records no generation of this lock"),
-            "with nothing recorded, rwv cannot say the project's copy changed"
-        );
-    }
-
-    #[test]
-    fn a_root_write_over_a_project_copy_that_moved_is_a_conflict() {
+    fn a_root_write_over_a_copy_history_cannot_give_back_is_a_conflict() {
         assert_eq!(
-            verdict(b"new", Some(b"pulled"), Some(&owned_digest(b"accepted"))),
-            Verdict::Conflict
-        );
-        assert_eq!(
-            verdict(b"new", Some(b"unrecorded"), None),
+            verdict_over(|repo| std::fs::write(repo.join("Cargo.lock"), "# untracked\n").unwrap()),
             Verdict::Conflict,
-            "with nothing recorded there is no telling which side moved"
+            "untracked"
+        );
+        assert_eq!(
+            verdict_over(|repo| {
+                commit_lock(repo, "# committed\n");
+                std::fs::write(repo.join("Cargo.lock"), "# edited\n").unwrap();
+            }),
+            Verdict::Conflict,
+            "edited since its commit"
+        );
+        assert_eq!(
+            verdict_over(|repo| {
+                commit_lock(repo, "# committed\n");
+                std::fs::write(repo.join("Cargo.lock"), "# staged\n").unwrap();
+                git(repo, &["add", "Cargo.lock"]);
+            }),
+            Verdict::Conflict,
+            "staged, which no commit holds"
         );
     }
 }

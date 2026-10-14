@@ -106,6 +106,13 @@ impl Weave {
         );
     }
 
+    /// Commit the project's lock, so history can give it back.
+    fn commit_project_lock(&self) {
+        let project = self.ws.join("projects/demo");
+        common::git_in(&project, &["add", "Cargo.lock"]);
+        common::git_in(&project, &["commit", "-qm", "lock"]);
+    }
+
     /// Replace the lock's link with a real file holding `bytes`: a tool that
     /// ran while the link was missing.
     fn write_past_the_link(&self, bytes: &str) {
@@ -179,13 +186,14 @@ fn a_lock_renamed_over_its_dangling_link_is_adopted_by_the_verb_that_ran_the_too
     );
 }
 
-/// A tool that ran while the link was missing: the project copy is still the
-/// lock rwv recorded, so the next intent verb takes the tool's in and relinks,
-/// without stopping on it.
+/// A tool that ran while the link was missing: history holds the project
+/// copy, so the next intent verb takes the tool's in and relinks, without
+/// stopping on it.
 #[test]
 fn a_lock_written_where_its_link_was_missing_is_adopted_by_the_next_intent_verb() {
     let weave = Weave::new();
     weave.add_cargo_member();
+    weave.commit_project_lock();
     weave.write_past_the_link("version = 4\n# regenerated\n");
     let plain = weave.origin("plain", &[]);
 
@@ -204,14 +212,16 @@ fn a_lock_written_where_its_link_was_missing_is_adopted_by_the_next_intent_verb(
     assert!(weave.is_linked("Cargo.lock"));
 }
 
-/// The project copy moved too (a pull), so neither side may be taken over the
-/// other: the verb names both, leaves both, and carries on without the link.
+/// The project copy holds an edit no commit has, so neither side may be taken
+/// over the other: the verb names both, leaves both, and carries on without
+/// the link.
 #[test]
 fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
     let weave = Weave::new();
     weave.add_cargo_member();
+    weave.commit_project_lock();
     weave.write_past_the_link("# the tool's\n");
-    std::fs::write(weave.ws.join("projects/demo/Cargo.lock"), "# the pull's\n").unwrap();
+    std::fs::write(weave.ws.join("projects/demo/Cargo.lock"), "# edited\n").unwrap();
     let plain = weave.origin("plain", &[]);
 
     let add = weave.rwv(&["add", &plain]);
@@ -222,11 +232,12 @@ fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
         "a conflict is named, not refused: {stderr}"
     );
     assert!(
-        stderr.contains("both changed") && stderr.contains("projects/demo/Cargo.lock"),
+        stderr.contains("version control does not hold")
+            && stderr.contains("projects/demo/Cargo.lock"),
         "the finding must name both copies: {stderr}"
     );
     assert_eq!(
-        stderr.matches("both changed").count(),
+        stderr.matches("version control does not hold").count(),
         1,
         "named once, though surfacing runs before and after the hooks: {stderr}"
     );
@@ -237,7 +248,7 @@ fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
     );
     assert_eq!(
         weave.project_file("Cargo.lock").as_deref(),
-        Some("# the pull's\n")
+        Some("# edited\n")
     );
 }
 
@@ -247,6 +258,7 @@ fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
 fn activate_reports_a_lock_written_past_its_link_and_doctor_fix_adopts_it() {
     let weave = Weave::new();
     weave.add_cargo_member();
+    weave.commit_project_lock();
     let recorded = weave.project_file("Cargo.lock").unwrap();
     weave.write_past_the_link("version = 4\n# regenerated\n");
 
@@ -292,6 +304,7 @@ fn activate_reports_a_lock_written_past_its_link_and_doctor_fix_adopts_it() {
 fn materialize_reads_a_lock_written_past_its_link_as_drift_to_settle() {
     let weave = Weave::new();
     weave.add_cargo_member();
+    weave.commit_project_lock();
     weave.write_past_the_link("version = 4\n# out of band\n");
 
     let materialize = weave.rwv(&["materialize"]);

@@ -1289,8 +1289,8 @@ corrects.
 
 A lock file a tool wrote at its weave-root path instead of through the link is
 the exception to report-only real content: `--fix` takes it into the project
-and restores the link, unless the project's copy changed too, in which case
-both copies are named and neither is touched.
+and restores the link, unless the project's copy differs and is not committed
+as it stands, in which case both copies are named and neither is touched.
 
 Real content occupying a link's path stays report-only, and so does a link
 surfaced at a name the active project no longer declares — for the same

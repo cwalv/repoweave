@@ -9171,8 +9171,12 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
         // exist and resolve. Scoped to `workspace_dir` (= `ctx.active_path()`),
         // so it checks primary's surfacing at primary and the workweave's
         // inside a workweave.
-        let surfacing_issues =
-            crate::activate::verify_surfacing(workspace_dir, &project.name, &project.manifest);
+        let surfacing_issues = crate::activate::verify_surfacing(
+            world.project_vcs.as_ref(),
+            workspace_dir,
+            &project.name,
+            &project.manifest,
+        );
         let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
             surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
         // A real file or dir occupying a surfacing path is user-held and never
@@ -9185,6 +9189,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             // so the weave root's shared names stay with the project it
             // presents.
             match crate::activate::surface_symlinks(
+                world.project_vcs.as_ref(),
                 workspace_dir,
                 &project.name,
                 &project.manifest,
@@ -9493,6 +9498,7 @@ struct DoctorWorld {
     workspace_dir: PathBuf,
     session: crate::workspace::WorkspaceSession,
     vcs: Box<dyn crate::vcs::Vcs>,
+    project_vcs: Box<dyn crate::vcs::Vcs>,
     active_project: Option<crate::manifest::ProjectName>,
     scope_all: bool,
     input: CheckInput,
@@ -9636,6 +9642,7 @@ fn load_doctor_world(
         workspace_dir,
         session,
         vcs,
+        project_vcs: crate::vcs::project_vcs(),
         active_project,
         scope_all,
         input,

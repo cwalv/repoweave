@@ -51,6 +51,7 @@ use crate::owned_state::{
 };
 use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
+use crate::vcs::Vcs;
 use crate::workspace::{
     observe_root, project_dir, project_rel_dir, scannable_registry_segments, strip_projects_prefix,
     Checkout, RootObservation, WorkspaceContext, WorkspaceSession, PROJECTS_DIR,
@@ -662,8 +663,10 @@ fn activate_in_phases(
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
     let ctx_base =
         session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
+    let project_vcs = crate::vcs::project_vcs();
 
     let Some(noticed) = author_and_surface(
+        project_vcs.as_ref(),
         root,
         &project_name,
         &manifest,
@@ -675,14 +678,23 @@ fn activate_in_phases(
     else {
         return Ok(());
     };
-    run_hooks(&integrations, &manifest, &ctx_base, opts, mode, &noticed)
-        .map_err(ActivationFailure::AtHooks)
+    run_hooks(
+        project_vcs.as_ref(),
+        &integrations,
+        &manifest,
+        &ctx_base,
+        opts,
+        mode,
+        &noticed,
+    )
+    .map_err(ActivationFailure::AtHooks)
 }
 
 /// The integration content step for `mode`, then the weave root's surfacing,
 /// returning what surfacing reported. `None` when the root presents a different
 /// project, which leaves it, and the hooks that act through it, untouched.
 fn author_and_surface(
+    project_vcs: &dyn Vcs,
     root: &Path,
     project_name: &ProjectName,
     manifest: &Manifest,
@@ -730,7 +742,13 @@ fn author_and_surface(
             // Before the drift check, so a tool's write that missed its link is
             // judged in the project copy the check reads, as one that went
             // through the link always is.
-            surface_with_notices(root, project_name, manifest, SurfacingMode::Repair)?;
+            surface_with_notices(
+                project_vcs,
+                root,
+                project_name,
+                manifest,
+                SurfacingMode::Repair,
+            )?;
             settle_arrived_drift(&ctx_base.output_dir, consent)?;
         }
     }
@@ -773,7 +791,7 @@ fn author_and_surface(
         ActivationMode::Context => SurfacingMode::Select,
         ActivationMode::Intent | ActivationMode::Materialize(_) => SurfacingMode::Repair,
     };
-    let notices = surface_with_notices(root, project_name, manifest, surfacing_mode)?;
+    let notices = surface_with_notices(project_vcs, root, project_name, manifest, surfacing_mode)?;
     for notice in &notices {
         eprintln!("[warning] core: surfacing: {notice}");
     }
@@ -786,6 +804,7 @@ fn author_and_surface(
 /// context-switches; the user can run install commands directly when they need
 /// them.
 fn run_hooks(
+    project_vcs: &dyn Vcs,
     integrations: &[&dyn Integration],
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
@@ -801,6 +820,7 @@ fn run_hooks(
         // generation by a renaming writer replaces the link that dangled.
         let after_hooks = match mode {
             ActivationMode::Intent | ActivationMode::Materialize(_) => surface_with_notices(
+                project_vcs,
                 ctx_base.workspace_root,
                 ctx_base.project,
                 manifest,
@@ -1487,12 +1507,13 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 /// content; the one exception is the outgoing project's file on a switch, which
 /// goes home before the incoming project's link can take its path.
 pub fn surface_symlinks(
+    project_vcs: &dyn Vcs,
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
     mode: SurfacingMode,
 ) -> anyhow::Result<()> {
-    for notice in surface_with_notices(root, project, manifest, mode)? {
+    for notice in surface_with_notices(project_vcs, root, project, manifest, mode)? {
         eprintln!("[warning] core: surfacing: {notice}");
     }
     Ok(())
@@ -1501,6 +1522,7 @@ pub fn surface_symlinks(
 /// [`surface_symlinks`], returning what it has to say about root writes it left
 /// rather than printing it.
 fn surface_with_notices(
+    project_vcs: &dyn Vcs,
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
@@ -1632,15 +1654,16 @@ fn surface_with_notices(
     let mut notices = Vec::new();
     for write in &root_writes {
         let may_adopt = mode == SurfacingMode::Repair || &write.owner != project;
-        match (may_adopt, write.verdict) {
-            (true, crate::root_write::Verdict::Adopt) => adoption.extend(write.adoption(root)),
-            (true, crate::root_write::Verdict::Conflict) => {
+        if !may_adopt {
+            left_unlinked.insert(write.name.clone());
+            notices.push(write.unadopted_message());
+            continue;
+        }
+        match write.verdict(project_vcs, root)? {
+            crate::root_write::Verdict::Adopt => adoption.extend(write.adoption(root)),
+            crate::root_write::Verdict::Conflict => {
                 left_unlinked.insert(write.name.clone());
                 notices.push(write.conflict_message());
-            }
-            (false, _) => {
-                left_unlinked.insert(write.name.clone());
-                notices.push(write.unadopted_message());
             }
         }
     }
@@ -2182,6 +2205,7 @@ pub fn member_incompatibilities(
 /// present is additionally expected to hold every shared name at the root,
 /// including names it does not itself declare.
 pub fn verify_surfacing(
+    project_vcs: &dyn Vcs,
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
@@ -2269,20 +2293,23 @@ pub fn verify_surfacing(
 
         if entry.source == SurfacedSource::WrittenThroughLink && link_meta.is_file() {
             if let Ok(Some(write)) = crate::root_write::read(root, project, file) {
-                let adoptable = write.verdict == crate::root_write::Verdict::Adopt;
+                let conflict = matches!(
+                    write.verdict(project_vcs, root),
+                    Ok(crate::root_write::Verdict::Conflict)
+                );
                 issues.push(Issue {
                     integration: integration.clone(),
                     severity: Severity::Warning,
                     message: format!(
                         "surfacing: {}",
-                        if adoptable {
-                            write.unadopted_message()
-                        } else {
+                        if conflict {
                             write.conflict_message()
+                        } else {
+                            write.unadopted_message()
                         }
                     ),
                     kind: IssueKind::Surfacing,
-                    safe_to_fix: adoptable,
+                    safe_to_fix: !conflict,
                 });
                 continue;
             }
@@ -2358,6 +2385,7 @@ pub fn verify_surfacing(
 mod tests {
     use super::*;
     use crate::integration::{Issue, IssueKind};
+    use crate::vcs::project_vcs;
 
     fn issue(integration: &str, severity: Severity, message: &str) -> Issue {
         Issue {
@@ -2628,7 +2656,14 @@ mod tests {
         let manifest = load_manifest(root, &project);
         std::fs::write(root.join(".claude"), "user content").unwrap();
 
-        let err = surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap_err();
+        let err = surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains(".claude"),
@@ -2682,6 +2717,7 @@ mod tests {
         let before = read_links(root, &surfaced);
 
         let err = surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &project,
             &load_manifest(root, &project),
@@ -2713,6 +2749,7 @@ mod tests {
         std::fs::write(root.join("package-lock.json"), "{}\n").unwrap();
 
         let msg = surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &project,
             &load_manifest(root, &project),
@@ -2739,6 +2776,7 @@ mod tests {
         std::fs::write(root.join("gita"), "a file\n").unwrap();
 
         let msg = surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &project,
             &load_manifest(root, &project),
@@ -2774,6 +2812,7 @@ mod tests {
         let writable = read_only(&root.join("sub"));
 
         let result = surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &project,
             &load_manifest(root, &project),
@@ -2800,6 +2839,7 @@ mod tests {
         let writable = read_only(&root.join("sub"));
 
         let result = surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &project,
             &load_manifest(root, &project),
@@ -2824,7 +2864,12 @@ mod tests {
         link_as_surfaced(root, project.as_str(), &["docs/github/notes.md"]);
         link_as_surfaced(root, project.as_str(), &["docs/projects/notes.md"]);
 
-        let issues = verify_surfacing(root, &project, &load_manifest(root, &project));
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &load_manifest(root, &project),
+        );
         assert!(
             issues
                 .iter()
@@ -2921,7 +2966,14 @@ mod tests {
         std::fs::write(claude.join("agents").join("a.md"), "x").unwrap();
         let manifest = load_manifest(root, &project);
 
-        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
 
         let link = root.join(".claude");
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
@@ -2937,7 +2989,14 @@ mod tests {
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
 
-        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
 
         // The symlink exists at the root and resolves to the project copy.
         let link = root.join(".claude");
@@ -2949,7 +3008,7 @@ mod tests {
         );
 
         // verify_surfacing reports nothing — surfacing matches the union.
-        let issues = verify_surfacing(root, &project, &manifest);
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert!(
             issues.is_empty(),
             "expected clean surfacing, got: {issues:?}"
@@ -2965,7 +3024,7 @@ mod tests {
         let manifest = load_manifest(root, &project);
 
         // Do NOT surface — the symlink is absent.
-        let issues = verify_surfacing(root, &project, &manifest);
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert_eq!(issues.len(), 1, "expected one missing-surfacing issue");
         let issue = &issues[0];
         assert_eq!(issue.integration, "static-files");
@@ -2997,7 +3056,7 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &project, &manifest);
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert_eq!(issues.len(), 1);
         assert!(issues[0].safe_to_fix);
         assert!(
@@ -3018,7 +3077,7 @@ mod tests {
 
         std::fs::write(root.join(".claude"), "i am a real file\n").unwrap();
 
-        let issues = verify_surfacing(root, &project, &manifest);
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert_eq!(issues.len(), 1);
         assert!(
             !issues[0].safe_to_fix,
@@ -3038,12 +3097,22 @@ mod tests {
         // Start from the un-surfaced (missing) state — the symlink was never
         // created in this weave (manifest gained the file after create, or a
         // manual rm). The check flags it.
-        assert_eq!(verify_surfacing(root, &project, &manifest).len(), 1);
+        assert_eq!(
+            verify_surfacing(project_vcs().as_ref(), root, &project, &manifest).len(),
+            1
+        );
 
         // The fix primitive (NOT activate_intent) creates the symlink.
-        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
         assert!(
-            verify_surfacing(root, &project, &manifest).is_empty(),
+            verify_surfacing(project_vcs().as_ref(), root, &project, &manifest).is_empty(),
             "re-surfacing should clear the missing-symlink finding"
         );
     }
@@ -3060,7 +3129,14 @@ mod tests {
         let other = write_surfacing_project(root, "other-app", &[".claude"], &[".claude"]);
         let manifest = load_manifest(root, &other);
 
-        surface_symlinks(root, &other, &manifest, SurfacingMode::Select).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &other,
+            &manifest,
+            SurfacingMode::Select,
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read_to_string(root.join(".rwv-active"))
                 .unwrap()
@@ -3079,7 +3155,7 @@ mod tests {
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
 
-        assert!(verify_surfacing(root, &project, &manifest).is_empty());
+        assert!(verify_surfacing(project_vcs().as_ref(), root, &project, &manifest).is_empty());
     }
 
     /// A weave with one cargo member and nothing authored in the project dir,
@@ -3135,7 +3211,14 @@ mod tests {
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
 
-        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
 
         assert_eq!(
             std::fs::read_link(root.join("Cargo.lock")).ok(),
@@ -3149,7 +3232,7 @@ mod tests {
              over its absent source would dangle forever"
         );
 
-        let issues = verify_surfacing(root, &project, &manifest);
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert!(
             issues.is_empty(),
             "surfacing just produced this state, so the check that reads it \
@@ -3166,12 +3249,19 @@ mod tests {
         let manifest = load_manifest(root, &project);
 
         for round in 1..=3 {
-            surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+            surface_symlinks(
+                project_vcs().as_ref(),
+                root,
+                &project,
+                &manifest,
+                SurfacingMode::Repair,
+            )
+            .unwrap();
             assert!(
                 root.join("Cargo.lock").symlink_metadata().is_ok(),
                 "round {round}: the pending link was removed"
             );
-            let issues = verify_surfacing(root, &project, &manifest);
+            let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
             assert!(
                 issues.is_empty(),
                 "round {round}: a repair left something for the next check to \
@@ -3184,11 +3274,41 @@ mod tests {
         std::fs::write(root.join("Cargo.lock"), bytes).unwrap();
     }
 
-    fn write_project_lock(root: &Path, project: &str, bytes: &str, recorded: Option<&str>) {
-        let dir = root.join("projects").join(project);
-        std::fs::write(dir.join("Cargo.lock"), bytes).unwrap();
-        if let Some(recorded) = recorded {
-            stamp_owned_digest(&dir, "Cargo.lock", recorded.as_bytes()).unwrap();
+    fn write_project_lock(root: &Path, project: &str, bytes: &str) {
+        std::fs::write(
+            root.join("projects").join(project).join("Cargo.lock"),
+            bytes,
+        )
+        .unwrap();
+    }
+
+    /// `project`'s directory made a repo with `bytes` committed as its lock.
+    fn commit_project_lock(root: &Path, project: &str, bytes: &str) {
+        let repo = root.join("projects").join(project);
+        write_project_lock(root, project, bytes);
+        for args in [
+            &["init", "-q"][..],
+            &["add", "Cargo.lock"],
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=T",
+                "commit",
+                "-qm",
+                "lock",
+            ],
+        ] {
+            let out = crate::git::git_command_in_test()
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         }
     }
 
@@ -3204,7 +3324,41 @@ mod tests {
     }
 
     fn surface(root: &Path, project: &ProjectName, mode: SurfacingMode) -> anyhow::Result<()> {
-        surface_symlinks(root, project, &load_manifest(root, project), mode)
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            project,
+            &load_manifest(root, project),
+            mode,
+        )
+    }
+
+    #[test]
+    fn a_lock_written_in_place_reaches_the_project_through_its_link_at_once() {
+        // How cargo, uv and npm 10 write: open the path and write it, first
+        // generation through the dangling link and every later one alike.
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        surface(root, &project, SurfacingMode::Repair).unwrap();
+        assert!(!root.join("projects/web-app/Cargo.lock").exists());
+
+        for generation in ["version = 4\n", "version = 4\n# regenerated\n"] {
+            std::fs::write(root.join("Cargo.lock"), generation).unwrap();
+
+            assert_eq!(
+                read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
+                Some(generation),
+                "the write must land in the project with no verb run after it"
+            );
+            assert!(is_lock_link(root, "web-app"));
+        }
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &load_manifest(root, &project),
+        );
+        assert!(issues.is_empty(), "nothing is left to adopt: {issues:?}");
     }
 
     #[test]
@@ -3228,7 +3382,7 @@ mod tests {
     fn a_root_write_identical_to_the_projects_is_relinked() {
         let (tmp, project) = make_cargo_surfacing_workspace();
         let root = tmp.path();
-        write_project_lock(root, "web-app", "version = 4\n", None);
+        write_project_lock(root, "web-app", "version = 4\n");
         write_root_lock(root, "version = 4\n");
 
         surface(root, &project, SurfacingMode::Repair).unwrap();
@@ -3237,12 +3391,12 @@ mod tests {
     }
 
     #[test]
-    fn a_root_write_over_the_recorded_project_copy_is_adopted() {
-        // A tool ran where the link was missing: the project copy is still the
-        // generation rwv recorded, so taking the tool's bytes loses nothing.
+    fn a_root_write_over_a_committed_project_copy_is_adopted() {
+        // A tool ran where the link was missing: history holds the project
+        // copy, so taking the tool's bytes over it loses nothing.
         let (tmp, project) = make_cargo_surfacing_workspace();
         let root = tmp.path();
-        write_project_lock(root, "web-app", "# accepted\n", Some("# accepted\n"));
+        commit_project_lock(root, "web-app", "# committed\n");
         write_root_lock(root, "# regenerated\n");
 
         surface(root, &project, SurfacingMode::Repair).unwrap();
@@ -3255,10 +3409,11 @@ mod tests {
     }
 
     #[test]
-    fn a_root_write_over_a_project_copy_that_moved_leaves_both_and_the_link_out() {
+    fn a_root_write_over_an_uncommitted_project_copy_leaves_both_and_the_link_out() {
         let (tmp, project) = make_cargo_surfacing_workspace();
         let root = tmp.path();
-        write_project_lock(root, "web-app", "# pulled\n", Some("# accepted\n"));
+        commit_project_lock(root, "web-app", "# committed\n");
+        write_project_lock(root, "web-app", "# edited\n");
         write_root_lock(root, "# the tool's\n");
 
         surface(root, &project, SurfacingMode::Repair).expect("a conflict is named, not refused");
@@ -3274,12 +3429,17 @@ mod tests {
             .is_file());
         assert_eq!(
             read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
-            Some("# pulled\n")
+            Some("# edited\n")
         );
-        let issues = verify_surfacing(root, &project, &load_manifest(root, &project));
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &load_manifest(root, &project),
+        );
         let conflict = issues
             .iter()
-            .find(|i| i.message.contains("both changed"))
+            .find(|i| i.message.contains("version control does not hold"))
             .unwrap_or_else(|| panic!("the conflict must be a finding: {issues:?}"));
         assert!(
             !conflict.safe_to_fix,
@@ -3308,7 +3468,12 @@ mod tests {
             .unwrap()
             .is_file());
         assert!(!root.join("projects/web-app/Cargo.lock").exists());
-        let issues = verify_surfacing(root, &project, &load_manifest(root, &project));
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &load_manifest(root, &project),
+        );
         assert!(
             issues
                 .iter()
@@ -3350,7 +3515,7 @@ mod tests {
     fn switching_projects_takes_the_outgoing_root_write_home_first() {
         let (tmp, _web) = make_cargo_surfacing_workspace();
         let root = tmp.path();
-        write_project_lock(root, "web-app", "# web\n", Some("# web\n"));
+        commit_project_lock(root, "web-app", "# web\n");
         write_root_lock(root, "# web, written past its link\n");
         let api = add_cargo_project(root, "api", "# api\n");
 
@@ -3368,7 +3533,8 @@ mod tests {
     fn switching_away_from_a_conflicting_root_write_keeps_it_and_the_incoming_link_out() {
         let (tmp, _web) = make_cargo_surfacing_workspace();
         let root = tmp.path();
-        write_project_lock(root, "web-app", "# pulled\n", Some("# web\n"));
+        commit_project_lock(root, "web-app", "# web\n");
+        write_project_lock(root, "web-app", "# edited\n");
         write_root_lock(root, "# the tool's\n");
         let api = add_cargo_project(root, "api", "# api\n");
 
@@ -3385,7 +3551,7 @@ mod tests {
             .is_file());
         assert_eq!(
             read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
-            Some("# pulled\n")
+            Some("# edited\n")
         );
     }
 
@@ -3396,7 +3562,7 @@ mod tests {
         // be made.
         let (tmp, project) = make_cargo_surfacing_workspace();
         let root = tmp.path();
-        write_project_lock(root, "web-app", "# accepted\n", Some("# accepted\n"));
+        commit_project_lock(root, "web-app", "# committed\n");
         write_root_lock(root, "# regenerated\n");
         let manifest_path = root.join("projects/web-app").join(Manifest::FILE_NAME);
         let text = std::fs::read_to_string(&manifest_path).unwrap();
@@ -3430,7 +3596,7 @@ mod tests {
             .is_file());
         assert_eq!(
             read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
-            Some("# accepted\n"),
+            Some("# committed\n"),
             "and the project copy it had overwritten"
         );
     }
@@ -3453,7 +3619,7 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &project, &manifest);
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert_eq!(
             issues.len(),
             1,
@@ -3482,16 +3648,26 @@ mod tests {
             LinkTarget::File,
         )
         .unwrap();
-        assert_eq!(verify_surfacing(root, &project, &manifest).len(), 1);
+        assert_eq!(
+            verify_surfacing(project_vcs().as_ref(), root, &project, &manifest).len(),
+            1
+        );
 
-        surface_symlinks(root, &project, &manifest, SurfacingMode::Repair).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &project,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
 
         assert!(
             root.join(".claude").symlink_metadata().is_err(),
             "the stale symlink should be removed, not recreated (source still missing)"
         );
         assert!(
-            verify_surfacing(root, &project, &manifest).is_empty(),
+            verify_surfacing(project_vcs().as_ref(), root, &project, &manifest).is_empty(),
             "after --fix, doctor should report nothing"
         );
     }
@@ -3532,7 +3708,14 @@ mod tests {
             &[".claude", "other-app.code-workspace"],
         );
         let manifest = load_manifest(tmp.path(), &presented);
-        surface_symlinks(tmp.path(), &presented, &manifest, SurfacingMode::Repair).unwrap();
+        surface_symlinks(
+            project_vcs().as_ref(),
+            tmp.path(),
+            &presented,
+            &manifest,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
         (tmp, presented, other)
     }
 
@@ -3545,6 +3728,7 @@ mod tests {
         let root = tmp.path();
 
         surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &other,
             &load_manifest(root, &other),
@@ -3576,6 +3760,7 @@ mod tests {
         let root = tmp.path();
 
         surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &other,
             &load_manifest(root, &other),
@@ -3597,7 +3782,12 @@ mod tests {
         let (tmp, _presented, other) = make_two_project_workspace();
         let root = tmp.path();
 
-        let issues = verify_surfacing(root, &other, &load_manifest(root, &other));
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &other,
+            &load_manifest(root, &other),
+        );
         assert_eq!(
             issues.len(),
             1,
@@ -3624,7 +3814,12 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented));
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &presented,
+            &load_manifest(root, &presented),
+        );
         assert_eq!(
             issues.len(),
             1,
@@ -3646,6 +3841,7 @@ mod tests {
         let (tmp, presented, other) = make_two_project_workspace();
         let root = tmp.path();
         surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &other,
             &load_manifest(root, &other),
@@ -3653,7 +3849,12 @@ mod tests {
         )
         .unwrap();
 
-        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented));
+        let issues = verify_surfacing(
+            project_vcs().as_ref(),
+            root,
+            &presented,
+            &load_manifest(root, &presented),
+        );
         assert!(
             issues.is_empty(),
             "expected clean surfacing, got: {issues:?}"
@@ -3672,6 +3873,7 @@ mod tests {
         .unwrap();
 
         surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &presented,
             &load_manifest(root, &presented),
@@ -3697,6 +3899,7 @@ mod tests {
         let presented = write_surfacing_project(root, "web-app", &["go.work"], &["go.work"]);
         let go = write_surfacing_project(root, "go", &["go.work"], &["go.work"]);
         surface_symlinks(
+            project_vcs().as_ref(),
             root,
             &presented,
             &load_manifest(root, &presented),
@@ -3704,8 +3907,14 @@ mod tests {
         )
         .unwrap();
 
-        let err = surface_symlinks(root, &go, &load_manifest(root, &go), SurfacingMode::Repair)
-            .unwrap_err();
+        let err = surface_symlinks(
+            project_vcs().as_ref(),
+            root,
+            &go,
+            &load_manifest(root, &go),
+            SurfacingMode::Repair,
+        )
+        .unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("go.work") && msg.contains("web-app"),
