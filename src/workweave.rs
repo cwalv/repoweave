@@ -1225,6 +1225,67 @@ pub(crate) fn birth_ephemeral_worktree(
     }
 }
 
+/// Copy, byte for byte, an enabled integration's managed or generated file
+/// that the project worktree checkout above cannot carry: the checkout is a
+/// git worktree, so it holds only what `source_project_dir`'s git tracks, and
+/// a file like cargo-workspace's gitignored `.cargo/config.toml` is deliberately
+/// never tracked.
+///
+/// Three conditions per declared path, all required:
+/// - `dest_project_dir` lacks the file — a context verb authors nothing, so a
+///   file already there (carried by an earlier step, or genuinely tracked and
+///   checked out) is left exactly as it is.
+/// - the source has it as a regular file. Never a symlink: a symlink at this
+///   path is a weave-root surfacing link or operator content, neither of
+///   which this is the carry for.
+/// - the seat's project VCS does not track the path — a tracked file is the
+///   worktree's own checkout of it, authoritative there on its own terms.
+///
+/// A source that also lacks the file carries nothing, so the seat lacks it
+/// too and the verify pass that follows reports it there exactly as it does
+/// at the source. This moves bytes a VCS fork drops; it is not authoring —
+/// nothing here is `Integration::activate()`, and nothing here runs for a
+/// path the source itself never materialized.
+fn carry_untracked_managed_files(
+    vcs: &dyn Vcs,
+    source_root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+    source_project_dir: &Path,
+    dest_project_dir: &Path,
+) -> anyhow::Result<()> {
+    for name in crate::activate::owned_paths(source_root, project, manifest) {
+        let dest_file = dest_project_dir.join(&name);
+        if dest_file.exists() {
+            continue;
+        }
+        let source_file = source_project_dir.join(&name);
+        let Ok(source_meta) = std::fs::symlink_metadata(&source_file) else {
+            continue;
+        };
+        if !source_meta.file_type().is_file() {
+            continue;
+        }
+        if vcs
+            .is_tracked(dest_project_dir, Path::new(&name))
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        if let Some(parent) = dest_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&source_file, &dest_file).with_context(|| {
+            format!(
+                "carrying {} into {}",
+                source_file.display(),
+                dest_file.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
@@ -1857,6 +1918,29 @@ pub fn create_workweave(
                     }
                 }
             }
+        }
+    }
+
+    // Managed/generated files the project's enabled integrations declare but
+    // git does not track (cargo-workspace's `.cargo/config.toml` under
+    // `rustc-wrapper`, chief among them) arrive at neither the worktree
+    // checkout above nor the attested-ledger carry below, which only knows
+    // about files the ledger has an entry for. Carry those bytes here, before
+    // the activation pass that follows verifies against them.
+    if project_dir.exists() && project_wt_dest.exists() {
+        if let Err(e) = carry_untracked_managed_files(
+            project_vcs.as_ref(),
+            source_root,
+            project,
+            &manifest,
+            &project_dir,
+            &project_wt_dest,
+        ) {
+            eprintln!(
+                "rwv workweave create: warning: could not carry untracked managed files \
+                 into projects/{}: {e}",
+                project.as_str()
+            );
         }
     }
 

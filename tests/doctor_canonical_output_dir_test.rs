@@ -291,9 +291,21 @@ fn an_inactive_project_is_not_verified_against_the_active_project_s_file() {
     }
 }
 
-/// The workweave arm of the same split, and the shape it was first reported
-/// in: a file whose source is absent gets no surfacing symlink at all, so the
-/// root view named a path that existed in neither view.
+/// The workweave arm of the same split.
+///
+/// `Cargo.lock` is the file that still demonstrates it: `create_workweave`
+/// now carries a managed/generated file's bytes from the source into the
+/// seat when the seat lacks it, the source has it as a regular file, and the
+/// seat's project VCS does not track it (see `carry_untracked_managed_files`
+/// in `src/workweave.rs`) — so `web-app.code-workspace`, this test's
+/// original fixture, no longer demonstrates "absent in both": an activated
+/// source now carries it across. A lockfile still can demonstrate it,
+/// because this fixture avoids ever activating it there — `cargo
+/// generate-lockfile` runs only from the activate HOOK, not from the content
+/// step the carry's source-side check reads, so authoring primary's content
+/// via `activate_intent_with_options(..., no_materialize: true)` instead of
+/// through `rwv doctor --fix` leaves no `Cargo.lock` for either mechanism to
+/// find.
 #[test]
 fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     let tmp = common::tempdir().unwrap();
@@ -306,13 +318,9 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.toml"), manifest_for("rust-lib")).unwrap();
     std::fs::write(project_dir.join("shared-tooling.json"), "{}\n").unwrap();
-    // Generated content is regenerable, so it is not committed — which is why
-    // a fresh workweave does not inherit it.
-    std::fs::write(
-        project_dir.join(".gitignore"),
-        "/Cargo.lock\n/web-app.code-workspace\n",
-    )
-    .unwrap();
+    // The lock is regenerable, so it is not committed — which is why a fresh
+    // workweave's worktree checkout does not carry one.
+    std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
     git_init_with_commit(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -332,7 +340,19 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
         )
     };
 
-    rwv_in(&["doctor", "--fix"], &ws);
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        "web-app",
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("primary intent activation should succeed");
+    assert!(
+        !project_dir.join("Cargo.lock").exists(),
+        "fixture: primary must have no lock, or the workweave's missing lock proves nothing"
+    );
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
@@ -343,23 +363,25 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
         "fixture: workweave create failed:\n{create}"
     );
 
-    let canonical = common::under(&ww, "projects/web-app/web-app.code-workspace");
+    let canonical = common::under(&ww, "projects/web-app/Cargo.lock");
     assert!(
         !canonical.exists(),
-        "fixture: the gitignored code-workspace must not have come across, \
+        "fixture: the gitignored, hook-only lock must not have come across, \
          or there is no absent file to report"
     );
+    // `Cargo.lock` is `written_through_link`: its root symlink is created
+    // dangling rather than withheld, unlike a `written_at_source` file with
+    // no source. The root view still names a path — just one `exists()`
+    // agrees is absent on both sides of the fork.
     assert!(
-        ww.join("web-app.code-workspace")
-            .symlink_metadata()
-            .is_err(),
-        "fixture: a workweave omits the surfacing symlink for an absent source, \
-         which is what made the root view name a path that exists in neither view"
+        ww.join("Cargo.lock").symlink_metadata().is_ok(),
+        "fixture: the lock's surfacing symlink should exist (dangling) even \
+         though the canonical lock it points at does not"
     );
 
     let report = rwv_in(&["doctor"], &ww);
     let expected = format!(
-        "vscode-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
+        "cargo-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
         repoweave::path_spelling::operator_path(&canonical)
     );
     assert!(
@@ -370,9 +392,9 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     assert!(
         !report.contains(&format!(
             "managed file missing: {}",
-            repoweave::path_spelling::operator_path(&ww.join("web-app.code-workspace"))
+            repoweave::path_spelling::operator_path(&ww.join("Cargo.lock"))
         )),
-        "doctor named the weave-root view, which does not exist here even as a \
-         link.\ngot:\n{report}"
+        "doctor named the weave-root view, which the correct binding never reads.\n\
+         got:\n{report}"
     );
 }
