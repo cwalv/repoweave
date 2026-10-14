@@ -637,6 +637,81 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
     );
 }
 
+/// The local-path arm reads `origin` back from a pre-existing clone and
+/// mints a `file://` URL from whatever git reports — a bare filesystem path
+/// when the clone was made without a `file://` source. A space or `%` in
+/// that path must come out percent-encoded, or the manifest records a URL
+/// git itself cannot parse back.
+#[test]
+fn add_local_path_percent_encodes_space_and_percent_in_the_origin_url() {
+    let tmp = common::tempdir().unwrap();
+
+    let bare = tmp.path().join("My Repo 100%Share.git");
+    init_bare_repo_with_commit(&bare);
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    let repo_path = "local/acme/percentrepo";
+    let local_dir = workspace.join(repo_path);
+    std::fs::create_dir_all(&local_dir).unwrap();
+    let run = |args: &[&str]| {
+        let status = common::git()
+            .args(args)
+            .current_dir(&local_dir)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed to start");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+    run(&["init", "--initial-branch=main"]);
+    run(&["remote", "add", "origin", &bare.to_string_lossy()]);
+    run(&["fetch", "origin"]);
+    run(&["remote", "set-head", "origin", "-a"]);
+
+    rwv()
+        .args(["add", repo_path])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
+    let manifest =
+        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let entry = manifest
+        .get_entry(&RepoPath::new(repo_path).unwrap())
+        .expect("manifest must record the added repo");
+    let url = entry.url.to_string();
+
+    assert!(
+        url.starts_with("file://"),
+        "expected a file:// URL, got: {url}"
+    );
+    assert!(
+        !url.contains(' '),
+        "a well-formed URL has no literal space: {url}"
+    );
+    assert!(
+        url.contains("My%20Repo%20100%25Share.git"),
+        "expected the space and the literal '%' both percent-encoded, got: {url}"
+    );
+
+    // Well-formedness by construction isn't enough — git itself must accept
+    // the minted URL as a clone source.
+    let clone_dest = tmp.path().join("clone-from-minted-url");
+    let clone_status = common::git()
+        .args(["clone", &url, &clone_dest.to_string_lossy()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git clone of the minted URL failed to start");
+    assert!(
+        clone_status.success(),
+        "git must accept the minted, percent-encoded file:// URL: {url}"
+    );
+    assert!(clone_dest.join("README").exists());
+}
+
 #[test]
 fn add_new_records_the_branch_git_init_actually_created() {
     let tmp = common::tempdir().unwrap();

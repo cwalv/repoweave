@@ -23,6 +23,9 @@
 //! character in a Unix filename and rewriting it would corrupt the path
 //! rather than respell it. So the wire output on Unix is byte-for-byte what
 //! it was before any of them existed.
+//!
+//! [`mint_file_url`] is a fourth spelling, for a path becoming a `file://`
+//! URL rather than a path on some other path-shaped surface.
 
 use std::path::Path;
 
@@ -73,6 +76,43 @@ pub fn weave_relative(path: &Path) -> String {
     #[cfg(not(windows))]
     {
         path.to_string_lossy().into_owned()
+    }
+}
+
+/// Mint a `file://` URL from an absolute path spelled however the operator's
+/// platform spells one — this is pure string shape, not `cfg(windows)`, so a
+/// Windows-shaped root drives the same code on every host.
+///
+/// Detects a drive letter (`C:\` or `C:/`) textually rather than through
+/// `Path::is_absolute`, which answers for the *compiling* platform, not the
+/// shape of the string in hand. A drive-letter path takes `\` as its
+/// separator and needs the authority slot `C:` would otherwise fill left
+/// empty behind an extra `/`; anything else is passed through unsplit, so a
+/// `/`-rooted path (its `\` is filename content, not a separator) keeps its
+/// bytes.
+pub fn mint_file_url(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let is_drive_letter_path = bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.get(1) == Some(&b':')
+        && matches!(bytes.get(2), None | Some(b'/') | Some(b'\\'));
+    let forward_separated = if is_drive_letter_path {
+        path.replace('\\', "/")
+    } else {
+        path.to_owned()
+    };
+    let mut encoded = String::with_capacity(forward_separated.len());
+    for byte in forward_separated.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
     }
 }
 
@@ -177,6 +217,57 @@ mod tests {
         assert!(
             wire.starts_with("//"),
             "a UNC path must keep the prefix Windows requires: {wire}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // mint_file_url
+    // -----------------------------------------------------------------------
+
+    /// `mint_file_url` reads the drive letter out of the string itself, not
+    /// out of `cfg(windows)`, so this fixture drives the Windows shape on
+    /// whatever platform runs the suite.
+    #[test]
+    fn a_drive_letter_root_mints_a_well_formed_file_url() {
+        assert_eq!(
+            mint_file_url(r"C:\Users\runneradmin\AppData\Local\Temp\.tmp8MlRUw\lab/acme/fresh"),
+            "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmp8MlRUw/lab/acme/fresh"
+        );
+    }
+
+    #[test]
+    fn a_posix_root_mints_the_same_as_before() {
+        assert_eq!(
+            mint_file_url("/srv/repos/acme/fresh"),
+            "file:///srv/repos/acme/fresh"
+        );
+    }
+
+    /// A `/`-rooted path never loses a `\`: off a drive letter, it is
+    /// filename content, not a separator.
+    #[test]
+    fn a_backslash_off_a_drive_letter_is_left_alone() {
+        assert_eq!(
+            mint_file_url("/srv/repos/a\\b/fresh"),
+            "file:///srv/repos/a%5Cb/fresh"
+        );
+    }
+
+    #[test]
+    fn a_space_in_the_root_is_percent_encoded() {
+        assert_eq!(
+            mint_file_url(r"C:\Users\dev\My Repos\acme\fresh"),
+            "file:///C:/Users/dev/My%20Repos/acme/fresh"
+        );
+    }
+
+    /// `%` is the percent-encoding escape character itself, so a literal one
+    /// in the path must be escaped too or the result is ambiguous.
+    #[test]
+    fn a_percent_in_the_root_is_percent_encoded() {
+        assert_eq!(
+            mint_file_url("/srv/repos/100%/fresh"),
+            "file:///srv/repos/100%25/fresh"
         );
     }
 }

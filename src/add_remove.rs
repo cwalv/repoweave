@@ -3,6 +3,7 @@
 use crate::activate::{activate_intent_for, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
+use crate::path_spelling::mint_file_url;
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
 use crate::vcs::{vcs_for, HeadAttachment, RefName, Vcs};
@@ -404,14 +405,14 @@ fn run_add_from_local_path(
         })?;
 
     // Normalise bare absolute paths to file:// URLs so manifests are
-    // consistent regardless of how the clone was created.
-    let origin_url = if raw_url.starts_with('/') {
-        format!("file://{raw_url}")
-    } else if !raw_url.contains("://") && Path::new(&raw_url).is_absolute() {
-        // The platform's other absolute spelling: a drive-letter path git
-        // reports verbatim. A file URL takes forward slashes and roots the
-        // drive letter behind a third slash.
-        format!("file:///{}", raw_url.replace('\\', "/"))
+    // consistent regardless of how the clone was created. The second
+    // disjunct is the platform's other absolute spelling — a drive-letter
+    // path git reports verbatim — and is reachable only on a Windows build,
+    // where `Path::is_absolute` recognizes that shape.
+    let origin_url = if raw_url.starts_with('/')
+        || (!raw_url.contains("://") && Path::new(&raw_url).is_absolute())
+    {
+        mint_file_url(&raw_url)
     } else {
         raw_url
     };
