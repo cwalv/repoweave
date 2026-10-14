@@ -65,6 +65,12 @@ Progress messages to stderr:
   failed (without `--delete-shared-clone`), directory removal failed, or
   activation returned an error.
 
+The manifest edit and the regeneration it drives land together or not at all.
+When activation refuses before the install hooks run, `rwv.toml` and every
+regenerated file are put back as they were, the error says so, and `--delete`
+deletes nothing. The install hooks run after that point and have no undo, so
+when one fails the error says `rwv.toml` was updated.
+
 ## Examples
 
 Remove from manifest (keep clone on disk):

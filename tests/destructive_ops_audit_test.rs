@@ -421,7 +421,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "activate.rs",
         pattern: "symlink::remove(",
-        count: 3,
+        count: 4,
         callers: &[],
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
@@ -450,12 +450,21 @@ const ALLOWLIST: &[Allowed] = &[
             loss list is shown and the choice is left. Recoverable without \
             rwv: unlinking destroys no content — the file each link pointed at \
             is untouched — and the finding prints the exact target, so the \
-            link is reconstructable from the report that named it.",
+            link is reconstructable from the report that named it. \
+            (4) SurfacingJournal::roll_back: unlinks only links the same \
+            surface_symlinks call created — each recorded in the journal at \
+            the moment symlink::create returned Ok — and only after that call \
+            failed, ahead of re-creating every link the call had removed. The \
+            journal is a private type with private fields, built and consumed \
+            inside one call, so no other path can be put on its list. No \
+            consent: the call is undoing its own act. Recoverable: what it \
+            returns to is the weave root as the call found it, and re-running \
+            the verb makes the link again.",
     },
     Allowed {
         file: "activate.rs",
         pattern: "remove_file",
-        count: 2,
+        count: 3,
         callers: &[],
         justification: "deactivate's .rwv-active removal moved to \
             workspace.rs's clear_active_project, audited above; the two \
@@ -485,7 +494,20 @@ const ALLOWLIST: &[Allowed] = &[
             acts. Recoverable by re-enabling the integration and running \
             `rwv doctor --fix`, which regenerates every artifact removed here \
             except the ecosystem lock, whose next generation is the ecosystem \
-            tool's to produce.",
+            tool's to produce. \
+            (5) RestorePoint::restore, on an intent verb's regeneration that \
+            failed before any install hook ran (ActivationFailure::BeforeHooks). \
+            Precondition: the path was ABSENT when RestorePoint::take read it, \
+            immediately before the verb wrote its manifest, and is a regular \
+            file now; and it is rwv.toml, the owned-state ledger, or an owned \
+            path under the manifest before or after the edit — all inside \
+            projects/<project>/. So the file is one the failed regeneration \
+            created. No consent: the verb is undoing its own write, and the \
+            error it returns says the change was put back. Recoverable: the \
+            file is a derivation of the refused edit, and re-running the verb \
+            once its cause is fixed regenerates it. The one case that removes \
+            content rwv did not write is another writer creating that same \
+            file inside the verb's own regeneration.",
     },
     Allowed {
         file: "op_state.rs",

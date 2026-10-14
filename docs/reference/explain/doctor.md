@@ -2948,7 +2948,9 @@ rwv doctor --fix
   in the active project's surfacing set. Run `rwv doctor --fix` to
   re-surface the symlink. If a real file occupies the surfacing path, the
   warning is marked not-safe-to-fix; resolve manually (move or remove the
-  occupying file, then rerun `--fix`).
+  occupying file, then rerun `--fix`). Until then `--fix` re-surfaces
+  nothing for that project: surfacing changes no link while any path it
+  needs is occupied.
 - *surfacing: `<file>` resolves into project `<other>`* — a weave-root
   symlink surfaces a SHARED name out of a project other than the one the
   weave root presents. Shared names — every surfaced name except

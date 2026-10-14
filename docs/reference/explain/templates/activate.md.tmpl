@@ -35,10 +35,16 @@ previous state.
 2. **Symlink removal:** any root-level symlinks from the previous activation
    that are owned by the integrations are removed (owner-scoped predicate:
    unlinked only if the symlink target resolves to
-   `projects/<some-project>/<that-file>`).
+   `projects/<some-project>/<that-file>`). Before anything is removed, every
+   path a link is wanted at is read: a real file, a directory, or a link of
+   any other shape standing there refuses with every such path named and no
+   link changed (`surfacing-path-occupied`). A link that already points where
+   it should is left in place.
 3. **Symlink creation:** new symlinks are created at the weave root pointing
    to `projects/<project>/<file>` for each file in the active integrations'
-   union of `generated_files()` and `managed_files()` (Axis-1 surfacing).
+   union of `generated_files()` and `managed_files()` (Axis-1 surfacing). If
+   one cannot be created, every link steps 2 and 3 had removed or created is
+   put back before the error is reported.
 4. **Install hooks:** integration install commands run against the now-in-place
    symlinks. Suppressed by `--no-materialize`, and withheld while a generated
    file rwv attests holds content it never accepted — a hook re-runs its

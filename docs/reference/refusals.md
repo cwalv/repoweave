@@ -794,7 +794,9 @@ belongs.
 
 **Why.** rwv replaces links it authored, never files it did not. An occupant
 with no provenance may be an operator's real file, and overwriting it would be
-silent data loss.
+silent data loss. Every wanted path is read before any link moves, so the
+refusal names every occupant at once and leaves the root presenting what it
+presented before.
 
 **Exits.** Move or delete the occupant yourself, then re-run the verb that
 surfaces it.

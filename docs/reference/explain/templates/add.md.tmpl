@@ -111,8 +111,10 @@ Run `rwv --help add` for the full clap surface.
 Progress messages to stderr:
 
 - `Added '<repo-path>' to manifest` — repo was registered.
-- `Repository already exists in manifest at '<repo-path>'` — idempotent; no
-  change made.
+- `Repository already exists in manifest at '<repo-path>'; re-running its
+  activation` — the manifest is left as it is, and activation runs again, so a
+  weave an earlier run left short (a surfaced link gone missing, install hooks
+  that failed) is repaired by repeating the same command.
 - `Directory already exists at '<path>', skipping clone` — clone present,
   not re-cloned.
 
@@ -124,6 +126,14 @@ Integration activation output (symlinks created/removed) goes to stderr.
   succeeded.
 - non-zero — URL could not be resolved, clone failed, manifest could not be
   written, or activation returned an error.
+
+The manifest edit and the regeneration it drives land together or not at all.
+When activation refuses before the install hooks run — an integration rejects
+the new member, or a surfacing path is occupied — `rwv.toml` and every
+regenerated file are put back as they were, and the error says so; the clone
+stays on disk, and re-running the add after fixing the cause reuses it. The
+install hooks run after that point and have no undo, so when one fails the
+error says `rwv.toml` was updated; re-running the add re-runs them.
 
 ## Examples
 

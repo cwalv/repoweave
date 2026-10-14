@@ -53,7 +53,7 @@ use crate::refusal::RefusalKind;
 use crate::symlink::LinkTarget;
 use crate::workspace::{
     observe_root, project_dir, project_rel_dir, scannable_registry_segments, strip_projects_prefix,
-    RootObservation, WorkspaceContext, WorkspaceSession, PROJECTS_DIR,
+    Checkout, RootObservation, WorkspaceContext, WorkspaceSession, PROJECTS_DIR,
 };
 
 /// Which class of verb is driving activation.
@@ -599,10 +599,59 @@ fn activate_at(
     opts: ActivateOptions,
     mode: ActivationMode,
 ) -> anyhow::Result<()> {
-    let project_name = ProjectName::new(project)?;
-    let project_dir = project_dir(root, project);
-    let manifest_path = project_dir.join(Manifest::FILE_NAME);
-    let manifest = Manifest::from_path(&manifest_path)?;
+    activate_in_phases(root, project, opts, mode).map_err(ActivationFailure::into_error)
+}
+
+/// How far an activation got before it failed, which is what decides whether
+/// its caller can still undo it.
+#[derive(Debug)]
+pub(crate) enum ActivationFailure {
+    /// Failed before any install hook ran, in the content step or in
+    /// surfacing. Surfacing is all-or-nothing, so what is left to undo is
+    /// whatever the content step wrote into the project directory.
+    BeforeHooks(anyhow::Error),
+    /// Failed at the install hooks, after the content and surfacing had
+    /// landed. What a hook does to the disk — an installed dependency tree, a
+    /// rewritten lock — has no inverse.
+    AtHooks(anyhow::Error),
+}
+
+impl ActivationFailure {
+    pub(crate) fn into_error(self) -> anyhow::Error {
+        match self {
+            ActivationFailure::BeforeHooks(e) | ActivationFailure::AtHooks(e) => e,
+        }
+    }
+}
+
+/// Intent-mode activation for the checkout `ctx` resolved —
+/// [`activate_workweave_intent`] inside a workweave, [`activate_intent`] at
+/// primary — reporting how far it got when it fails.
+pub(crate) fn activate_intent_for(
+    project: &str,
+    ctx: &WorkspaceContext,
+) -> Result<(), ActivationFailure> {
+    match &ctx.checkout {
+        Checkout::Workweave { dir, .. } => workweave_intent(project, dir),
+        Checkout::Primary { .. } => activate_in_phases(
+            ctx.primary_path(),
+            project,
+            ActivateOptions::default(),
+            ActivationMode::Intent,
+        ),
+    }
+}
+
+fn activate_in_phases(
+    root: &Path,
+    project: &str,
+    opts: ActivateOptions,
+    mode: ActivationMode,
+) -> Result<(), ActivationFailure> {
+    let project_name =
+        ProjectName::new(project).map_err(|e| ActivationFailure::BeforeHooks(e.into()))?;
+    let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
+    let manifest = Manifest::from_path(&manifest_path).map_err(ActivationFailure::BeforeHooks)?;
 
     // Discover repos on disk and project paths (needed by IntegrationContext).
     let session = WorkspaceSession::new(root);
@@ -610,14 +659,39 @@ fn activate_at(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
-    // Integration content step.
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
     let ctx_base =
         session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
 
+    let surfaced = author_and_surface(
+        root,
+        &project_name,
+        &manifest,
+        &integrations,
+        &ctx_base,
+        mode,
+    )
+    .map_err(ActivationFailure::BeforeHooks)?;
+    if !surfaced {
+        return Ok(());
+    }
+    run_hooks(&integrations, &manifest, &ctx_base, opts, mode).map_err(ActivationFailure::AtHooks)
+}
+
+/// The integration content step for `mode`, then the weave root's surfacing.
+/// False when the root presents a different project, which leaves it, and the
+/// hooks that act through it, untouched.
+fn author_and_surface(
+    root: &Path,
+    project_name: &ProjectName,
+    manifest: &Manifest,
+    integrations: &[&dyn Integration],
+    ctx_base: &IntegrationContextBase,
+    mode: ActivationMode,
+) -> anyhow::Result<bool> {
     match mode {
         ActivationMode::Intent => {
-            let issues = run_activations(&integrations, &manifest, &ctx_base);
+            let issues = run_activations(integrations, manifest, ctx_base);
             report_and_check_activation_issues(&issues)?;
         }
         ActivationMode::Context => {
@@ -632,7 +706,7 @@ fn activate_at(
             // findings are surfaced as warnings and the activation proceeds —
             // the recovery hatch is `rwv doctor --fix`. Bailing here would
             // defeat the spec's unqualified "activate never authors" contract.
-            let check_issues = run_checks(&integrations, &manifest, &ctx_base);
+            let check_issues = run_checks(integrations, manifest, ctx_base);
             for issue in &check_issues {
                 let prefix = match issue.severity {
                     Severity::Warning => "warning",
@@ -640,7 +714,7 @@ fn activate_at(
                 };
                 eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
             }
-            let verify_issues = run_verifications(&integrations, &manifest, &ctx_base);
+            let verify_issues = run_verifications(integrations, manifest, ctx_base);
             for issue in &verify_issues {
                 let prefix = match issue.severity {
                     Severity::Warning => "warning (drift)",
@@ -650,8 +724,8 @@ fn activate_at(
             }
         }
         ActivationMode::Materialize(consent) => {
-            strip_disabled_integrations(root, &integrations, &manifest, &ctx_base)?;
-            forget_unproduced_attestations(&integrations, &manifest, &ctx_base)?;
+            strip_disabled_integrations(root, integrations, manifest, ctx_base)?;
+            forget_unproduced_attestations(integrations, manifest, ctx_base)?;
             settle_arrived_drift(&ctx_base.output_dir, consent)?;
         }
     }
@@ -673,9 +747,9 @@ fn activate_at(
         if observed
             .as_ref()
             .and_then(RootObservation::presented_project)
-            != Some(&project_name)
+            != Some(project_name)
         {
-            return Ok(());
+            return Ok(false);
         }
     }
 
@@ -694,17 +768,25 @@ fn activate_at(
         ActivationMode::Context => SurfacingMode::Select,
         ActivationMode::Intent | ActivationMode::Materialize(_) => SurfacingMode::Repair,
     };
-    surface_symlinks(root, &project_name, &manifest, surfacing_mode)?;
+    surface_symlinks(root, project_name, manifest, surfacing_mode)?;
+    Ok(true)
+}
 
-    // Run integration activate hooks (install commands).
-    //    Per-integration hooks operate on the now-in-place symlinks at the
-    //    workspace root (e.g., `npm install` reads the symlinked
-    //    package.json). Suppressed by `--no-materialize` for fast
-    //    context-switches; the user can run install commands directly when
-    //    they need them.
+/// Run integration activate hooks (install commands). They operate on the
+/// now-in-place symlinks at the workspace root (e.g., `npm install` reads the
+/// symlinked package.json). Suppressed by `--no-materialize` for fast
+/// context-switches; the user can run install commands directly when they need
+/// them.
+fn run_hooks(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+    opts: ActivateOptions,
+    mode: ActivationMode,
+) -> anyhow::Result<()> {
     if !opts.no_materialize && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
-        refuse_hooks_over_malformed_settings(&integrations, &manifest, &ctx_base)?;
-        let hook_issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        refuse_hooks_over_malformed_settings(integrations, manifest, ctx_base)?;
+        let hook_issues = run_activate_hooks(integrations, manifest, ctx_base);
         report_and_check_activate_hook_issues(&hook_issues)?;
     }
 
@@ -887,22 +969,50 @@ fn report_and_check_activate_hook_issues(
 /// This replaces the previous blanket "target has a `projects` component"
 /// check, which swept up unrelated symlinks (e.g. workweave links whose
 /// resolved source-root path happens to live under a `projects/` ancestor).
-/// Directories that were created solely to hold nested symlinks are cleaned
-/// up if they become empty.
-fn remove_activation_symlinks(root: &Path, owned_files: &BTreeSet<String>) -> anyhow::Result<()> {
+/// A directory a removal empties is pruned; one that was already empty is not
+/// the sweep's to judge, since git tracks no empty directory and an operator's
+/// scratch directory looks exactly like one.
+///
+/// Each removal is appended to `removed` as it happens, so a caller holds the
+/// record of a sweep that failed partway.
+fn remove_activation_symlinks(
+    root: &Path,
+    owned_files: &BTreeSet<String>,
+    removed: &mut Vec<RemovedLink>,
+) -> anyhow::Result<()> {
     let skip = sweep_descent_skip(root);
-    remove_activation_symlinks_in(root, root, owned_files, &skip)
+    remove_activation_symlinks_in(root, root, owned_files, &skip, removed)
 }
 
-/// Directory names a symlink sweep must not descend into: every registry
-/// segment a project manifest under `root` names, plus the built-ins, plus
-/// `projects/` itself. Computed once at each sweep's entry point — recursing
-/// into a candidate skip name would re-read every project manifest per
-/// directory entry.
-fn sweep_descent_skip(root: &Path) -> BTreeSet<String> {
-    let mut skip = scannable_registry_segments(root);
-    skip.insert(PROJECTS_DIR.to_string());
+/// A weave-root link a sweep unlinked, and the target it read.
+struct RemovedLink {
+    link: std::path::PathBuf,
+    target: std::path::PathBuf,
+}
+
+/// The weave-root directories a symlink sweep must not descend into: every
+/// registry segment a project manifest under `root` names, plus the built-ins,
+/// plus `projects/` itself. Computed once at each sweep's entry point —
+/// recursing into a candidate skip name would re-read every project manifest
+/// per directory entry.
+///
+/// Held as paths under `root`, not as names: those segments mean a registry
+/// or the project tree only at the top level, and a directory deeper down that
+/// shares the name is ordinary content.
+fn sweep_descent_skip(root: &Path) -> BTreeSet<std::path::PathBuf> {
+    let mut skip: BTreeSet<std::path::PathBuf> = scannable_registry_segments(root)
+        .into_iter()
+        .map(|segment| root.join(segment))
+        .collect();
+    skip.insert(root.join(PROJECTS_DIR));
     skip
+}
+
+fn sweep_skips(dir: &Path, skip: &BTreeSet<std::path::PathBuf>) -> bool {
+    skip.contains(dir)
+        || dir
+            .file_name()
+            .is_some_and(|name| name == crate::git::GIT_DIR_ENTRY_NAME)
 }
 
 /// Which of `names` the weave root currently surfaces out of a project, in
@@ -929,7 +1039,7 @@ pub fn surfaced_names(root: &Path, names: &[String]) -> Vec<String> {
 /// rather than at a whole activation's, and it removes nothing
 /// [`surfaced_names`] would not have counted.
 pub fn unsurface_names(root: &Path, names: &[String]) -> anyhow::Result<()> {
-    remove_activation_symlinks(root, &names.iter().cloned().collect())
+    remove_activation_symlinks(root, &names.iter().cloned().collect(), &mut Vec::new())
 }
 
 /// True if `target` (the `read_link` output of a symlink at `link_path`,
@@ -1000,12 +1110,14 @@ fn remove_activation_symlinks_in(
     dir: &Path,
     root: &Path,
     owned_files: &BTreeSet<String>,
-    skip: &BTreeSet<String>,
+    skip: &BTreeSet<std::path::PathBuf>,
+    removed: &mut Vec<RemovedLink>,
 ) -> anyhow::Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return Ok(()),
     };
+    let removed_before = removed.len();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -1036,25 +1148,15 @@ fn remove_activation_symlinks_in(
                 let resolves_to_projects = target_resolves_to_projects(rel_from_root, &target);
                 if in_owned_set && resolves_to_projects {
                     crate::symlink::remove(&path)?;
+                    removed.push(RemovedLink { link: path, target });
                 }
             }
-        } else if meta.file_type().is_dir() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if skip.contains(name) || name == crate::git::GIT_DIR_ENTRY_NAME {
-                    continue;
-                }
-            }
-            remove_activation_symlinks_in(&path, root, owned_files, skip)?;
-
-            // Clean up empty directories that we may have created.
-            if dir != root {
-                let _ = std::fs::remove_dir(dir); // ignore error if not empty
-            }
+        } else if meta.file_type().is_dir() && !sweep_skips(&path, skip) {
+            remove_activation_symlinks_in(&path, root, owned_files, skip, removed)?;
         }
     }
 
-    // If we're in a subdirectory, try to remove it if empty.
-    if dir != root {
+    if dir != root && removed.len() > removed_before {
         let _ = std::fs::remove_dir(dir);
     }
 
@@ -1102,7 +1204,11 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
 /// it uses [`activate_intent_at`], which runs the hooks; see that function
 /// for why a repair verb cannot suppress them.
 pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
-    activate_at(
+    workweave_intent(project, workweave_dir).map_err(ActivationFailure::into_error)
+}
+
+fn workweave_intent(project: &str, workweave_dir: &Path) -> Result<(), ActivationFailure> {
+    activate_in_phases(
         workweave_dir,
         project,
         ActivateOptions {
@@ -1195,6 +1301,99 @@ pub(crate) fn owned_paths(
         .collect()
 }
 
+/// Every file in `project`'s directory that an intent verb's manifest write
+/// and its regeneration may change, as it stood before either ran.
+///
+/// The set is `rwv.toml`, the owned-state ledger, and the owned paths under
+/// each manifest given — the one on disk and the one about to be written, since
+/// a regeneration rewrites what the new manifest declares and strips what only
+/// the old one did. Only regular files are held: a directory or a link at an
+/// owned path is a `static-files` source, which no regeneration writes.
+pub(crate) struct RestorePoint {
+    files: Vec<(std::path::PathBuf, FileBefore)>,
+}
+
+enum FileBefore {
+    Bytes(Vec<u8>),
+    /// With the directories that did not exist either, deepest first.
+    Absent(Vec<std::path::PathBuf>),
+}
+
+impl RestorePoint {
+    pub(crate) fn take(
+        root: &Path,
+        project: &ProjectName,
+        manifests: &[&Manifest],
+    ) -> anyhow::Result<Self> {
+        let dir = project_dir(root, project.as_str());
+        let mut paths: BTreeSet<std::path::PathBuf> =
+            BTreeSet::from([dir.join(Manifest::FILE_NAME), ledger_path(&dir)]);
+        for manifest in manifests {
+            paths.extend(
+                owned_paths(root, project, manifest)
+                    .into_iter()
+                    .map(|file| dir.join(file)),
+            );
+        }
+
+        let mut files = Vec::new();
+        for path in paths {
+            let before = match path.symlink_metadata() {
+                Ok(meta) if meta.is_file() => {
+                    FileBefore::Bytes(std::fs::read(&path).with_context(|| {
+                        format!("reading {} before changing it", path.display())
+                    })?)
+                }
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileBefore::Absent(
+                    path.ancestors()
+                        .skip(1)
+                        .take_while(|dir| dir.symlink_metadata().is_err())
+                        .map(Path::to_path_buf)
+                        .collect(),
+                ),
+                Err(e) => {
+                    return Err(anyhow::Error::new(e)
+                        .context(format!("reading {} before changing it", path.display())))
+                }
+            };
+            files.push((path, before));
+        }
+        Ok(Self { files })
+    }
+
+    /// Put every file back as [`RestorePoint::take`] found it, leaving one that
+    /// already matches untouched. Returns the paths it could not put back.
+    pub(crate) fn restore(&self) -> Vec<std::path::PathBuf> {
+        let mut unrestored = Vec::new();
+        for (path, before) in &self.files {
+            let restored = match before {
+                FileBefore::Bytes(bytes) => {
+                    std::fs::read(path).is_ok_and(|now| now == *bytes)
+                        || path
+                            .parent()
+                            .map_or(Ok(()), std::fs::create_dir_all)
+                            .map_err(anyhow::Error::from)
+                            .and_then(|()| crate::durable_file::replace(path, bytes))
+                            .is_ok()
+                }
+                FileBefore::Absent(missing_dirs) => {
+                    let removed = !path.symlink_metadata().is_ok_and(|m| m.is_file())
+                        || std::fs::remove_file(path).is_ok();
+                    for dir in missing_dirs {
+                        let _ = std::fs::remove_dir(dir);
+                    }
+                    removed
+                }
+            };
+            if !restored {
+                unrestored.push(path.clone());
+            }
+        }
+        unrestored
+    }
+}
+
 /// Compute the owner-scoped surfacing set for the project `root` currently
 /// presents — the pointer at primary, the marker in a workweave. Returns an
 /// empty set if `root` presents no project (in which case no symlinks are
@@ -1246,6 +1445,11 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 /// [`SurfacingMode::Repair`] it may only when the root already presents it, so
 /// a repair scoped to another project surfaces that project's per-project-named
 /// paths and leaves every shared name where the presented project put it.
+///
+/// All or nothing. Every path a link is wanted at is read before any link
+/// moves, so an occupant refuses with the root as it was; a link that already
+/// reads its wanted target is left in place rather than re-made; and a failure
+/// partway through puts back every link this call had removed or made.
 pub fn surface_symlinks(
     root: &Path,
     project: &ProjectName,
@@ -1280,10 +1484,41 @@ pub fn surface_symlinks(
             );
         }
     }
-    let new_generated: Vec<(&String, &SurfacedEntry)> = owned
+    let wanted: Vec<WantedLink> = owned
         .iter()
         .filter(|(file, _)| new_owned.contains(file.as_str()))
+        .filter_map(|(file, entry)| {
+            let source = project_dir.join(file);
+            (!link_waits_for_its_source(entry, &source)).then(|| WantedLink {
+                file: file.clone(),
+                target: relative_symlink_target(project.as_str(), file),
+                kind: LinkTarget::on_disk(&source),
+            })
+        })
         .collect();
+
+    let mut already_linked: BTreeSet<String> = BTreeSet::new();
+    let mut occupants = Vec::new();
+    for wanted in &wanted {
+        match link_slot(root, wanted) {
+            LinkSlot::AlreadyLinked => {
+                already_linked.insert(wanted.file.clone());
+            }
+            LinkSlot::Clear => {}
+            LinkSlot::Occupied(occupant) => occupants.push(occupant),
+        }
+    }
+    if !occupants.is_empty() {
+        crate::refuse!(
+            RefusalKind::SurfacingPathOccupied,
+            "surfacing project `{project}` stopped before changing any weave-root link: {}",
+            occupants
+                .iter()
+                .map(|occupant| crate::symlink::occupied_path_remedy(occupant))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
 
     // 2. Remove old symlinks from a previous activation using the
     //    owner-scoped predicate: a root symlink is unlinked only if its
@@ -1300,7 +1535,7 @@ pub fn surface_symlinks(
     //    not itself declare, so it is available only to the project the root
     //    presents; for any other project the candidates are its own narrowed
     //    set, or the repair would unlink the presented project's surfacing.
-    let removal_candidates = if presents_project {
+    let mut removal_candidates = if presents_project {
         let mut union = new_owned.clone();
         if let Ok(prev_owned) = compute_active_owned_set(root) {
             for f in prev_owned {
@@ -1311,49 +1546,153 @@ pub fn surface_symlinks(
     } else {
         new_owned.clone()
     };
-    remove_activation_symlinks(root, &removal_candidates)?;
+    removal_candidates.retain(|file| !already_linked.contains(file));
 
     // 2b. Shared names surfaced out of some other project — left behind by a
     //     project switch, or taken by a repair that predates the rule. The
     //     presented project's declarations never reach them, so the removal
-    //     above cannot.
-    if presents_project {
-        for (file, _owner) in foreign_shared_name_links(root, project, &new_owned) {
-            crate::symlink::remove(&root.join(&file))?;
-        }
+    //     cannot.
+    let reclaim_from = presents_project.then_some(&new_owned);
+    let to_create: Vec<&WantedLink> = wanted
+        .iter()
+        .filter(|wanted| !already_linked.contains(&wanted.file))
+        .collect();
+
+    let mut journal = SurfacingJournal::default();
+    match journal.apply(root, project, &removal_candidates, reclaim_from, &to_create) {
+        Ok(()) => Ok(()),
+        Err(failure) => Err(journal.roll_back(failure)),
     }
+}
 
-    // 3. Create new symlinks at root pointing to project_dir files.
-    for (file, entry) in &new_generated {
-        let source = project_dir.join(file);
-        let link = root.join(file);
+/// A link surfacing wants at `<root>/<file>`, reading `target`.
+struct WantedLink {
+    file: String,
+    target: std::path::PathBuf,
+    kind: LinkTarget,
+}
 
-        if link_waits_for_its_source(entry, &source) {
-            continue;
-        }
+/// What stands at the path a wanted link takes, read before anything moves.
+enum LinkSlot {
+    /// The wanted link itself.
+    AlreadyLinked,
+    /// Nothing, or a link of rwv's surfacing shape, which the sweep removes.
+    Clear,
+    /// Something no sweep removes, at the path carried — which is an ancestor
+    /// of the link's path when that ancestor is not a directory.
+    Occupied(std::path::PathBuf),
+}
 
-        // Ensure parent directory exists for nested files (e.g., gita/repos.csv).
-        if let Some(parent) = link.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "surfacing `{file}`: failed to create parent directory {}",
-                        parent.display()
-                    )
-                })?;
+fn link_slot(root: &Path, wanted: &WantedLink) -> LinkSlot {
+    let link = root.join(&wanted.file);
+    match link.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => LinkSlot::Clear,
+        Err(_) => LinkSlot::Occupied(
+            link.ancestors()
+                .take_while(|path| *path != root)
+                .find(|path| path.symlink_metadata().is_ok_and(|m| !m.is_dir()))
+                .unwrap_or(&link)
+                .to_path_buf(),
+        ),
+        Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&link) {
+            Ok(target) if target == wanted.target => LinkSlot::AlreadyLinked,
+            Ok(target) if target_resolves_to_projects(Path::new(&wanted.file), &target) => {
+                LinkSlot::Clear
+            }
+            _ => LinkSlot::Occupied(link),
+        },
+        Ok(_) => LinkSlot::Occupied(link),
+    }
+}
+
+/// Every weave-root change one surfacing pass made, in the order it made them.
+#[derive(Default)]
+struct SurfacingJournal {
+    removed: Vec<RemovedLink>,
+    created: Vec<std::path::PathBuf>,
+    created_dirs: Vec<std::path::PathBuf>,
+}
+
+impl SurfacingJournal {
+    fn apply(
+        &mut self,
+        root: &Path,
+        project: &ProjectName,
+        removal_candidates: &BTreeSet<String>,
+        reclaim_from: Option<&BTreeSet<String>>,
+        to_create: &[&WantedLink],
+    ) -> anyhow::Result<()> {
+        remove_activation_symlinks(root, removal_candidates, &mut self.removed)?;
+
+        if let Some(declared) = reclaim_from {
+            for (file, _owner) in foreign_shared_name_links(root, project, declared) {
+                let link = root.join(&file);
+                let target = std::fs::read_link(&link)?;
+                crate::symlink::remove(&link)?;
+                self.removed.push(RemovedLink { link, target });
             }
         }
 
-        // Compute a relative symlink target from the link location to the
-        // source in the project directory. For top-level files this is just
-        // `projects/{project}/{file}`. For nested files like `gita/repos.csv`
-        // we need to prepend `../` for each directory level.
-        let relative_target = relative_symlink_target(project.as_str(), file);
-
-        crate::symlink::create(&relative_target, &link, LinkTarget::on_disk(&source))?;
+        for wanted in to_create {
+            let link = root.join(&wanted.file);
+            if let Some(parent) = link.parent() {
+                let missing: Vec<std::path::PathBuf> = parent
+                    .ancestors()
+                    .take_while(|dir| dir.symlink_metadata().is_err())
+                    .map(Path::to_path_buf)
+                    .collect();
+                if !missing.is_empty() {
+                    std::fs::create_dir_all(parent).with_context(|| {
+                        format!(
+                            "surfacing `{}`: failed to create parent directory {}",
+                            wanted.file,
+                            parent.display()
+                        )
+                    })?;
+                    self.created_dirs.extend(missing);
+                }
+            }
+            crate::symlink::create(&wanted.target, &link, wanted.kind)?;
+            self.created.push(link);
+        }
+        Ok(())
     }
 
-    Ok(())
+    /// Put back what this pass changed, after `failure` stopped it.
+    fn roll_back(self, failure: anyhow::Error) -> anyhow::Error {
+        let mut unrestored: Vec<String> = Vec::new();
+        for link in self.created.iter().rev() {
+            if crate::symlink::remove(link).is_err() {
+                unrestored.push(link.display().to_string());
+            }
+        }
+        let mut created_dirs = self.created_dirs;
+        created_dirs.sort_by_key(|dir| std::cmp::Reverse(dir.components().count()));
+        for dir in &created_dirs {
+            let _ = std::fs::remove_dir(dir);
+        }
+        for removed in self.removed.iter().rev() {
+            let parent = removed.link.parent().unwrap_or(Path::new(""));
+            let kind = LinkTarget::on_disk(&parent.join(&removed.target));
+            let restored = std::fs::create_dir_all(parent)
+                .map_err(anyhow::Error::from)
+                .and_then(|()| crate::symlink::create(&removed.target, &removed.link, kind));
+            if restored.is_err() {
+                unrestored.push(removed.link.display().to_string());
+            }
+        }
+        if unrestored.is_empty() {
+            failure.context(
+                "surfacing stopped; every weave-root link it had changed is back as it was",
+            )
+        } else {
+            failure.context(format!(
+                "surfacing stopped, and these weave-root links could not be put back as they \
+                 were: {}. `rwv doctor` reports what is left",
+                unrestored.join(", ")
+            ))
+        }
+    }
 }
 
 /// The relative symlink target a surfaced file should point at, from the link
@@ -1531,7 +1870,7 @@ fn collect_undeclared_links_in(
     root: &Path,
     presented: &ProjectName,
     declared: &BTreeSet<String>,
-    skip: &BTreeSet<String>,
+    skip: &BTreeSet<std::path::PathBuf>,
     found: &mut Vec<UndeclaredLink>,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1543,12 +1882,9 @@ fn collect_undeclared_links_in(
             continue;
         };
         if meta.file_type().is_dir() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if skip.contains(name) || name == crate::git::GIT_DIR_ENTRY_NAME {
-                    continue;
-                }
+            if !sweep_skips(&path, skip) {
+                collect_undeclared_links_in(&path, root, presented, declared, skip, found);
             }
-            collect_undeclared_links_in(&path, root, presented, declared, skip, found);
             continue;
         }
         if !meta.file_type().is_symlink() {
@@ -2131,6 +2467,275 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(root.join(".claude")).unwrap(),
             "user content"
+        );
+    }
+
+    /// Link `files` at the root as surfacing would, out of `project`.
+    fn link_as_surfaced(root: &Path, project: &str, files: &[&str]) {
+        for file in files {
+            let link = root.join(file);
+            std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+            crate::symlink::create(
+                &relative_symlink_target(project, file),
+                &link,
+                LinkTarget::File,
+            )
+            .unwrap();
+        }
+    }
+
+    fn read_links(root: &Path, files: &[&str]) -> Vec<Option<std::path::PathBuf>> {
+        files
+            .iter()
+            .map(|file| std::fs::read_link(root.join(file)).ok())
+            .collect()
+    }
+
+    #[test]
+    fn an_occupied_path_leaves_every_surfaced_link_in_place() {
+        // The incident: a tool replaced one surfaced link with a real file,
+        // and the next surfacing unlinked every link, re-made them in name
+        // order, and stopped at the occupant — so each link sorting after it
+        // was gone.
+        let surfaced = [
+            ".claude",
+            "AGENTS.md",
+            "package.json",
+            "web-app.code-workspace",
+        ];
+        let mut declared = surfaced.to_vec();
+        declared.push("package-lock.json");
+        let (tmp, project) = make_surfacing_workspace(&declared);
+        let root = tmp.path();
+        link_as_surfaced(root, project.as_str(), &surfaced);
+        std::fs::write(root.join("package-lock.json"), "{}\n").unwrap();
+        let before = read_links(root, &surfaced);
+
+        let err = surface_symlinks(
+            root,
+            &project,
+            &load_manifest(root, &project),
+            SurfacingMode::Repair,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::SurfacingPathOccupied),
+            "{err:#}"
+        );
+        assert_eq!(read_links(root, &surfaced), before);
+        assert_eq!(
+            std::fs::read_to_string(root.join("package-lock.json")).unwrap(),
+            "{}\n"
+        );
+    }
+
+    #[test]
+    fn an_occupied_path_refusal_names_every_occupant() {
+        // Read before anything moves, so the operator clears them all in one
+        // pass instead of meeting them one re-run at a time.
+        let (tmp, project) =
+            make_surfacing_workspace(&[".claude", "AGENTS.md", "package-lock.json"]);
+        let root = tmp.path();
+        link_as_surfaced(root, "old-app", &[".claude"]);
+        std::fs::write(root.join("AGENTS.md"), "mine\n").unwrap();
+        std::fs::write(root.join("package-lock.json"), "{}\n").unwrap();
+
+        let msg = surface_symlinks(
+            root,
+            &project,
+            &load_manifest(root, &project),
+            SurfacingMode::Repair,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            msg.contains("AGENTS.md") && msg.contains("package-lock.json"),
+            "every occupant must be named: {msg}"
+        );
+        assert_eq!(
+            std::fs::read_link(root.join(".claude")).unwrap(),
+            Path::new("projects/old-app/.claude"),
+            "nothing may move before the occupants are cleared"
+        );
+    }
+
+    #[test]
+    fn an_ancestor_that_is_not_a_directory_is_the_occupant_named() {
+        let (tmp, project) = make_surfacing_workspace(&["gita/repos.csv"]);
+        let root = tmp.path();
+        std::fs::write(root.join("gita"), "a file\n").unwrap();
+
+        let msg = surface_symlinks(
+            root,
+            &project,
+            &load_manifest(root, &project),
+            SurfacingMode::Repair,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(
+            msg.contains(&format!("{} (a regular file)", root.join("gita").display())),
+            "the refusal must name the file standing where a directory belongs: {msg}"
+        );
+    }
+
+    /// Mode bits only obstruct an unprivileged process, and these tests assert
+    /// on the obstruction.
+    #[cfg(unix)]
+    fn read_only(dir: &Path) -> std::fs::Permissions {
+        use std::os::unix::fs::PermissionsExt;
+        let writable = std::fs::metadata(dir).unwrap().permissions();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        writable
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_link_already_at_its_target_is_left_alone() {
+        // Observed through a directory nothing may be unlinked from: a pass
+        // that re-made the link would have to.
+        let (tmp, project) = make_surfacing_workspace(&["sub/notes.md"]);
+        let root = tmp.path();
+        link_as_surfaced(root, project.as_str(), &["sub/notes.md"]);
+        let writable = read_only(&root.join("sub"));
+
+        let result = surface_symlinks(
+            root,
+            &project,
+            &load_manifest(root, &project),
+            SurfacingMode::Repair,
+        );
+        std::fs::set_permissions(root.join("sub"), writable).unwrap();
+
+        result.expect("a link already at its target needs no write to stay surfaced");
+        assert_eq!(
+            std::fs::read_link(root.join("sub/notes.md")).unwrap(),
+            Path::new("../projects/web-app/sub/notes.md")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_failure_after_links_moved_puts_them_back() {
+        // No occupant, so the pass starts: `.claude` is replaced, then the
+        // link under the read-only `sub/` cannot be made.
+        let (tmp, project) = make_surfacing_workspace(&[".claude", "sub/notes.md"]);
+        let root = tmp.path();
+        link_as_surfaced(root, "old-app", &[".claude"]);
+        std::fs::create_dir(root.join("sub")).unwrap();
+        let writable = read_only(&root.join("sub"));
+
+        let result = surface_symlinks(
+            root,
+            &project,
+            &load_manifest(root, &project),
+            SurfacingMode::Repair,
+        );
+        std::fs::set_permissions(root.join("sub"), writable).unwrap();
+
+        assert!(result.is_err(), "the obstruction must stop the pass");
+        assert_eq!(
+            std::fs::read_link(root.join(".claude")).unwrap(),
+            Path::new("projects/old-app/.claude"),
+            "the link the pass replaced before failing must be put back"
+        );
+    }
+
+    #[test]
+    fn a_sweep_descends_into_a_nested_directory_named_like_a_registry() {
+        // `github` and `projects` are the registry and the project tree only
+        // at the top of the weave.
+        let (tmp, project) = make_surfacing_workspace(&["docs/github/notes.md"]);
+        let root = tmp.path();
+        link_as_surfaced(root, project.as_str(), &["docs/github/notes.md"]);
+        link_as_surfaced(root, project.as_str(), &["docs/projects/notes.md"]);
+
+        let issues = verify_surfacing(root, &project, &load_manifest(root, &project));
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.message.contains("docs/projects/notes.md")),
+            "an undeclared link under a nested `projects/` must be reported: {issues:?}"
+        );
+
+        unsurface_names(root, &["docs/github/notes.md".to_string()]).unwrap();
+        assert!(
+            root.join("docs/github/notes.md")
+                .symlink_metadata()
+                .is_err(),
+            "a declared link under a nested `github/` must be swept"
+        );
+    }
+
+    #[test]
+    fn a_sweep_still_stops_at_a_top_level_registry_directory() {
+        let (tmp, _project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        link_as_surfaced(root, "web-app", &["github/acme/notes.md"]);
+
+        unsurface_names(root, &["github/acme/notes.md".to_string()]).unwrap();
+
+        assert!(root
+            .join("github/acme/notes.md")
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink()));
+    }
+
+    #[test]
+    fn a_sweep_prunes_only_directories_it_emptied() {
+        let (tmp, project) = make_surfacing_workspace(&["gita/repos.csv"]);
+        let root = tmp.path();
+        link_as_surfaced(root, project.as_str(), &["gita/repos.csv"]);
+        std::fs::create_dir(root.join("scratch")).unwrap();
+
+        unsurface_names(root, &["gita/repos.csv".to_string()]).unwrap();
+
+        assert!(
+            root.join("scratch").is_dir(),
+            "an empty directory the sweep removed nothing from is the operator's"
+        );
+        assert!(
+            root.join("gita").symlink_metadata().is_err(),
+            "the directory the removal emptied goes with it"
+        );
+    }
+
+    #[test]
+    fn a_restore_point_puts_back_what_a_regeneration_changed() {
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let dir = project_dir(root, project.as_str());
+        let manifest = load_manifest(root, &project);
+        let mut edited = manifest.clone();
+        edited.integrations.insert(
+            "static-files".to_string(),
+            toml::from_str("enabled = true\nfiles = [\".claude\", \"nested/new.md\"]").unwrap(),
+        );
+        let manifest_before = std::fs::read(dir.join(Manifest::FILE_NAME)).unwrap();
+
+        let restore_point = RestorePoint::take(root, &project, &[&manifest, &edited]).unwrap();
+        edited.write(&dir.join(Manifest::FILE_NAME)).unwrap();
+        std::fs::create_dir(dir.join("nested")).unwrap();
+        std::fs::write(dir.join("nested/new.md"), "made by the failed run\n").unwrap();
+        std::fs::write(dir.join(".claude"), "rewritten\n").unwrap();
+
+        assert_eq!(restore_point.restore(), Vec::<std::path::PathBuf>::new());
+
+        assert_eq!(
+            std::fs::read(dir.join(Manifest::FILE_NAME)).unwrap(),
+            manifest_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".claude")).unwrap(),
+            "content of .claude\n"
+        );
+        assert!(
+            !dir.join("nested").exists(),
+            "a file the run created goes, with the directory made for it"
         );
     }
 

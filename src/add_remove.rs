@@ -1,6 +1,6 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
-use crate::activate::{activate_intent, activate_workweave_intent};
+use crate::activate::{activate_intent_for, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::refusal::{refusal, RefusalKind};
@@ -130,7 +130,37 @@ fn create_worktree_in_workweave(
     Ok(())
 }
 
-/// Run the appropriate activation pass for the current checkout kind.
+/// In a workweave, give the workweave its worktree of the member whose
+/// canonical clone is `canonical`. Nothing to do at primary, or while the
+/// canonical clone is not on disk.
+fn worktree_for_workweave(
+    vcs: &dyn Vcs,
+    ctx: &WorkspaceContext,
+    canonical: &Path,
+    repo_path: &RepoPath,
+) -> anyhow::Result<()> {
+    let Checkout::Workweave {
+        name, dir, project, ..
+    } = &ctx.checkout
+    else {
+        return Ok(());
+    };
+    if !canonical.exists() {
+        return Ok(());
+    }
+    create_worktree_in_workweave(
+        vcs,
+        ctx.primary_path(),
+        canonical,
+        dir,
+        repo_path,
+        project,
+        name.require(dir, project)?,
+    )
+}
+
+/// Write `edited` as `project`'s manifest and regenerate the integrations from
+/// it, as one change; `None` regenerates from the manifest as it stands.
 ///
 /// `rwv add`/`rwv remove` are **intent verbs**: they mutate `rwv.toml`, then
 /// regenerate the integrations' managed/generated files so the new content can
@@ -139,16 +169,31 @@ fn create_worktree_in_workweave(
 /// project repo — symlinks write through to it) but skip install hooks; in
 /// primary we run the full intent-mode activation.
 ///
+/// A regeneration that fails before the install hooks puts `rwv.toml` and
+/// every file it had rewritten back as they were, so the verb either lands
+/// whole or not at all. The hooks are past that point: what `npm install` or
+/// `cargo generate-lockfile` did to the disk has no inverse, so a failure there
+/// leaves the change standing and says so.
+///
 /// Regeneration is withheld when an active repo the manifest declares is not
 /// on disk: the managed files are authored from the repos the run can see, so
 /// over a partial member set they would be rewritten without the rest. The
 /// manifest change still lands, and `rwv doctor --fix` regenerates once the
 /// member set is whole.
-fn activate_for_workspace(ctx: &WorkspaceContext, project: &ProjectName) -> anyhow::Result<()> {
+fn settle_manifest(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    edited: Option<&Manifest>,
+) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
-    let manifest = Manifest::from_path(&manifest_path)
+    let on_disk = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
+    let manifest = edited.unwrap_or(&on_disk);
+    let restore_point = RestorePoint::take(root, project, &[&on_disk, manifest])?;
+    if let Some(edited) = edited {
+        edited.write(&manifest_path)?;
+    }
 
     let missing = missing_active_members(root, manifest.iter_entries());
     if !missing.is_empty() {
@@ -163,9 +208,38 @@ fn activate_for_workspace(ctx: &WorkspaceContext, project: &ProjectName) -> anyh
         return Ok(());
     }
 
-    match &ctx.checkout {
-        Checkout::Workweave { dir, .. } => activate_workweave_intent(project.as_str(), dir),
-        Checkout::Primary { .. } => activate_intent(project.as_str(), ctx),
+    match activate_intent_for(project.as_str(), ctx) {
+        Ok(()) => Ok(()),
+        Err(ActivationFailure::BeforeHooks(e)) => {
+            let unrestored = restore_point.restore();
+            if unrestored.is_empty() {
+                return Err(e.context(if edited.is_some() {
+                    "rwv.toml is unchanged: the edit and every file its regeneration had \
+                     rewritten were put back"
+                } else {
+                    "every file the regeneration had rewritten was put back"
+                }));
+            }
+            let manifest_note = if unrestored.contains(&manifest_path) {
+                "; rwv.toml still carries the change"
+            } else {
+                ""
+            };
+            Err(e.context(format!(
+                "the regeneration failed, and these files could not be put back as they \
+                 were: {}{manifest_note}",
+                unrestored
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )))
+        }
+        Err(ActivationFailure::AtHooks(e)) if edited.is_some() => Err(e.context(
+            "rwv.toml was updated and the integration files were regenerated from it; \
+             only the install hooks did not complete",
+        )),
+        Err(ActivationFailure::AtHooks(e)) => Err(e),
     }
 }
 
@@ -192,11 +266,9 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             // Warn when this clone path is already registered by another project
             // before adding it here (local-path arm). Same shared-clone detection
             // as the URL arm.
-            {
-                let repo_path = RepoPath::new(url)?;
-                warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
-            }
-            run_add_from_local_path(
+            let repo_path = RepoPath::new(url)?;
+            warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
+            let registration = run_add_from_local_path(
                 vcs.as_ref(),
                 vcs_type,
                 url,
@@ -207,25 +279,21 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             // Local-path add doesn't clone, but if we are in a workweave the
             // operator may still expect the workweave to see the repo as a
             // worktree. Mirror the URL path's worktree-creation step.
-            if let Checkout::Workweave {
-                name, dir, project, ..
-            } = &ctx.checkout
-            {
-                let repo_path = RepoPath::new(url)?;
-                let canonical = ctx.primary_path().join(repo_path.as_path());
-                if canonical.exists() {
-                    create_worktree_in_workweave(
-                        vcs.as_ref(),
-                        ctx.primary_path(),
-                        &canonical,
-                        dir,
-                        &repo_path,
-                        project,
-                        name.require(dir, project)?,
-                    )?;
-                }
+            let canonical = ctx.primary_path().join(repo_path.as_path());
+            worktree_for_workweave(vcs.as_ref(), ctx, &canonical, &repo_path)?;
+            settle_manifest(
+                ctx,
+                &project,
+                registration.as_ref().map(|(manifest, _)| manifest),
+            )?;
+            if let Some((_, origin_url)) = registration {
+                eprintln!(
+                    "Added '{}' to manifest (url: {})",
+                    repo_path.as_str(),
+                    origin_url
+                );
             }
-            return activate_for_workspace(ctx, &project);
+            return Ok(());
         }
     }
 
@@ -253,20 +321,18 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.contains_repo(&repo_path) {
-        eprintln!(
-            "Repository already exists in manifest at '{}'",
-            repo_path.as_str()
-        );
-        return Ok(());
-    }
-
     // Clone the repo if it doesn't exist on disk. The clone always lives
     // at primary's canonical path — the canonical store, in tier-0
     // topology terms; workweaves link into it via `git worktree` rather
     // than holding their own clones (see
     // `docs/explanation/joints/clone-topology.md`).
     let dest = ctx.primary_path().join(repo_path.as_path());
+
+    if manifest.contains_repo(&repo_path) {
+        announce_already_registered(&repo_path);
+        worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+        return settle_manifest(ctx, &project, None);
+    }
 
     // Warn when this clone path is already registered by another project.
     // The physical clone is shared; the operator should know. This is not a
@@ -314,38 +380,35 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     };
     manifest.insert_repo(repo_path.clone(), entry);
 
-    // Write back the manifest (per-workspace state: workweave's own copy when
-    // CWD is in one, primary's otherwise).
-    manifest.write(&manifest_path)?;
+    // In a workweave, also create a worktree at the workweave so the new
+    // repo is materialized there. Before the manifest names it, because the
+    // regeneration that follows authors only from members it finds on disk.
+    worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+
+    // Per-workspace state: the workweave's own copy when CWD is in one,
+    // primary's otherwise.
+    settle_manifest(ctx, &project, Some(&manifest))?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
-
-    // In a workweave, also create a worktree at the workweave so the new
-    // repo is materialized there.
-    if let Checkout::Workweave {
-        name, dir, project, ..
-    } = &ctx.checkout
-    {
-        create_worktree_in_workweave(
-            vcs.as_ref(),
-            ctx.primary_path(),
-            &dest,
-            dir,
-            &repo_path,
-            project,
-            name.require(dir, project)?,
-        )?;
-    }
-
-    // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
-    activate_for_workspace(ctx, &project)?;
-
     Ok(())
+}
+
+/// Re-running `add` for a member the manifest already names changes nothing
+/// in it, and still re-runs the regeneration, which is what repairs a weave a
+/// previous run left short.
+fn announce_already_registered(repo_path: &RepoPath) {
+    eprintln!(
+        "Repository already exists in manifest at '{}'; re-running its activation",
+        repo_path.as_str()
+    );
 }
 
 /// Handle `rwv add <local-path>` where the argument is a relative path to an
 /// existing directory under the workspace root.  Infers the URL by reading the
 /// clone's `origin` remote.
+///
+/// Returns the manifest with the member added and the URL it was recorded
+/// under, unwritten, or `None` when the manifest already names it.
 fn run_add_from_local_path(
     vcs: &dyn Vcs,
     vcs_type: VcsType,
@@ -353,7 +416,7 @@ fn run_add_from_local_path(
     clone_dir: &Path,
     role: Role,
     manifest_path: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<(Manifest, String)>> {
     // Read the recorded URL from the existing clone.
     let raw_url = vcs
         .remote_url(clone_dir)
@@ -395,11 +458,8 @@ fn run_add_from_local_path(
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     if manifest.contains_repo(&repo_path) {
-        eprintln!(
-            "Repository already exists in manifest at '{}'",
-            repo_path.as_str()
-        );
-        return Ok(());
+        announce_already_registered(&repo_path);
+        return Ok(None);
     }
 
     let Some(remote_default) = vcs.remote_default_branch(clone_dir).with_context(|| {
@@ -427,16 +487,8 @@ fn run_add_from_local_path(
         version: default_branch,
         role,
     };
-    manifest.insert_repo(repo_path.clone(), entry);
-
-    manifest.write(manifest_path)?;
-
-    eprintln!(
-        "Added '{}' to manifest (url: {})",
-        repo_path.as_str(),
-        origin_url
-    );
-    Ok(())
+    manifest.insert_repo(repo_path, entry);
+    Ok(Some((manifest, origin_url)))
 }
 
 /// Execute `rwv remove PATH [--delete] [--delete-shared-clone]`.
@@ -507,13 +559,12 @@ pub fn run_remove(
         }
     }
 
-    // Write back the manifest (after all pre-flight checks pass).
-    manifest.write(&manifest_path)?;
+    // Write back the manifest (after all pre-flight checks pass), and re-run
+    // activation so ecosystem files (Cargo.toml, package.json, etc.) are
+    // updated.
+    settle_manifest(ctx, &project, Some(&manifest))?;
 
     eprintln!("Removed '{}' from manifest", repo_path.as_str());
-
-    // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
-    activate_for_workspace(ctx, &project)?;
 
     // Optionally delete the clone directory. Always targets primary's
     // canonical path — `--delete` semantics mean "remove the shared clone",
@@ -825,13 +876,15 @@ pub fn run_add_new(
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
+    // Creation always lives at primary's canonical path (clones are global
+    // infrastructure).
+    let dest = ctx.primary_path().join(repo_path.as_path());
+
     if let Some(existing) = manifest.get_entry(&repo_path) {
         if existing.url == plan.url {
-            eprintln!(
-                "Repository already exists in manifest at '{}'",
-                repo_path.as_str()
-            );
-            return Ok(());
+            announce_already_registered(&repo_path);
+            worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
+            return settle_manifest(ctx, &project, None);
         }
         crate::refuse!(
             RefusalKind::OccupiedPlacement,
@@ -843,10 +896,6 @@ pub fn run_add_new(
             plan.url
         );
     }
-
-    // Creation always lives at primary's canonical path (clones are global
-    // infrastructure).
-    let dest = ctx.primary_path().join(repo_path.as_path());
 
     // Warn when this repo path is already registered by another project with
     // a potentially different role. The physical init'd repo is shared; the
@@ -955,33 +1004,15 @@ pub fn run_add_new(
     };
     manifest.insert_repo(repo_path.clone(), entry);
 
-    // Write back the manifest (per-workspace state).
-    manifest.write(&manifest_path)?;
-
-    eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
-
     // In a workweave, attempt to create a worktree at the workweave so the
     // new repo is materialized there. An unborn HEAD (both creation shapes
     // start unborn) means create_worktree_in_workweave silently skips until
     // the first commit lands upstream (operator can then `rwv sync`).
-    if let Checkout::Workweave {
-        name, dir, project, ..
-    } = &ctx.checkout
-    {
-        create_worktree_in_workweave(
-            vcs.as_ref(),
-            ctx.primary_path(),
-            &dest,
-            dir,
-            &repo_path,
-            project,
-            name.require(dir, project)?,
-        )?;
-    }
+    worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
 
-    // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
-    activate_for_workspace(ctx, &project)?;
+    settle_manifest(ctx, &project, Some(&manifest))?;
 
+    eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
     Ok(())
 }
 
