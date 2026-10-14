@@ -184,13 +184,14 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "share.rs",
         pattern: "remove_file",
-        count: 2,
+        count: 3,
         callers: &[],
-        justification: "placement's own scratch files, each minted by the \
-            same call that removes it: the probe clone that asks whether a \
-            source can be cloned from at all, and a staged clone whose rename \
-            over a member file failed. Neither path holds anything but that \
-            clone; the member file it would have replaced is untouched.",
+        justification: "names placement itself made in the same call, and \
+            nothing else: the probe that asks whether a source can be cloned or \
+            linked from at all; a staged clone or link whose rename over a member \
+            file failed; and a new link whose file turned out to have write \
+            bits, which removes only that new name, never the source's. The \
+            member file a staged name would have replaced is untouched.",
     },
     Allowed {
         file: "add_remove.rs",

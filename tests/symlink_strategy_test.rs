@@ -37,10 +37,14 @@ use common::src_scan::{production_lines, SourceLine};
 /// The module that owns platform link creation.
 const OWNER: &str = "symlink.rs";
 
-/// The atomic exclusive publish, which links a staged temp into place and
-/// removes the temp in the same call. It is the one hardlink rwv makes, and
-/// no second name survives it.
-const HARDLINK_OWNER: &str = "durable_file.rs";
+/// Where rwv makes a hardlink. The atomic exclusive publish links a staged
+/// temp into place and removes the temp in the same call, so no second name
+/// survives it. Sharing links a `reference` member's read-only tracked file
+/// into another workspace, and that second name survives on purpose: it is
+/// made only where the backend declares that an update replaces a file rather
+/// than writing into it (tests/shared_file_conformance_test.rs proves it), so
+/// neither workspace's update reaches the other's copy.
+const HARDLINK_OWNERS: &[&str] = &["durable_file.rs", "share.rs"];
 
 /// The platform constructors, each of which is a place a link's kind is
 /// decided — implicitly on Unix, explicitly on Windows.
@@ -141,7 +145,7 @@ fn no_call_site_hardcodes_a_file_link() {
 }
 
 #[test]
-fn hardlinks_are_confined_to_the_atomic_publish() {
+fn hardlinks_are_confined_to_the_atomic_publish_and_sharing() {
     let lines = production_lines();
     let found = sites(&lines, "hard_link(");
     assert!(
@@ -152,16 +156,17 @@ fn hardlinks_are_confined_to_the_atomic_publish() {
     );
     let strays: Vec<String> = found
         .iter()
-        .filter(|l| l.file != HARDLINK_OWNER)
+        .filter(|l| !HARDLINK_OWNERS.contains(&l.file.as_str()))
         .map(|l| l.site())
         .collect();
     assert!(
         strays.is_empty(),
-        "hard_link is called outside {HARDLINK_OWNER}: {}. rwv publishes owned \
+        "hard_link is called outside {}: {}. rwv publishes owned \
          files by renaming over them, and rename replaces the directory entry \
          rather than writing through the inode — a hardlink that outlives one \
          call keeps the previous contents, silently. Hardlinks also cannot \
          name directories at all",
+        HARDLINK_OWNERS.join(" and "),
         strays.join(", ")
     );
 }

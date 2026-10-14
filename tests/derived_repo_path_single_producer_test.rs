@@ -80,6 +80,14 @@ const ALLOWLIST: &[Allowed] = &[
              manifest. None derives a layout from an identity.",
     },
     Allowed {
+        file: "share.rs",
+        count: 1,
+        justification: "An observed location: the path of a checkout already on \
+             disk, taken relative to the workspace root found above it, and looked \
+             up in that workspace's manifest to read the role it gives that \
+             checkout. Nothing is derived from an identity.",
+    },
+    Allowed {
         file: "role.rs",
         count: 1,
         justification: "The role verb's lookup key: the operator's typed path is \

@@ -1,12 +1,14 @@
-//! Placing a member's tracked files by copy-on-write clone from the
-//! repository's other workspaces, so a workspace costs disk only where its
-//! files differ from one that already holds them.
+//! Placing a member's tracked files from the repository's other workspaces,
+//! so a workspace costs disk only where its files differ from one that
+//! already holds them: by copy-on-write clone for any member, and by hard
+//! link for a `reference` member's read-only files.
 //!
 //! The backend says what a checkout writes, which source files still hold
 //! exactly that, and writes whatever was not placed; nothing here knows how a
-//! VCS stores content. Nothing records which files were cloned: a later
+//! VCS stores content. Nothing records how a file was placed: a later
 //! operation asks the backend again.
 
+use crate::manifest::{Manifest, RepoPath, Role};
 use crate::vcs::{
     BornRef, OwnedRef, ResolvedRevisionId, TrackedFile, Vcs, VcsError, WorkspacePopulation,
 };
@@ -51,6 +53,9 @@ pub(crate) fn files_note(placement: Option<FilePlacement>) -> String {
 pub(crate) trait FilePrimitives: Sync {
     /// Make `to`, which must not exist, a copy-on-write clone of `from`.
     fn reflink(&self, from: &Path, to: &Path) -> io::Result<()>;
+
+    /// Make `to`, which must not exist, another name for `from`.
+    fn hardlink(&self, from: &Path, to: &Path) -> io::Result<()>;
 }
 
 /// The filesystem this process runs on.
@@ -60,15 +65,34 @@ impl FilePrimitives for Filesystem {
     fn reflink(&self, from: &Path, to: &Path) -> io::Result<()> {
         reflink_copy::reflink(from, to)
     }
+
+    fn hardlink(&self, from: &Path, to: &Path) -> io::Result<()> {
+        std::fs::hard_link(from, to)
+    }
 }
 
-/// An error saying that nothing at all can be cloned between these two
-/// places, as opposed to this one file failing.
-fn cannot_clone_between(e: &io::Error) -> bool {
+/// How a file is placed from another workspace, in the order tried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Reflink,
+    Hardlink,
+}
+
+/// An error saying that nothing at all can be placed between these two
+/// places in a mode, as opposed to this one file failing.
+fn cannot_place_between(e: &io::Error) -> bool {
     matches!(
         e.kind(),
         io::ErrorKind::Unsupported | io::ErrorKind::CrossesDevices | io::ErrorKind::InvalidInput
     )
+}
+
+/// Whether a file placed for a member of `role` may share one file with
+/// another workspace's copy: only into a `reference` member, only from one,
+/// and only where the backend promises an update in one workspace leaves the
+/// other's file alone.
+fn may_link(role: Role, backend_declares: bool, source_is_reference: bool) -> bool {
+    role == Role::Reference && backend_declares && source_is_reference
 }
 
 /// What creating a workspace with shared files came to.
@@ -82,13 +106,14 @@ pub(crate) struct Populated {
     pub(crate) filled: anyhow::Result<Option<FilePlacement>>,
 }
 
-/// Create the workspace [`Vcs::create_worktree_on`] would, with every file
-/// another workspace of the repository holds cloned from it and the rest
-/// written by the backend.
+/// Create the workspace [`Vcs::create_worktree_on`] would, for a member of
+/// `role`, with every file another workspace of the repository holds placed
+/// from it and the rest written by the backend.
 pub(crate) fn create_worktree_populated(
     vcs: &dyn Vcs,
     owned: &OwnedRef,
     dest: &Path,
+    role: Role,
     fs: &dyn FilePrimitives,
 ) -> Populated {
     let Some(population) = vcs.population() else {
@@ -99,7 +124,7 @@ pub(crate) fn create_worktree_populated(
     };
     let created = population.create_unpopulated_worktree_on(owned, dest);
     let filled = match &created {
-        Ok(_) => fill(vcs, population, dest, owned.created_at(), fs).map(Some),
+        Ok(_) => fill(vcs, population, dest, role, owned.created_at(), fs).map(Some),
         Err(_) => Ok(None),
     };
     Populated { created, filled }
@@ -109,32 +134,40 @@ fn fill(
     vcs: &dyn Vcs,
     population: &dyn WorkspacePopulation,
     dest: &Path,
+    role: Role,
     at: &ResolvedRevisionId,
     fs: &dyn FilePrimitives,
 ) -> anyhow::Result<FilePlacement> {
     let tracked = population.tracked_files(dest)?;
     let wanted: Vec<&TrackedFile> = tracked.iter().filter(|f| f.identity().is_some()).collect();
-    let placed = place(vcs, population, dest, at, &wanted, fs, Placing::IntoEmpty);
+    let placed = place(
+        vcs,
+        population,
+        dest,
+        role,
+        at,
+        &wanted,
+        fs,
+        Placing::IntoEmpty,
+    );
     population
         .finish_checkout(dest)
         .with_context(|| format!("failed to finish the checkout at {}", dest.display()))?;
-    let reflinked = verify_and_repair(population, dest, &placed)?;
-    Ok(FilePlacement {
-        reflinked,
-        hardlinked: 0,
-        written: tracked.len() - reflinked,
-    })
+    let mut placement = verify_and_repair(population, dest, &placed)?;
+    placement.written = tracked.len() - placement.reflinked - placement.hardlinked;
+    Ok(placement)
 }
 
-/// After the backend rewrote `changed` in the member checked out at
-/// `member`, replace each rewritten file with a clone of another workspace's
-/// copy of the same content. A file that no longer holds what the member
-/// records is never replaced, so no local change is lost.
+/// After the backend rewrote `changed` in the member of `role` checked out at
+/// `member`, replace each rewritten file with one placed from another
+/// workspace's copy of the same content. A file that no longer holds what the
+/// member records is never replaced, so no local change is lost.
 ///
 /// `None` for a backend that answers no population questions.
 pub(crate) fn reshare(
     vcs: &dyn Vcs,
     member: &Path,
+    role: Role,
     changed: &[String],
     fs: &dyn FilePrimitives,
 ) -> anyhow::Result<Option<FilePlacement>> {
@@ -170,17 +203,15 @@ pub(crate) fn reshare(
         vcs,
         population,
         member,
+        role,
         &at,
         &wanted,
         fs,
         Placing::OverIntact,
     );
-    let reflinked = verify_and_repair(population, member, &placed)?;
-    Ok(Some(FilePlacement {
-        reflinked,
-        hardlinked: 0,
-        written: rewritten.len() - reflinked,
-    }))
+    let mut placement = verify_and_repair(population, member, &placed)?;
+    placement.written = rewritten.len() - placement.reflinked - placement.hardlinked;
+    Ok(Some(placement))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -191,26 +222,37 @@ enum Placing {
     OverIntact,
 }
 
-/// Clone each of `wanted` into `dest` from a workspace holding its content,
-/// and return the paths cloned. A file nothing can be cloned from is left
-/// for the backend.
+/// Place each of `wanted` into `dest` from a workspace holding its content,
+/// trying each mode in turn, and return the paths placed with how. A file
+/// nothing can be placed from is left for the backend.
+#[allow(clippy::too_many_arguments)]
 fn place(
     vcs: &dyn Vcs,
     population: &dyn WorkspacePopulation,
     dest: &Path,
+    role: Role,
     at: &ResolvedRevisionId,
     wanted: &[&TrackedFile],
     fs: &dyn FilePrimitives,
     placing: Placing,
-) -> Vec<String> {
+) -> Vec<(String, Mode)> {
     let mut uncovered: BTreeMap<&str, &TrackedFile> =
         wanted.iter().map(|f| (f.path.as_str(), *f)).collect();
     let mut placed = Vec::new();
+    let backend_declares = population.updates_replace_files();
     for source in sources(vcs, dest, at) {
         if uncovered.is_empty() {
             break;
         }
-        if !can_clone_from(&source, dest, uncovered.keys().copied(), fs) {
+        let mut modes: Vec<Mode> = [Mode::Reflink, Mode::Hardlink]
+            .into_iter()
+            .filter(|mode| {
+                *mode == Mode::Reflink
+                    || may_link(role, backend_declares, checked_out_as_reference(&source))
+            })
+            .filter(|mode| can_place_from(&source, dest, uncovered.keys().copied(), fs, *mode))
+            .collect();
+        if modes.is_empty() {
             continue;
         }
         let asked: Vec<String> = uncovered.keys().map(|p| (*p).to_owned()).collect();
@@ -218,19 +260,25 @@ fn place(
             continue;
         };
         for offered in held {
+            if modes.is_empty() {
+                break;
+            }
             let Some(want) = uncovered.get(offered.path.as_str()).copied() else {
                 continue;
             };
             if offered.kind != want.kind {
                 continue;
             }
-            match clone_into(&source, dest, &want.path, fs, placing) {
-                Ok(()) => {
-                    uncovered.remove(want.path.as_str());
-                    placed.push(want.path.clone());
+            for mode in modes.clone() {
+                match place_one(&source, dest, &want.path, fs, mode, placing) {
+                    Ok(()) => {
+                        uncovered.remove(want.path.as_str());
+                        placed.push((want.path.clone(), mode));
+                        break;
+                    }
+                    Err(e) if cannot_place_between(&e) => modes.retain(|m| *m != mode),
+                    Err(_) => {}
                 }
-                Err(e) if cannot_clone_between(&e) => break,
-                Err(_) => {}
             }
         }
     }
@@ -262,42 +310,110 @@ fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<PathBuf> 
     found.into_iter().map(|(_, _, w)| w).collect()
 }
 
-/// Whether anything can be cloned from `source` into `dest`, asked once by
-/// cloning a file `source` has at one of `paths` and removing the clone, so
-/// a filesystem that cannot clone costs one attempt rather than a read of
-/// every source file.
-fn can_clone_from<'a>(
+/// Whether the checkout at `checkout` is a `reference` member where it
+/// lives: in a workweave, by its project's manifest; in a primary, by every
+/// project's manifest that lists it, since its clone serves them all.
+fn checked_out_as_reference(checkout: &Path) -> bool {
+    for root in checkout.ancestors().skip(1) {
+        let Some(repo) = checkout
+            .strip_prefix(root)
+            .ok()
+            .and_then(|rel| {
+                rel.components()
+                    .map(|c| c.as_os_str().to_str())
+                    .collect::<Option<Vec<_>>>()
+            })
+            .and_then(|parts| RepoPath::new(parts.join("/")).ok())
+        else {
+            return false;
+        };
+        let role_in = |project: &str| {
+            Manifest::from_path(
+                &crate::workspace::project_dir(root, project).join(Manifest::FILE_NAME),
+            )
+            .ok()
+            .and_then(|m| m.get_entry(&repo).map(|e| e.role))
+        };
+        if let Some(marker) = crate::workspace::WorkweaveMarker::read(root).ok().flatten() {
+            return role_in(marker.project().as_str()) == Some(Role::Reference);
+        }
+        if crate::workspace::projects_dir(root).is_dir() {
+            let roles: Vec<Role> = crate::workspace::discover_projects(root)
+                .iter()
+                .filter_map(|p| role_in(p.as_str()))
+                .collect();
+            return !roles.is_empty() && roles.iter().all(|r| *r == Role::Reference);
+        }
+    }
+    false
+}
+
+/// Whether anything can be placed from `source` into `dest` in `mode`, asked
+/// once by placing a file `source` has at one of `paths` and removing it, so
+/// a mode the filesystem lacks costs one attempt rather than a read of every
+/// source file.
+fn can_place_from<'a>(
     source: &Path,
     dest: &Path,
     mut paths: impl Iterator<Item = &'a str>,
     fs: &dyn FilePrimitives,
+    mode: Mode,
 ) -> bool {
     let Some(sample) = paths
         .find(|p| std::fs::symlink_metadata(source.join(p)).is_ok_and(|m| m.file_type().is_file()))
     else {
         return false;
     };
-    let probe = dest.join(format!(".rwv-clone-probe-{}", std::process::id()));
-    let cloned = fs.reflink(&source.join(sample), &probe).is_ok();
+    let probe = dest.join(format!(".rwv-place-probe-{}", std::process::id()));
+    let from = source.join(sample);
+    let placed = match mode {
+        Mode::Reflink => fs.reflink(&from, &probe),
+        Mode::Hardlink => fs.hardlink(&from, &probe),
+    }
+    .is_ok();
     let _ = std::fs::remove_file(&probe);
-    cloned
+    placed
 }
 
-fn clone_into(
+/// A file that can be written in place must not gain a second name: one edit
+/// would reach every workspace sharing it.
+fn read_only(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .is_ok_and(|meta| meta.file_type().is_file() && !crate::settle::any_write_bit(&meta))
+}
+
+fn place_one(
     source: &Path,
     dest: &Path,
     path: &str,
     fs: &dyn FilePrimitives,
+    mode: Mode,
     placing: Placing,
 ) -> io::Result<()> {
     let from = source.join(path);
     let to = dest.join(path);
+    if mode == Mode::Hardlink && !read_only(&from) {
+        return Err(io::Error::other("a writable file is never linked"));
+    }
+    let put = |at: &Path| -> io::Result<()> {
+        match mode {
+            Mode::Reflink => fs.reflink(&from, at),
+            Mode::Hardlink => fs.hardlink(&from, at).and_then(|()| {
+                if read_only(at) {
+                    Ok(())
+                } else {
+                    let _ = std::fs::remove_file(at);
+                    Err(io::Error::other("the linked file gained write bits"))
+                }
+            }),
+        }
+    };
     match placing {
         Placing::IntoEmpty => {
             if let Some(parent) = to.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            fs.reflink(&from, &to)
+            put(&to)
         }
         Placing::OverIntact => {
             let name = to
@@ -305,9 +421,7 @@ fn clone_into(
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let staged = to.with_file_name(format!(".{name}.rwv-share"));
-            let replaced = fs
-                .reflink(&from, &staged)
-                .and_then(|()| std::fs::rename(&staged, &to));
+            let replaced = put(&staged).and_then(|()| std::fs::rename(&staged, &to));
             if replaced.is_err() {
                 let _ = std::fs::remove_file(&staged);
             }
@@ -317,29 +431,34 @@ fn clone_into(
 }
 
 /// Check out again every one of `placed` that does not hold exactly what the
-/// workspace records, and return how many did.
+/// workspace records, and count, by mode, those that did.
 fn verify_and_repair(
     population: &dyn WorkspacePopulation,
     workspace: &Path,
-    placed: &[String],
-) -> anyhow::Result<usize> {
+    placed: &[(String, Mode)],
+) -> anyhow::Result<FilePlacement> {
+    let mut placement = FilePlacement::default();
     if placed.is_empty() {
-        return Ok(0);
+        return Ok(placement);
     }
+    let paths: Vec<String> = placed.iter().map(|(p, _)| p.clone()).collect();
     let holding: BTreeSet<String> = population
-        .files_holding_recorded_content(workspace, placed)?
+        .files_holding_recorded_content(workspace, &paths)?
         .into_iter()
         .map(|f| f.path)
         .collect();
-    let mismatched: Vec<String> = placed
-        .iter()
-        .filter(|p| !holding.contains(*p))
-        .cloned()
-        .collect();
+    let mut mismatched = Vec::new();
+    for (path, mode) in placed {
+        match (holding.contains(path), mode) {
+            (false, _) => mismatched.push(path.clone()),
+            (true, Mode::Reflink) => placement.reflinked += 1,
+            (true, Mode::Hardlink) => placement.hardlinked += 1,
+        }
+    }
     population
         .check_out_paths(workspace, &mismatched)
         .with_context(|| format!("failed to repair placed files in {}", workspace.display()))?;
-    Ok(placed.len() - mismatched.len())
+    Ok(placement)
 }
 
 #[cfg(test)]
@@ -349,14 +468,16 @@ pub(crate) mod testing {
     use super::*;
     use std::sync::Mutex;
 
-    type BeforeClone = Box<dyn FnMut(&Path, &Path) + Send>;
+    type BeforePlace = Box<dyn FnMut(&Path, &Path) + Send>;
 
-    /// Clones by copying, unless scripted to fail for a source.
+    /// Clones by copying and links for real, unless scripted to fail for a
+    /// source.
     #[derive(Default)]
     pub(crate) struct FakePrimitives {
-        failures: Mutex<Vec<(PathBuf, io::ErrorKind)>>,
-        before_clone: Mutex<Option<BeforeClone>>,
+        failures: Mutex<Vec<(PathBuf, Mode, io::ErrorKind)>>,
+        before_place: Mutex<Option<BeforePlace>>,
         clones: Mutex<Vec<(PathBuf, PathBuf)>>,
+        links: Mutex<Vec<(PathBuf, PathBuf)>>,
         attempts: Mutex<usize>,
     }
 
@@ -366,12 +487,21 @@ pub(crate) mod testing {
             self.failures
                 .lock()
                 .unwrap()
-                .push((source.to_path_buf(), kind));
+                .push((source.to_path_buf(), Mode::Reflink, kind));
         }
 
-        /// Run `hook` with each clone's `(from, to)` just before it is made.
-        pub(crate) fn before_clone(&self, hook: impl FnMut(&Path, &Path) + Send + 'static) {
-            *self.before_clone.lock().unwrap() = Some(Box::new(hook));
+        /// Every link from under `source` fails with `kind`.
+        pub(crate) fn fail_links_from(&self, source: &Path, kind: io::ErrorKind) {
+            self.failures
+                .lock()
+                .unwrap()
+                .push((source.to_path_buf(), Mode::Hardlink, kind));
+        }
+
+        /// Run `hook` with each clone's or link's `(from, to)` just before it
+        /// is made.
+        pub(crate) fn before_place(&self, hook: impl FnMut(&Path, &Path) + Send + 'static) {
+            *self.before_place.lock().unwrap() = Some(Box::new(hook));
         }
 
         /// Every clone that succeeded, as `(from, to)`.
@@ -379,32 +509,52 @@ pub(crate) mod testing {
             self.clones.lock().unwrap().clone()
         }
 
+        /// Every link that succeeded, as `(from, to)`.
+        pub(crate) fn links(&self) -> Vec<(PathBuf, PathBuf)> {
+            self.links.lock().unwrap().clone()
+        }
+
         /// How many clones were asked for, failed ones included.
         pub(crate) fn attempts(&self) -> usize {
             *self.attempts.lock().unwrap()
         }
-    }
 
-    impl FilePrimitives for FakePrimitives {
-        fn reflink(&self, from: &Path, to: &Path) -> io::Result<()> {
-            *self.attempts.lock().unwrap() += 1;
-            if let Some((_, kind)) = self
+        fn enter(&self, from: &Path, to: &Path, mode: Mode) -> io::Result<()> {
+            if let Some((_, _, kind)) = self
                 .failures
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|(source, _)| from.starts_with(source))
+                .find(|(source, m, _)| *m == mode && from.starts_with(source))
             {
                 return Err(io::Error::from(*kind));
             }
             if to.symlink_metadata().is_ok() {
                 return Err(io::Error::from(io::ErrorKind::AlreadyExists));
             }
-            if let Some(hook) = self.before_clone.lock().unwrap().as_mut() {
+            if let Some(hook) = self.before_place.lock().unwrap().as_mut() {
                 hook(from, to);
             }
+            Ok(())
+        }
+    }
+
+    impl FilePrimitives for FakePrimitives {
+        fn reflink(&self, from: &Path, to: &Path) -> io::Result<()> {
+            *self.attempts.lock().unwrap() += 1;
+            self.enter(from, to, Mode::Reflink)?;
             std::fs::copy(from, to)?;
             self.clones
+                .lock()
+                .unwrap()
+                .push((from.to_path_buf(), to.to_path_buf()));
+            Ok(())
+        }
+
+        fn hardlink(&self, from: &Path, to: &Path) -> io::Result<()> {
+            self.enter(from, to, Mode::Hardlink)?;
+            std::fs::hard_link(from, to)?;
+            self.links
                 .lock()
                 .unwrap()
                 .push((from.to_path_buf(), to.to_path_buf()));
@@ -439,7 +589,10 @@ mod tests {
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
     }
 
-    /// A canonical clone whose own checkout is the primary's.
+    const REPO: &str = "github/o/r";
+
+    /// A primary whose one project lists [`REPO`], and that repo's canonical
+    /// clone, whose own checkout is the primary's.
     struct Weave {
         tmp: tempfile::TempDir,
         store: PathBuf,
@@ -447,9 +600,26 @@ mod tests {
 
     impl Weave {
         fn with(files: &[(&str, &str)]) -> Self {
+            Self::listing(files, Role::Owned)
+        }
+
+        /// A primary whose project gives [`REPO`] the role `role`.
+        fn listing(files: &[(&str, &str)], role: Role) -> Self {
             let tmp = tempfile::tempdir().unwrap();
-            let store = tmp.path().join("primary");
-            std::fs::create_dir(&store).unwrap();
+            let primary = tmp.path().join("primary");
+            let project = crate::workspace::project_dir(&primary, "app");
+            std::fs::create_dir_all(&project).unwrap();
+            std::fs::write(
+                project.join(Manifest::FILE_NAME),
+                format!(
+                    "[repositories.\"{REPO}\"]\ntype = \"git\"\n\
+                     url = \"https://example.com/{REPO}.git\"\nversion = \"main\"\n\
+                     role = \"{role}\"\n"
+                ),
+            )
+            .unwrap();
+            let store = primary.join(REPO);
+            std::fs::create_dir_all(&store).unwrap();
             git(&store, &["init", "-q", "-b", "main"]);
             let w = Self { tmp, store };
             w.commit(files);
@@ -495,10 +665,20 @@ mod tests {
             at: &ResolvedRevisionId,
             fs: &dyn FilePrimitives,
         ) -> (PathBuf, FilePlacement) {
+            self.populate_as(name, at, Role::Owned, fs)
+        }
+
+        fn populate_as(
+            &self,
+            name: &str,
+            at: &ResolvedRevisionId,
+            role: Role,
+            fs: &dyn FilePrimitives,
+        ) -> (PathBuf, FilePlacement) {
             let dest = self.tmp.path().join(name);
             let owned =
                 OwnedRef::from_receipt(self.store.join(".git"), RawRefName::new(name), at.clone());
-            let populated = create_worktree_populated(git_vcs().as_ref(), &owned, &dest, fs);
+            let populated = create_worktree_populated(git_vcs().as_ref(), &owned, &dest, role, fs);
             assert!(populated.created.unwrap().is_some());
             (
                 dest,
@@ -541,7 +721,7 @@ mod tests {
                 !to.file_name()
                     .unwrap()
                     .to_string_lossy()
-                    .starts_with(".rwv-clone-probe")
+                    .starts_with(".rwv-place-probe")
             })
             .map(|(from, _)| {
                 let source = candidates
@@ -676,7 +856,7 @@ mod tests {
         let w = Weave::with(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
         let at = w.head();
         let fs = FakePrimitives::default();
-        fs.before_clone(|from, to| {
+        fs.before_place(|from, to| {
             let probe = to
                 .file_name()
                 .unwrap()
@@ -860,6 +1040,7 @@ mod tests {
             &fake,
             &owned,
             Path::new("/dest"),
+            Role::Reference,
             &FakePrimitives::default(),
         );
 
@@ -884,7 +1065,7 @@ mod tests {
             .unwrap();
         let fs = FakePrimitives::default();
 
-        let placement = reshare(git_vcs().as_ref(), &member, &changed, &fs)
+        let placement = reshare(git_vcs().as_ref(), &member, Role::Owned, &changed, &fs)
             .unwrap()
             .unwrap();
 
@@ -920,9 +1101,15 @@ mod tests {
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
 
-        let placement = reshare(git_vcs().as_ref(), &member, &["a.txt".to_owned()], &fs)
-            .unwrap()
-            .unwrap();
+        let placement = reshare(
+            git_vcs().as_ref(),
+            &member,
+            Role::Owned,
+            &["a.txt".to_owned()],
+            &fs,
+        )
+        .unwrap()
+        .unwrap();
 
         assert_eq!(placement.reflinked, 0);
         assert_eq!(file_identity(&member.join("a.txt")), identity_before);
@@ -940,7 +1127,7 @@ mod tests {
         fs.fail_from(&w.store.join("b.txt"), io::ErrorKind::PermissionDenied);
         let changed = vec!["a.txt".to_owned(), "b.txt".to_owned()];
 
-        let placement = reshare(git_vcs().as_ref(), &member, &changed, &fs)
+        let placement = reshare(git_vcs().as_ref(), &member, Role::Owned, &changed, &fs)
             .unwrap()
             .unwrap();
 
@@ -949,6 +1136,279 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(member.join("b.txt")).unwrap(),
             "b2\n"
+        );
+        assert_eq!(git(&member, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn a_file_may_be_linked_only_into_and_from_a_reference_member_on_a_declared_platform() {
+        for role in [Role::Owned, Role::Reference] {
+            for declared in [false, true] {
+                for source_is_reference in [false, true] {
+                    assert_eq!(
+                        may_link(role, declared, source_is_reference),
+                        role == Role::Reference && declared && source_is_reference,
+                        "{role} target, declared {declared}, reference source {source_is_reference}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The paths, relative to `source`, every link that placed a file came
+    /// from; probes are left out.
+    fn linked_from(fs: &FakePrimitives, source: &Path) -> Vec<String> {
+        fs.links()
+            .into_iter()
+            .filter(|(_, to)| {
+                !to.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(".rwv-place-probe")
+            })
+            .map(|(from, _)| {
+                from.strip_prefix(source)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect()
+    }
+
+    /// Whether this backend links at all on this platform.
+    fn declared() -> bool {
+        git_vcs().population().unwrap().updates_replace_files()
+    }
+
+    /// A primary whose reference member holds `files`, settled read-only.
+    #[cfg(unix)]
+    fn read_only_reference(files: &[(&str, &str)]) -> Weave {
+        let w = Weave::listing(files, Role::Reference);
+        crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
+        w
+    }
+
+    #[cfg(unix)]
+    fn mode_bits(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reference_file_no_clone_can_place_is_linked_to_a_read_only_reference_copy() {
+        let w = read_only_reference(&[("a.txt", "a\n"), ("dir/b.txt", "b\n")]);
+        let at = w.head();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
+
+        let tracked = files_in(&dest).len();
+        if declared() {
+            assert_eq!(
+                placement,
+                FilePlacement {
+                    reflinked: 0,
+                    hardlinked: tracked,
+                    written: 0
+                }
+            );
+            for path in files_in(&dest) {
+                assert_eq!(
+                    file_identity(&dest.join(&path)),
+                    file_identity(&w.store.join(&path)),
+                    "{path} does not share the source's file"
+                );
+                assert_eq!(
+                    mode_bits(&dest.join(&path)) & 0o222,
+                    0,
+                    "{path} is writable"
+                );
+            }
+        } else {
+            assert_eq!(
+                placement.hardlinked,
+                0,
+                "linked on {}",
+                std::env::consts::OS
+            );
+            assert!(linked_from(&fs, &w.store).is_empty());
+        }
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_writable_source_file_is_never_linked() {
+        let w = read_only_reference(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+        let at = w.head();
+        crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Owned).unwrap();
+        let read_only = w.store.join("b.txt");
+        let meta = std::fs::metadata(&read_only).unwrap();
+        let mut perms = meta.permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&read_only, perms).unwrap();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
+
+        let linked = linked_from(&fs, &w.store);
+        assert!(
+            !linked.contains(&"a.txt".to_owned()),
+            "linked a writable file: {linked:?}"
+        );
+        if declared() {
+            assert_eq!(linked, vec!["b.txt".to_owned()]);
+            assert_eq!(placement.hardlinked, 1);
+        }
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_member_that_is_not_reference_never_shares_a_file() {
+        let w = read_only_reference(&[("a.txt", "a\n")]);
+        let at = w.head();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Owned, &fs);
+
+        assert!(
+            linked_from(&fs, &w.store).is_empty(),
+            "linked into an owned member"
+        );
+        assert_eq!(placement.hardlinked, 0);
+        assert_ne!(
+            file_identity(&dest.join("a.txt")),
+            file_identity(&w.store.join("a.txt"))
+        );
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_source_not_checked_out_as_reference_is_never_linked_from() {
+        let w = Weave::listing(&[("a.txt", "a\n")], Role::Owned);
+        crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
+        let at = w.head();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
+
+        assert!(
+            linked_from(&fs, &w.store).is_empty(),
+            "linked from a member its own project calls owned"
+        );
+        assert_eq!(placement.hardlinked, 0);
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clone_is_preferred_to_a_link() {
+        let w = read_only_reference(&[("a.txt", "a\n")]);
+        let at = w.head();
+        let fs = FakePrimitives::default();
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
+
+        assert_eq!(placement.reflinked, 1);
+        assert_eq!(placement.hardlinked, 0);
+        assert_ne!(
+            file_identity(&dest.join("a.txt")),
+            file_identity(&w.store.join("a.txt"))
+        );
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_across_devices_leaves_the_file_to_the_backend() {
+        let w = read_only_reference(&[("a.txt", "a\n"), ("b.txt", "b\n")]);
+        let at = w.head();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+        fs.fail_links_from(&w.store, io::ErrorKind::CrossesDevices);
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
+
+        assert_eq!(placement.hardlinked, 0);
+        assert_eq!(placement.written, files_in(&dest).len());
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_source_made_writable_as_it_is_linked_is_not_left_sharing() {
+        use std::os::unix::fs::PermissionsExt;
+        let w = read_only_reference(&[("a.txt", "a\n")]);
+        let at = w.head();
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+        fs.before_place(|from, to| {
+            let probe = to
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".rwv");
+            if !probe {
+                std::fs::set_permissions(from, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+        });
+
+        let (dest, placement) = w.populate_as("seat", &at, Role::Reference, &fs);
+
+        assert_eq!(placement.hardlinked, 0);
+        assert_ne!(
+            file_identity(&dest.join("a.txt")),
+            file_identity(&w.store.join("a.txt")),
+            "a file that gained write bits was left with two names"
+        );
+        assert_checked_out(&dest);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reference_member_moved_shares_its_rewritten_files_by_link() {
+        let w = Weave::listing(&[("a.txt", "a1\n"), ("b.txt", "b\n")], Role::Reference);
+        let before = w.head();
+        let after = w.commit(&[("a.txt", "a2\n")]);
+        crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
+        let member = w.seat("member", &before);
+        git(&member, &["checkout", "-q", "--detach", after.as_str()]);
+        let fs = FakePrimitives::default();
+        fs.fail_from(&w.store, io::ErrorKind::Unsupported);
+
+        let placement = reshare(
+            git_vcs().as_ref(),
+            &member,
+            Role::Reference,
+            &["a.txt".to_owned()],
+            &fs,
+        )
+        .unwrap()
+        .unwrap();
+
+        if declared() {
+            assert_eq!(placement.hardlinked, 1);
+            assert_eq!(
+                file_identity(&member.join("a.txt")),
+                file_identity(&w.store.join("a.txt"))
+            );
+        } else {
+            assert_eq!(placement.hardlinked, 0);
+        }
+        assert_eq!(
+            std::fs::read_to_string(member.join("a.txt")).unwrap(),
+            "a2\n"
         );
         assert_eq!(git(&member, &["status", "--porcelain"]), "");
     }

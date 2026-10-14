@@ -72,7 +72,7 @@ pub fn settle_moved(
                 None
             } else {
                 let changed = vcs.changed_paths_between(member, from, &to)?;
-                crate::share::reshare(vcs, member, &changed, &crate::share::Filesystem)
+                crate::share::reshare(vcs, member, role, &changed, &crate::share::Filesystem)
                     .with_context(|| format!("failed to share files in {}", member.display()))?
             }
         }
@@ -172,7 +172,7 @@ fn unshare(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn any_write_bit(meta: &Metadata) -> bool {
+pub(crate) fn any_write_bit(meta: &Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
     meta.permissions().mode() & 0o222 != 0
 }
@@ -202,7 +202,7 @@ fn set_writable(path: &Path, meta: &Metadata, writable: bool) -> std::io::Result
 }
 
 #[cfg(windows)]
-fn any_write_bit(meta: &Metadata) -> bool {
+pub(crate) fn any_write_bit(meta: &Metadata) -> bool {
     !meta.permissions().readonly()
 }
 

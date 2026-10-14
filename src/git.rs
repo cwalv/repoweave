@@ -3457,7 +3457,9 @@ impl WorkspacePopulation for GitVcs {
     }
 
     fn updates_replace_files(&self) -> bool {
-        false
+        // Declared where tests/shared_file_conformance_test.rs holds the
+        // property; a platform joins when its CI leg shows it green.
+        cfg!(target_os = "linux")
     }
 }
 
@@ -4642,8 +4644,13 @@ mod population_tests {
     }
 
     #[test]
-    fn git_declares_no_platform_where_updates_replace_files() {
-        assert!(!population().updates_replace_files());
+    fn git_declares_updates_replace_files_only_where_conformance_holds() {
+        assert_eq!(
+            population().updates_replace_files(),
+            cfg!(target_os = "linux"),
+            "on {}",
+            std::env::consts::OS
+        );
     }
 
     #[test]

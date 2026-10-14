@@ -316,6 +316,19 @@ replace_never_rewrite! {
     a_repair_replaces_a_shared_file_without_write_bits: Update::Repair, writable = false;
 }
 
+/// The backend declares the property exactly where the tests above observe it.
+/// A platform joins by its CI leg passing them and this pin changing with it.
+#[test]
+fn the_declaration_follows_where_the_property_is_observed() {
+    let declared = population(git_vcs().as_ref()).updates_replace_files();
+    assert_eq!(
+        declared,
+        cfg!(target_os = "linux"),
+        "on {}",
+        std::env::consts::OS
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 2. Population leaves placed files alone
 // ---------------------------------------------------------------------------

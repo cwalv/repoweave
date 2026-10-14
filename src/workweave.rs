@@ -1024,9 +1024,9 @@ pub(crate) struct BirthOutcome {
 pub(crate) enum WorktreeFiles<'a> {
     /// The VCS writes every one.
     Written,
-    /// Cloned from the repository's other workspaces wherever the filesystem
-    /// allows; the VCS writes the rest.
-    Shared(&'a dyn FilePrimitives),
+    /// Placed from the repository's other workspaces wherever the filesystem
+    /// and the member's role allow; the VCS writes the rest.
+    Shared(&'a dyn FilePrimitives, Role),
 }
 
 impl BirthOutcome {
@@ -1128,7 +1128,7 @@ pub(crate) fn materialize_member(
         &dest,
         &EphemeralRefName::mint(project, workweave),
         start.clone(),
-        WorktreeFiles::Shared(&Filesystem),
+        WorktreeFiles::Shared(&Filesystem, role),
     )
     .with_context(|| format!("cannot materialize {repo_path}"))?;
     let files = outcome.placement;
@@ -1276,7 +1276,9 @@ pub(crate) fn birth_ephemeral_worktree(
             created: vcs.create_worktree_on(&owned, dest),
             filled: Ok(None),
         },
-        WorktreeFiles::Shared(fs) => crate::share::create_worktree_populated(vcs, &owned, dest, fs),
+        WorktreeFiles::Shared(fs, role) => {
+            crate::share::create_worktree_populated(vcs, &owned, dest, role, fs)
+        }
     };
     let (placement, filling_failed) = match populated.filled {
         Ok(placement) => (placement, None),
@@ -1725,7 +1727,7 @@ pub fn create_workweave(
                         &worktree_dest,
                         &ephemeral,
                         start,
-                        WorktreeFiles::Shared(&Filesystem),
+                        WorktreeFiles::Shared(&Filesystem, entry.role),
                     )
                 }) {
                 Ok(outcome) => {
