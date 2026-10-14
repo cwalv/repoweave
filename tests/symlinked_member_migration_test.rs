@@ -489,6 +489,150 @@ fn abort_refuses_an_unmigrated_workweave_before_restoring_anything() {
     );
 }
 
+/// The refusal's own remedy is runnable while an op is parked: abort refuses
+/// on the link and names `doctor --fix`; `doctor --fix` migrates the member
+/// with the op still parked; abort then restores. An op-in-progress guard on
+/// the repair would leave the two verbs naming each other.
+#[test]
+fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
+    let tmp = common::tempdir().unwrap();
+    let primary = tmp.path().join("primary");
+    std::fs::create_dir_all(primary.join("github/org")).unwrap();
+    let owned = primary.join(OWNED_PATH);
+    let owned_pin = init_repo(&owned, "OWNED");
+    let linked = primary.join(LINKED_PATH);
+    let linked_pin = init_repo(&linked, "LINKED");
+    let project_dir = primary.join("projects").join(PROJECT);
+    init_repo(&project_dir, "PLACEHOLDER");
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    common::git_in(&project_dir, &["add", ".gitattributes"]);
+    commit_project(
+        &project_dir,
+        &manifest(&[
+            (OWNED_PATH, &owned, "owned"),
+            (LINKED_PATH, &linked, "reference"),
+        ]),
+        &[
+            (OWNED_PATH, &owned, &owned_pin),
+            (LINKED_PATH, &linked, &linked_pin),
+        ],
+    );
+    std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    rwv()
+        .args(["workweave", PROJECT, "create", SEAT])
+        .current_dir(&primary)
+        .assert()
+        .success();
+    let seat = tmp
+        .path()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--{SEAT}"));
+
+    std::fs::write(owned.join("OWNED"), "primary\n").unwrap();
+    common::git_in(&owned, &["commit", "-qam", "primary edit"]);
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&primary)
+        .assert()
+        .success();
+    let seat_owned = seat.join(OWNED_PATH);
+    std::fs::write(seat_owned.join("OWNED"), "seat\n").unwrap();
+    common::git_in(&seat_owned, &["commit", "-qam", "seat edit"]);
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&seat)
+        .assert()
+        .success();
+    let seat_owned_before = common::git_in(&seat_owned, &["rev-parse", "HEAD"]);
+    let primary_owned_before = common::git_in(&owned, &["rev-parse", "main"]);
+
+    let parked = rwv()
+        .args(["sync-to", &primary.to_string_lossy(), "--strategy=rebase"])
+        .current_dir(&seat)
+        .output()
+        .unwrap();
+    assert!(
+        !parked.status.success() && seat.join(".rwv-op").exists(),
+        "fixture: the conflicting owned edit must park the sync-to; stderr:\n{}",
+        String::from_utf8_lossy(&parked.stderr)
+    );
+
+    // What an older release left: the reference member as a link into the
+    // canonical clone, with no worktree or branch of the workweave's own.
+    let seat_linked = seat.join(LINKED_PATH);
+    common::git_in(
+        &linked,
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            &seat_linked.to_string_lossy(),
+        ],
+    );
+    common::git_in(&linked, &["branch", "-D", &format!("{PROJECT}--{SEAT}")]);
+    repoweave::symlink::create(
+        &linked,
+        &seat_linked,
+        repoweave::symlink::LinkTarget::Directory,
+    )
+    .unwrap();
+
+    let refused = rwv().args(["abort"]).current_dir(&seat).output().unwrap();
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(1), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "rwv -C {} doctor --fix",
+            repoweave::path_spelling::operator_path(&seat)
+        )),
+        "abort must name the repair; stderr:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "workweave-drift");
+
+    let fixed = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&seat)
+        .output()
+        .unwrap();
+    assert!(
+        seat.join(".rwv-op").exists(),
+        "fixture: the op is still parked while doctor repairs"
+    );
+    assert!(
+        String::from_utf8_lossy(&fixed.stdout).contains(&format!(
+            "[fixed] core: created the worktree for {LINKED_PATH} in workweave {SEAT}"
+        )),
+        "doctor --fix must migrate the member under a parked op; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&fixed.stdout),
+        String::from_utf8_lossy(&fixed.stderr)
+    );
+    assert_worktree_at(&seat_linked, &linked, &linked_pin);
+
+    let aborted = rwv().args(["abort"]).current_dir(&seat).output().unwrap();
+    assert!(
+        aborted.status.success(),
+        "abort must restore once the member is a worktree; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&aborted.stdout),
+        String::from_utf8_lossy(&aborted.stderr)
+    );
+    assert!(!seat.join(".rwv-op").exists(), "abort clears the op");
+    assert_eq!(
+        common::git_in(&seat_owned, &["rev-parse", "HEAD"]),
+        seat_owned_before,
+        "abort restores the workweave's owned member to its pre-op tip"
+    );
+    assert_eq!(
+        common::git_in(&owned, &["rev-parse", "main"]),
+        primary_owned_before,
+        "the target never moved"
+    );
+    assert_worktree_at(&seat_linked, &linked, &linked_pin);
+}
+
 #[test]
 fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_fetch() {
     let tmp = common::tempdir().unwrap();
