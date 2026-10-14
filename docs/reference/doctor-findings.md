@@ -33,10 +33,11 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Eleven kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
-`dead-op-lease`, `index-drift`, `missing-replay-exclusion`,
-`orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`,
-`working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
+Twelve kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
+`dead-op-lease`, `index-drift`, `member-permissions`,
+`missing-replay-exclusion`, `orphaned-savepoint`, `provenance`,
+`weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`,
+`workweave-tree-integrity`. Where the
 sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
 where it only narrows what was found, one entry covers them all.
 
@@ -700,6 +701,33 @@ clone does not hold the pinned revision, or is not on disk.
 **Warning. Report-only.** A worktree exists that the manifest does not list.
 
 **What to do:** it is either a repo to `rwv add` or a directory to remove.
+
+### `member-permissions`
+
+**Warning. Auto-fixable.** A member checkout whose tracked regular files do
+not hold the permissions its role asks for: a `reference` member's files carry
+no write bit, and every other member's are writable by their owner. The two
+sub-kinds share that disposition and differ only in which way the files
+disagree: `writable-reference` (a `reference` member has writable tracked
+files) and `read-only-member` (a member of another role has read-only ones).
+`files` counts them. Doctor checks the members of the workspace it runs in,
+and from the primary also those of every registered workweave in scope.
+
+Only tracked regular files are counted or touched. A tracked symlink is never
+chmod'ed, since that would change what it points at; directories keep their
+write bits, so the VCS can still replace files during an update and untracked
+files can still be created in a `reference` member.
+
+Every verb that writes or moves a member's files settles them for its role,
+so this finding appears after a hand edit of `role` in `rwv.toml`, a chmod by
+hand, or once in every weave that predates read-only `reference` members.
+
+**What to do:** `rwv doctor --fix` settles the member: it removes the write
+bits of a `reference` member's tracked files, and restores the owner's write
+bit on another member's. A read-only file that shares its storage with
+another workspace's copy is first replaced by a private copy, since write bits
+belong to the file rather than to the name, and restoring them in place would
+make every workspace's copy writable.
 
 ### `stale-worktree-registration`
 

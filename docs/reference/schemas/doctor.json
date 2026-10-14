@@ -936,6 +936,25 @@
         }
       ]
     },
+    "PermissionsKind": {
+      "description": "Which way a member's tracked files disagree with its role.",
+      "oneOf": [
+        {
+          "description": "A `reference` member's tracked file carries a write bit.",
+          "type": "string",
+          "enum": [
+            "writable-reference"
+          ]
+        },
+        {
+          "description": "A tracked file of a member of any other role is not writable by its owner.",
+          "type": "string",
+          "enum": [
+            "read-only-member"
+          ]
+        }
+      ]
+    },
     "PluginRecord": {
       "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When the same name appears in more than one `PATH` directory, the first occurrence wins at exec time; later occurrences are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary.",
       "type": "object",
@@ -1180,6 +1199,46 @@
             },
             "project": {
               "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "files",
+            "kind",
+            "path",
+            "sub_kind"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "files": {
+              "description": "How many tracked regular files disagree with the member's role.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "member-permissions"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/PermissionsKind"
+            },
+            "workweave": {
+              "description": "`None` for the primary weave.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         },

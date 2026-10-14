@@ -6,10 +6,14 @@ Create, delete, or list workweaves for a project. A workweave is a parallel
 working directory that materializes every repo in the project's manifest
 (including the project repo itself). Every repo, whatever its `role`, becomes
 a `git worktree` checkout of the canonical weave-root clone on the ephemeral
-branch `{project}--{name}`. A member slot holding a symlink — the shape older
-releases gave `reference` repos — is not one rwv operates on: verbs that walk
-the workweave's members refuse it (`rwv explain workweave-drift`), and
-`rwv doctor --fix` replaces it with a worktree. Each workweave is fully
+branch `{project}--{name}`. A `reference` repo's tracked files carry no write
+bit, here and in the primary: every verb that writes or moves a member's files
+settles them for its role, and `rwv doctor` reports a member whose files
+disagree (`rwv explain member-permissions`). A member slot holding a symlink —
+the shape older releases gave `reference` repos — is not one rwv operates on:
+verbs that walk the workweave's members refuse it (`rwv explain
+workweave-drift`), and `rwv doctor --fix` replaces it with a worktree. Each
+workweave is fully
 self-describing: it carries `.rwv-workweave`, recording the primary weave,
 project, and parent workspace. That marker is a workweave root's only
 identity file — `.rwv-active` is the primary root's project-selection
