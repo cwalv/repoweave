@@ -1841,7 +1841,17 @@ Two things follow immediately, and both shipped:
   (`:2783-2791`) `[V]`. Under R2 both arms are the same operation over the
   same receipt set, and the asymmetry has nowhere left to live.
 
-### 5.2 The reference-repo carve-out survives unchanged
+### 5.2 The reference-repo carve-out (removed)
+
+**Removed; verified at `f95b87f`.** Every member, `reference` included, is now
+a worktree on the workweave's ephemeral branch. `CheckoutKind`,
+`classify_checkout` and `checkout_is_syncable` have no definitions in the
+tree, and the I3 scan, sync and the migration's enumerator treat a
+`reference` member like any other. A symlink at a member slot is not a member
+checkout of any kind: enumerators skip it, verbs refuse it, and doctor
+repairs it as `workweave-drift` ([member-population](./member-population.md)
+§8). The rest of this section
+records the carve-out as it stood at the citation base.
 
 A `role: reference` repo is materialized as a **symlink** to the canonical
 store, has no per-workweave checkout, and therefore has no ephemeral branch
@@ -2785,9 +2795,8 @@ the ref types, 2 more on the name types `mint` consumes, and 23 probes in
   (`:190`, `:202`) — §6 item 7.
 - `docs/explanation/joints/workweave-lifecycle.md` — creation flags, the retire
   contract, deletion semantics; the `--force` split into named overrides.
-- `docs/explanation/joints/sync-semantics.md` — the direction-pair contract,
-  the `ReferenceAlias` exclusion-by-construction, and the "why no merge
-  strategy" argument flagged in §9.
+- `docs/explanation/joints/sync-semantics.md` — the direction-pair contract
+  and the "why no merge strategy" argument flagged in §9.
 - `docs/explanation/joints/pyramid-of-stability.md` — a channel is a branch is
   a lock; channels are concept, not verbs.
 - `docs/explanation/destructive-operations.md` — rules 1-3 (`:14-36`,

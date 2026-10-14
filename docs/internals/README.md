@@ -68,6 +68,11 @@ backstop unnecessary.
   (`Registry::creation_params`/`plan_creation`, the creation-address
   grammar, two-sided `local` creation), and the `placement-disagreement`
   doctor finding's role-based exemptions.
+- [member-population](./member-population.md) — how a member's tracked files
+  reach a workspace: the one member shape, the `WorkspacePopulation`
+  questions, reflink and hardlink placement with byte-exact verification,
+  settle and read-only `reference` members, the per-platform hardlink
+  declaration, role changes, and the migration from symlinked members.
 
 ## Where else to look
 

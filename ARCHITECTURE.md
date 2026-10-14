@@ -91,7 +91,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, `weave_dir_name`, and the two seams that recover an identity from what it renders — `workweave_name_in` for a caller holding the project, `resolve_flat_address` for one holding only what an operator typed. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
 | `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
-| `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and `CheckoutKind` classification. |
+| `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
 | `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` and `RefRegistry` — the ref-ownership receipt store. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` / `SyncStrategy`, the two record fields the engine also reads. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
@@ -115,6 +115,8 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 | `integration_runner` (`src/integration_runner.rs`, 867) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
 | `plugins` (`src/plugins.rs`, 759) | External-subcommand discovery and dispatch. §6.4. |
 | `parallel` (`src/parallel.rs`, 676) | Bounded per-repo fan-out for the network-bound verbs. |
+| `share` (`src/share.rs`) | Placing a member's tracked files from the repository's other workspaces by reflink or hardlink, with byte-exact verification and repair. [`docs/internals/member-population.md`](docs/internals/member-population.md). |
+| `settle` (`src/settle.rs`) | The permissions a member's tracked files hold for its role, and re-sharing after a member moves. Same document. |
 
 ## 3. Process model
 
