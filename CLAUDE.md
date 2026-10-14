@@ -423,33 +423,56 @@ and register rules:
 
 ### Operator prose register (`README.md` and `docs/SUMMARY.md` pages)
 
-- **Direct, concrete, timeless present tense.** State the invariant or mechanism
-  without throat-clearing. Strip `was/now` repair narration ("previously…",
-  "each integration now gets…"), point-in-time status caveats ("today there is
-  only one backend", "current coverage: 51 of 54"), and marketing clichés ("hero
-  moments", "antidote to manual wiring hell").
+- **Present-tense invariants across all operator surfaces.** State how the tool
+  works today. Strip `was/now` repair narration ("previously…", "each
+  integration now gets…") and point-in-time status caveats ("today there is only
+  one backend", "current coverage: 51 of 54").
 - **No leaked maintainer internals.** Rust trait definitions, private struct or
   enum names, internal JSON state plumbing (`SurfacedSource`,
   `written_through_link`), and field-level state schemas (`.rwv-op`,
   `.rwv-owned`) belong in `ARCHITECTURE.md` or `docs/internals/*.md`. Operator
   pages describe observable behavior, CLI flags, exit codes, and `rwv doctor`
   findings.
+- **Show the payoff; never label it.** Avoid outlining meta-jargon or
+  self-congratulation that tells the reader to be impressed ("hero moments",
+  "hero workflow", "the elegance is exactly that"). Describe the concrete
+  friction and let the command or guarantee speak for itself.
 
-### Diátaxis boundaries inside `docs/SUMMARY.md`
+### Diátaxis and persuasive surfaces (`README.md` and `docs/SUMMARY.md`)
 
-- **`docs/how-to/*.md`** — task-shaped recipes for a reader who already knows
-  what they want to do. Open with a 1–2 sentence goal statement, then go
-  straight to commands and verification. Do not open a recipe with an
+The published docs layer **persuasive entry and lens pages** onto **Diátaxis
+quadrants**. Warmth and dryness vary deliberately by surface:
+
+- **Front doors and motivational lenses (`README.md`, `docs/introduction.md`,
+  `docs/explanation/lenses/*.md`)** — the persuasive surfaces for a reader
+  asking *"why does this exist, does it solve my problem, and can I trust it?"*
+  Do **not** flatten these into dry reference prose. Persuade through
+  **recognition over assertion**: name the concrete polyrepo or parallel-agent
+  friction the reader recognizes from daily work (a conflict mid-rebase across
+  four repos, two coding agents colliding in `target/`, hand-maintaining
+  `Cargo.toml` `[patch]` lines), lead with failure handling (`rwv abort`,
+  savepoints, `rwv doctor`, actionable refusals) and near-zero exit cost
+  (`rwv.lock` and ecosystem files are derived, so the tool can die without
+  taking your work), and let the workflow contrast do the convincing.
+- **Onboarding walkthrough (`docs/tutorial.md`)** — guided, concrete, and
+  momentum-driven. Keep the reader moving through a first end-to-end session
+  without pausing for architectural detours.
+- **Architectural joints (`docs/explanation/joints/*.md`)** — design rationale
+  and trade-off analysis for a reader asking *"why is this seam or invariant
+  shaped this way, and what breaks without it?"* Engaging because the trade-offs
+  are sharp and honest, not because it pitches the tool. Do not dump exhaustive
+  CLI flag tables or JSON schemas that belong in `docs/reference/cli.md` or
+  `docs/reference/formats.md`.
+- **Task recipes (`docs/how-to/*.md`)** — brisk, task-shaped guides for a reader
+  who is already sold and mid-task. Open with a 1–2 sentence goal statement,
+  then go straight to commands and verification. Do not open a recipe with an
   architectural essay; link to `docs/explanation/joints/` in a closing
   `## Related` section instead.
-- **`docs/reference/*.md`** — austere, lookup-shaped tables and specifications.
-  No motivational pitch, no repeated paragraphs across sections, and a uniform
-  heading template across sibling pages (`docs/reference/integrations/*.md`).
-- **`docs/explanation/joints/*.md` and `docs/explanation/lenses/*.md`** —
-  architectural rationale and trade-off analysis: why a seam or invariant holds
-  and what breaks without it. Do not duplicate exhaustive CLI flag tables or
-  JSON schemas that belong in `docs/reference/cli.md` or
-  `docs/reference/formats.md`.
+- **Lookup reference (`docs/reference/*.md`)** — deliberately austere, dry, and
+  tabular. No motivational pitch, no repeated paragraphs across sections, and a
+  uniform heading template across sibling pages
+  (`docs/reference/integrations/*.md`).
+
 
 ### Canonical vocabulary (`docs/reference/glossary.md`)
 
