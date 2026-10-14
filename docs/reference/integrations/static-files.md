@@ -21,6 +21,30 @@ files = ["turbo.json", "nx.json", ".eslintrc.json", ".prettierrc"]
 
 Each file listed in `files` must exist in the project directory (e.g., `projects/web-app/turbo.json`). On activation, the integration symlinks each file to the weave directory so tools find them where they expect.
 
+### Entry forms
+
+| Entry | The weave-directory link reads |
+|---|---|
+| `"turbo.json"` | this weave's `projects/<project>/turbo.json` |
+| `{ path = "turbo.json" }` | the same as the plain string |
+| `{ path = ".beads", from = "primary" }` | the primary's `projects/<project>/.beads`, from every workweave of the project |
+
+A table takes `path` (required) and `from` (optional). `"primary"` is the only value `from` accepts. A table with any other key or value is reported as `malformed-settings` rather than read as a plain entry.
+
+### Branch content and shared state
+
+A plain entry is branch content. Each workweave surfaces its own checkout of the project repo, so an edit made in a workweave is visible there and lands with that workweave's work. Use it for files that change with the code: `CLAUDE.md`, `turbo.json`, linter configs.
+
+`from = "primary"` is for shared state that every workweave must see one copy of: an issue tracker's directory, a local database, a cache that workweaves coordinate through. In a workweave, the link is an absolute path into the primary's project directory, taken from the primary the workweave records:
+
+- a workweave created from another workweave still links the primary, not the workweave it was created from;
+- the link targets the project's own directory, `projects/<project>/<path>`, never the primary's weave-directory entry, so it does not depend on which project the primary currently presents;
+- in the primary itself, the entry is surfaced exactly like a plain one.
+
+The primary's copy is the one that has to exist. While it is absent, the link is not created.
+
+A name may not appear both in `files` (in either form) and in `[workweave] link`; `rwv doctor` reports the combination as `config-rejected` and activation refuses it.
+
 ## How it works
 
 Unlike ecosystem integrations that auto-detect repos and generate config, static-files does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the weave directory via symlinks.
@@ -29,11 +53,11 @@ If a declared file is missing from the project directory, the integration prints
 
 ## Deactivation
 
-Symlinks are removed by the activation framework (any symlink at the weave directory pointing into `projects/` is cleaned up). The original files in the project directory are untouched.
+Symlinks are removed by the activation framework. A link counts as surfacing only when it reads the declared path in a project directory: `projects/<project>/<path>` relative to the weave directory, or, for a primary-sourced entry in a workweave, the same path under the primary. Any other link at a declared name is left alone. The original files in the project directory, including the primary's copy behind a primary-sourced link, are untouched.
 
 ## Check
 
-Warns if any declared file is missing from the project directory.
+Warns if any declared file is missing from the project directory. In a workweave, primary-sourced entries are not checked against the workweave's own project directory, since that is not the copy they surface.
 
 The framework-level Axis-1 surfacing check (run by `rwv doctor`) additionally
 warns when a surfacing symlink for a declared file is missing or mis-resolved
@@ -43,6 +67,16 @@ the `files:` list after a workweave was created. These surfacing warnings are
 emitted framework-side (not by this integration's `check()`) and are safe to
 fix with `rwv doctor --fix`. A real file occupying the surfacing path is
 reported but never auto-clobbered.
+
+For a primary-sourced entry in a workweave, the expected link is the absolute
+path into the primary's project directory. `rwv doctor` reports a missing link,
+or a link that reads the workweave's own copy, as safe to fix, and
+`rwv doctor --fix` replaces it in the existing workweave. A link that resolves
+somewhere rwv's surfacing never points (for example, into a different tree's
+`projects/`) is reported as not auto-fixed and left in place; remove it, and
+`rwv doctor --fix` creates the expected one. After an entry is dropped from
+`files`, the link it left is reported like any other undeclared surfacing link
+and removed by `rwv materialize --remove-undeclared-links`.
 
 ## Examples
 
@@ -131,6 +165,18 @@ files = ["nx.json"]
 ```
 
 Nx discovers packages from `pnpm-workspace.yaml` and reads task configuration from `nx.json`. Run `pnpm exec nx run-many -t build` to build all affected packages in dependency order.
+
+### Shared issue-tracker state
+
+A tracker that keeps its database in a directory beside the project's files, such as beads' `.beads`, needs every workweave to reach the primary's copy. A workweave's own checkout carries only the tracked configuration:
+
+```toml
+[integrations.static-files]
+enabled = true
+files = ["CLAUDE.md", { path = ".beads", from = "primary" }]
+```
+
+At the primary, `.beads` links `projects/<project>/.beads`. In every workweave of the project, `.beads` links the primary's `projects/<project>/.beads` directly, so a tool that finds `.beads` by searching upward from its working directory reaches the same database from anywhere in the workweave. `CLAUDE.md` stays branch content: each workweave sees its own edits.
 
 ### Toolchain versions (`.mise.toml`)
 

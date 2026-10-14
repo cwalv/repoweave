@@ -1321,7 +1321,8 @@ and restores the link, unless the project's copy differs and is neither
 committed as it stands nor the generation rwv recorded, in which case both
 copies are named and neither is touched.
 
-Real content occupying a link's path stays report-only, and so does a link
+Real content occupying a link's path stays report-only, and so do a link at a
+declared name that resolves somewhere surfacing never points and a link
 surfaced at a name the active project no longer declares — for the same
 reason in each case: on disk, either is indistinguishable from something you
 made yourself at that path, so `--fix` will not guess and overwrite it.

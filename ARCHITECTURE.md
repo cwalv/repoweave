@@ -470,6 +470,19 @@ them, because rwv derives their content and can simply rewrite it. That is why
 `owned_state` is a core service `activate`, `check` and `workweave` consume
 directly rather than a second helper under `integrations/`.
 
+Surfacing is the delivery layer in front of both axes. Each path an
+integration declares is a `SurfacedFile` (`src/integration.rs`) answering two
+questions: where the write that produces it lands (`SurfacedSource`), and which
+project checkout the weave-root link reads (`SurfacedCopy` — the weave's own,
+or the primary's, which `static-files` asks for with `from = "primary"`).
+`SurfacingSites::link` (`src/activate.rs`) turns a declaration into the one
+expected target that `surface_symlinks` creates and `verify_surfacing`
+checks: relative into the root's own `projects/`, or, for the primary's copy
+in a workweave, absolute into the marker's primary. The owner-scoped predicate
+that authorizes removing or replacing a link accepts that absolute shape only
+under the root's own primary and never at a `workweave.link` name, since that
+section canonicalizes its source into the same shape.
+
 ### 6.3 Type-level enforcement, in one place
 
 Three of the mechanisms above are the same technique applied at different
