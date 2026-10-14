@@ -2376,9 +2376,11 @@ struct SourceSnapshot {
     /// `raw_source_lock` resolved ONCE, against the SOURCE workspace, at T0.
     /// A lock entry in tag or branch form names a different commit in a
     /// different workspace, so the workspace whose lock it is, is the only one
-    /// that can say what it means. Every downstream consumer takes its target
-    /// from here; nothing re-resolves the raw lock in another context. An entry
-    /// the source could not resolve is absent, never guessed at.
+    /// that can say what it means. A commit id names the same commit in every
+    /// workspace on the store, so one whose checkout the source lacks is
+    /// resolved in the canonical clone instead. Every downstream consumer takes
+    /// its target from here; nothing re-resolves the raw lock in another
+    /// context. An entry neither could resolve is absent, never guessed at.
     source_lock: crate::manifest::ResolvedLockFile,
     /// The source's member checkouts classified at T0, `None` under
     /// [`ClassifySource::Skip`]. The staleness refusals, the tips-as-truth
@@ -2811,6 +2813,7 @@ fn run_preconditions_after_acquire(
         project_vcs,
         source_project_dir,
         source_workspace_root,
+        cwd_ctx.primary_path(),
         classify,
     )?;
 
@@ -3619,6 +3622,7 @@ fn load_continuing_context<'a>(
         project_vcs.as_ref(),
         &source_project_dir,
         &source_workspace_root,
+        invocation_ctx.primary_path(),
         classify,
     )?;
 
@@ -5100,6 +5104,7 @@ fn pin_source_snapshot(
     source_vcs: &dyn Vcs,
     source_project_dir: &Path,
     source_workspace_root: &Path,
+    canonical_root: &Path,
     classify: ClassifySource,
 ) -> anyhow::Result<SourceSnapshot> {
     let source_project_tip = source_vcs
@@ -5152,9 +5157,33 @@ fn pin_source_snapshot(
         })?
     };
 
-    let (source_lock, source_lock_unresolvable) = raw_source_lock
+    let (mut source_lock, source_lock_unresolvable) = raw_source_lock
         .clone()
         .resolve_versions(source_workspace_root);
+    // A commit id names one commit in every workspace on the store, so an
+    // entry the source holds no checkout for still resolves in the canonical
+    // clone. A name does not: it can point elsewhere in each workspace.
+    for (repo_path, entry) in raw_source_lock.iter_entries() {
+        if source_lock.contains_repo(repo_path)
+            || !entry.version.is_commit_id()
+            || source_workspace_root.join(repo_path.as_path()).exists()
+        {
+            continue;
+        }
+        if let Ok(version) = vcs_for(entry.vcs_type).resolve_revision(
+            &canonical_root.join(repo_path.as_path()),
+            entry.version.as_str(),
+        ) {
+            source_lock.repositories.insert(
+                repo_path.clone(),
+                crate::manifest::ResolvedLockEntry {
+                    vcs_type: entry.vcs_type,
+                    url: entry.url.clone(),
+                    version,
+                },
+            );
+        }
+    }
 
     let source_class = match classify {
         ClassifySource::Skip => None,
@@ -5348,18 +5377,16 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let cwd_project_final = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
         .context("failed to reload CWD project for advance-target")?;
 
+    let target_ctx =
+        WorkspaceContext::resolve_for_project(&ctx.dest_workspace_dir, &ctx.cwd_project_name)
+            .context("failed to resolve the target for advance-target")?;
+
     let mut any_ff_failure = false;
     for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let target_repo = ctx.dest_workspace_dir.join(repo_path.as_path());
         if !cwd_repo.exists() {
-            continue;
-        }
-        if !target_repo.exists() {
-            if emit_text {
-                eprintln!("  {}: skipped (not on disk in target)", repo_path);
-            }
             continue;
         }
         let cwd_tip = match vcs.head_revision(&cwd_repo) {
@@ -5372,6 +5399,44 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 continue;
             }
         };
+        if !target_repo.exists() {
+            match &target_ctx.checkout {
+                Checkout::Workweave {
+                    name, dir, project, ..
+                } => match name.require(dir, project).and_then(|name| {
+                    crate::workweave::materialize_member(
+                        vcs.as_ref(),
+                        target_ctx.primary_path(),
+                        target_ctx.active_path(),
+                        &ctx.cwd_project_name,
+                        name,
+                        repo_path,
+                        cwd_tip.as_str(),
+                    )
+                }) {
+                    Ok(_) => {
+                        if emit_text {
+                            println!(
+                                "  {repo_path}: materialized in target at {}",
+                                short_sha(cwd_tip.as_str())
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        if emit_text {
+                            eprintln!("  {repo_path}: materialize in target failed: {e:#}");
+                        }
+                        any_ff_failure = true;
+                    }
+                },
+                Checkout::Primary { .. } => {
+                    if emit_text {
+                        eprintln!("  {}: skipped (not on disk in target)", repo_path);
+                    }
+                }
+            }
+            continue;
+        }
         match ff_advance_repo(vcs.as_ref(), &target_repo, &cwd_repo, &cwd_tip) {
             Ok(advance) => {
                 if emit_text {

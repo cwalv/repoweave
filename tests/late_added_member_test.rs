@@ -6,7 +6,8 @@
 //!   - `rwv doctor --fix` creates it when the canonical clone holds the pinned
 //!     revision, and `rwv fetch` when the canonical clone is not on disk;
 //!   - afterwards `rwv fetch` and `rwv doctor` agree;
-//!   - sync brings a member the source added, at the source's pin.
+//!   - sync brings a member the source added, at the source's pin, and a
+//!     sync-to replay does not park on a member the target lacks.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -324,6 +325,73 @@ fn a_reference_member_arriving_by_sync_is_a_worktree_at_the_pinned_revision() {
         lock.contains(&pin),
         "the workweave's lock pins the member where the source's does; lock:\n{lock}"
     );
+}
+
+#[test]
+fn a_sync_to_does_not_park_on_a_member_its_target_lacks() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let parent = weave.create("parent", None);
+    let child = weave.create("child", Some(&parent));
+
+    let canonical = weave.primary.join(LATE_PATH);
+    let pin = init_repo(&canonical, "LATE");
+    add_to_project(
+        &parent.join("projects").join(PROJECT),
+        LATE_PATH,
+        &canonical,
+        "reference",
+        &pin,
+    );
+    assert!(
+        !parent.join(LATE_PATH).exists(),
+        "fixture: the target lacks it"
+    );
+
+    let landed = run(&["sync-to"], &child);
+    assert!(
+        landed.status.success(),
+        "sync-to must land rather than park on a member the target lacks; {}",
+        describe(&landed)
+    );
+    assert!(
+        !child.join(".rwv-op").exists() && !parent.join(".rwv-op-lease").exists(),
+        "no op may be left parked"
+    );
+    assert_worktree_at(&child.join(LATE_PATH), &canonical, "app--child", &pin);
+    assert_worktree_at(&parent.join(LATE_PATH), &canonical, "app--parent", &pin);
+    assert_eq!(
+        findings_about(&parent, LATE_PATH),
+        Vec::<String>::new(),
+        "the landing leaves the target holding every member its lock now pins"
+    );
+}
+
+#[test]
+fn a_sync_to_retire_lands_into_a_target_that_lacked_a_member() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let parent = weave.create("parent", None);
+    let child = weave.create("child", Some(&parent));
+
+    let canonical = weave.primary.join(LATE_PATH);
+    let pin = init_repo(&canonical, "LATE");
+    add_to_project(
+        &parent.join("projects").join(PROJECT),
+        LATE_PATH,
+        &canonical,
+        "reference",
+        &pin,
+    );
+
+    let landed = run(&["sync-to", "--retire"], &child);
+    assert!(
+        landed.status.success(),
+        "retire's merged-check must find the target holding the member; {}",
+        describe(&landed)
+    );
+    assert!(!child.exists(), "--retire deletes the workweave");
+    assert_worktree_at(&parent.join(LATE_PATH), &canonical, "app--parent", &pin);
 }
 
 #[test]
