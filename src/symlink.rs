@@ -8,9 +8,9 @@
 //! tests rather than inside a `#[cfg(windows)]` arm nothing here can run.
 //!
 //! Failure returns rather than warning. rwv reads its own links back as
-//! structural facts — `classify_checkout` answers "is this a shared read-only
-//! alias" by asking the filesystem what is at the path — so a link that
-//! silently failed to appear is a workspace that misreports what it contains.
+//! structural facts — doctor's surfacing check asks the filesystem what is at
+//! each weave-root name — so a link that silently failed to appear is a
+//! workspace that misreports what it contains.
 //! The argument is in `docs/explanation/joints/symlinks-as-structure.md`.
 
 use crate::refusal::RefusalKind;

@@ -14,7 +14,7 @@ use crate::vcs::{
     project_vcs, vcs_for, HeadAttachment, RawRefName, ResolvedRevisionId, TrackingRef, Vcs,
     VcsError,
 };
-use crate::workspace::{project_dir, projects_dir, Resolution, WorkspaceContext};
+use crate::workspace::{project_dir, projects_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -265,9 +265,9 @@ pub fn run_fetch(
 /// Clone-topology (I1): the canonical clone always lives at primary's
 /// `<weave>/<repo_path>`, even when this verb is invoked from inside a
 /// workweave. In-place fetch therefore materializes into
-/// [`WorkspaceContext::primary_path`]; the workweave will pick up the newly
-/// available canonical via `rwv sync` (which does the worktree-add) — this
-/// matches how `rwv add` and `sync::materialize_missing_repo` divide labor.
+/// [`WorkspaceContext::primary_path`] first; from a workweave it then creates
+/// the worktree for each member the workweave's `rwv.lock` pins and the
+/// workweave lacks, as `rwv doctor --fix` would once the revision is local.
 ///
 /// The auto-activate step from the SOURCE-mode path is not repeated: in-place
 /// mode operates on an already-active project.
@@ -310,6 +310,90 @@ pub fn run_fetch_in_place(
         json,
         /* auto_activate_on_bootstrap = */ false,
         ctx.resolution(),
+    )?;
+
+    match &ctx.checkout {
+        Checkout::Workweave {
+            name: workweave,
+            dir,
+            project,
+            ..
+        } => materialize_workweave_members(
+            ctx,
+            &name,
+            workweave.require(dir, project)?,
+            &project_dir,
+            no_reference,
+            filter,
+            json,
+        ),
+        Checkout::Primary { .. } => Ok(()),
+    }
+}
+
+/// Create the worktree for each member the workweave's `rwv.lock` pins and the
+/// workweave lacks — nothing at the slot, or a symlink — once the fetch above
+/// has put the pinned revisions in the canonical clones.
+fn materialize_workweave_members(
+    ctx: &WorkspaceContext,
+    project: &crate::manifest::ProjectName,
+    workweave: &crate::manifest::WorkweaveName,
+    project_dir: &Path,
+    no_reference: bool,
+    filter: &RepoFilter,
+    json: bool,
+) -> anyhow::Result<()> {
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    if !lock_path.exists() {
+        return Ok(());
+    }
+    let lock = LockFile::from_path(&lock_path)?;
+    let mut failures: Vec<String> = Vec::new();
+    for (repo_path, entry) in manifest.iter_entries() {
+        if !filter.matches(repo_path, entry.role) || (no_reference && entry.role == Role::Reference)
+        {
+            continue;
+        }
+        let Some(pin) = lock.get_entry(repo_path) else {
+            continue;
+        };
+        let slot = ctx.active_path().join(repo_path.as_path());
+        if !crate::workweave::is_symlinked_member(&slot) && slot.exists() {
+            continue;
+        }
+        match crate::workweave::materialize_member(
+            vcs_for(entry.vcs_type).as_ref(),
+            ctx.primary_path(),
+            ctx.active_path(),
+            project,
+            workweave,
+            repo_path,
+            pin.version.as_str(),
+        ) {
+            Ok(born) => {
+                let line = format!(
+                    "rwv fetch: created the worktree for {repo_path} in this workweave at {}",
+                    &born.as_str()[..born.as_str().len().min(12)]
+                );
+                if json {
+                    eprintln!("{line}");
+                } else {
+                    println!("{line}");
+                }
+            }
+            Err(e) => failures.push(format!("{repo_path}: {e:#}")),
+        }
+    }
+    if failures.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::PartialRunAborted,
+        "fetch aligned the canonical clones but could not create {} worktree(s) in this \
+         workweave:\n  {}",
+        failures.len(),
+        failures.join("\n  ")
     )
 }
 

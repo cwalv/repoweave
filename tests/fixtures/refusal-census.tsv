@@ -32,7 +32,7 @@ src/cli/dispatch.rs	wrong-checkout-kind	-	1
 src/explain.rs	no-explain-entry	-	2
 src/fetch.rs	incomplete-lock	-	1
 src/fetch.rs	missing-lock	-	1
-src/fetch.rs	partial-run-aborted	tests/refusal_arrival_test.rs	2
+src/fetch.rs	partial-run-aborted	tests/refusal_arrival_test.rs	3
 src/fetch.rs	project-dir-occupied	-	1
 src/health_floor.rs	health-floor-too-low	-	1
 src/init.rs	malformed-provider	-	1
@@ -82,7 +82,6 @@ src/sync.rs	dropped-repo-has-unique-commits	-	3
 src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	4
 src/sync.rs	mid-operation	-	1
-src/sync.rs	missing-canonical-clone	-	1
 src/sync.rs	missing-replay-exclusion	-	4
 src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
 src/sync.rs	not-fast-forwardable	-	2
@@ -112,6 +111,7 @@ src/workweave.rs	(untokened:environment-passthrough)	-	1
 src/workweave.rs	(untokened:tally)	-	2
 src/workweave.rs	dirty-project-dir	-	1
 src/workweave.rs	foreign-workweave-in-target-dir	-	3
+src/workweave.rs	missing-canonical-clone	-	1
 src/workweave.rs	no-active-project	-	1
 src/workweave.rs	no-such-workweave	-	1
 src/workweave.rs	owned-branch-moved	-	1
@@ -128,6 +128,7 @@ src/workweave.rs	unowned-branch-in-namespace	-	2
 src/workweave.rs	unreadable-status	-	1
 src/workweave.rs	unregistered-workweave	-	1
 src/workweave.rs	workweave-name-taken	-	1
+src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	1
 src/workweave.rs	wrong-checkout-kind	-	1
 src/workweave_index.rs	legacy-workweave-index	-	1
 src/workweave_index.rs	project-dir-missing	-	2

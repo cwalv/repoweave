@@ -368,14 +368,13 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 
 ### `rwv workweave <project> create <name>`
 
-Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dependency` repo, symlinks to the canonical weave-root clone for each `role: reference` repo, generated ecosystem files, per-workweave tool state.
+Create a workweave: a worktree on its ephemeral branch for every repo, whatever its role, generated ecosystem files, per-workweave tool state.
 
 | Flag | Effect |
 |---|---|
 | `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace. Forking from an existing workweave is how you **duplicate** one; copying a workweave with `cp` aliases the original's git state rather than duplicating it |
 | `--replace-existing` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted or unmerged work |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
-| `--worktree-references` | Cut a real `git worktree` for `role: reference` repos instead of the default symlink to the canonical weave-root clone. Restores the legacy behavior (per-workweave reference refs) at the cost of duplicating each reference repo's working tree into the workweave |
 | `--dir <path>` | Per-invocation placement override. Places the workweave at exactly this path (recorded verbatim in the index). Absolute paths are used as-is; relative paths resolve against the primary root. Overrides the recorded container for this invocation only |
 
 Workweaves live at `<container>/<project>--<name>/` where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index` (machine-local JSON, one line in the project's `.gitignore`). The default container is `<parent-of-primary>/.workweaves`. Set the container explicitly with `rwv workweave <project> set-container <path>`; `create` records new entries into the index; every `find`-direction verb (list, delete, sync targets by bare name) resolves via the recorded `name → absolute path` entries with `.rwv-workweave` marker round-trip validation. Doctor reconciles the index against on-disk state — stale entries are pruned, orphan workweaves are adopted, a tracked index is flagged as a hygiene finding.

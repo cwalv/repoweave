@@ -385,6 +385,15 @@ pub fn workweave_delete(
     )
 }
 
+/// [`crate::workweave::refuse_symlinked_members`] for the workspace a verb was
+/// invoked in, under the project it acts for.
+fn refuse_symlinked_members_here(ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    match ctx.active_project() {
+        Some(project) => crate::workweave::refuse_symlinked_members(ctx.active_path(), project),
+        None => Ok(()),
+    }
+}
+
 /// Run the requested verb and render whatever it declined with.
 ///
 /// The single funnel every refusal leaves through, which is what lets a
@@ -408,8 +417,8 @@ pub fn run() -> anyhow::Result<()> {
     // These run before clap's full parse so we can produce a friendly error
     // instead of clap's generic "unexpected argument" message.
     //
-    // MIGRATORY shims: the flag spellings they intercept were renamed in
-    // v0.10.0. Expiry follows the alpha rule rather than a health floor —
+    // MIGRATORY shims: each intercepts a flag spelling a release renamed or
+    // removed. Expiry follows the alpha rule rather than a health floor —
     // verify no local automation still spells the old flags, then delete
     // the shim (`crate::health_floor` documents the floor-gated arms).
     {
@@ -481,6 +490,18 @@ pub fn run() -> anyhow::Result<()> {
                 eprintln!("error: {msg}");
                 std::process::exit(2);
             }
+        }
+        // Detect: `--worktree-references` on `rwv workweave` — it asked for
+        // what every member now is.
+        if raw_args.get(1).map(|s| s.as_str()) == Some("workweave")
+            && raw_args.iter().any(|a| a == "--worktree-references")
+        {
+            eprintln!(
+                "error: `--worktree-references` has been removed from \
+                 `rwv workweave <project> create`: every member, `reference` included, is \
+                 now a worktree, which is what the flag asked for. Drop the flag."
+            );
+            std::process::exit(2);
         }
         // Detect: `--detach-working-branch` on `rwv fetch` — an interim
         // override that shipped ahead of the full branch model. The model
@@ -705,6 +726,7 @@ pub fn run() -> anyhow::Result<()> {
                 });
             let undeclared =
                 consent::RemoveUndeclaredLinksConsent::from_flag(remove_undeclared_links);
+            refuse_symlinked_members_here(&ctx)?;
             activate::materialize(&ctx, consent, undeclared)?;
         }
         Some(Commands::Prime { no_suppress }) => {
@@ -881,7 +903,6 @@ pub fn run() -> anyhow::Result<()> {
                         replace_existing,
                         from,
                         capture_dirty,
-                        worktree_references,
                         dir,
                     }) => {
                         let source_root = match from.as_deref() {
@@ -911,7 +932,6 @@ pub fn run() -> anyhow::Result<()> {
                             &WorkweaveName::new(name)?,
                             replace_existing,
                             capture_dirty,
-                            worktree_references,
                             dir_override,
                         )?;
                         if hook_mode {
@@ -1002,6 +1022,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            refuse_symlinked_members_here(&ctx)?;
             lock::lock(&ctx, dirty, commit)?;
         }
         Some(Commands::Status { json, project }) => {
@@ -1011,6 +1032,7 @@ pub fn run() -> anyhow::Result<()> {
                 project_override,
                 use_workweave_flag,
             )?;
+            refuse_symlinked_members_here(&ctx)?;
             status::run_status(&ctx, json)?;
         }
         Some(Commands::Abort {
@@ -1177,6 +1199,7 @@ pub fn run() -> anyhow::Result<()> {
             // to multi-worker NDJSON on multi-core machines. Callers that want the
             // envelope must pass `-j 1` explicitly alongside --json.
             let jobs = crate::parallel::resolve_jobs(jobs);
+            refuse_symlinked_members_here(&ctx)?;
             update::run_update(&ctx, dirty, commit, json, &filter, jobs, detach_checkouts)?;
         }
         Some(Commands::Completions { shell }) => {

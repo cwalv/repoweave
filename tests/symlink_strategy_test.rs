@@ -165,35 +165,3 @@ fn hardlinks_are_confined_to_the_atomic_publish() {
         strays.join(", ")
     );
 }
-
-/// The copy-fallback prohibition rests on this: rwv records nothing about a
-/// checkout being a shared alias, so a copy is read back as a workspace the
-/// user asked to work in. Changing that classification is the only way to make
-/// a copy fallback safe, and this failing is the conversation about it.
-#[test]
-fn a_copied_checkout_is_indistinguishable_from_a_worktree() {
-    use repoweave::workweave::{classify_checkout, CheckoutKind};
-
-    let tmp = common::tempdir().unwrap();
-    let canonical = tmp.path().join("canonical");
-    std::fs::create_dir_all(canonical.join(".git")).unwrap();
-
-    let alias = tmp.path().join("alias");
-    repoweave::symlink::create(
-        &canonical,
-        &alias,
-        repoweave::symlink::LinkTarget::Directory,
-    )
-    .unwrap();
-    assert_eq!(classify_checkout(&alias), CheckoutKind::ReferenceAlias);
-
-    let copy = tmp.path().join("copy");
-    std::fs::create_dir_all(copy.join(".git")).unwrap();
-    assert_eq!(
-        classify_checkout(&copy),
-        CheckoutKind::Worktree,
-        "a copy of the canonical store classifies as a worktree, so sync \
-         advances it, orphan pruning hands it to `git worktree remove`, and \
-         doctor reports it as a standalone store inside a workweave"
-    );
-}

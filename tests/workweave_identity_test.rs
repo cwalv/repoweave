@@ -65,7 +65,6 @@ fn create(ws: &Path, project: &str, name: &str) -> PathBuf {
         &WorkweaveName::new(name).unwrap(),
         false,
         false,
-        false,
         None,
     )
     .expect("create should succeed")

@@ -880,6 +880,11 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             "migrated legacy workweave marker",
             Findings(&["legacy-workweave-marker"]),
         ),
+        // --- repair_member_gaps ----------------------------------------
+        (
+            "created the worktree for",
+            Findings(&["workweave-drift/missing", "workweave-drift/symlink"]),
+        ),
         // --- apply_workspace_repairs -----------------------------------
         (
             "cleared `.rwv-active`",

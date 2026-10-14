@@ -122,6 +122,9 @@ pub enum RefusalKind {
     /// An op-state lease outlived the process that took it. Shared with the
     /// finding.
     DeadOpLease,
+    /// A workweave lacks the worktree a member needs; a symlink in the slot
+    /// counts. Shared with the finding.
+    WorkweaveDrift,
 
     /// No project is selected and none was supplied.
     NoActiveProject,

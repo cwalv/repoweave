@@ -76,6 +76,9 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::IncompleteLock { .. } => "incomplete-lock".into(),
         CheckViolation::WorkweaveDrift { kind, .. } => match kind {
             DriftKind::Missing => "workweave-drift/missing".into(),
+            DriftKind::MissingUnfetched => "workweave-drift/missing-unfetched".into(),
+            DriftKind::Symlink => "workweave-drift/symlink".into(),
+            DriftKind::SymlinkUnfetched => "workweave-drift/symlink-unfetched".into(),
             DriftKind::Extra => "workweave-drift/extra".into(),
         },
         CheckViolation::IndexDrift { kind, .. } => match kind {
@@ -248,6 +251,21 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::WorkweaveDrift {
             workweave: workweave(),
             kind: DriftKind::Missing,
+            repo: repo(),
+        },
+        CheckViolation::WorkweaveDrift {
+            workweave: workweave(),
+            kind: DriftKind::MissingUnfetched,
+            repo: repo(),
+        },
+        CheckViolation::WorkweaveDrift {
+            workweave: workweave(),
+            kind: DriftKind::Symlink,
+            repo: repo(),
+        },
+        CheckViolation::WorkweaveDrift {
+            workweave: workweave(),
+            kind: DriftKind::SymlinkUnfetched,
             repo: repo(),
         },
         CheckViolation::WorkweaveDrift {

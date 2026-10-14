@@ -648,12 +648,58 @@ migrate a live one in place.
 
 ### `workweave-drift`
 
-**Warning. Report-only.** A worktree the manifest lists is missing from a
-workweave (`missing`), or a worktree exists that the manifest does not list
-(`extra`).
+A workweave has no worktree for a member its `rwv.lock` pins, or holds a
+worktree the manifest does not list. Every member of a workweave, whatever its
+`role`, is a worktree of the canonical clone on the workweave's ephemeral
+branch. Doctor checks the workweave it runs in; from the primary, every
+workweave of the projects in scope.
 
-**What to do:** `rwv sync` materializes a missing worktree. An extra one is
-either a repo to `rwv add` or a directory to remove.
+A symlink at a member's slot, dangling or not, counts as no worktree. Older
+releases materialized `reference` members that way; rwv no longer operates on
+one, so the verbs that walk a workweave's members refuse with this token until
+it is replaced. Replacing it unlinks the symlink and never touches what it
+pointed at.
+
+#### `missing`
+
+**Error. Auto-fixable.** Nothing is at the member's slot, and the canonical
+clone holds the revision `rwv.lock` pins.
+
+**What to do:** `rwv doctor --fix` creates the worktree at that revision. No
+network is involved.
+
+#### `missing-unfetched`
+
+**Error. Report-only.** Nothing is at the member's slot, and the canonical
+clone does not hold the pinned revision, or is not on disk.
+
+**What to do:** where the canonical clone is not on disk, `rwv fetch` run in
+the workweave clones it at the pinned revision and creates the worktree. Where
+it is on disk, `rwv fetch` refuses — it aligns a present clone only to
+revisions already in it — so fetch the revision into that clone with git, then
+`rwv doctor --fix`. Doctor never fetches.
+
+#### `symlink`
+
+**Error. Auto-fixable.** A symlink is at the member's slot, and the canonical
+clone holds the revision `rwv.lock` pins — or, where the lock pins none, the
+canonical clone's HEAD, which is what the link showed.
+
+**What to do:** `rwv doctor --fix` replaces the link with a worktree at that
+revision.
+
+#### `symlink-unfetched`
+
+**Error. Report-only.** A symlink is at the member's slot, and the canonical
+clone does not hold the pinned revision, or is not on disk.
+
+**What to do:** as for `missing-unfetched`; the worktree replaces the link.
+
+#### `extra`
+
+**Warning. Report-only.** A worktree exists that the manifest does not list.
+
+**What to do:** it is either a repo to `rwv add` or a directory to remove.
 
 ### `stale-worktree-registration`
 
@@ -690,10 +736,8 @@ A full clone is hosted under `.workweaves/` instead of at the manifest's
 canonical slot — the inverted-primary case, where the canonical store has
 migrated into one workweave and other workweaves link into *it*.
 
-A symlinked `reference` checkout is not this: it is the single canonical store
-viewed through a symlink, which upholds the single-store invariant by
-identity, and the scan excludes it. A real standalone store inside a workweave
-is a real directory.
+A member slot holding a symlink is not scanned: read through the link it is
+the canonical store itself. It is reported as `workweave-drift`.
 
 #### `disconnected-weave-clone`
 
@@ -812,10 +856,9 @@ to read, and this one is only the route to it.
 such as `main` — from a `git switch` inside the workweave, or a clone that was
 never moved onto an ephemeral branch.
 
-A symlinked `reference` checkout legitimately shares the canonical store's
-branch and has no per-workweave ephemeral branch by design; the scan skips
-those. A `reference` repo created with `--worktree-references` is a real
-worktree on its own ephemeral branch and is checked normally.
+A member slot holding a symlink is not scanned: read through the link it is
+the canonical store, on the canonical store's branch. It is reported as
+`workweave-drift`.
 
 **What to do:** the message names the `git switch` that repairs it, and picks
 between `git switch <name>` and `git switch -c <name>` based on whether the

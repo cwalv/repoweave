@@ -360,6 +360,13 @@ const ROUTED: &[Routed] = &[
         renders: 2,
         prints: "the delete refusal naming the registered directory and the one reached",
     },
+    Routed {
+        file: "workweave.rs",
+        scope: "",
+        needle: r#""workweave {dir} holds {n} member(s) as a symlink, a shape rwv no longer operates on:\n  \"#,
+        renders: 1,
+        prints: "the refusal on a workweave holding a symlinked member, naming where to run doctor",
+    },
 ];
 
 /// The macros a message is rendered by. A construct is one of these calls.

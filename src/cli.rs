@@ -499,14 +499,6 @@ pub enum WorkweaveAction {
         /// explicitly.
         #[arg(long)]
         capture_dirty: bool,
-        /// Cut a real `git worktree` for `role: reference` repos instead of
-        /// the default symlink to the canonical weave-root clone. Restores
-        /// the legacy behavior (per-workweave reference refs) at the cost of
-        /// duplicating each reference repo's full working tree into this
-        /// workweave. By default, reference repos are symlinked — zero
-        /// working-tree duplication, byte-identical across workweaves.
-        #[arg(long)]
-        worktree_references: bool,
         /// Explicit per-workweave placement override.
         ///
         /// Places the workweave at exactly this path (recorded in the

@@ -163,6 +163,11 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         &["doctor", "refusal"],
         "two weave roots claim one identity",
     ),
+    (
+        "workweave-drift",
+        &["doctor", "refusal"],
+        "a workweave lacks the worktree a member needs",
+    ),
 ];
 
 fn source(file: &str) -> String {
@@ -867,7 +872,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (23, 89);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (23, 92);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than

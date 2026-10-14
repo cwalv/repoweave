@@ -5,7 +5,7 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
-use crate::vcs::{vcs_for, EphemeralRefName, HeadAttachment, RefName, Vcs};
+use crate::vcs::{vcs_for, HeadAttachment, RefName, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::Context;
@@ -41,26 +41,14 @@ fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)
 }
 
 /// Create a worktree of `repo_path` in the workweave directory, pointing at
-/// the canonical clone at `primary_root`.
-///
-/// Used by `rwv add` from a workweave so the workweave gets the new repo's
-/// worktree as part of the add (mirrors the pattern in
-/// `sync::materialize_missing_repo`). Creating an attachment where there was
-/// none is a **birth**: it attaches at the revision the verb is
-/// materializing, and is never followed by a move to reach the intended
-/// revision. The name comes from [`EphemeralRefName::mint`], the same and
-/// only minter `workweave create` uses — deriving one here instead is what
-/// let three copies of the derivation disagree.
-///
-/// It also **emits an ownership receipt**, which is what makes a later
-/// `workweave delete` visit this ref at all: under R2 delete destroys the
-/// recorded set, and a ref added this way used to be reachable only by the
-/// prefix glob that no longer authorizes anything.
+/// the canonical clone at `primary_root`, born at the canonical clone's HEAD
+/// ([`crate::workweave::materialize_member`]). A symlink in the slot is
+/// replaced.
 ///
 /// If the canonical clone has no HEAD (e.g. `rwv add --new` produced an
 /// empty `git init`), the worktree creation is skipped — `git worktree add`
-/// against an unborn HEAD would fail, and the user can materialize the
-/// worktree after the first commit via `rwv sync`.
+/// against an unborn HEAD would fail. After the first commit, `rwv lock` pins
+/// it and `rwv doctor --fix` creates the worktree.
 fn create_worktree_in_workweave(
     vcs: &dyn Vcs,
     primary_root: &Path,
@@ -71,40 +59,31 @@ fn create_worktree_in_workweave(
     workweave_name: &crate::manifest::WorkweaveName,
 ) -> anyhow::Result<()> {
     let dest = workweave_dir.join(repo_path.as_path());
-    if dest.exists() {
-        // Nothing to do — operator may have pre-populated the workweave,
-        // or this is a re-run of `rwv add` for an already-materialized repo.
+    if !crate::workweave::is_symlinked_member(&dest) && dest.exists() {
         return Ok(());
     }
 
-    // Skip if the canonical has no HEAD (empty `git init` from --new).
     let start = match vcs.head_revision(canonical_clone) {
         Ok(start) => start,
         Err(_) => {
             eprintln!(
                 "rwv add: canonical clone at {} has no commits yet; \
                  skipping worktree creation in workweave \
-                 (commit upstream and run `rwv sync` to materialize)",
+                 (after the first commit, `rwv lock` then `rwv doctor --fix` here create it)",
                 canonical_clone.display()
             );
             return Ok(());
         }
     };
 
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory {}", parent.display()))?;
-    }
-
-    let mut registry = RefRegistry::for_project(primary_root, project);
-    let ephemeral = EphemeralRefName::mint(project, workweave_name);
-    let outcome = crate::workweave::birth_ephemeral_worktree(
+    crate::workweave::materialize_member(
         vcs,
-        &mut registry,
-        canonical_clone,
-        &dest,
-        &ephemeral,
-        start,
+        primary_root,
+        workweave_dir,
+        project,
+        workweave_name,
+        repo_path,
+        start.as_str(),
     )
     .with_context(|| {
         format!(
@@ -113,20 +92,6 @@ fn create_worktree_in_workweave(
             canonical_clone.display()
         )
     })?;
-
-    if let Some(e) = outcome.failure {
-        // The receipt stands and names the ref, so a later delete or doctor
-        // pass can reconcile whatever git left behind. Nothing is deleted
-        // here: a DESTROY needs a warrant this path does not hold.
-        return Err(e).with_context(|| {
-            format!(
-                "failed to create worktree at {} from canonical clone {}",
-                dest.display(),
-                canonical_clone.display()
-            )
-        });
-    }
-
     Ok(())
 }
 
@@ -1006,8 +971,8 @@ pub fn run_add_new(
 
     // In a workweave, attempt to create a worktree at the workweave so the
     // new repo is materialized there. An unborn HEAD (both creation shapes
-    // start unborn) means create_worktree_in_workweave silently skips until
-    // the first commit lands upstream (operator can then `rwv sync`).
+    // start unborn) means create_worktree_in_workweave skips until the first
+    // commit lands.
     worktree_for_workweave(vcs.as_ref(), ctx, &dest, &repo_path)?;
 
     settle_manifest(ctx, &project, Some(&manifest))?;

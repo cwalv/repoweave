@@ -322,7 +322,6 @@ fn create_no_submodule_invocation_for_repo_without_gitmodules() {
         &WorkweaveName::new("feat").unwrap(),
         false,
         false,
-        false,
         None,
     );
 
@@ -478,7 +477,6 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
         &WorkweaveName::new("feat").unwrap(),
         false,
         false,
-        false,
         None,
     )
     .expect("create should succeed");
@@ -532,7 +530,6 @@ fn doctor_scan_silent_for_repo_without_gitmodules() {
         &ws,
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("feat").unwrap(),
-        false,
         false,
         false,
         None,

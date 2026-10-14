@@ -871,9 +871,6 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
         .current_dir(&workweave_dir)
         .output()
         .expect("fetch spawn failed");
-    // We may not care whether this ends up clean end-to-end for the workweave
-    // side (worktree add is sync's job), but the canonical materialization at
-    // primary IS the load-bearing assertion.
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -899,12 +896,29 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
         "primary canonical clone must be at LOCKED SHA"
     );
 
-    // The workweave's slot should NOT have gotten its own separate clone
-    // (that would be two DAGs for one repo).
+    // The workweave's slot holds a worktree linked into that canonical store
+    // — never a second clone, which would be two DAGs for one repo — on the
+    // workweave's ephemeral branch at the locked SHA.
     let workweave_dest = workweave_dir.join(repo);
     assert!(
-        !workweave_dest.exists(),
-        "workweave slot must NOT have received a separate clone (I1 violation); \
-         `rwv sync` adds worktrees, not fetch"
+        workweave_dest.join(".git").is_file(),
+        "fetch from a workweave must create the workweave's worktree for the member \
+         its lock pins, as a linked worktree (`.git` a file), not a clone; got:\n{combined}"
+    );
+    let common_dir = common::git_in(&workweave_dest, &["rev-parse", "--git-common-dir"]);
+    assert_eq!(
+        std::fs::canonicalize(workweave_dest.join(common_dir)).unwrap(),
+        std::fs::canonicalize(primary_dest.join(".git")).unwrap(),
+        "the workweave's worktree must share primary's canonical store (clone-topology I1)"
+    );
+    assert_eq!(
+        common::git_in(&workweave_dest, &["symbolic-ref", "--short", "HEAD"]),
+        "my-app--dev",
+        "the worktree sits on the workweave's ephemeral branch"
+    );
+    assert_eq!(
+        common::git_in(&workweave_dest, &["rev-parse", "HEAD"]),
+        *first_sha,
+        "the worktree is born at the revision the workweave's lock pins"
     );
 }

@@ -17,14 +17,14 @@ use crate::refusal::RefusalKind;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
-    DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName, ForeignTipPolicy, HeadAttachment,
-    RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+    DiscardLocalCommitsConsent, DiscardWarrant, ForeignTipPolicy, HeadAttachment, RefName,
+    ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{
     project_dir, project_rel_path, AdvisoryKindOutput, AdvisoryOutput, Checkout, Resolution,
     WorkspaceContext,
 };
-use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
+use crate::workweave::{ensure_registered_workweave, refuse_symlinked_members};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -1564,151 +1564,48 @@ fn replay_exclusion_source_only_refusal(
 }
 
 // ---------------------------------------------------------------------------
-// Sync's reference-alias chokepoint
-// ---------------------------------------------------------------------------
-//
-// The sync/abort phase machine has no single shared repo-set object: each phase
-// legitimately iterates a *different* manifest or lock (CWD manifest, source
-// lock, target manifest, …). What every mutating phase *does* share is one
-// shape — iterate `repo_path`s, join each against a workspace dir to form the
-// on-disk checkout `abs`, gate on `abs.exists()`, then operate on `abs`. That
-// per-checkout existence gate is the narrowest chokepoint, so the reference
-// exclusion lives there, in a single predicate every site routes through.
-//
-// A `reference` repo materialized as a symlink (`CheckoutKind::ReferenceAlias`)
-// aliases the single canonical weave-root clone shared by *every* workweave.
-// Operating on it through the symlink — savepoint `refs/rwv/pre-op/*`, rebase /
-// ff its branch, `reset --hard` on abort, `worktree add/remove` — mutates that
-// shared store (cross-workweave ref collisions, a branch other workspaces
-// read). A reference symlink is also read-only, lock-pinned, and byte-identical
-// across workweaves, so there is *nothing to sync*. Excluding it here makes the
-// canonical store **unreachable by construction** from every mutating phase: an
-// absent element cannot be operated on, where a per-call-site guard could be
-// forgotten at the next site.
-//
-// The predicate keys on `CheckoutKind::ReferenceAlias` (⇔ the checkout path is
-// a symlink), **never on `role`**. A `reference` repo created with
-// `--worktree-references` is a real worktree on its own ephemeral branch:
-// `classify_checkout` returns `Worktree` for it, so it passes this gate and
-// syncs exactly like any owned/fork worktree. Keying on `role == Reference`
-// would silently break that escape hatch. `rwv lock` is unaffected — it reads
-// HEAD through the symlink (resolving to the canonical), which correctly pins
-// the shared SHA; reference repos stay in the lock for reproducibility and
-// `rwv fetch`. Only sync's *advancement / mutation* skips them.
-
-/// Why a sync/abort phase may or may not operate on the checkout at `abs`,
-/// decided by ONE classification read.
-///
-/// A caller that both skips a checkout and names why it skipped it consumes
-/// this one value for both. Asking [`classify_checkout`] a second time for the
-/// label reads the filesystem at a second instant, so the reason printed can
-/// describe a state other than the one the skip decision was made on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CheckoutSyncability {
-    /// An on-disk worktree checkout: phases may operate on it.
-    Syncable,
-    /// A symlink aliasing the shared canonical store — read-only, and
-    /// byte-identical across workweaves, so there is nothing to sync.
-    ReferenceAlias,
-    /// No checkout at this path: nothing to mutate or restore.
-    NotOnDisk,
-}
-
-/// Classify the checkout at `abs` for the sync/abort phases.
-///
-/// This is the single chokepoint for the reference-repo exclusion: every
-/// savepoint / replay / advance-target / abort / materialize / prune loop gates
-/// the checkout it is about to touch through this classification, so the
-/// canonical store is unreachable from all of them. Keyed on alias-ness, never
-/// on role, so `--worktree-references` reference repos (real worktrees) sync
-/// normally.
-///
-/// [`classify_checkout`] returns [`CheckoutKind::Worktree`] for a non-existent
-/// path, so existence is a second term rather than something the classification
-/// already answers.
-fn checkout_syncability(abs: &Path) -> CheckoutSyncability {
-    match classify_checkout(abs) {
-        CheckoutKind::ReferenceAlias => CheckoutSyncability::ReferenceAlias,
-        CheckoutKind::Worktree if abs.exists() => CheckoutSyncability::Syncable,
-        CheckoutKind::Worktree => CheckoutSyncability::NotOnDisk,
-    }
-}
-
-/// Whether a sync/abort phase may operate on the checkout at `abs`.
-///
-/// True iff `abs` is an on-disk **worktree** checkout: it exists (an absent
-/// checkout has nothing to mutate / restore) and it is not a
-/// [`CheckoutKind::ReferenceAlias`].
-fn checkout_is_syncable(abs: &Path) -> bool {
-    checkout_syncability(abs) == CheckoutSyncability::Syncable
-}
-
-// ---------------------------------------------------------------------------
 // Phase 3 helpers: materialize new repos / prune dropped repos
 // ---------------------------------------------------------------------------
 
 /// Materialize a repo that's listed in the (source) lock but missing from the
 /// CWD workspace on disk.
 ///
-/// - In a workweave: `git worktree add` against the canonical clone at primary
-///   (mirrors what `create_workweave` does for initial materialization).
+/// - In a workweave: a worktree of the canonical clone at primary, born at
+///   `start` ([`crate::workweave::materialize_member`]).
 /// - In a primary weave: `git clone` from the manifest URL (mirrors
 ///   `rwv fetch`'s clone path).
 ///
-/// `entry` carries the manifest URL; `target` is the lock revision to check
-/// out. Caller is responsible for the surrounding sync flow (Phase 2 will then
-/// call `sync_one_repo` to land HEAD on `target`).
+/// `entry` carries the manifest URL. Caller is responsible for the
+/// surrounding sync flow (Phase 2 will then call `sync_one_repo` to land HEAD
+/// on its target).
 fn materialize_missing_repo(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
     entry: &crate::manifest::RepoEntry,
+    start: &str,
     project_name: &ProjectName,
 ) -> anyhow::Result<()> {
-    let dest = ctx.active_path().join(repo_path.as_path());
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-
     match &ctx.checkout {
         Checkout::Workweave {
             name, dir, project, ..
         } => {
-            let name = name.require(dir, project)?;
-            // Canonical clone lives at primary.
-            let canonical = ctx.primary_path().join(repo_path.as_path());
-            if !canonical.exists() {
-                crate::refuse!(
-                    RefusalKind::MissingCanonicalClone,
-                    "canonical clone for {repo_path} missing at {}; \
-                     run `rwv sync` from primary first to materialize it there",
-                    canonical.display()
-                );
-            }
-            // The manifest's tracking branch is the START POINT, and only
-            // that. The NAME comes from `EphemeralRefName::mint` — the same
-            // call `create_workweave` (`workweave.rs`) and `rwv add`
-            // (`add_remove.rs`) make, from the same two inputs.
-            let start_ref = entry.version.as_str();
-            let start = vcs
-                .resolve_revision(&canonical, start_ref)
-                .with_context(|| format!("failed to resolve {start_ref} in canonical clone"))?;
-            let mut registry =
-                crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project_name);
-            crate::workweave::birth_ephemeral_worktree(
+            crate::workweave::materialize_member(
                 vcs,
-                &mut registry,
-                &canonical,
-                &dest,
-                &EphemeralRefName::mint(project_name, name),
+                ctx.primary_path(),
+                ctx.active_path(),
+                project_name,
+                name.require(dir, project)?,
+                repo_path,
                 start,
-            )
-            .with_context(|| format!("cannot materialize {repo_path}"))?
-            .into_authored(&mut registry)
-            .with_context(|| format!("worktree add for {repo_path} failed"))?;
+            )?;
         }
         Checkout::Primary { .. } => {
+            let dest = ctx.active_path().join(repo_path.as_path());
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
             vcs.clone_repo(&entry.url.to_string(), &dest)
                 .with_context(|| format!("clone of {repo_path} from {} failed", entry.url))?;
         }
@@ -3242,6 +3139,9 @@ fn guard_and_mark<'a>(
         )
     };
 
+    refuse_symlinked_members(&cwd_workspace_dir, &cwd_project_name)?;
+    refuse_symlinked_members(&source_workspace_root, &cwd_project_name)?;
+
     // dest_project_dir is where the terminal write lands.
     //   plain sync: CWD (relock writes a new lock commit there).
     //   sync-to: target (advance-target ff-forwards target's repos to CWD's tips).
@@ -3409,9 +3309,7 @@ fn guard_and_mark<'a>(
     create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &op_id)?;
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks: a savepoint here would write
-        // `refs/rwv/pre-op/*` into the shared canonical store.
-        if checkout_is_syncable(&abs) {
+        if abs.exists() {
             let _ = create_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &op_id);
         }
     }
@@ -3439,8 +3337,7 @@ fn guard_and_mark<'a>(
             ) {
                 for (repo_path, entry) in tp.manifest.iter_entries() {
                     let abs = dest_workspace_dir.join(repo_path.as_path());
-                    // Skip reference symlinks (shared canonical store).
-                    if checkout_is_syncable(&abs) {
+                    if abs.exists() {
                         let _ = create_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &tsp_id);
                     }
                 }
@@ -3934,9 +3831,7 @@ fn check_dirty_target_preflight(
     let mut dirty: Vec<String> = Vec::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks: a dirty shared canonical must not block a
-        // sync-to that never touches it (advance-target excludes it too).
-        if checkout_is_syncable(&target_repo) {
+        if target_repo.exists() {
             let tracked = vcs_for(entry.vcs_type)
                 .tracked_dirty_file_names(&target_repo)
                 .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
@@ -4001,9 +3896,7 @@ fn check_detached_target_preflight(
     let mut detached: Vec<String> = Vec::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks: advance-target excludes them, so their
-        // attachment is not this op's business.
-        if !checkout_is_syncable(&target_repo) {
+        if !target_repo.exists() {
             continue;
         }
         if let Some(state) = unattached(vcs_for(entry.vcs_type).as_ref(), &target_repo) {
@@ -4127,9 +4020,7 @@ fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
 ///
 /// ## Scope
 ///
-/// Covers every CWD manifest repo gated by [`checkout_is_syncable`] (skips
-/// reference symlinks — the shared canonical store is never rebased by sync)
-/// and the project repo.
+/// Covers every CWD manifest repo on disk and the project repo.
 fn check_dirty_preflight_sync(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
@@ -4141,10 +4032,7 @@ fn check_dirty_preflight_sync(
 
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks: the shared canonical store is never
-        // rebased or ff'd by sync (checkout_is_syncable guards every mutating
-        // phase). A dirty canonical must not block a sync that never touches it.
-        if !checkout_is_syncable(&repo) {
+        if !repo.exists() {
             continue;
         }
         match vcs_for(entry.vcs_type).tracked_dirty_file_names(&repo) {
@@ -4262,9 +4150,7 @@ fn check_dirty_source_preflight(
 
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks: a dirty shared canonical must not block a
-        // sync-to that never rebases it (replay excludes it too).
-        if checkout_is_syncable(&repo) {
+        if repo.exists() {
             let tracked = vcs_for(entry.vcs_type)
                 .tracked_dirty_file_names(&repo)
                 .unwrap_or_else(|_| {
@@ -4370,8 +4256,7 @@ struct LockClassification {
 
 /// Classify every manifest repo's committed lock SHA against its on-disk HEAD.
 ///
-/// Reference-symlink checkouts are skipped (they alias the shared canonical and
-/// are never rebased). Repos missing on disk are skipped (nothing to classify).
+/// Repos missing on disk are skipped (nothing to classify).
 /// `resolved_lock` is the workspace's own lock already resolved against
 /// `workspace_dir` — the caller resolves, so the value the relations compare
 /// against is the same one every other consumer of that resolve reads.
@@ -4388,10 +4273,6 @@ fn classify_lock_relations(
     for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let repo_abs = workspace_dir.join(repo_path.as_path());
-        // Reference aliases are read-only and never rebased; do not classify.
-        if !checkout_is_syncable(&repo_abs) {
-            continue;
-        }
         if !repo_abs.exists() {
             continue;
         }
@@ -4794,23 +4675,31 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
     for repo_path in snapshot.raw_source_lock.iter_repo_paths() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        // Skip a checkout that already exists. Also skip a reference symlink:
-        // even a *dangling* symlink (whose `exists()` follows the link and
-        // returns false) must never be replaced by a `git worktree add` against
-        // the shared canonical store. `classify_checkout` keys on `is_symlink`,
-        // which does not follow the link, so it catches the dangling case.
-        if checkout_syncability(&abs) != CheckoutSyncability::NotOnDisk {
+        if abs.exists() {
             continue;
         }
         let entry = match snapshot.source_manifest.get_entry(repo_path) {
             Some(e) => e,
             None => continue,
         };
+        // Born where replay will aim it, so the new checkout needs no move.
+        let start = snapshot
+            .pull_tips
+            .get(repo_path)
+            .or_else(|| {
+                snapshot
+                    .source_lock
+                    .get_entry(repo_path)
+                    .map(|e| &e.version)
+            })
+            .map(|rev| rev.as_str())
+            .unwrap_or_else(|| entry.version.as_str());
         match materialize_missing_repo(
             vcs_for(entry.vcs_type).as_ref(),
             &ctx.cwd_ctx,
             repo_path,
             entry,
+            start,
             &ctx.cwd_project_name,
         ) {
             Ok(()) => {
@@ -4833,13 +4722,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if snapshot.raw_source_lock.contains_repo(repo_path) {
                 continue;
             }
-            // Skip reference symlinks: pruning would `git worktree remove`
-            // against the shared canonical store. Unlinking a reference alias
-            // is the workweave-delete path's job, not sync's.
             let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-            if checkout_syncability(&abs) == CheckoutSyncability::ReferenceAlias {
-                continue;
-            }
             let absence = if ctx.discard_local_commits {
                 SourceLockAbsence::DiscardedHere
             } else {
@@ -4925,24 +4808,11 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     for (repo_path, raw_entry) in snapshot.raw_source_lock.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        // The reference exclusion: a reference symlink is read-only and aliases
-        // the shared canonical store, so it never becomes a sync task. Without
-        // a task it is never rebased/ff'd and never gets a planned-target write,
-        // so replay Phase 2 cannot move the canonical's branch.
-        match checkout_syncability(&abs) {
-            CheckoutSyncability::Syncable => {}
-            CheckoutSyncability::ReferenceAlias => {
-                if emit_text {
-                    println!("  {repo_path}: skipped (reference (read-only alias))");
-                }
-                continue;
+        if !abs.exists() {
+            if emit_text {
+                println!("  {repo_path}: skipped (not on disk)");
             }
-            CheckoutSyncability::NotOnDisk => {
-                if emit_text {
-                    println!("  {repo_path}: skipped (not on disk)");
-                }
-                continue;
-            }
+            continue;
         }
         // The source resolved its own lock at pin time. An entry missing from
         // that resolution is one the source could not answer for — either the
@@ -5330,8 +5200,7 @@ fn pin_source_snapshot(
 }
 
 /// Read every manifest repo's HEAD in `workspace_dir`, skipping the checkouts
-/// [`classify_lock_relations`] skips — reference aliases, which are read-only,
-/// and repos absent from disk.
+/// [`classify_lock_relations`] skips — repos absent from disk.
 ///
 /// The unclassified counterpart to reading the relations' pinned tips:
 /// `--allow-stale-lock` takes no classification, so this is where the tips a
@@ -5343,7 +5212,7 @@ fn read_member_tips(
     let mut out = std::collections::BTreeMap::new();
     for (repo_path, entry) in manifest.iter_entries() {
         let abs = workspace_dir.join(repo_path.as_path());
-        if !checkout_is_syncable(&abs) || !abs.exists() {
+        if !abs.exists() {
             continue;
         }
         if let Ok(tip) = vcs_for(entry.vcs_type).head_revision(&abs) {
@@ -5484,13 +5353,10 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let target_repo = ctx.dest_workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks on either side: ff'ing the target alias would
-        // move the shared canonical's branch. Both sides of a reference alias
-        // resolve to the same canonical anyway, so there is nothing to advance.
-        if !checkout_is_syncable(&cwd_repo) {
+        if !cwd_repo.exists() {
             continue;
         }
-        if !checkout_is_syncable(&target_repo) {
+        if !target_repo.exists() {
             if emit_text {
                 eprintln!("  {}: skipped (not on disk in target)", repo_path);
             }
@@ -5741,7 +5607,7 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
     }
     for (repo_path, entry) in project.manifest.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        if !checkout_is_syncable(&abs) {
+        if !abs.exists() {
             continue;
         }
         let vcs = vcs_for(entry.vcs_type);
@@ -6357,6 +6223,10 @@ pub fn run_abort(
     // manifest (to enumerate repo paths); it never reads lock contents.
     let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir, op_project_name.clone())
         .context("failed to load CWD project")?;
+    refuse_symlinked_members(&workspace_dir, &op_project_name)?;
+    for extra in &extra_workspace_dirs {
+        refuse_symlinked_members(extra, &op_project_name)?;
+    }
 
     let mut any_failure = false;
     let mut any_foreign = false;
@@ -6367,11 +6237,7 @@ pub fn run_abort(
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let abs = workspace_dir.join(repo_path.as_path());
-        // Skip reference symlinks: `reset --hard` here would rewind the shared
-        // canonical store. Sync never savepoints or advances a reference (the
-        // savepoint/replay/advance loops exclude it via the same predicate), so
-        // there is by construction nothing to restore.
-        if !checkout_is_syncable(&abs) {
+        if !abs.exists() {
             continue;
         }
         let intent = advanced_tips.get(repo_path.as_str()).map(String::as_str);
@@ -6463,9 +6329,7 @@ pub fn run_abort(
                 for (repo_path, entry) in extra_project.manifest.iter_entries() {
                     let vcs = vcs_for(entry.vcs_type);
                     let abs = extra_ws_dir.join(repo_path.as_path());
-                    // Skip reference symlinks (shared canonical store): nothing
-                    // was savepointed or advanced for them, so nothing to reset.
-                    if !checkout_is_syncable(&abs) {
+                    if !abs.exists() {
                         continue;
                     }
                     // Target-side repos: advanced_tips is source/owner side only.
@@ -7360,6 +7224,7 @@ fn ff_advance_repo(
 mod tests {
     use super::*;
     use crate::git::git_vcs;
+    use crate::vcs::EphemeralRefName;
 
     // -----------------------------------------------------------------------
     // The parked-op decorator
@@ -8422,8 +8287,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
 
-        materialize_missing_repo(git_vcs().as_ref(), &ctx, &dropped(), &entry, &project)
-            .expect("a name nothing holds is the ordinary create");
+        materialize_missing_repo(
+            git_vcs().as_ref(),
+            &ctx,
+            &dropped(),
+            &entry,
+            "main",
+            &project,
+        )
+        .expect("a name nothing holds is the ordinary create");
 
         let checkout = ctx.active_path().join(dropped().as_path());
         assert!(
@@ -8452,8 +8324,15 @@ mod tests {
         let operator_tip = commit(&canonical, "operators-work");
         git(&canonical, &["checkout", "main"]);
 
-        let err = materialize_missing_repo(git_vcs().as_ref(), &ctx, &dropped(), &entry, &project)
-            .expect_err("a branch rwv holds no receipt for is not rwv's to reuse");
+        let err = materialize_missing_repo(
+            git_vcs().as_ref(),
+            &ctx,
+            &dropped(),
+            &entry,
+            "main",
+            &project,
+        )
+        .expect_err("a branch rwv holds no receipt for is not rwv's to reuse");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("rwv holds no ownership receipt for it"),
@@ -8471,75 +8350,6 @@ mod tests {
                 .unwrap(),
             operator_tip,
             "the operator's branch must survive the refusal at its own tip"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // checkout_is_syncable — the sync reference-exclusion chokepoint predicate
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn checkout_is_syncable_true_for_a_real_directory_worktree() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("repo");
-        std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(classify_checkout(&dir), CheckoutKind::Worktree);
-        assert!(
-            checkout_is_syncable(&dir),
-            "a real on-disk worktree directory must be syncable"
-        );
-    }
-
-    #[test]
-    fn checkout_is_syncable_false_for_a_symlink_reference_alias() {
-        let tmp = tempfile::tempdir().unwrap();
-        let canonical = tmp.path().join("canonical");
-        std::fs::create_dir_all(&canonical).unwrap();
-        let link = tmp.path().join("alias");
-        crate::symlink::create(&canonical, &link, crate::symlink::LinkTarget::Directory).unwrap();
-        // The alias resolves to a real dir (so `exists()` is true), but it is a
-        // symlink, so it must be excluded — proving the predicate keys on
-        // alias-ness, not on existence.
-        assert!(link.exists(), "symlink target exists");
-        assert_eq!(classify_checkout(&link), CheckoutKind::ReferenceAlias);
-        assert!(
-            !checkout_is_syncable(&link),
-            "a symlink reference alias must NOT be syncable even though it exists"
-        );
-    }
-
-    #[test]
-    fn checkout_is_syncable_false_for_a_nonexistent_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = tmp.path().join("nope");
-        // A non-existent path classifies as Worktree, so the `exists()` term is
-        // load-bearing: without it a missing checkout would wrongly be syncable.
-        assert_eq!(classify_checkout(&missing), CheckoutKind::Worktree);
-        assert!(
-            !checkout_is_syncable(&missing),
-            "a non-existent checkout must NOT be syncable"
-        );
-    }
-
-    #[test]
-    fn checkout_is_syncable_false_for_a_dangling_symlink() {
-        let tmp = tempfile::tempdir().unwrap();
-        let link = tmp.path().join("dangling");
-        crate::symlink::create(
-            &tmp.path().join("missing-target"),
-            &link,
-            crate::symlink::LinkTarget::File,
-        )
-        .unwrap();
-        // A dangling symlink: `exists()` (which follows the link) is false, but
-        // `classify_checkout` (which does not follow) still flags it as an
-        // alias. Either way it is excluded — and must never be materialized as
-        // a worktree against the canonical.
-        assert!(!link.exists(), "dangling symlink target is missing");
-        assert_eq!(classify_checkout(&link), CheckoutKind::ReferenceAlias);
-        assert!(
-            !checkout_is_syncable(&link),
-            "a dangling reference symlink must NOT be syncable"
         );
     }
 
