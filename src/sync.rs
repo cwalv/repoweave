@@ -1735,27 +1735,30 @@ enum SourceLockAbsence {
 }
 
 impl SourceLockAbsence {
-    fn classify(shared: &anyhow::Result<LockFile>, repo_path: &RepoPath) -> Self {
+    fn classify(shared: &anyhow::Result<Option<LockFile>>, repo_path: &RepoPath) -> Self {
         match shared {
-            Ok(lock) if lock.contains_repo(repo_path) => Self::DroppedBySource,
-            Ok(_) => Self::AddedHere,
+            Ok(Some(lock)) if lock.contains_repo(repo_path) => Self::DroppedBySource,
+            Ok(Some(_)) => Self::AddedHere,
+            Ok(None) => Self::Undetermined("the two project histories share no commit".to_owned()),
             Err(e) => Self::Undetermined(format!("{e:#}")),
         }
     }
 }
 
 /// The lock committed at the common ancestor of CWD's and the source's
-/// project tips.
+/// project tips, or `None` when the two histories share no commit.
 fn shared_lock(
     vcs: &dyn Vcs,
     project_dir: &Path,
     cwd_tip: &ResolvedRevisionId,
     source_tip: &ResolvedRevisionId,
-) -> anyhow::Result<LockFile> {
-    let base = vcs
+) -> anyhow::Result<Option<LockFile>> {
+    let Some(base) = vcs
         .common_ancestor(project_dir, cwd_tip, source_tip)
         .context("the common ancestor of the two project tips could not be read")?
-        .ok_or_else(|| anyhow::anyhow!("the two project histories share no commit"))?;
+    else {
+        return Ok(None);
+    };
     let content = vcs
         .read_file_at_revision(project_dir, &base, Path::new(LockFile::FILE_NAME))
         .with_context(|| {
@@ -1765,13 +1768,15 @@ fn shared_lock(
                 short_sha(base.as_str())
             )
         })?;
-    LockFile::from_json_str(&content).with_context(|| {
-        format!(
-            "the {} at their common ancestor {} does not parse",
-            LockFile::FILE_NAME,
-            short_sha(base.as_str())
-        )
-    })
+    LockFile::from_json_str(&content)
+        .map(Some)
+        .with_context(|| {
+            format!(
+                "the {} at their common ancestor {} does not parse",
+                LockFile::FILE_NAME,
+                short_sha(base.as_str())
+            )
+        })
 }
 
 /// R4: refuse to destroy `store` while anything still claims it.
@@ -4806,7 +4811,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     if let Some(ref cwd_lock) = cwd_project.lock {
-        let mut shared: Option<anyhow::Result<LockFile>> = None;
+        let mut shared: Option<anyhow::Result<Option<LockFile>>> = None;
         for repo_path in cwd_lock.iter_repo_paths() {
             if snapshot.raw_source_lock.contains_repo(repo_path) {
                 continue;
