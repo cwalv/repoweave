@@ -45,8 +45,10 @@ const OWNER_FILE: &str = "activate.rs";
 const GATE_FN: &str = "withhold_hooks_over_unsettled_drift";
 
 /// The call form, not the declaration: `run_activate_hooks` is declared in
-/// `integration_runner.rs` and that line must not count as a use.
-const HOOK_CALL: &str = "run_activate_hooks(&";
+/// `integration_runner.rs` and that line must not count as a use. Matched
+/// without the arguments, so a caller holding its inputs by reference or by
+/// value is counted the same.
+const HOOK_CALL: &str = "run_activate_hooks(";
 
 fn production_lines_containing(needle: &str) -> Vec<SourceLine> {
     production_lines()
@@ -55,11 +57,18 @@ fn production_lines_containing(needle: &str) -> Vec<SourceLine> {
         .collect()
 }
 
+fn hook_calls() -> Vec<SourceLine> {
+    production_lines_containing(HOOK_CALL)
+        .into_iter()
+        .filter(|l| !l.text.contains(&format!("fn {HOOK_CALL}")))
+        .collect()
+}
+
 /// Vacuity guard. Both needles are repo symbols, so a rename makes them stop
 /// matching and every emptiness below would then be evidence of nothing.
 #[test]
 fn both_needles_still_match_the_source() {
-    let hooks = production_lines_containing(HOOK_CALL);
+    let hooks = hook_calls();
     assert!(
         !hooks.is_empty(),
         "`{HOOK_CALL}` matches no production line — the hook runner was \
@@ -80,7 +89,7 @@ fn both_needles_still_match_the_source() {
 /// be asked.
 #[test]
 fn the_hooks_are_run_from_exactly_one_site() {
-    let sites: Vec<String> = production_lines_containing(HOOK_CALL)
+    let sites: Vec<String> = hook_calls()
         .iter()
         .map(|l| format!("{} {}", l.site(), l.text.trim()))
         .collect();
@@ -130,7 +139,7 @@ fn the_drift_question_guards_the_run_and_is_asked_once() {
         asked.text.trim()
     );
 
-    let hook_site = production_lines_containing(HOOK_CALL)
+    let hook_site = hook_calls()
         .into_iter()
         .next()
         .expect("guarded by the vacuity test above");

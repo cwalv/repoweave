@@ -57,8 +57,8 @@ struct Allowed {
 const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "add_remove.rs",
-        count: 4,
-        justification: "Two sites are the local-path arm's lookup key — the argument \
+        count: 3,
+        justification: "One site is the local-path arm's lookup key — the argument \
              is only reached once it has already been observed as a directory on \
              disk. One reads the origin remote of a clone already on disk (an \
              observed location). One is the removal verb's lookup key, matched \
@@ -66,9 +66,10 @@ const ALLOWLIST: &[Allowed] = &[
              (`run_add_new`) used to hold a fifth site that took the operator's typed \
              path as a layout assertion; it now reads `registry::placement(&plan.url)` \
              instead, so its path is derived from the identity the registry's creation \
-             plan mints — inside registry.rs, where a derived path belongs. None of \
-             the four remaining sites maps a registry/owner/repo triple through the \
-             canonical layout the way `placement` does.",
+             plan mints — inside registry.rs, where a derived path belongs. The \
+             local-path arm parsed the same argument twice and now parses it once. \
+             None of the three remaining sites maps a registry/owner/repo triple \
+             through the canonical layout the way `placement` does.",
     },
     Allowed {
         file: "check.rs",

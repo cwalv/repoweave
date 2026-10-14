@@ -91,6 +91,19 @@ fn root_links(ws: &Path) -> BTreeMap<String, PathBuf> {
         .collect()
 }
 
+/// The refusal's route line is the one line naming a token, and it is last.
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, vec![token], "stderr was:\n{stderr}");
+    assert!(
+        stderr.ends_with(&format!("\n\nrwv explain {token}\n")),
+        "the route line must be the last line, after a blank one, stderr was:\n{stderr}"
+    );
+}
+
 fn add(ws: &Path, url: &str) -> std::process::Output {
     common::rwv()
         .args(["add", url])
@@ -179,6 +192,7 @@ fn an_add_stopped_by_a_surfacing_occupant_moves_no_link_and_lands_nothing() {
         stderr.contains("Cargo.lock") && stderr.contains("rwv.toml is unchanged"),
         "the refusal must name the occupant and say nothing landed: {stderr}"
     );
+    assert_routes_to(&stderr, "surfacing-path-occupied");
     assert_eq!(tree(&project), project_before);
     assert_eq!(root_links(&ws), links_before);
     assert_eq!(

@@ -3,6 +3,7 @@ src/activate.rs	(untokened:internal-invariant)	-	1
 src/activate.rs	(untokened:tally)	-	3
 src/activate.rs	no-active-project	-	1
 src/activate.rs	shared-name-contested	-	1
+src/activate.rs	surfacing-path-occupied	tests/intent_verb_atomicity_test.rs	1
 src/activate.rs	unaccepted-generated-content	-	1
 src/activate.rs	wrong-checkout-kind	-	1
 src/add_remove.rs	(untokened:internal-invariant)	-	1
