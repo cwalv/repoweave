@@ -525,3 +525,83 @@ fn update_silent_when_advance_keeps_members_compatible() {
         "an advance that stays under the pin is not a breach; got:\n{combined}"
     );
 }
+
+// ===========================================================================
+// add — the report at the moment add-order seeding bites
+// ===========================================================================
+//
+// `rwv add` seeds a `DefaultOnly` value (go.work's go-line) from whichever
+// member is on disk first. A later `rwv add` of a module requiring more is
+// exactly where that seed stops matching reality — the pin was compatible
+// when it was made, same as `update`'s motivating case, but the breach is
+// created by adding the new member rather than by advancing an existing one.
+
+/// A bare repo holding one module at `go_version`, under `tmp`, ready to be
+/// cloned by `rwv add`.
+fn new_module_remote(tmp: &Path, name: &str, go_version: &str) -> PathBuf {
+    let bare = tmp.join(format!("{name}.git"));
+    init_bare_with_go_mod(&bare, go_version);
+    bare
+}
+
+#[test]
+fn add_reports_new_member_incompatible_with_existing_pin() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_doctor_workspace(tmp.path(), "go-add-project", "1.21", "1.21");
+    let remote = new_module_remote(tmp.path(), "module-b", "1.26");
+    let remote_url = common::file_url(&remote);
+
+    let output = rwv_without_go()
+        .args(["add", &remote_url])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv add should run");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "add must not refuse on a member incompatibility; got:\n{combined}"
+    );
+
+    let line = the_finding(&combined);
+    assert_finding_shape(&line, "1.21", "1.26");
+
+    // The report is not a repair: rule 5 still owns the go-line.
+    let go_work = std::fs::read_to_string(ws.join("projects/go-add-project/go.work")).unwrap();
+    assert!(
+        go_work.contains("go 1.21"),
+        "add must not rewrite the DefaultOnly go-line; got:\n{go_work}"
+    );
+}
+
+#[test]
+fn add_silent_when_new_member_is_compatible() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_doctor_workspace(tmp.path(), "go-add-ok-project", "1.26", "1.21");
+    let remote = new_module_remote(tmp.path(), "module-b", "1.20");
+    let remote_url = common::file_url(&remote);
+
+    let output = rwv_without_go()
+        .args(["add", &remote_url])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv add should run");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "add should succeed; got:\n{combined}"
+    );
+    assert!(
+        !combined.contains("member-incompatibility"),
+        "a new member within the pin is not a breach; got:\n{combined}"
+    );
+}
