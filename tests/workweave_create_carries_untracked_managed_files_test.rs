@@ -146,11 +146,7 @@ fn workweave_create_carries_an_activated_wrapper_config() {
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
-    let create = rwv_with_path(
-        &["workweave", "web-app", "create", "agent-1"],
-        &ws,
-        &path,
-    );
+    let create = rwv_with_path(&["workweave", "web-app", "create", "agent-1"], &ws, &path);
     assert!(
         !create.contains("cargo-workspace managed file missing"),
         "create should leave nothing for cargo-workspace to warn about.\n{create}"
@@ -241,7 +237,10 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
 
     rwv_with_path(&["doctor", "--fix"], &ws, &path);
     let config = project_dir.join(".cargo/config.toml");
-    assert!(config.is_file(), "fixture: activation should have authored it");
+    assert!(
+        config.is_file(),
+        "fixture: activation should have authored it"
+    );
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
     let tracked_bytes = std::fs::read(&config).unwrap();
