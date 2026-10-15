@@ -78,6 +78,21 @@ const FORBIDDEN: &[&str] = &[
 
 const ALLOWLIST: &[Allowed] = &[
     Allowed {
+        file: "add_remove.rs",
+        pattern: "remove_dir_all",
+        count: 1,
+        callers: &[],
+        justification: "AddLeftovers::refused, taking back a repository \
+            `rwv add --new` created before it was refused: the bare upstream \
+            or the new member. Only a path recorded as Made::Repo, and \
+            recorded only after the add saw nothing there, so it holds \
+            nothing but what this add put in it: an empty bare repository, \
+            or a clone of one, or a fresh `git init`. Never reached once \
+            rwv.toml lists the member (a failed install hook leaves the \
+            member standing). Directories made to hold them are removed \
+            with remove_dir, which refuses a non-empty one.",
+    },
+    Allowed {
         file: "sync.rs",
         pattern: "remove_dir_all",
         count: 1,
