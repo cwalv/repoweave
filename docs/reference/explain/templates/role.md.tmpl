@@ -48,7 +48,7 @@ Run `rwv --help role` for the full clap surface.
 
 Progress messages go to stderr: the integration activation output, then the
 change made. When the repo already has the role, `role` leaves `rwv.toml`
-alone, settles the member's files for that role (so it finishes a hand edit of the role), and
+alone, regenerates from it, settles the member's files for that role (so it finishes a hand edit of the role), and
 reports how many files it settled.
 
 ## Exit codes

@@ -16,8 +16,8 @@ use anyhow::Context;
 /// settled for whichever role `rwv.toml` holds afterwards, so a regeneration
 /// that put the edit back leaves the files as they were.
 ///
-/// A role `rwv.toml` already holds is not rewritten, but the member's files are
-/// still settled for it, so a hand edit of the role is finished by re-running
+/// A role `rwv.toml` already holds is not rewritten, but the generated files are
+/// regenerated and the member's files settled for it, so a hand edit of the role is finished by re-running
 /// this.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
@@ -56,6 +56,7 @@ pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Resul
     }
 
     if was == role {
+        settle_manifest(ctx, &project, None)?;
         let changed = if checked_out {
             crate::settle::settle(vcs.as_ref(), &member, role)
                 .with_context(|| format!("failed to settle the files of '{repo_path}'"))?

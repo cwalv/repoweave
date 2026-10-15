@@ -340,6 +340,11 @@ fn an_unchanged_reference_role_makes_the_files_read_only() {
         describe(&out)
     );
     assert_read_only(&beta, "after re-running the role");
+    let generated = weave.generated_members(&weave.ws);
+    assert!(
+        !generated.contains(&weave.beta) && generated.contains(&weave.alpha),
+        "the generated Cargo workspace drops the reference member:\n{generated}"
+    );
     assert_eq!(std::fs::read(&toml).unwrap(), manifest);
     assert_eq!(
         manifest_mtime(&weave),
