@@ -792,3 +792,22 @@ fn doctor_reports_the_disagreement_and_agrees_on_permissions_whichever_project_i
         );
     }
 }
+
+#[test]
+fn a_role_made_reference_in_one_project_leaves_a_clone_another_declares_owned_writable() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    weave.commit_manifest(&weave.project_dir(), "owned", "owned");
+    add_project(&weave, OTHER_PROJECT, "owned");
+    activate(&weave, OTHER_PROJECT);
+
+    succeed(
+        &["role", "--project", PROJECT, REF_PATH, "reference"],
+        &weave.primary,
+    );
+
+    assert_writable(
+        &weave.reference,
+        &format!("after {PROJECT} made it reference, while {OTHER_PROJECT} declares it owned"),
+    );
+}
