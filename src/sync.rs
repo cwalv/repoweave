@@ -3665,10 +3665,9 @@ fn guard_and_mark<'a>(
         ) {
             Ok(relocked) => relocked,
             Err(e) => {
-                let restored = match &lock_found {
-                    Some(bytes) => std::fs::write(&lock_path, bytes),
-                    None => std::fs::remove_file(&lock_path),
-                };
+                let restored = lock_found
+                    .as_ref()
+                    .map_or(Ok(()), |bytes| std::fs::write(&lock_path, bytes));
                 for (dir, id) in &project_anchors {
                     delete_savepoint(project_vcs.as_ref(), dir, id);
                 }
