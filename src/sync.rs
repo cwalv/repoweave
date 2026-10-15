@@ -1575,8 +1575,43 @@ fn replay_exclusion_source_only_refusal(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 helpers: materialize new repos / prune dropped repos
+// Replay helpers: materialize new repos / prune dropped repos
 // ---------------------------------------------------------------------------
+
+/// CWD's manifest as the op found it, read at the project repo's savepoint so
+/// a resumed replay weighs the same member set the interrupted run did.
+fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
+    let vcs = ctx.project_vcs.as_ref();
+    let savepoint = vcs
+        .resolve_savepoint(&ctx.cwd_project_dir, ctx.op_id.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal: no savepoint under op {} in {}",
+                ctx.op_id.as_str(),
+                ctx.cwd_project_dir.display(),
+            )
+        })?;
+    let content = vcs
+        .read_file_at_revision(
+            &ctx.cwd_project_dir,
+            &savepoint,
+            Path::new(Manifest::FILE_NAME),
+        )
+        .with_context(|| {
+            format!(
+                "failed to read {} at the op's savepoint {}",
+                Manifest::FILE_NAME,
+                short_sha(savepoint.as_str())
+            )
+        })?;
+    Manifest::from_toml_str(&content).with_context(|| {
+        format!(
+            "the {} at the op's savepoint {} does not parse",
+            Manifest::FILE_NAME,
+            short_sha(savepoint.as_str())
+        )
+    })
+}
 
 /// Materialize a repo that's listed in the (source) lock but missing from the
 /// CWD workspace on disk.
@@ -1587,7 +1622,7 @@ fn replay_exclusion_source_only_refusal(
 ///   `rwv fetch`'s clone path).
 ///
 /// `entry` carries the manifest URL. Caller is responsible for the
-/// surrounding sync flow (Phase 2 will then call `sync_one_repo` to land HEAD
+/// surrounding sync flow (replay will then call `sync_one_repo` to land HEAD
 /// on its target).
 fn materialize_missing_repo(
     vcs: &dyn Vcs,
@@ -1625,69 +1660,6 @@ fn materialize_missing_repo(
         }
     }
     Ok(None)
-}
-
-/// Why the source's lock lacks a path CWD's lock names.
-///
-/// Replay prunes the checkout only when the op ends with CWD's lock no
-/// longer naming the path: the source dropped it, or CWD is discarding its
-/// own commits. A replay applies CWD's commits on top of the source's, so a
-/// path CWD added survives into CWD's next lock and its checkout is kept.
-#[derive(Debug, PartialEq, Eq)]
-enum SourceLockAbsence {
-    /// The lock CWD and the source last shared names it.
-    DroppedBySource,
-    /// `--discard-local-commits` hands CWD the source's lock as it stands.
-    DiscardedHere,
-    /// CWD added it after the lock both sides last shared.
-    AddedHere,
-    /// No lock both sides shared could be read; the string says why.
-    Undetermined(String),
-}
-
-impl SourceLockAbsence {
-    fn classify(shared: &anyhow::Result<Option<LockFile>>, repo_path: &RepoPath) -> Self {
-        match shared {
-            Ok(Some(lock)) if lock.contains_repo(repo_path) => Self::DroppedBySource,
-            Ok(Some(_)) => Self::AddedHere,
-            Ok(None) => Self::Undetermined("the two project histories share no commit".to_owned()),
-            Err(e) => Self::Undetermined(format!("{e:#}")),
-        }
-    }
-}
-
-/// The lock committed at the common ancestor of CWD's and the source's
-/// project tips, or `None` when the two histories share no commit.
-fn shared_lock(
-    vcs: &dyn Vcs,
-    project_dir: &Path,
-    cwd_tip: &ResolvedRevisionId,
-    source_tip: &ResolvedRevisionId,
-) -> anyhow::Result<Option<LockFile>> {
-    let Some(base) = vcs
-        .common_ancestor(project_dir, cwd_tip, source_tip)
-        .context("the common ancestor of the two project tips could not be read")?
-    else {
-        return Ok(None);
-    };
-    let content = vcs
-        .read_file_at_revision(project_dir, &base, Path::new(LockFile::FILE_NAME))
-        .with_context(|| {
-            format!(
-                "no {} readable at their common ancestor {}",
-                LockFile::FILE_NAME,
-                short_sha(base.as_str())
-            )
-        })?;
-    LockFile::from_json_str(&content)
-        .map(Some)
-        .with_context(|| {
-            format!(
-                "the {} at their common ancestor {} does not parse",
-                LockFile::FILE_NAME,
-                short_sha(base.as_str())
-            )
-        })
 }
 
 /// R4: refuse to destroy `store` while anything still claims it.
@@ -2409,8 +2381,6 @@ enum ClassifySource {
 struct SourceSnapshot {
     /// Source project tip at T0.
     source_project_tip: ResolvedRevisionId,
-    /// Source manifest, read at `source_project_tip`.
-    source_manifest: Manifest,
     /// Source lock (raw, unresolved), read at `source_project_tip`.
     raw_source_lock: LockFile,
     /// `raw_source_lock` resolved ONCE, against the SOURCE workspace, at T0.
@@ -4666,8 +4636,9 @@ fn display_count(n: Option<usize>) -> String {
 // Phase: replay
 // ---------------------------------------------------------------------------
 //
-// Pins the source snapshot at T0 (first entry only), then runs Phase 2
-// (manifest repos) + Phase 1' (project repo). Per-repo parallelism and
+// Runs Phase 1' (project repo), materializes the members its manifest names,
+// replays the manifest repos, then prunes the members that manifest no longer
+// names. Per-repo parallelism and
 // partial-failure reporting live inside this phase — the `--json` / NDJSON
 // contracts are byte-compatible with the pre-restructure shape.
 //
@@ -4703,10 +4674,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // converged repos no-op via `sync_one_repo`'s head-equals-target check.
     let snapshot = &ctx.snapshot;
 
-    // Load CWD project (manifest + lock) from disk.
-    let cwd_project = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
-        .context("failed to load CWD project")?;
-
     // CWD project tip — read before any side effects so Phase 1' has the
     // pre-op starting state for its `cwd_tip == source_tip` short-circuit.
     let cwd_project_tip = ctx
@@ -4714,7 +4681,89 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
 
-    // === Phase 2 (manifest repos) — materialize missing, prune dropped, sync ===
+    // === Phase 1' (project repo) — strategy on the project repo ===
+
+    let phase1_outcome = if ctx.discard_local_commits {
+        // --discard-local-commits: rewind CWD's project repo to source's tip,
+        // discarding any project commits not reachable from source. Guard
+        // already refused on uncommitted changes.
+        //
+        // A rewinding MOVE needs a `DiscardWarrant`, and the warrant
+        // needs a savepoint that has actually been written — not one that is
+        // planned. `guard_and_mark` wrote it before this phase, which is what
+        // keeps the discarded commits reachable through `rwv abort`, so this
+        // *resolves* that savepoint rather than creating one: re-creating it
+        // here would move the recovery point to the tip we are about to
+        // discard from, on every `--continue`.
+        rewind_project_repo(ctx, &snapshot.source_project_tip)
+    } else {
+        apply_project_strategy(
+            ctx.project_vcs.as_ref(),
+            &ctx.cwd_project_dir,
+            &snapshot.source_project_tip,
+            &cwd_project_tip,
+            ctx.strategy,
+            ctx.verb,
+        )
+    };
+
+    if let Err(e) = phase1_outcome {
+        if emit_text {
+            eprintln!("Phase 1' (project repo) failed: {e:#}");
+        }
+        // Only teach the VCS-native resume when the project repo is actually
+        // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
+        // failure or a non-conflict rebase error leaves no in-flight VCS op.
+        let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
+        crate::refuse!(
+            RefusalKind::OpParked,
+            "{}",
+            phase1_or_phase3_failure_message(
+                ctx.project_vcs.as_ref(),
+                Phase::One,
+                &ctx.cwd_project_dir,
+                ctx.verb,
+                live_conflict,
+            )
+        );
+    }
+
+    // === advanced_tips write 2: capture actual post-Phase-1' project repo tip ===
+    //
+    // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
+    // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite the
+    // project repo's advanced_tips entry with the actual post-rebase HEAD.
+    // This also covers the ff/discard-local-commits case (tip == source tip,
+    // idempotent overwrite).
+    {
+        let project_tip = ctx
+            .project_vcs
+            .head_revision(&ctx.cwd_project_dir)
+            .context("failed to read project HEAD after Phase 1'")?;
+        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
+            .ok_or_else(|| anyhow::anyhow!("internal: owner record missing after Phase 1'"))?;
+        owner
+            .tips
+            .advanced_mut()
+            .ok_or_else(|| {
+                anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
+            })?
+            .insert(
+                project_repo_key().to_owned(),
+                project_tip.as_str().to_owned(),
+            );
+        op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+            .context("failed to write advanced_tips after Phase 1'")?;
+    }
+
+    // === Member set: decided against the manifest Phase 1' produced ===
+    //
+    // Checkouts are added and removed only below this point, and removed only
+    // after every manifest repo replayed, so an op that parks leaves every
+    // checkout in place for `rwv abort`, which restores refs and nothing else.
+    let replayed = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
+        .context("failed to load CWD project after Phase 1'")?;
+    let pre_op_manifest = pre_op_manifest(ctx)?;
 
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
     for repo_path in snapshot.raw_source_lock.iter_repo_paths() {
@@ -4722,9 +4771,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if abs.exists() {
             continue;
         }
-        let entry = match snapshot.source_manifest.get_entry(repo_path) {
-            Some(e) => e,
-            None => continue,
+        let Some(entry) = replayed.manifest.get_entry(repo_path) else {
+            continue;
         };
         // Born where replay will aim it, so the new checkout needs no move.
         let start = snapshot
@@ -4763,73 +4811,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     eprintln!("  {repo_path}: materialize failed: {e:#}");
                 }
                 materialize_failures.push(repo_path.clone());
-            }
-        }
-    }
-
-    if let Some(ref cwd_lock) = cwd_project.lock {
-        let mut shared: Option<anyhow::Result<Option<LockFile>>> = None;
-        for repo_path in cwd_lock.iter_repo_paths() {
-            if snapshot.raw_source_lock.contains_repo(repo_path) {
-                continue;
-            }
-            let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-            let absence = if ctx.discard_local_commits {
-                SourceLockAbsence::DiscardedHere
-            } else {
-                let shared = shared.get_or_insert_with(|| {
-                    shared_lock(
-                        ctx.project_vcs.as_ref(),
-                        &ctx.cwd_project_dir,
-                        &cwd_project_tip,
-                        &snapshot.source_project_tip,
-                    )
-                });
-                SourceLockAbsence::classify(shared, repo_path)
-            };
-            let report_kept = emit_text && abs.exists();
-            match absence {
-                SourceLockAbsence::DroppedBySource | SourceLockAbsence::DiscardedHere => {}
-                SourceLockAbsence::AddedHere => {
-                    if report_kept {
-                        println!("  {repo_path}: kept (added here; not in the source's lock yet)");
-                    }
-                    continue;
-                }
-                SourceLockAbsence::Undetermined(why) => {
-                    if report_kept {
-                        println!(
-                            "  {repo_path}: kept (not in the source's lock, and nothing shows \
-                             the source dropped it: {why})"
-                        );
-                    }
-                    continue;
-                }
-            }
-            // The lock named this path and no longer does, so there is no
-            // entry to resolve a backend from unless the manifest still
-            // carries one.
-            let dropped_vcs = cwd_project
-                .manifest
-                .get_entry(repo_path)
-                .map(|e| vcs_for(e.vcs_type))
-                .unwrap_or_else(crate::vcs::probe_vcs);
-            match prune_dropped_repo(
-                dropped_vcs.as_ref(),
-                &ctx.cwd_ctx,
-                repo_path,
-                &ctx.cwd_project_name,
-            ) {
-                Ok(()) => {
-                    if emit_text {
-                        println!("  {repo_path}: pruned (dropped from lock)");
-                    }
-                }
-                Err(e) => {
-                    if emit_text {
-                        eprintln!("  {repo_path}: prune skipped: {e:#}");
-                    }
-                }
             }
         }
     }
@@ -4888,7 +4869,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         };
         // The lock names paths; the manifest names backends. A lock entry
         // with no manifest entry has no declared backend to resolve from.
-        let vcs = cwd_project
+        let vcs = replayed
             .manifest
             .get_entry(repo_path)
             .map(|e| vcs_for(e.vcs_type))
@@ -5065,79 +5046,38 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    // === Phase 1' (project repo) — strategy on the project repo ===
-
-    let phase1_outcome = if ctx.discard_local_commits {
-        // --discard-local-commits: rewind CWD's project repo to source's tip,
-        // discarding any project commits not reachable from source. Guard
-        // already refused on uncommitted changes.
-        //
-        // A rewinding MOVE needs a `DiscardWarrant`, and the warrant
-        // needs a savepoint that has actually been written — not one that is
-        // planned. `guard_and_mark` wrote it before this phase, which is what
-        // keeps the discarded commits reachable through `rwv abort`, so this
-        // *resolves* that savepoint rather than creating one: re-creating it
-        // here would move the recovery point to the tip we are about to
-        // discard from, on every `--continue`.
-        rewind_project_repo(ctx, &snapshot.source_project_tip)
-    } else {
-        apply_project_strategy(
-            ctx.project_vcs.as_ref(),
-            &ctx.cwd_project_dir,
-            &snapshot.source_project_tip,
-            &cwd_project_tip,
-            strategy,
-            ctx.verb,
-        )
-    };
-
-    if let Err(e) = phase1_outcome {
-        if emit_text {
-            eprintln!("Phase 1' (project repo) failed: {e:#}");
+    for repo_path in replayed.manifest.iter_repo_paths() {
+        if emit_text
+            && !snapshot.raw_source_lock.contains_repo(repo_path)
+            && ctx.cwd_workspace_dir.join(repo_path.as_path()).exists()
+        {
+            println!(
+                "  {repo_path}: kept (not in the source's lock; the replayed manifest names it)"
+            );
         }
-        // Only teach the VCS-native resume when the project repo is actually
-        // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
-        // failure or a non-conflict rebase error leaves no in-flight VCS op.
-        let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
-        crate::refuse!(
-            RefusalKind::OpParked,
-            "{}",
-            phase1_or_phase3_failure_message(
-                ctx.project_vcs.as_ref(),
-                Phase::One,
-                &ctx.cwd_project_dir,
-                ctx.verb,
-                live_conflict,
-            )
-        );
     }
 
-    // === advanced_tips write 2: capture actual post-Phase-1' project repo tip ===
-    //
-    // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
-    // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite the
-    // project repo's advanced_tips entry with the actual post-rebase HEAD.
-    // This also covers the ff/discard-local-commits case (tip == source tip,
-    // idempotent overwrite).
-    {
-        let project_tip = ctx
-            .project_vcs
-            .head_revision(&ctx.cwd_project_dir)
-            .context("failed to read project HEAD after Phase 1'")?;
-        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
-            .ok_or_else(|| anyhow::anyhow!("internal: owner record missing after Phase 1'"))?;
-        owner
-            .tips
-            .advanced_mut()
-            .ok_or_else(|| {
-                anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
-            })?
-            .insert(
-                project_repo_key().to_owned(),
-                project_tip.as_str().to_owned(),
-            );
-        op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-            .context("failed to write advanced_tips after Phase 1'")?;
+    for (repo_path, entry) in pre_op_manifest.iter_entries() {
+        if replayed.manifest.contains_repo(repo_path) {
+            continue;
+        }
+        match prune_dropped_repo(
+            vcs_for(entry.vcs_type).as_ref(),
+            &ctx.cwd_ctx,
+            repo_path,
+            &ctx.cwd_project_name,
+        ) {
+            Ok(()) => {
+                if emit_text {
+                    println!("  {repo_path}: pruned (dropped from lock)");
+                }
+            }
+            Err(e) => {
+                if emit_text {
+                    eprintln!("  {repo_path}: prune skipped: {e:#}");
+                }
+            }
+        }
     }
 
     settle_members(
@@ -5322,7 +5262,6 @@ fn pin_source_snapshot(
 
     Ok(SourceSnapshot {
         source_project_tip,
-        source_manifest,
         raw_source_lock,
         source_lock,
         source_class,
@@ -8569,81 +8508,6 @@ mod tests {
             operator_tip,
             "the operator's branch must survive the refusal at its own tip"
         );
-    }
-
-    fn commit_lock(dir: &Path, paths: &[&str]) -> ResolvedRevisionId {
-        let entries: Vec<String> = paths
-            .iter()
-            .map(|p| {
-                format!(
-                    "{p:?}: {{\"type\": \"git\", \"url\": \"file:///x\", \"version\": \"{}\"}}",
-                    "a".repeat(40)
-                )
-            })
-            .collect();
-        let lock =
-            LockFile::from_json_str(&format!("{{\"repositories\": {{{}}}}}", entries.join(",")))
-                .unwrap();
-        crate::lock::write_lock(&lock, &dir.join(LockFile::FILE_NAME)).unwrap();
-        git(dir, &["add", "."]);
-        git(dir, &["commit", "-m", "lock"]);
-        git_vcs().head_revision(dir).unwrap()
-    }
-
-    fn absence(
-        dir: &Path,
-        cwd: &ResolvedRevisionId,
-        source: &ResolvedRevisionId,
-    ) -> SourceLockAbsence {
-        let shared = shared_lock(git_vcs().as_ref(), dir, cwd, source);
-        SourceLockAbsence::classify(&shared, &dropped())
-    }
-
-    #[test]
-    fn the_lock_at_the_common_ancestor_tells_a_drop_from_an_add() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("r");
-        init_repo(&repo);
-        let base = commit_lock(&repo, &[dropped().as_str()]);
-        let source = commit_lock(&repo, &[]);
-        git(&repo, &["checkout", "-b", "cwd", base.as_str()]);
-        assert_eq!(
-            absence(&repo, &base, &source),
-            SourceLockAbsence::DroppedBySource
-        );
-
-        let added_repo = tmp.path().join("a");
-        init_repo(&added_repo);
-        let base = commit_lock(&added_repo, &[]);
-        let cwd = commit_lock(&added_repo, &[dropped().as_str()]);
-        git(&added_repo, &["checkout", "-b", "source", base.as_str()]);
-        let source = commit(&added_repo, "source-work");
-        assert_eq!(
-            absence(&added_repo, &cwd, &source),
-            SourceLockAbsence::AddedHere
-        );
-    }
-
-    #[test]
-    fn without_a_lock_both_sides_shared_the_absence_is_undetermined() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("r");
-        init_repo(&repo);
-        let unlocked_base = git_vcs().head_revision(&repo).unwrap();
-        let cwd = commit_lock(&repo, &[dropped().as_str()]);
-        git(&repo, &["checkout", "-b", "source", unlocked_base.as_str()]);
-        let source = commit_lock(&repo, &[]);
-        let SourceLockAbsence::Undetermined(why) = absence(&repo, &cwd, &source) else {
-            panic!("a common ancestor with no lock must leave the absence undetermined");
-        };
-        assert!(why.contains("no rwv.lock readable"), "{why}");
-
-        git(&repo, &["checkout", "--orphan", "disjoint"]);
-        let disjoint = commit_lock(&repo, &[]);
-        let SourceLockAbsence::Undetermined(why) = absence(&repo, &cwd, &disjoint) else {
-            panic!("disjoint histories must leave the absence undetermined");
-        };
-        assert!(why.contains("share no commit"), "{why}");
     }
 
     #[test]

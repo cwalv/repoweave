@@ -1,7 +1,7 @@
-//! What replay does with a member CWD's lock names and the source's lock does
-//! not. It prunes the checkout only when the op ends with CWD's lock no longer
-//! naming the member, and keeps one CWD added that the source has not taken
-//! yet. Role plays no part.
+//! Which checkouts replay adds and removes. Both are decided against the
+//! manifest the project-repo replay produces: a member it names is never
+//! pruned, a member it does not name is never materialized, and nothing is
+//! pruned until every repo has replayed. Role plays no part.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -148,7 +148,7 @@ fn a_seat_that_adds_a_reference_member_lands_and_retires_with_it() {
     assert_no_prune_line(&stdout);
     assert!(
         stdout.contains(&format!(
-            "{EXTRA}: kept (added here; not in the source's lock yet)"
+            "{EXTRA}: kept (not in the source's lock; the replayed manifest names it)"
         )),
         "the replay must say it kept the member and why:\n{stdout}"
     );
@@ -251,9 +251,8 @@ fn discarding_local_commits_prunes_the_member_they_added() {
     assert!(!names_extra(&s1) && !names_extra(&weave.root));
 }
 
-/// With no commit in common there is no lock both sides shared, so nothing
-/// shows the source dropped the member. Replaying CWD's whole history onto
-/// the source keeps CWD's member in CWD's lock, so the checkout stays.
+/// Replaying CWD's whole history onto a source it shares no commit with keeps
+/// CWD's member in the replayed manifest, so the checkout stays.
 #[test]
 fn a_seat_with_no_history_in_common_with_its_target_keeps_its_members() {
     let weave = weave();
@@ -270,10 +269,153 @@ fn a_seat_with_no_history_in_common_with_its_target_keeps_its_members() {
     assert_not_pruned(&stdout, &s1);
     assert!(
         stdout.contains(&format!(
-            "{EXTRA}: kept (not in the source's lock, and nothing shows the source dropped \
-             it: the two project histories share no commit)"
+            "{EXTRA}: kept (not in the source's lock; the replayed manifest names it)"
         )),
         "the replay must say it kept the member and why:\n{stdout}"
     );
     assert!(names_extra(&weave.root), "the target must name the member");
+}
+
+/// `rwv remove` (checkout kept), `rwv lock`, then commit both files.
+fn drop_and_commit(workspace: &Path) {
+    succeed(workspace, &["remove", EXTRA]);
+    succeed(workspace, &["lock"]);
+    let project = project_dir(workspace);
+    common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project, &["commit", "-m", "drop extra"]);
+}
+
+fn commit_note(workspace: &Path, text: &str) {
+    let project = project_dir(workspace);
+    std::fs::write(project.join("notes.txt"), text).unwrap();
+    common::git_in(&project, &["add", "notes.txt"]);
+    common::git_in(&project, &["commit", "-m", "note"]);
+}
+
+fn head(repo: &Path) -> String {
+    common::git_in(repo, &["rev-parse", "HEAD"])
+}
+
+/// The target drops the member; the seat drops it and adds it back. The
+/// replayed manifest names it, so the seat keeps its own checkout and the
+/// landed lock pins the seat's commit — never the primary clone's, which has
+/// moved on since.
+#[test]
+fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
+    let weave = weave();
+    add_and_commit(&weave.root, &weave.extra_url, "owned");
+    let target = seat(&weave, &weave.root, "target");
+    let s1 = seat(&weave, &target, "s1");
+    let own = head(&common::under(&s1, EXTRA));
+
+    let manifest = std::fs::read_to_string(project_dir(&s1).join("rwv.toml")).unwrap();
+    drop_and_commit(&s1);
+    std::fs::write(project_dir(&s1).join("rwv.toml"), manifest).unwrap();
+    succeed(&s1, &["lock"]);
+    common::git_in(&project_dir(&s1), &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&project_dir(&s1), &["commit", "-m", "re-add extra"]);
+
+    drop_and_commit(&target);
+
+    let canonical = common::under(&weave.root, EXTRA);
+    std::fs::write(canonical.join("later.txt"), "later\n").unwrap();
+    common::git_in(&canonical, &["add", "later.txt"]);
+    common::git_in(&canonical, &["commit", "-m", "primary moves on"]);
+    let primary_tip = head(&canonical);
+
+    let stdout = succeed(&s1, &["sync-to", "--strategy", "rebase"]);
+    assert_not_pruned(&stdout, &s1);
+    assert_eq!(head(&common::under(&s1, EXTRA)), own);
+    for workspace in [&s1, &target] {
+        assert!(
+            names_extra(workspace),
+            "{} must name the member",
+            workspace.display()
+        );
+        let lock = std::fs::read_to_string(project_dir(workspace).join("rwv.lock")).unwrap();
+        assert!(
+            lock.contains(&own) && !lock.contains(&primary_tip),
+            "the lock in {} must pin the seat's own commit {own}, not the primary \
+             clone's {primary_tip}:\n{lock}",
+            workspace.display()
+        );
+    }
+}
+
+/// The source drops the member and its project history conflicts with the
+/// seat's, so the replay parks on the project repo.
+fn parked_pull_of_a_drop(weave: &Weave) -> PathBuf {
+    add_and_commit(&weave.root, &weave.extra_url, "owned");
+    let s1 = seat(weave, &weave.root, "s1");
+    commit_note(&s1, "seat\n");
+    commit_note(&weave.root, "primary\n");
+    drop_and_commit(&weave.root);
+
+    let out = run(&s1, &["sync", "primary", "--strategy", "rebase"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !out.status.success(),
+        "the conflicting note must park the replay:\nstdout:\n{stdout}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_not_pruned(&stdout, &s1);
+    s1
+}
+
+#[test]
+fn a_replay_parked_on_the_project_repo_prunes_nothing_and_abort_keeps_the_checkout() {
+    let weave = weave();
+    let s1 = parked_pull_of_a_drop(&weave);
+
+    succeed(&s1, &["abort"]);
+    assert!(
+        common::under(&s1, EXTRA).is_dir(),
+        "abort must leave the checkout the parked op found"
+    );
+    assert!(
+        names_extra(&s1),
+        "abort must leave the seat naming the member"
+    );
+}
+
+#[test]
+fn a_prune_deferred_by_a_parked_replay_runs_on_continue() {
+    let weave = weave();
+    let s1 = parked_pull_of_a_drop(&weave);
+
+    let project = project_dir(&s1);
+    std::fs::write(project.join("notes.txt"), "resolved\n").unwrap();
+    common::git_in(&project, &["add", "notes.txt"]);
+    let stdout = succeed(&s1, &["sync", "--continue"]);
+    assert!(
+        stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
+        "the resumed replay must prune the member the source dropped:\n{stdout}"
+    );
+    assert!(!common::under(&s1, EXTRA).exists());
+}
+
+/// The seat's own history drops the member (a pull that pruned it); a later
+/// pull from a source still naming it must not bring the checkout back.
+#[test]
+fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() {
+    let weave = weave();
+    add_and_commit(&weave.root, &weave.extra_url, "owned");
+    let s1 = seat(&weave, &weave.root, "s1");
+    let s2 = seat(&weave, &weave.root, "s2");
+    drop_and_commit(&s2);
+
+    let s2_dir = s2.to_string_lossy().into_owned();
+    let stdout = succeed(&s1, &["sync", &s2_dir]);
+    assert!(
+        stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
+        "{stdout}"
+    );
+
+    let stdout = succeed(&s1, &["sync", "primary", "--strategy", "rebase"]);
+    assert!(
+        !stdout.contains(&format!("{EXTRA}: materialized")),
+        "a member the seat dropped must not be re-created:\n{stdout}"
+    );
+    assert!(!common::under(&s1, EXTRA).exists());
+    assert!(!names_extra(&s1));
 }
