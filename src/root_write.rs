@@ -386,6 +386,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_differing_copy_in_a_project_outside_version_control_is_a_conflict() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let project = root.join("projects/demo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(project.join("Cargo.lock"), "# the project's\n").unwrap();
+        std::fs::write(root.join("Cargo.lock"), "# the tool's\n").unwrap();
+
+        let verdict = read(root, &ProjectName::new("demo").unwrap(), "Cargo.lock")
+            .unwrap()
+            .unwrap()
+            .verdict(crate::vcs::project_vcs().as_ref(), root);
+
+        assert_eq!(verdict.unwrap(), Verdict::Conflict);
+    }
+
     fn hidden_edit_under(flag: &str) -> Verdict {
         verdict_over(|repo| {
             commit_lock(repo, "# committed\n");

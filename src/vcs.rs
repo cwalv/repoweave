@@ -2062,7 +2062,8 @@ pub trait Vcs: Send + Sync {
     ///
     /// Read from the file itself: no index state, status flag or staged
     /// rename bears on the answer. `false` when either side has no regular
-    /// file at `path`, including before the first commit.
+    /// file at `path`, including before the first commit, and when `repo` is
+    /// not a repository at all. `Err` is a failure of the VCS inside one.
     ///
     /// For git: compares `git hash-object --no-filters` of the file against
     /// the blob `git ls-tree HEAD` records at `path`.

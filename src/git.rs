@@ -1544,7 +1544,10 @@ impl Vcs for GitVcs {
     fn holds_committed_content(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
         let is_file =
             std::fs::symlink_metadata(repo.join(path)).is_ok_and(|meta| meta.file_type().is_file());
-        if !is_file || matches!(self.head_attachment(repo)?, HeadAttachment::Unborn(_)) {
+        if !is_file
+            || !self.is_repo(repo)
+            || matches!(self.head_attachment(repo)?, HeadAttachment::Unborn(_))
+        {
             return Ok(false);
         }
         let path = path_as_git_arg(path, "path")?;
