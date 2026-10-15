@@ -114,7 +114,12 @@ Progress messages to stderr:
 - `Repository already exists in manifest at '<repo-path>'; re-running its
   activation` — the manifest is left as it is, and activation runs again, so a
   weave an earlier run left short (a surfaced link gone missing, install hooks
-  that failed) is repaired by repeating the same command.
+  that failed) is repaired by repeating the same command. An entry written into
+  `rwv.toml` by hand is finished the same way: when its canonical clone is not
+  on disk, `add` clones it from the URL the manifest records, creates the
+  workweave's worktree when run in one, then regenerates. The URL given must
+  name the same repo as the manifest's entry, or the add refuses
+  (`occupied-placement`).
 - `Directory already exists at '<path>', skipping clone` — clone present,
   not re-cloned.
 
@@ -186,5 +191,5 @@ rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "rep
   table above) was not supplied by the address, `--param`, or `--params-json`.
 - *duplicate creation parameter* — the same parameter name arrived through
   more than one of the address shorthand, `--param`, and `--params-json`.
-- *occupied placement* — the creation address's placement already maps to a
-  different URL in the manifest.
+- *occupied placement* — the URL's or creation address's placement already
+  maps to a different URL in the manifest.

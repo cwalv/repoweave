@@ -317,7 +317,29 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     let dest = ctx.primary_path().join(repo_path.as_path());
 
     if let Some(existing) = manifest.get_entry(&repo_path) {
+        if !crate::manifest::clone_urls_equivalent(&existing.url.to_string(), url) {
+            crate::refuse!(
+                RefusalKind::OccupiedPlacement,
+                "'{}' already maps to '{}' in the manifest; this add would map it to \
+                 '{}' instead. Re-run with the manifest's URL to finish that entry, or \
+                 `rwv remove {}` first if replacing it is what's intended.",
+                repo_path.as_str(),
+                existing.url,
+                url,
+                repo_path.as_str()
+            );
+        }
         announce_already_registered(&repo_path);
+        if !dest.exists() {
+            warn_if_shared_clone(
+                ctx.primary_path(),
+                &project,
+                &repo_path,
+                &dest,
+                existing.role,
+            );
+            clone_into(vcs.as_ref(), &existing.url, &dest)?;
+        }
         place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
         return settle_manifest(ctx, &project, None);
     }
@@ -334,14 +356,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             dest.display()
         );
     } else {
-        // Create parent directories.
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create directory {}", parent.display()))?;
-        }
-        let clone_url = crate::registry::resolve_to_clone_info(&parsed_url)?.url;
-        vcs.clone_repo(&clone_url.to_string(), &dest)
-            .with_context(|| format!("failed to clone '{}' into {}", clone_url, dest.display()))?;
+        clone_into(vcs.as_ref(), &parsed_url, &dest)?;
     }
 
     let Some(remote_default) = vcs
@@ -378,6 +393,17 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     settle_manifest(ctx, &project, Some(&manifest))?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
+    Ok(())
+}
+
+fn clone_into(vcs: &dyn Vcs, url: &RepoUrl, dest: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+    let clone_url = crate::registry::resolve_to_clone_info(url)?.url;
+    vcs.clone_repo(&clone_url.to_string(), dest)
+        .with_context(|| format!("failed to clone '{}' into {}", clone_url, dest.display()))?;
     Ok(())
 }
 

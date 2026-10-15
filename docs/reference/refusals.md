@@ -466,8 +466,8 @@ there is no frame to interpret the command in.
 
 ### `occupied-placement`
 
-**Condition.** An `rwv add --new` creation address places at a path the
-manifest already maps to a different URL.
+**Condition.** An `rwv add <url>`, or an `rwv add --new` creation address,
+places at a path the manifest already maps to a different URL.
 
 **Why.** Placement is a function of the identity a registry mints, not of a
 creation parameter like `--param root=<dir>`. Two different roots naming the
@@ -475,8 +475,9 @@ same owner and repo would both place at the same path if this proceeded
 silently, and the second creation would overwrite the first's meaning in the
 manifest without saying so.
 
-**Exits.** Use a different owner or repo so the two do not collide, or remove
-the existing entry first if replacing it is what's intended.
+**Exits.** To finish an entry already in the manifest, re-run with the URL it
+records. Otherwise use a different owner or repo so the two do not collide, or
+remove the existing entry first if replacing it is what's intended.
 
 ### `not-fast-forwardable`
 
