@@ -180,47 +180,45 @@ fn concurrent_processes_keep_every_stamp_and_serial_ones_are_the_control() {
     );
 
     // The drive: all N released together, contending on one ledger.
-    // Every attempt asserts the loss invariant, overlapping or not; only an
-    // overlapping attempt counts as evidence, and the first one ends the drive.
-    common::start_gate::drive_until_overlap("stamp", |attempt| {
-        let (_tmp, ledger, windows) = ledger_dirs();
-        let barrier = common::start_gate::gate_in(&windows);
-        let children: Vec<_> = (0..STAMPERS)
-            .map(|i| {
-                stamper(&ledger, &windows, &entry_name(i), Some(&barrier))
-                    .spawn()
-                    .expect("concurrent stamper spawns")
-            })
-            .collect();
-        let names: Vec<String> = (0..STAMPERS).map(entry_name).collect();
-        common::start_gate::open_when_all_ready(&barrier, &names);
-        for (i, child) in children.into_iter().enumerate() {
-            let out = child.wait_with_output().expect("concurrent stamper exits");
-            assert!(
-                out.status.success(),
-                "attempt {attempt}: concurrent stamper {i} failed: {}\n{}",
-                out.status,
-                transcript(&out)
-            );
-        }
-        assert_eq!(
-            common::start_gate::early_arrivals(&barrier, &names),
-            Vec::<String>::new(),
-            "every stamper must reach the barrier before it opens"
+    let (_tmp, ledger, windows) = ledger_dirs();
+    let barrier = common::start_gate::gate_in(&windows);
+    let children: Vec<_> = (0..STAMPERS)
+        .map(|i| {
+            stamper(&ledger, &windows, &entry_name(i), Some(&barrier))
+                .spawn()
+                .expect("concurrent stamper spawns")
+        })
+        .collect();
+    let names: Vec<String> = (0..STAMPERS).map(entry_name).collect();
+    common::start_gate::open_when_all_ready(&barrier, &names);
+    for (i, child) in children.into_iter().enumerate() {
+        let out = child.wait_with_output().expect("concurrent stamper exits");
+        assert!(
+            out.status.success(),
+            "concurrent stamper {i} failed: {}\n{}",
+            out.status,
+            transcript(&out)
         );
+    }
 
-        let retained = attested_owned_files(&ledger);
-        assert_eq!(
-            retained.len(),
-            STAMPERS,
-            "attempt {attempt}: every concurrent stamp must survive: a \
-             whole-map publish that lost one returns Ok, so the entry is gone \
-             with nothing reporting it. Retained {retained:?}"
-        );
-        let concurrent: Vec<_> = windows_in(&windows)
-            .iter()
-            .map(|w| (w.start, w.end))
-            .collect();
-        common::start_gate::overlap_miss(&concurrent)
-    });
+    assert_eq!(
+        common::start_gate::early_arrivals(&barrier, &names),
+        Vec::<String>::new(),
+        "every stamper must reach the barrier before it opens"
+    );
+    let retained = attested_owned_files(&ledger);
+    let concurrent = windows_in(&windows);
+    assert!(
+        share_an_instant(&concurrent),
+        "no instant had every stamp in flight, so this drive did not exercise \
+         the read-modify-write against itself and its result is not evidence \
+         either way: {concurrent:?}"
+    );
+    assert_eq!(
+        retained.len(),
+        STAMPERS,
+        "every concurrent stamp must survive: a whole-map publish that lost \
+         one returns Ok, so the entry is gone with nothing reporting it. \
+         Retained {retained:?}"
+    );
 }
