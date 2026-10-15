@@ -9791,11 +9791,7 @@ fn load_doctor_world(
             if let Some(ref active) = active_project {
                 if name != active {
                     if let Err(e) = Manifest::from_path(&manifest_path) {
-                        unparseable_projects.push((
-                            name.clone(),
-                            manifest_path,
-                            format!("{e:#}"),
-                        ));
+                        unparseable_projects.push((name.clone(), manifest_path, format!("{e:#}")));
                     }
                     continue;
                 }

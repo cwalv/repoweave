@@ -717,9 +717,7 @@ pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTre
 /// The segments of [`scannable_registry_segments`], and whether any project
 /// manifest failed to parse: an unparseable manifest contributes no segments,
 /// so the set is then a lower bound, not the full answer.
-fn registry_segments_and_unparseable(
-    root: &Path,
-) -> (std::collections::BTreeSet<String>, bool) {
+fn registry_segments_and_unparseable(root: &Path) -> (std::collections::BTreeSet<String>, bool) {
     let mut any_unparseable = false;
     let mut segments: std::collections::BTreeSet<String> = builtin_registry_names()
         .iter()
