@@ -1578,6 +1578,25 @@ fn replay_exclusion_source_only_refusal(
 // Replay helpers: materialize new repos / prune dropped repos
 // ---------------------------------------------------------------------------
 
+/// CWD's project as Phase 1' left it: the manifest the op ends with.
+fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
+    Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()).map_err(|e| {
+        crate::refusal::refusal(
+            RefusalKind::UnparseableProject,
+            format!(
+                "failed to reload project manifest after Phase 1' ({e}).\n\
+                 \n\
+                 The project repo was successfully rebased/merged, but the manifest \
+                 in {cwd_project_dir} could not be parsed. Proceeding would silently \
+                 omit newly-added repos from the regenerated lock.\n\
+                 \n\
+                 To recover: `rwv abort`",
+                cwd_project_dir = ctx.cwd_project_dir.display(),
+            ),
+        )
+    })
+}
+
 /// CWD's manifest as the op found it, read at the project repo's savepoint so
 /// a resumed replay weighs the same member set the interrupted run did.
 fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
@@ -4761,8 +4780,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // Checkouts are added and removed only below this point, and removed only
     // after every manifest repo replayed, so an op that parks leaves every
     // checkout in place for `rwv abort`, which restores refs and nothing else.
-    let replayed = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
-        .context("failed to load CWD project after Phase 1'")?;
+    let replayed = reload_replayed_project(ctx)?;
     let pre_op_manifest = pre_op_manifest(ctx)?;
 
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
@@ -5315,24 +5333,7 @@ fn read_member_tips(
 fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
-    // Reload the project after replay (manifest may now include newly-added
-    // repos brought over from source).
-    let cwd_project = Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone())
-        .map_err(|e| {
-            crate::refusal::refusal(
-                RefusalKind::UnparseableProject,
-                format!(
-                    "failed to reload project manifest after Phase 1' ({e}).\n\
-             \n\
-             The project repo was successfully rebased/merged, but the manifest \
-             in {cwd_project_dir} could not be parsed. Proceeding would silently \
-             omit newly-added repos from the regenerated lock.\n\
-             \n\
-             To recover: `rwv abort`",
-                    cwd_project_dir = ctx.cwd_project_dir.display(),
-                ),
-            )
-        })?;
+    let cwd_project = reload_replayed_project(ctx)?;
 
     if let Err(e) = regenerate_lock_phase3(
         ctx.project_vcs.as_ref(),

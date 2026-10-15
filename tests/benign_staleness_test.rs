@@ -751,13 +751,12 @@ fn relation_ahead_sync_from_workweave_source_pulls_tips_with_note() {
 /// distinct revisions the destination starts at neither of: what the resume
 /// leaves behind names which of the two replay targeted.
 ///
-/// The strand is a project-repo conflict. Replay syncs the MEMBER repos first
-/// and the project repo second, so this stops the op with the members already
-/// landed under the fresh invocation's pin — which is why the source then
-/// commits again inside the operator's window. The resume re-pins at its own
-/// T0, so that later commit is what tips-as-truth must reach and what the
-/// recorded consent must decline to chase. Without it both outcomes would look
-/// identical to "the resume did nothing".
+/// The strand is a project-repo conflict. Replay replays the project repo
+/// before any member repo, so this stops the op with the members where they
+/// started, and the source then commits again inside the operator's window.
+/// The resume re-pins at its own T0, so that later commit is what tips-as-truth
+/// must reach and what the recorded consent must decline to chase. Without it
+/// both outcomes would look identical to "the resume did nothing".
 struct StrandedPull {
     f: Fixture,
     /// The source's committed lock revision: replay's target under the
@@ -817,10 +816,9 @@ fn strand_a_pull_from_an_ahead_workweave(extra: &[&str]) -> StrandedPull {
         "the pull must strand mid-replay, or there is nothing for `--continue` to resume"
     );
     let dest_after_strand = head(&f.main.manifest_repo);
-    assert_ne!(
+    assert_eq!(
         dest_after_strand, dest_before,
-        "the strand must follow the member sync, or the source's later commit is not \
-         what separates the two targets"
+        "a project-repo strand must come before any member repo moves"
     );
 
     std::fs::write(
@@ -906,9 +904,10 @@ fn a_resumed_pull_carrying_allow_stale_lock_still_targets_the_lock() {
         vec!["allow-stale-lock".to_string()],
         "the consent must reach the record, or the resume has nothing to read back"
     );
-    assert_eq!(
-        sp.dest_after_strand, sp.locked,
-        "setup: the consented fresh pull must have targeted the lock"
+    assert_ne!(
+        sp.locked, sp.tip_at_resume,
+        "setup: the source must have moved past its lock in the window, or the two \
+         targets cannot be told apart"
     );
 
     rwv()

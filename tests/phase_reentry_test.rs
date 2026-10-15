@@ -1096,13 +1096,12 @@ fn retire_abort_restores_source_and_target() {
 fn re_entering_each_phase_independently_completes_to_a_clean_state() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
-    let op_id = "reentry-test-multi";
-
     for phase in ["replay", "relock"] {
-        // Plant owner record at the phase.
+        // Plant owner record at the phase, with savepoints under its id.
         write_owner_record(&ww.root, &primary.root, &ww.root, phase);
-        create_savepoint(&ww.project_dir, op_id);
-        create_savepoint(&ww.server_dir, op_id);
+        let op_id = format!("reentry-test-{phase}");
+        create_savepoint(&ww.project_dir, &op_id);
+        create_savepoint(&ww.server_dir, &op_id);
 
         rwv()
             .args(["sync", "--continue"])
