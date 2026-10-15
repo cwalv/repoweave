@@ -199,6 +199,37 @@ fn matching_origin_url_is_clean() {
     );
 }
 
+/// A local clone whose origin is the bare absolute path, recorded in the
+/// manifest as the percent-encoded `file://` URL of that path, is the same
+/// repo and raises no `origin-url-mismatch`.
+#[test]
+fn encoded_file_url_matches_the_bare_path_origin() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("local/acme/fresh");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "/srv/my repos/caf\u{e9}/fresh");
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "local/acme/fresh",
+            "file:///srv/my%20repos/caf%C3%A9/fresh",
+            "owned",
+        )],
+    );
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("origin-url-mismatch"),
+        "an encoded file URL and the bare path it encodes must agree; got:\n{stdout}"
+    );
+}
+
 // ===========================================================================
 // 2. lock-sha-unreachable
 // ===========================================================================

@@ -264,9 +264,10 @@ impl RepoUrl {
 ///
 /// Returns `true` when both strings resolve to the same logical repo after
 /// stripping trailing slashes, a `.git` suffix, and normalising `git@host:`
-/// SCP-style URLs to `https://host/`. Used for the `fork`-role mismatch
-/// warning where we only need to recognise "origin already points at the
-/// source-of-record" — not a security-grade comparison.
+/// SCP-style URLs to `https://host/`. A `file://` URL is percent-decoded, so
+/// it equals the bare absolute path it encodes. Used by the all-roles
+/// origin-url-mismatch check, which only needs to recognise "origin already
+/// points at the source-of-record" — not a security-grade comparison.
 pub fn clone_urls_equivalent(a: &str, b: &str) -> bool {
     normalize_clone_url(a) == normalize_clone_url(b)
 }
@@ -283,13 +284,37 @@ fn normalize_clone_url(s: &str) -> String {
     } else if let Some(rest) = s.strip_prefix("ssh://") {
         rest.trim_start_matches("git@").to_owned()
     } else if let Some(rest) = s.strip_prefix("file://") {
-        rest.to_owned()
+        percent_decode(rest)
     } else {
         s.to_owned()
     };
     body.trim_end_matches('/')
         .trim_end_matches(".git")
         .to_ascii_lowercase()
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let decoded = (bytes[i] == b'%')
+            .then(|| bytes.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match decoded {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 impl fmt::Display for RepoUrl {
@@ -1819,6 +1844,14 @@ role = "owned"
         assert!(clone_urls_equivalent(
             "https://github.com/a/b/",
             "https://github.com/a/b"
+        ));
+    }
+
+    #[test]
+    fn urls_equivalent_encoded_file_url_and_the_bare_path_it_encodes() {
+        assert!(clone_urls_equivalent(
+            "file:///srv/my%20repos/caf%C3%A9/100%25/a%2Bb%40c",
+            "/srv/my repos/café/100%/a+b@c"
         ));
     }
 

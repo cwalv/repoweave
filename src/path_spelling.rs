@@ -102,6 +102,9 @@ pub fn weave_relative(path: &Path) -> String {
 /// `/`-rooted path (its `\` is filename content, not a separator) keeps its
 /// bytes.
 pub fn mint_file_url(path: &str) -> String {
+    if let Some(unc) = path.strip_prefix(r"\\").filter(|rest| !rest.starts_with('?')) {
+        return format!("file://{}", encode_url_path(&unc.replace('\\', "/")));
+    }
     let bytes = path.as_bytes();
     let is_drive_letter_path = bytes.first().is_some_and(u8::is_ascii_alphabetic)
         && bytes.get(1) == Some(&b':')
@@ -111,8 +114,17 @@ pub fn mint_file_url(path: &str) -> String {
     } else {
         path.to_owned()
     };
-    let mut encoded = String::with_capacity(forward_separated.len());
-    for byte in forward_separated.bytes() {
+    let encoded = encode_url_path(&forward_separated);
+    if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
+fn encode_url_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
                 encoded.push(byte as char)
@@ -120,11 +132,7 @@ pub fn mint_file_url(path: &str) -> String {
             _ => encoded.push_str(&format!("%{byte:02X}")),
         }
     }
-    if encoded.starts_with('/') {
-        format!("file://{encoded}")
-    } else {
-        format!("file:///{encoded}")
-    }
+    encoded
 }
 
 /// The mint applied at the serde boundary, for a wire field that stays a
@@ -245,6 +253,14 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // mint_file_url
+
+    #[test]
+    fn mint_file_url_names_a_unc_share_by_host() {
+        assert_eq!(
+            mint_file_url(r"\\server\share\My Repos\acme"),
+            "file://server/share/My%20Repos/acme"
+        );
+    }
     // -----------------------------------------------------------------------
 
     /// `mint_file_url` reads the drive letter out of the string itself, not
