@@ -19,11 +19,23 @@
 //! project — exactly as lossy as before, so a threaded drive cannot tell the
 //! two apart. Both drives here spawn real processes.
 //!
-//! **Controls.** N of N retained proves nothing if the drive never overlapped:
-//! a serial run of the same work retains N of N with no exclusion at all. So
-//! each drive carries its serial control, and the receipt drive records the
-//! wall-clock window of each child's call so the overlap is measured rather
-//! than assumed.
+//! **Exclusion is pinned by holding the claim, not by racing for it.** The
+//! index's exclusion is a claim file created exclusively; a recorder that
+//! cannot create it waits out the claim budget and refuses with
+//! `state-claim-held`. The recorder drive creates that file itself, so while it
+//! holds the claim a recorder that honours the exclusion has exactly one
+//! possible outcome — refusal — and one that does not succeeds. Neither
+//! outcome depends on how the scheduler interleaves the children, because the
+//! holder is the test and releases only after every child has exited.
+//!
+//! **Convergence is the other half.** With no claim held, N concurrent
+//! recorders all succeed and all N receipts are kept. That holds under every
+//! interleaving for a correct index; the exclusion pin carries the proof that
+//! it is the claim, not luck, that makes it hold.
+//!
+//! The `rwv workweave create` drive below runs the reachable topology end to
+//! end and asserts the same property of its outcome: no branch is left without
+//! a receipt.
 
 mod common;
 
@@ -32,7 +44,6 @@ use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Recorders in the primitive drive.
 const N: usize = 8;
@@ -40,26 +51,20 @@ const N: usize = 8;
 const CHILD_ROOT: &str = "RWV_INDEX_TEST_ROOT";
 const CHILD_STORE: &str = "RWV_INDEX_TEST_STORE";
 const CHILD_NAME: &str = "RWV_INDEX_TEST_NAME";
-const CHILD_WINDOWS: &str = "RWV_INDEX_TEST_WINDOWS";
-const CHILD_BARRIER: &str = "RWV_INDEX_TEST_BARRIER";
+const CHILD_RESULTS: &str = "RWV_INDEX_TEST_RESULTS";
 
 const PROJECT: &str = "web-app";
 const MEMBER: &str = "github/acme/lib";
 
-fn now_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock at or after the epoch")
-        .as_nanos()
-}
+/// The index's claim file. Not exported by the crate, so the literal is spelled
+/// here; a wrong spelling holds nothing, the recorders succeed, and the
+/// exclusion pin goes red.
+const INDEX_CLAIM_FILE: &str = ".rwv-workweave-index.lock";
+const INDEX_FILE: &str = ".rwv-workweave-index";
 
 /// Not a test: the child half of the receipt drive. Inert in an ordinary suite
-/// run — without [`CHILD_ROOT`] set it returns immediately.
-///
-/// A barrier, when named, is a file the parent creates once every child has
-/// signalled that it reached the barrier. Spinning on it rather than sleeping keeps the children's start
-/// times within microseconds, so the recorded windows measure contention
-/// rather than staggered launches.
+/// run — without [`CHILD_ROOT`] set it returns immediately. It records one
+/// receipt and writes `ok`, or `refused <kind token>` when the record refuses.
 #[test]
 fn receipt_child() {
     let Ok(root) = std::env::var(CHILD_ROOT) else {
@@ -67,38 +72,32 @@ fn receipt_child() {
     };
     let store = std::env::var(CHILD_STORE).expect("a child is given a store");
     let name = std::env::var(CHILD_NAME).expect("a child is given a name");
-    if let Ok(barrier) = std::env::var(CHILD_BARRIER) {
-        common::start_gate::arrive(Path::new(&barrier), &name);
-    }
+    let results = std::env::var(CHILD_RESULTS).expect("a child records its result");
 
     let project = ProjectName::new(PROJECT).expect("project name");
     let mut registry = RefRegistry::for_project(Path::new(&root), &project);
     let minted = EphemeralRefName::mint(&project, &WorkweaveName::new(&name).expect("ww name"));
     let at = ResolvedRevisionId::from_canonical("a".repeat(40), None);
 
-    let start = now_nanos();
-    registry
-        .record_created(Path::new(&store), minted, at)
-        .unwrap_or_else(|e| panic!("recording a receipt for {name} must succeed: {e:#}"));
-    let end = now_nanos();
-
-    let windows = std::env::var(CHILD_WINDOWS).expect("a child records its window");
-    std::fs::write(Path::new(&windows).join(&name), format!("{start} {end}"))
-        .expect("window record must be writable");
+    let outcome = match registry.record_created(Path::new(&store), minted, at) {
+        Ok(_) => "ok".to_string(),
+        Err(e) => match repoweave::refusal::kind_of(&e) {
+            Some(kind) => format!("refused {}", kind.token()),
+            None => format!("failed {e:#}"),
+        },
+    };
+    std::fs::write(Path::new(&results).join(&name), outcome)
+        .expect("result record must be writable");
 }
 
-fn recorder(root: &Path, store: &Path, windows: &Path, name: &str, gate: Option<&Path>) -> Command {
+fn recorder(root: &Path, store: &Path, results: &Path, name: &str) -> Command {
     let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
     cmd.args(["--exact", "receipt_child", "--test-threads=1"]);
     cmd.env(CHILD_ROOT, root);
     cmd.env(CHILD_STORE, store);
-    cmd.env(CHILD_WINDOWS, windows);
+    cmd.env(CHILD_RESULTS, results);
     cmd.env(CHILD_NAME, name);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    match gate {
-        Some(path) => cmd.env(CHILD_BARRIER, path),
-        None => cmd.env_remove(CHILD_BARRIER),
-    };
     cmd
 }
 
@@ -149,97 +148,76 @@ fn receipt_names(root: &Path) -> Vec<String> {
         .collect()
 }
 
-fn windows_in(dir: &Path) -> Vec<(u128, u128)> {
-    (0..N)
-        .map(|i| {
-            let path = dir.join(seat(i));
-            let text = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("child {i} recorded no window at {path:?}: {e}"));
-            let (s, e) = text.split_once(' ').expect("window is `start end`");
-            (
-                s.parse().expect("start nanos"),
-                e.parse().expect("end nanos"),
-            )
-        })
-        .collect()
-}
-
-/// Every call in flight at one instant, which is what makes an N-of-N result
-/// evidence rather than a report that the drive serialised itself.
-fn share_an_instant(w: &[(u128, u128)]) -> bool {
-    w.iter().map(|x| x.0).max().expect("non-empty")
-        < w.iter().map(|x| x.1).min().expect("non-empty")
-}
-
-#[test]
-fn concurrent_recorders_keep_every_receipt_and_serial_ones_are_the_control() {
-    let tmp = common::tempdir().expect("tempdir");
-
-    // Control: the same N recorders, one at a time.
-    let (serial_root, serial_store) = seeded_primary(tmp.path(), "serial");
-    let serial_windows = tmp.path().join("serial-windows");
-    std::fs::create_dir_all(&serial_windows).expect("windows dir");
-    for i in 0..N {
-        let out = recorder(&serial_root, &serial_store, &serial_windows, &seat(i), None)
-            .output()
-            .expect("serial recorder spawns");
-        assert!(
-            out.status.success(),
-            "serial recorder {i} failed: {}\n{}",
-            out.status,
-            transcript(&out)
-        );
-    }
-    assert_eq!(
-        receipt_names(&serial_root).len(),
-        N,
-        "the serial drive must keep every receipt; if it does not, the \
-         concurrent result below is measuring something other than contention"
-    );
-    let serial = windows_in(&serial_windows);
-    assert!(
-        !share_an_instant(&serial),
-        "the control must not overlap — if these windows share an instant the \
-         drive did not run serially and is no control at all: {serial:?}"
-    );
-
-    // Drive: all N released together against one index.
-    let (root, store) = seeded_primary(tmp.path(), "concurrent");
-    let windows = tmp.path().join("windows");
-    std::fs::create_dir_all(&windows).expect("windows dir");
-    let barrier = common::start_gate::gate_in(&windows);
+/// Spawn every recorder at once and wait for all of them to exit; the result
+/// each recorded, in seat order.
+fn run_recorders(root: &Path, store: &Path, results: &Path) -> Vec<String> {
     let children: Vec<_> = (0..N)
         .map(|i| {
-            recorder(&root, &store, &windows, &seat(i), Some(&barrier))
+            recorder(root, store, results, &seat(i))
                 .spawn()
                 .expect("concurrent recorder spawns")
         })
         .collect();
-    let names: Vec<String> = (0..N).map(seat).collect();
-    common::start_gate::open_when_all_ready(&barrier, &names);
     for (i, child) in children.into_iter().enumerate() {
         let out = child.wait_with_output().expect("concurrent recorder exits");
         assert!(
             out.status.success(),
-            "concurrent recorder {i} failed: {}\n{}",
+            "recorder {i} crashed: {}\n{}",
             out.status,
             transcript(&out)
         );
     }
+    (0..N)
+        .map(|i| {
+            std::fs::read_to_string(results.join(seat(i)))
+                .unwrap_or_else(|e| panic!("recorder {i} recorded no result: {e}"))
+        })
+        .collect()
+}
 
+#[test]
+fn a_held_claim_refuses_every_recorder_and_leaves_the_index_untouched() {
+    let tmp = common::tempdir().expect("tempdir");
+    let (root, store) = seeded_primary(tmp.path(), "held");
+    let results = tmp.path().join("results");
+    std::fs::create_dir_all(&results).expect("results dir");
+    let project_dir = root.join("projects").join(PROJECT);
+    let before = std::fs::read(project_dir.join(INDEX_FILE)).expect("seeded index");
+
+    let claim = project_dir.join(INDEX_CLAIM_FILE);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&claim)
+        .expect("the test takes the claim itself");
+    let outcomes = run_recorders(&root, &store, &results);
+    let refused = format!(
+        "refused {}",
+        repoweave::refusal::RefusalKind::StateClaimHeld.token()
+    );
     assert_eq!(
-        common::start_gate::early_arrivals(&barrier, &names),
-        Vec::<String>::new(),
-        "every recorder must reach the barrier before it opens"
+        outcomes,
+        vec![refused; N],
+        "while a peer holds the claim every recorder must refuse; one that \
+         succeeded wrote without the exclusion"
     );
+    assert_eq!(
+        std::fs::read(project_dir.join(INDEX_FILE)).expect("index still present"),
+        before,
+        "a refused record must write nothing"
+    );
+    std::fs::remove_file(&claim).expect("the test releases the claim");
+}
+
+#[test]
+fn concurrent_recorders_keep_every_receipt() {
+    let tmp = common::tempdir().expect("tempdir");
+    let (root, store) = seeded_primary(tmp.path(), "concurrent");
+    let results = tmp.path().join("results");
+    std::fs::create_dir_all(&results).expect("results dir");
+    let outcomes = run_recorders(&root, &store, &results);
+    assert_eq!(outcomes, vec!["ok".to_string(); N]);
     let kept = receipt_names(&root);
-    let concurrent = windows_in(&windows);
-    assert!(
-        share_an_instant(&concurrent),
-        "no instant had every recorder in flight, so this drive did not \
-         exercise the read-modify-write against itself and its result is not \
-         evidence either way: {concurrent:?}"
-    );
     assert_eq!(
         kept.len(),
         N,

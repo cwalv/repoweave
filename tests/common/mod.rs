@@ -5,7 +5,6 @@ pub mod contract;
 pub mod doctor_corpus;
 pub mod json_schema;
 pub mod src_scan;
-pub mod start_gate;
 
 use std::path::PathBuf;
 use std::process::Command;
