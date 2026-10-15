@@ -4,7 +4,8 @@
 //!   - both directions, in the primary and in a workweave, with the generated
 //!     Cargo workspace dropping and regaining the member;
 //!   - a change to `reference` refuses over uncommitted tracked changes;
-//!   - an unchanged role changes nothing, and an unknown role is rejected;
+//!   - an unchanged role leaves rwv.toml alone and settles the files a hand
+//!     edit left behind, and an unknown role is rejected;
 //!   - a change the regeneration refuses leaves the manifest and the member's
 //!     files as they were;
 //!   - the change lands through sync-to, the target settles on landing, and
@@ -306,6 +307,80 @@ fn an_unchanged_role_changes_nothing() {
         "rwv.toml is not rewritten"
     );
     assert_eq!(common::git_in(&project, &["status", "--porcelain"]), before);
+}
+
+fn manifest_mtime(weave: &Weave) -> std::time::SystemTime {
+    std::fs::metadata(weave.project_dir(&weave.ws).join("rwv.toml"))
+        .unwrap()
+        .modified()
+        .unwrap()
+}
+
+#[test]
+fn an_unchanged_reference_role_makes_the_files_read_only() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let beta = weave.ws.join(&weave.beta);
+    let toml = weave.project_dir(&weave.ws).join("rwv.toml");
+    let edited = std::fs::read_to_string(&toml).unwrap();
+    let section = edited.find(&weave.beta).unwrap();
+    let (head, tail) = edited.split_at(section);
+    let tail = tail.replacen("role = \"owned\"", "role = \"reference\"", 1);
+    std::fs::write(&toml, format!("{head}{tail}")).unwrap();
+    assert_eq!(weave.role_of(&weave.ws, &weave.beta), Role::Reference);
+    assert_writable(&beta, "fixture: the hand edit left the files writable");
+    let written_at = manifest_mtime(&weave);
+    let manifest = std::fs::read(&toml).unwrap();
+
+    let out = succeed(&["role", &weave.beta, "reference"], &weave.ws);
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains(&format!("'{}' is already reference; settled ", weave.beta)),
+        "{}",
+        describe(&out)
+    );
+    assert_read_only(&beta, "after re-running the role");
+    assert_eq!(std::fs::read(&toml).unwrap(), manifest);
+    assert_eq!(
+        manifest_mtime(&weave),
+        written_at,
+        "rwv.toml is not rewritten"
+    );
+}
+
+#[test]
+fn an_unchanged_owned_role_makes_a_shared_read_only_file_a_private_writable_copy() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    let beta = weave.ws.join(&weave.beta);
+    let file = beta.join("src/lib.rs");
+    let twin = tmp.path().join("twin-of-lib.rs");
+    std::fs::hard_link(&file, &twin).unwrap();
+    for f in tracked_regular_files(&beta) {
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o444)).unwrap();
+    }
+    assert_read_only(&beta, "fixture: a read-only owned member");
+    let written_at = manifest_mtime(&weave);
+
+    let out = succeed(&["role", &weave.beta, "owned"], &weave.ws);
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains(&format!("'{}' is already owned; settled ", weave.beta)),
+        "{}",
+        describe(&out)
+    );
+    assert_writable(&beta, "after re-running the role");
+    assert_eq!(
+        std::os::unix::fs::MetadataExt::nlink(&std::fs::metadata(&file).unwrap()),
+        1,
+        "the file is a private copy"
+    );
+    assert_eq!(mode(&twin) & 0o222, 0, "the other link stays read-only");
+    assert_eq!(
+        manifest_mtime(&weave),
+        written_at,
+        "rwv.toml is not rewritten"
+    );
 }
 
 #[test]

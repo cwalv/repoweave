@@ -16,6 +16,10 @@ use anyhow::Context;
 /// settled for whichever role `rwv.toml` holds afterwards, so a regeneration
 /// that put the edit back leaves the files as they were.
 ///
+/// A role `rwv.toml` already holds is not rewritten, but the member's files are
+/// still settled for it, so a hand edit of the role is finished by re-running
+/// this.
+///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
 pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
@@ -33,11 +37,6 @@ pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Resul
         );
     };
     let was = entry.role;
-    if was == role {
-        eprintln!("'{repo_path}' is already {role}; nothing to change");
-        return Ok(());
-    }
-
     let vcs = vcs_for(entry.vcs_type);
     let member = ctx.active_path().join(repo_path.as_path());
     let checked_out = !member.is_symlink() && vcs.is_repo(&member);
@@ -54,6 +53,21 @@ pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Resul
                 dirty.join("\n  ")
             );
         }
+    }
+
+    if was == role {
+        let changed = if checked_out {
+            crate::settle::settle(vcs.as_ref(), &member, role)
+                .with_context(|| format!("failed to settle the files of '{repo_path}'"))?
+        } else {
+            0
+        };
+        if changed == 0 {
+            eprintln!("'{repo_path}' is already {role}; nothing to change");
+        } else {
+            eprintln!("'{repo_path}' is already {role}; settled {changed} file(s)");
+        }
+        return Ok(());
     }
 
     entry.role = role;
