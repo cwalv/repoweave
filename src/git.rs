@@ -1503,6 +1503,11 @@ impl Vcs for GitVcs {
         args.extend_from_slice(paths);
         Self::run(&args, repo).map(|_| ())
     }
+    fn unstage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {
+        let mut args: Vec<&str> = vec!["reset", "-q", "--"];
+        args.extend_from_slice(paths);
+        Self::run(&args, repo).map(|_| ())
+    }
     fn has_staged_changes(&self, repo: &Path) -> Result<bool, VcsError> {
         // Exit 0 means no difference between index and HEAD, so a non-zero
         // exit is the positive answer and not a failure to report.

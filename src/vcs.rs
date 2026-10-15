@@ -2091,6 +2091,14 @@ pub trait Vcs: Send + Sync {
     /// `git add -- <paths>`.
     fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError>;
 
+    /// Return `paths` in the index to their committed state, leaving the work
+    /// tree alone: what undoes [`Vcs::stage_paths`] when the commit it was
+    /// staging for is refused.
+    ///
+    /// For git: runs
+    /// `git reset -q -- <paths>`.
+    fn unstage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError>;
+
     /// Return `true` when something is marked for the next commit.
     ///
     /// The question a caller asks before committing, so an empty commit is

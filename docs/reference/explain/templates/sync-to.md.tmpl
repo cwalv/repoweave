@@ -94,6 +94,14 @@ start (after writing savepoints, so the auto-relock commit is covered by
 many commits HEAD is ahead of the lock. Phase 3 re-relocks idempotently at op
 end regardless.
 
+If that commit is refused (a `commit-msg` hook, for instance), the op does not
+start: the refusal carries the full cause, including the hook's own text, and
+the project repo's `rwv.lock`, index and op-state are left as they were, so
+there is nothing to `--continue` or `rwv abort`. Clear the cause and re-run. A
+relock refused later, in Phase 3, parks the op instead; it resumes with
+`rwv sync-to --continue` once the cause is gone. Either way a refused lock
+commit leaves `rwv.lock` unstaged.
+
 The same relation on the TARGET side refuses instead. Step 1 replays CWD
 against the target's committed lock, so a target holding commits its lock does
 not record would leave those commits missing from CWD's tip and step 3 could

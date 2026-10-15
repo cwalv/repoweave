@@ -191,7 +191,7 @@ pub(crate) fn commit_lock_file_with_message(
 /// Returns `Ok(false)` when nothing ended up staged, `Ok(true)` when a
 /// commit was made. Every path must exist and be committable — callers
 /// derive the list from `git status`, which reports neither absent nor
-/// ignored files.
+/// ignored files. A refused commit leaves `paths` unstaged again.
 fn stage_and_commit(
     vcs: &dyn Vcs,
     project_dir: &Path,
@@ -208,8 +208,16 @@ fn stage_and_commit(
         return Ok(false);
     }
 
-    vcs.commit(project_dir, message)
-        .context("failed to commit the lock")?;
+    if let Err(refused) = vcs.commit(project_dir, message) {
+        let refused = anyhow::Error::from(refused).context("failed to commit the lock");
+        return Err(match vcs.unstage_paths(project_dir, paths) {
+            Ok(()) => refused,
+            Err(e) => refused.context(format!(
+                "{} left staged: unstaging after the refused commit failed ({e})",
+                paths.join(", ")
+            )),
+        });
+    }
 
     Ok(true)
 }

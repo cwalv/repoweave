@@ -284,10 +284,9 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
     let ww_project_before = head(&f.ww.project_dir);
     block_commits(&f.ww.project_dir, &hooks);
 
-    // The op fails: phase 3's relock hits the same blocked commit and bails.
-    // That failure is also this fixture's proof that the hook fired at all —
-    // without it, every check below holds against a run where the hook never
-    // ran and the relock succeeded.
+    // The op refuses at op start. That refusal is also this fixture's proof
+    // that the hook fired at all — without it, every check below holds against
+    // a run where the hook never ran and the relock succeeded.
     let assert = rwv()
         .args(["sync-to", &f.main.root.to_string_lossy()])
         .current_dir(&f.ww.root)
@@ -319,7 +318,7 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
          stderr:\n{stderr}"
     );
     assert!(
-        stderr.contains("op-start relock could not commit"),
+        stderr.contains("could not commit, so the op did not start"),
         "the operator must be told the op-start relock failed; got stderr:\n{stderr}"
     );
     assert!(

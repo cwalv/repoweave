@@ -379,6 +379,10 @@ impl Vcs for FakeVcs {
         unsupported("stage_paths")
     }
 
+    fn unstage_paths(&self, _repo: &Path, _paths: &[&str]) -> Result<(), VcsError> {
+        unsupported("unstage_paths")
+    }
+
     fn has_staged_changes(&self, _repo: &Path) -> Result<bool, VcsError> {
         unsupported("has_staged_changes")
     }

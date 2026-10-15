@@ -3593,10 +3593,15 @@ fn guard_and_mark<'a>(
     // on the CWD side. Sibling .4 (abort hardening) verifies these refs
     // against HEAD; we create them here so the anchor exists.
     create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &op_id)?;
+    let mut project_anchors: Vec<(PathBuf, OpId)> = vec![(cwd_project_dir.clone(), op_id.clone())];
+    let mut member_anchors: Vec<(Box<dyn Vcs>, PathBuf, OpId)> = Vec::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
         if abs.exists() {
-            let _ = create_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &op_id);
+            let vcs = vcs_for(entry.vcs_type);
+            if create_savepoint(vcs.as_ref(), &abs, &op_id).is_ok() {
+                member_anchors.push((vcs, abs, op_id.clone()));
+            }
         }
     }
 
@@ -3616,7 +3621,9 @@ fn guard_and_mark<'a>(
             WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name).is_ok();
         if target_presents_the_project {
             let target_project_dir = project_dir(&dest_workspace_dir, cwd_project_name.as_str());
-            let _ = create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id);
+            if create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id).is_ok() {
+                project_anchors.push((target_project_dir.clone(), tsp_id.clone()));
+            }
             if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(
                 &target_project_dir,
                 cwd_project_name.clone(),
@@ -3624,7 +3631,10 @@ fn guard_and_mark<'a>(
                 for (repo_path, entry) in tp.manifest.iter_entries() {
                     let abs = dest_workspace_dir.join(repo_path.as_path());
                     if abs.exists() {
-                        let _ = create_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &tsp_id);
+                        let vcs = vcs_for(entry.vcs_type);
+                        if create_savepoint(vcs.as_ref(), &abs, &tsp_id).is_ok() {
+                            member_anchors.push((vcs, abs, tsp_id.clone()));
+                        }
                     }
                 }
             }
@@ -3640,28 +3650,60 @@ fn guard_and_mark<'a>(
     // that mismatches the tips it lands, then emit one LOUD line per repo naming
     // what the commit pinned. Phase 3 re-runs relock at op end idempotently;
     // doing it here surfaces the surprising number at the moment it matters (the
-    // ancestry-gate guardrail). Best-effort: a relock-commit failure here does
-    // not abort the op — Phase 3 will still regenerate the lock post-replay.
+    // ancestry-gate guardrail). A relock that cannot commit refuses the op
+    // before any work: the lock file goes back to the bytes the op found, and
+    // the claim and savepoints are released, so nothing is left to abort.
     if !cwd_lock_behind.is_empty() {
-        let relocked = regenerate_lock_phase3(
+        let lock_path = cwd_project_dir.join(LockFile::FILE_NAME);
+        let lock_found = std::fs::read(&lock_path).ok();
+        let relocked = match regenerate_lock_phase3(
             project_vcs.as_ref(),
             cwd_ctx,
             &cwd_project_dir,
             &cwd_project,
             &source_workspace_name,
-        );
-        if let Err(ref e) = relocked {
-            if emit_text {
-                eprintln!(
-                    "warning: op-start relock could not commit ({e}); Phase 3 will retry \
-                     post-replay"
+        ) {
+            Ok(relocked) => relocked,
+            Err(e) => {
+                let restored = match &lock_found {
+                    Some(bytes) => std::fs::write(&lock_path, bytes),
+                    None => std::fs::remove_file(&lock_path),
+                };
+                for (dir, id) in &project_anchors {
+                    delete_savepoint(project_vcs.as_ref(), dir, id);
+                }
+                for (vcs, dir, id) in &member_anchors {
+                    delete_savepoint(vcs.as_ref(), dir, id);
+                }
+                op_state::release_acquired(&acquired);
+                let behind = op_start_relock_lines(
+                    &cwd_lock_behind,
+                    None,
+                    &cwd_workspace_dir,
+                    &cwd_project.manifest,
+                    &cwd_workspace_name_str,
+                )
+                .join("\n");
+                let restore_note = match restored {
+                    Ok(()) => String::new(),
+                    Err(r) => format!(
+                        "\n\nRestoring {} to the bytes the op found also failed ({r}); check \
+                         it before re-running.",
+                        lock_path.display()
+                    ),
+                };
+                anyhow::bail!(
+                    "the op-start relock in {} could not commit, so the op did not start and \
+                     nothing was changed: {e:#}\n\n{behind}\n\n\
+                     Clear what refused the commit, then re-run.{restore_note}",
+                    cwd_project_dir.display(),
                 );
             }
-        }
+        };
         if emit_text {
             for line in op_start_relock_lines(
                 &cwd_lock_behind,
-                relocked.as_ref().ok().and_then(Option::as_ref),
+                relocked.as_ref(),
                 &cwd_workspace_dir,
                 &cwd_project.manifest,
                 &cwd_workspace_name_str,
