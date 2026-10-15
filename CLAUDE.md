@@ -454,15 +454,25 @@ and register rules:
   findings.
 - **Show the payoff; never label it.** Avoid outlining meta-jargon or
   self-congratulation that tells the reader to be impressed ("hero moments",
-  "hero workflow", "the elegance is exactly that"). Describe the concrete
-  friction and let the command or guarantee speak for itself.
+  "hero workflow", "the elegance is exactly that"), and avoid defensive tic
+  words ("honest", "honestly", "load-bearing", "deliberately", "not a bug").
+  Describe the concrete friction or trade-off and let the command or guarantee
+  speak for itself.
+- **Every example runs and parses.** Documented shell blocks must execute
+  cleanly against a disposable weave, `toml` snippets must parse under
+  `rwv.toml`'s schema (or mark elided fields with `# …`), generated-file
+  samples must match the exact headers/markers emitted by `src/integrate/`, and
+  prose referring to `rwv.toml` keys must use TOML syntax (`version = "main"`,
+  not YAML `version: main`).
 
 ### Diátaxis and persuasive surfaces (`README.md` and `docs/SUMMARY.md`)
 
-The published docs layer **persuasive entry and lens pages** onto **Diátaxis
-quadrants**. Warmth and dryness vary deliberately by surface:
+The published docs layer **persuasive entry and perspective pages** onto
+**Diátaxis quadrants**, using plain reader-facing navigation labels in
+`docs/SUMMARY.md` (rather than internal taxonomy jargon like "Lenses" and
+"Joints"). Warmth and dryness vary by surface:
 
-- **Front doors and motivational lenses (`README.md`, `docs/introduction.md`,
+- **Front doors and audience perspectives (`README.md`, `docs/introduction.md`,
   `docs/explanation/lenses/*.md`)** — the persuasive surfaces for a reader
   asking *"why does this exist, does it solve my problem, and can I trust it?"*
   Do **not** flatten these into dry reference prose. Persuade through
@@ -476,21 +486,23 @@ quadrants**. Warmth and dryness vary deliberately by surface:
 - **Onboarding walkthrough (`docs/tutorial.md`)** — guided, concrete, and
   momentum-driven. Keep the reader moving through a first end-to-end session
   without pausing for architectural detours.
-- **Architectural joints (`docs/explanation/joints/*.md`)** — design rationale
-  and trade-off analysis for a reader asking *"why is this seam or invariant
-  shaped this way, and what breaks without it?"* Engaging because the trade-offs
-  are sharp and honest, not because it pitches the tool. Do not dump exhaustive
-  CLI flag tables or JSON schemas that belong in `docs/reference/cli.md` or
-  `docs/reference/formats.md`.
+- **Core concepts and design notes (`docs/explanation/joints/*.md`,
+  `docs/explanation/destructive-operations.md`)** — separated in navigation
+  between **core user concepts** (workspace layout, lock & channels, branches
+  across the three layers, workweaves & landing, file ownership & safety) and
+  **design notes** (`verb-vs-composition`, `verb-vs-vocabulary`, `vcs-as-seam`,
+  `plugin-boundary`). Engaging because the trade-offs are sharp and candid, not
+  because they pitch the tool. Do not dump exhaustive CLI flag tables or JSON
+  schemas that belong in `docs/reference/cli.md` or `docs/reference/formats.md`.
 - **Task recipes (`docs/how-to/*.md`)** — brisk, task-shaped guides for a reader
-  who is already sold and mid-task. Open with a 1–2 sentence goal statement,
-  then go straight to commands and verification. Do not open a recipe with an
-  architectural essay; link to `docs/explanation/joints/` in a closing
-  `## Related` section instead.
-- **Lookup reference (`docs/reference/*.md`)** — deliberately austere, dry, and
-  tabular. No motivational pitch, no repeated paragraphs across sections, and a
-  uniform heading template across sibling pages
-  (`docs/reference/integrations/*.md`).
+  who is already sold and mid-task. Lead immediately with the command sequence
+  after a 1–2 sentence goal statement. Do not open a recipe with an
+  architectural essay; link to concept pages in a closing `## Related` section
+  instead.
+- **Lookup reference (`docs/reference/*.md`)** — austere, dry, and tabular. No
+  motivational pitch, no repeated paragraphs across sections, and a uniform
+  heading template across sibling pages (`docs/reference/integrations/*.md`,
+  `doctor-findings.md`, `refusals.md`, `vcs-errors.md`).
 
 
 ### Canonical vocabulary (`docs/reference/glossary.md`)
@@ -500,6 +512,7 @@ top-level directory containing `projects/` and canonical member clones; **member
 repo** (not "manifest repo" or "constituent repo") for an `rwv.toml` `[repos]`
 entry; **project repo** for `projects/<name>/`; **workweave** (or **seat** when
 referring to an agent's persistent checkout) for an isolated parallel
-workspace; and distinguish **materialize** (populating member checkouts via
-`rwv sync` or `rwv workweave create`) from **activate** (switching `.rwv-active`
-and root-level ecosystem symlinks via `rwv activate`).
+workspace; and distinguish **materialize** (populating member checkouts and
+ecosystem state via `rwv materialize`, `rwv sync`, or `rwv workweave create`)
+from **activate** (switching `.rwv-active` and root-level ecosystem symlinks
+via `rwv activate`).
