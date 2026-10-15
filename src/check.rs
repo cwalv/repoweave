@@ -52,6 +52,15 @@ pub enum CheckViolation {
         files: usize,
     },
 
+    /// A canonical clone of the primary that some projects listing it declare
+    /// `reference` and others do not. Its files hold the role other than
+    /// `reference`, so the projects declaring `reference` get a writable clone.
+    RoleDisagreement {
+        repo: RepoPath,
+        /// Every project listing the clone, with the role it declares.
+        roles: Vec<(ProjectName, Role)>,
+    },
+
     /// An `rwv.toml` entry missing the `role` field.
     MissingRole {
         project: ProjectName,
@@ -697,6 +706,7 @@ impl CheckViolation {
             | CheckViolation::UnknownSegmentClone { .. }
             | CheckViolation::DanglingReference { .. }
             | CheckViolation::MissingRole { .. }
+            | CheckViolation::RoleDisagreement { .. }
             | CheckViolation::StaleLock { .. }
             | CheckViolation::IncompleteLock { .. }
             | CheckViolation::UnparseableProject { .. }
@@ -815,6 +825,7 @@ impl CheckViolation {
             CheckViolation::DanglingReference { .. } => "dangling-reference",
             CheckViolation::MemberPermissions { .. } => "member-permissions",
             CheckViolation::MissingRole { .. } => "missing-role",
+            CheckViolation::RoleDisagreement { .. } => "role-disagreement",
             CheckViolation::StaleLock { .. } => "stale-lock",
             CheckViolation::IncompleteLock { .. } => "incomplete-lock",
             CheckViolation::WorkweaveDrift { .. } => "workweave-drift",
@@ -1733,6 +1744,12 @@ pub enum ViolationOutput {
         absolute_path: String,
         project: String,
     },
+    RoleDisagreement {
+        path: String,
+        absolute_path: String,
+        /// Every project listing the clone, with the role it declares.
+        roles: Vec<ProjectRoleOutput>,
+    },
     StaleLock {
         path: String,
         absolute_path: String,
@@ -2015,6 +2032,13 @@ pub enum ViolationOutput {
     },
 }
 
+/// One project's declared role for a member.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+pub struct ProjectRoleOutput {
+    pub project: String,
+    pub role: String,
+}
+
 /// Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].
 ///
 /// Kept separate so the internal type stays free of serde/schemars deps
@@ -2093,6 +2117,17 @@ impl ViolationOutput {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
                 project: project.to_string(),
+            },
+            CheckViolation::RoleDisagreement { repo, roles } => Self::RoleDisagreement {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                roles: roles
+                    .into_iter()
+                    .map(|(project, role)| ProjectRoleOutput {
+                        project: project.to_string(),
+                        role: role.as_str().to_owned(),
+                    })
+                    .collect(),
             },
             CheckViolation::StaleLock {
                 project,
@@ -5353,8 +5388,8 @@ fn workweaves_in_scope(
         .collect()
 }
 
-/// A member checkout doctor answers for, with the role its own workspace's
-/// manifest gives it.
+/// A member checkout doctor answers for, with the role its files hold
+/// ([`crate::settle::role_held`]).
 struct MemberSlot {
     workweave: Option<WorkweaveName>,
     checkout: PathBuf,
@@ -5365,8 +5400,8 @@ struct MemberSlot {
 
 /// Every member checkout of the primary when doctor runs there, for the
 /// projects in scope, and of each workweave [`workweaves_in_scope`] names. A
-/// slot that is absent or a symlink is not a checkout. A clone two projects
-/// of the primary list is counted once, for the first of them.
+/// slot that is absent or a symlink is not a checkout. A clone several
+/// projects of the primary list is counted once.
 fn member_slots(
     ctx: &crate::workspace::WorkspaceContext,
     projects: &[Project],
@@ -5384,10 +5419,10 @@ fn member_slots(
             }
             slots.push(MemberSlot {
                 workweave: workweave.clone(),
+                role: crate::settle::role_held(&checkout, entry.role),
                 checkout,
                 repo: repo.clone(),
                 vcs_type: entry.vcs_type,
-                role: entry.role,
             });
         }
     };
@@ -5400,6 +5435,35 @@ fn member_slots(
         push(Some(workweave), &dir, &project);
     }
     slots
+}
+
+/// A `role-disagreement` finding for each canonical clone of the primary that
+/// the projects in scope list and the projects listing it disagree on, when
+/// doctor runs in the primary. Every project listing the clone is named, in
+/// scope or not.
+fn scan_role_disagreements(
+    ctx: &crate::workspace::WorkspaceContext,
+    projects: &[Project],
+) -> Vec<CheckViolation> {
+    if !matches!(ctx.checkout, crate::workspace::Checkout::Primary { .. }) {
+        return Vec::new();
+    }
+    let listed: BTreeSet<&RepoPath> = projects
+        .iter()
+        .flat_map(|project| project.manifest.iter_repo_paths())
+        .collect();
+    listed
+        .into_iter()
+        .filter_map(|repo| {
+            let listing = crate::settle::Listing::of(&ctx.primary_path().join(repo.as_path()));
+            listing
+                .disagreement()
+                .map(|roles| CheckViolation::RoleDisagreement {
+                    repo: repo.clone(),
+                    roles: roles.to_vec(),
+                })
+        })
+        .collect()
 }
 
 /// The member-permissions finding for `slot`, when any of its tracked regular
@@ -7193,6 +7257,21 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         format!("member permissions: {detail}"),
                     )
                 }
+                CheckViolation::RoleDisagreement { repo, roles } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "role disagreement: {repo} — the projects listing this clone declare \
+                         different roles ({}); a clone several projects share is read-only \
+                         only when every one of them declares `reference`, so its files stay \
+                         writable; give every project the same role with \
+                         `rwv role --project <name> {repo} <role>`",
+                        roles
+                            .iter()
+                            .map(|(project, role)| format!("{project}: {role}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                ),
                 CheckViolation::MissingRole { project, repo } => (
                     crate::integration::Severity::Warning,
                     format!(
@@ -9925,6 +10004,7 @@ fn collect_doctor_violations(
             .iter()
             .filter_map(member_permissions_finding),
     );
+    violations.extend(scan_role_disagreements(ctx, &input.projects));
 
     {
         use crate::workspace::read_active_project;

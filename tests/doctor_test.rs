@@ -1571,6 +1571,12 @@ mod doctor_json {
     /// fields that remain are enough to prove the round-trip: a missing or
     /// renamed one still fails to deserialize.
     #[derive(serde::Deserialize, Debug, PartialEq)]
+    struct WireProjectRole {
+        project: String,
+        role: String,
+    }
+
+    #[derive(serde::Deserialize, Debug, PartialEq)]
     #[serde(tag = "kind", rename_all = "kebab-case")]
     enum WireViolation {
         OrphanedClone {
@@ -1597,6 +1603,11 @@ mod doctor_json {
             path: String,
             absolute_path: String,
             project: String,
+        },
+        RoleDisagreement {
+            path: String,
+            absolute_path: String,
+            roles: Vec<WireProjectRole>,
         },
         StaleLock {
             path: String,

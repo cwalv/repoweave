@@ -985,6 +985,22 @@
         }
       }
     },
+    "ProjectRoleOutput": {
+      "description": "One project's declared role for a member.",
+      "type": "object",
+      "required": [
+        "project",
+        "role"
+      ],
+      "properties": {
+        "project": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      }
+    },
     "ProvenanceKind": {
       "description": "Discriminator for [`CheckViolation::Provenance`] findings.",
       "oneOf": [
@@ -1265,6 +1281,36 @@
             },
             "project": {
               "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "roles"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "role-disagreement"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "roles": {
+              "description": "Every project listing the clone, with the role it declares.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ProjectRoleOutput"
+              }
             }
           }
         },

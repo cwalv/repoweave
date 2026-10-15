@@ -639,3 +639,156 @@ fn a_hand_edit_to_owned_unshares_before_restoring_write_bits() {
     );
     assert_eq!(std::fs::metadata(&sibling).unwrap().nlink(), 1);
 }
+
+const OTHER_PROJECT: &str = "lib";
+
+/// A second project in the primary, listing the reference member's canonical
+/// clone as `ref_role`.
+fn add_project(weave: &Weave, name: &str, ref_role: &str) {
+    let project_dir = weave.primary.join("projects").join(name);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    weave.commit_manifest(&project_dir, "owned", ref_role);
+}
+
+fn activate(weave: &Weave, project: &str) {
+    std::fs::write(weave.primary.join(".rwv-active"), format!("{project}\n")).unwrap();
+}
+
+fn make_read_only(checkout: &Path) {
+    for file in tracked_regular_files(checkout) {
+        let mode = mode(&file);
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode & !0o222)).unwrap();
+    }
+}
+
+/// `rwv doctor --json` run in `dir` with `scope`, as the `(kind, path)` of
+/// every `member-permissions` and `role-disagreement` record, plus the
+/// `project: role` pairs of the latter.
+fn role_findings(dir: &Path, scope: &[&str]) -> Vec<(String, String, Vec<String>)> {
+    let mut args = vec!["doctor", "--json"];
+    args.extend_from_slice(scope);
+    let out = run(&args, dir);
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("doctor --json must print JSON ({e}); {}", describe(&out)));
+    doc["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "member-permissions" || v["kind"] == "role-disagreement")
+        .map(|v| {
+            let roles = v["roles"]
+                .as_array()
+                .map(|roles| {
+                    roles
+                        .iter()
+                        .map(|r| {
+                            format!(
+                                "{}: {}",
+                                r["project"].as_str().unwrap(),
+                                r["role"].as_str().unwrap()
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            (
+                v["kind"].as_str().unwrap().to_owned(),
+                v["path"].as_str().unwrap().to_owned(),
+                roles,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_clone_projects_disagree_on_stays_writable_whichever_project_settles_it() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    add_project(&weave, OTHER_PROJECT, "owned");
+
+    for project in [PROJECT, OTHER_PROJECT] {
+        activate(&weave, project);
+        make_read_only(&weave.reference);
+        succeed(&["update"], &weave.primary);
+        assert_writable(
+            &weave.reference,
+            &format!("after update with {project} active, while {OTHER_PROJECT} declares it owned"),
+        );
+    }
+}
+
+#[test]
+fn a_clone_every_project_declares_reference_is_read_only() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    add_project(&weave, OTHER_PROJECT, "reference");
+
+    activate(&weave, OTHER_PROJECT);
+    succeed(&["update"], &weave.primary);
+    assert_read_only(
+        &weave.reference,
+        "after update, every project declaring reference",
+    );
+    assert_eq!(role_findings(&weave.primary, &["--all"]), vec![]);
+}
+
+#[test]
+fn doctor_reports_the_disagreement_and_agrees_on_permissions_whichever_project_is_in_scope() {
+    let tmp = common::tempdir().unwrap();
+    let weave = make_weave(tmp.path());
+    add_project(&weave, OTHER_PROJECT, "owned");
+    let disagreement = (
+        "role-disagreement".to_owned(),
+        REF_PATH.to_owned(),
+        vec![
+            format!("{PROJECT}: reference"),
+            format!("{OTHER_PROJECT}: owned"),
+        ],
+    );
+    let scopes: [&[&str]; 3] = [&[], &["--project", OTHER_PROJECT], &["--all"]];
+
+    for scope in scopes {
+        assert_eq!(
+            role_findings(&weave.primary, scope),
+            vec![disagreement.clone()],
+            "doctor {scope:?} on a writable clone the projects disagree on"
+        );
+    }
+
+    make_read_only(&weave.reference);
+    let read_only = (
+        "member-permissions".to_owned(),
+        REF_PATH.to_owned(),
+        Vec::new(),
+    );
+    for scope in scopes {
+        let mut found = role_findings(&weave.primary, scope);
+        found.sort();
+        assert_eq!(
+            found,
+            vec![read_only.clone(), disagreement.clone()],
+            "doctor {scope:?} on a read-only clone the projects disagree on"
+        );
+    }
+
+    succeed(&["doctor", "--fix"], &weave.primary);
+    assert_writable(
+        &weave.reference,
+        &format!("after doctor --fix with {PROJECT} active"),
+    );
+    for scope in scopes {
+        assert_eq!(
+            role_findings(&weave.primary, scope),
+            vec![disagreement.clone()],
+            "doctor {scope:?} after --fix"
+        );
+    }
+}

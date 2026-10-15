@@ -50,7 +50,7 @@ Cloned for reading or study, not as a build input. Examples: a sibling project's
 
 - **Visible** in the workspace (so editors and grep see them).
 - **Excluded** from generated ecosystem workspace files (`go.work`, `package.json` workspaces, Cargo workspace members) — they don't appear as build-graph nodes.
-- **Read-only.** Every tracked regular file of a `reference` repo has no write bits, in the weave and in every workweave. Directories stay writable, so untracked files (build output, editor swap files) can still be created and the VCS can still replace files when the repo moves. `rwv doctor` reports a `reference` repo with writable tracked files as [`member-permissions`](./doctor-findings.md#member-permissions).
+- **Read-only.** Every tracked regular file of a `reference` repo has no write bits, in the weave and in every workweave. Directories stay writable, so untracked files (build output, editor swap files) can still be created and the VCS can still replace files when the repo moves. `rwv doctor` reports a `reference` repo with writable tracked files as [`member-permissions`](./doctor-findings.md#member-permissions). In the weave, one clone serves every project that lists it, so it is read-only only when all of them declare it `reference`; where they disagree it stays writable, and `rwv doctor` reports [`role-disagreement`](./doctor-findings.md#role-disagreement).
 
 `rwv doctor` reports untracked clones in registry directories as **orphans**. Tracking a clone as `reference` is how you tell `rwv` "I cloned this on purpose, leave it alone."
 

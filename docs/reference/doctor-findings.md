@@ -711,7 +711,11 @@ sub-kinds share that disposition and differ only in which way the files
 disagree: `writable-reference` (a `reference` member has writable tracked
 files) and `read-only-member` (a member of another role has read-only ones).
 `files` counts them. Doctor checks the members of the workspace it runs in,
-and from the primary also those of every registered workweave in scope.
+and from the primary also those of every registered workweave in scope. A
+canonical clone in the primary that several projects list is checked against
+the role its files hold for all of them (see
+[`role-disagreement`](#role-disagreement)), so every project scope agrees on
+it.
 
 Only tracked regular files are counted or touched. A tracked symlink is never
 chmod'ed, since that would change what it points at; directories keep their
@@ -728,6 +732,26 @@ bit on another member's. A read-only file that shares its storage with
 another workspace's copy is first replaced by a private copy, since write bits
 belong to the file rather than to the name, and restoring them in place would
 make every workspace's copy writable.
+
+### `role-disagreement`
+
+**Warning. Report-only.** A canonical clone in the primary that the projects
+listing it disagree on: some declare it `reference`, others another role.
+`roles` names every project listing it, with the role each declares, whether
+or not that project is in scope. Doctor reports it from the primary, for each
+clone a project in scope lists.
+
+One clone serves every project in the primary that lists it, so its files can
+hold only one set of permissions. They are read-only only when every project
+listing the clone declares `reference`; otherwise they stay writable, whichever
+project's verb last settled them. A project declaring `reference` therefore
+gets a writable clone, and its `reference` role is not enforced there.
+Workweaves are unaffected: each has its own checkout, settled for its own
+project's role.
+
+**What to do:** decide which role the clone should have and give it that role
+in every project listing it, with `rwv role --project <name> <repo> <role>`.
+`--fix` does not choose between the projects.
 
 ### `stale-worktree-registration`
 

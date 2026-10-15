@@ -31,7 +31,7 @@ use repoweave::check::{
 use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
-use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
+use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveName};
 use repoweave::op_state::OpVerb;
 use repoweave::vcs::ResolvedRevisionId;
 use repoweave::workspace::MarkerDefect;
@@ -77,6 +77,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             PermissionsKind::ReadOnlyMember => "member-permissions/read-only-member".into(),
         },
         CheckViolation::MissingRole { .. } => "missing-role".into(),
+        CheckViolation::RoleDisagreement { .. } => "role-disagreement".into(),
         CheckViolation::StaleLock { .. } => "stale-lock".into(),
         CheckViolation::IncompleteLock { .. } => "incomplete-lock".into(),
         CheckViolation::WorkweaveDrift { kind, .. } => match kind {
@@ -242,6 +243,13 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::MissingRole {
             project: project(),
             repo: repo(),
+        },
+        CheckViolation::RoleDisagreement {
+            repo: repo(),
+            roles: vec![
+                (project(), Role::Reference),
+                (ProjectName::new("other").unwrap(), Role::Owned),
+            ],
         },
         CheckViolation::StaleLock {
             project: project(),

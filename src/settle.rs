@@ -8,15 +8,106 @@
 //! lets the VCS replace a read-only file during an update, and what lets an
 //! untracked file still be created in a `reference` member.
 
-use crate::manifest::{Manifest, RepoPath, Role};
+use crate::manifest::{Manifest, ProjectName, RepoPath, Role};
 use crate::share::FilePlacement;
 use crate::vcs::{vcs_for, ResolvedRevisionId, TrackedFileKind, Vcs};
 use anyhow::Context;
 use std::fs::Metadata;
 use std::path::Path;
 
+/// Whose manifests decide the role of a checkout, and what each says.
+pub(crate) enum Listing {
+    /// A workweave's checkout serves its own project alone.
+    Workweave(Option<Role>),
+    /// A primary's checkout is the one clone every project listing it shares,
+    /// so it holds `reference` only where all of them declare it.
+    Primary(Vec<(ProjectName, Role)>),
+    /// Not a member slot of any weave.
+    Unplaced,
+}
+
+impl Listing {
+    /// The checkout at `checkout`, by the manifests on disk where it lives.
+    pub(crate) fn of(checkout: &Path) -> Listing {
+        for root in checkout.ancestors().skip(1) {
+            let Some(repo) = checkout
+                .strip_prefix(root)
+                .ok()
+                .and_then(|rel| {
+                    rel.components()
+                        .map(|c| c.as_os_str().to_str())
+                        .collect::<Option<Vec<_>>>()
+                })
+                .and_then(|parts| RepoPath::new(parts.join("/")).ok())
+            else {
+                return Listing::Unplaced;
+            };
+            let role_in = |project: &str| {
+                Manifest::from_path(
+                    &crate::workspace::project_dir(root, project).join(Manifest::FILE_NAME),
+                )
+                .ok()
+                .and_then(|m| m.get_entry(&repo).map(|e| e.role))
+            };
+            if let Some(marker) = crate::workspace::WorkweaveMarker::read(root).ok().flatten() {
+                return Listing::Workweave(role_in(marker.project().as_str()));
+            }
+            if crate::workspace::projects_dir(root).is_dir() {
+                return Listing::Primary(
+                    crate::workspace::discover_projects(root)
+                        .into_iter()
+                        .filter_map(|p| role_in(p.as_str()).map(|role| (p, role)))
+                        .collect(),
+                );
+            }
+        }
+        Listing::Unplaced
+    }
+
+    /// Whether the checkout's files hold `reference`: some manifest lists it,
+    /// and every one that does declares `reference`.
+    pub(crate) fn is_reference(&self) -> bool {
+        match self {
+            Listing::Workweave(role) => *role == Some(Role::Reference),
+            Listing::Primary(roles) => {
+                !roles.is_empty() && roles.iter().all(|(_, role)| *role == Role::Reference)
+            }
+            Listing::Unplaced => false,
+        }
+    }
+
+    /// The projects listing a primary's checkout, with their roles, when some
+    /// declare `reference` and some do not.
+    pub(crate) fn disagreement(&self) -> Option<&[(ProjectName, Role)]> {
+        match self {
+            Listing::Primary(roles)
+                if roles.iter().any(|(_, r)| *r == Role::Reference)
+                    && roles.iter().any(|(_, r)| *r != Role::Reference) =>
+            {
+                Some(roles)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The role the files of the checkout at `member` hold, for a member its
+/// caller's project declares `declared`: in a primary, the first role other
+/// than `reference` any project listing the checkout declares, if one does.
+pub fn role_held(member: &Path, declared: Role) -> Role {
+    match Listing::of(member) {
+        Listing::Primary(roles) if declared == Role::Reference => roles
+            .into_iter()
+            .map(|(_, role)| role)
+            .find(|role| *role != Role::Reference)
+            .unwrap_or(Role::Reference),
+        _ => declared,
+    }
+}
+
 /// Bring the tracked regular files of the member checked out at `member` to
-/// the permissions `role` asks for, and return how many files changed.
+/// the permissions [`role_held`] gives it for a member its caller's project
+/// declares `role`, and return how many files changed.
 ///
 /// A file already in that state is left alone, so its ctime does not move. A
 /// read-only file of a non-`reference` member that shares its inode with
@@ -24,6 +115,10 @@ use std::path::Path;
 /// write bits belong to the inode, so restoring them in place would make
 /// every workspace sharing it writable.
 pub fn settle(vcs: &dyn Vcs, member: &Path, role: Role) -> anyhow::Result<usize> {
+    settle_held(vcs, member, role_held(member, role))
+}
+
+fn settle_held(vcs: &dyn Vcs, member: &Path, role: Role) -> anyhow::Result<usize> {
     let mut changed = 0;
     for file in tracked_regular_files(vcs, member)? {
         let path = member.join(&file);
@@ -65,6 +160,7 @@ pub fn settle_moved(
     role: Role,
     from: Option<&ResolvedRevisionId>,
 ) -> anyhow::Result<Settled> {
+    let role = role_held(member, role);
     let files = match from {
         Some(from) => {
             let to = vcs.head_revision(member)?;
@@ -79,13 +175,14 @@ pub fn settle_moved(
         None => None,
     };
     Ok(Settled {
-        permissions: settle(vcs, member, role)?,
+        permissions: settle_held(vcs, member, role)?,
         files,
     })
 }
 
 /// How many tracked regular files of the member at `member` do not hold the
-/// permissions `role` asks for.
+/// permissions `role` asks for. `role` is the one the files hold, not one a
+/// project declares: [`role_held`] answers that.
 pub fn unsettled(vcs: &dyn Vcs, member: &Path, role: Role) -> anyhow::Result<usize> {
     Ok(tracked_regular_files(vcs, member)?
         .into_iter()

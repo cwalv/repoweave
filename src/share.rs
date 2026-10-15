@@ -8,7 +8,7 @@
 //! VCS stores content. Nothing records how a file was placed: a later
 //! operation asks the backend again.
 
-use crate::manifest::{Manifest, RepoPath, Role};
+use crate::manifest::Role;
 use crate::vcs::{
     BornRef, OwnedRef, ResolvedRevisionId, TrackedFile, Vcs, VcsError, WorkspacePopulation,
 };
@@ -248,7 +248,11 @@ fn place(
             .into_iter()
             .filter(|mode| {
                 *mode == Mode::Reflink
-                    || may_link(role, backend_declares, checked_out_as_reference(&source))
+                    || may_link(
+                        role,
+                        backend_declares,
+                        crate::settle::Listing::of(&source).is_reference(),
+                    )
             })
             .filter(|mode| can_place_from(&source, dest, uncovered.keys().copied(), fs, *mode))
             .collect();
@@ -308,44 +312,6 @@ fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<PathBuf> 
         .collect();
     found.sort_by_key(|(elsewhere, secondary, _)| (*elsewhere, *secondary));
     found.into_iter().map(|(_, _, w)| w).collect()
-}
-
-/// Whether the checkout at `checkout` is a `reference` member where it
-/// lives: in a workweave, by its project's manifest; in a primary, by every
-/// project's manifest that lists it, since its clone serves them all.
-fn checked_out_as_reference(checkout: &Path) -> bool {
-    for root in checkout.ancestors().skip(1) {
-        let Some(repo) = checkout
-            .strip_prefix(root)
-            .ok()
-            .and_then(|rel| {
-                rel.components()
-                    .map(|c| c.as_os_str().to_str())
-                    .collect::<Option<Vec<_>>>()
-            })
-            .and_then(|parts| RepoPath::new(parts.join("/")).ok())
-        else {
-            return false;
-        };
-        let role_in = |project: &str| {
-            Manifest::from_path(
-                &crate::workspace::project_dir(root, project).join(Manifest::FILE_NAME),
-            )
-            .ok()
-            .and_then(|m| m.get_entry(&repo).map(|e| e.role))
-        };
-        if let Some(marker) = crate::workspace::WorkweaveMarker::read(root).ok().flatten() {
-            return role_in(marker.project().as_str()) == Some(Role::Reference);
-        }
-        if crate::workspace::projects_dir(root).is_dir() {
-            let roles: Vec<Role> = crate::workspace::discover_projects(root)
-                .iter()
-                .filter_map(|p| role_in(p.as_str()))
-                .collect();
-            return !roles.is_empty() && roles.iter().all(|r| *r == Role::Reference);
-        }
-    }
-    false
 }
 
 /// Whether anything can be placed from `source` into `dest` in `mode`, asked
@@ -568,6 +534,7 @@ mod tests {
     use super::testing::FakePrimitives;
     use super::*;
     use crate::git::{git_command_in_test, git_vcs, under_both_line_endings, LineEndings};
+    use crate::manifest::Manifest;
     use crate::vcs::RawRefName;
 
     fn git(dir: &Path, args: &[&str]) -> String {

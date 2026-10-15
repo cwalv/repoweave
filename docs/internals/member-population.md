@@ -251,11 +251,19 @@ with read-only ones — whose `--fix` settles.
 
 **The primary is not special.** Its reference checkouts are read-only and are a
 source like any seat's. A role is per project, and one canonical clone in the
-primary can serve several projects; settle takes the role of the project whose
-verb is running, and `doctor` checks such a clone once, for the first project
-listing it. Where those projects disagree, the clone's permissions follow
-whichever settled it last, and the hardlink mode takes a primary checkout as a
-`reference` source only where every project listing it agrees.
+primary can serve several projects, so its files hold one role for all of
+them: `reference` only where every project listing it declares `reference`,
+and otherwise the first other role a project declares. `Listing` in
+`src/settle.rs` reads that from the manifests on disk and is the one statement
+of the rule. Settle applies it to the role its caller declares
+(`role_held`), so a verb run from any of those projects leaves the same
+permissions; doctor's `member-permissions` checks the clone against it, so
+every project scope agrees; and the hardlink mode takes a checkout as a
+`reference` source only where it holds `reference`. A workweave checkout
+serves its own project alone and holds that project's role. Where the projects
+disagree, doctor reports `role-disagreement`, naming each project and its
+role; a `reference` role is not enforced on a clone another project declares
+otherwise.
 
 ## 6. Backend conformance and the per-platform declaration
 
