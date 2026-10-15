@@ -237,3 +237,127 @@ fn a_landing_warns_on_a_tag_pinned_entry_and_its_relock_records_the_commit() {
         );
     }
 }
+
+fn json(dir: &Path, args: &[&str]) -> serde_json::Value {
+    let (stdout, _) = succeed(dir, args);
+    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("rwv {args:?}: {e}\n{stdout}"))
+}
+
+fn pinned_by_name_findings(dir: &Path) -> Vec<serde_json::Value> {
+    let out = run(dir, &["doctor", "--json"]);
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "doctor --json: {e}\n{}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    doc["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "lock-pinned-by-name")
+        .cloned()
+        .collect()
+}
+
+fn dep_status(dir: &Path) -> serde_json::Value {
+    let doc = json(dir, &["status", "--json"]);
+    doc["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == DEP)
+        .unwrap_or_else(|| panic!("status lists no {DEP}:\n{doc}"))
+        .clone()
+}
+
+#[test]
+fn doctor_reports_and_status_marks_a_tag_pinned_entry() {
+    let p = published(false);
+    succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+
+    let findings = pinned_by_name_findings(&p.workspace);
+    assert_eq!(findings.len(), 1, "one finding: {findings:?}");
+    assert_eq!(findings[0]["path"], DEP);
+    assert_eq!(findings[0]["project"], "project");
+    assert_eq!(findings[0]["version"], "v1.0.0");
+
+    let (stdout, _) = succeed(&p.workspace, &["doctor"]);
+    assert!(
+        stdout.contains("lock pins `v1.0.0`")
+            && stdout.contains("`rwv lock` records the commit id"),
+        "doctor text must name the entry and the fix:\n{stdout}"
+    );
+
+    assert_eq!(dep_status(&p.workspace)["lock_pinned_by_name"], true);
+    let (stdout, _) = succeed(&p.workspace, &["status"]);
+    assert!(
+        stdout.contains("pinned by name; run `rwv lock`"),
+        "status text must mark the entry:\n{stdout}"
+    );
+}
+
+#[test]
+fn a_commit_id_pinned_entry_raises_no_finding_and_no_marker() {
+    let p = published(false);
+    succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+    succeed(&p.workspace, &["lock", "--project", "project"]);
+
+    assert_eq!(
+        pinned_by_name_findings(&p.workspace),
+        Vec::<serde_json::Value>::new()
+    );
+    assert_eq!(dep_status(&p.workspace)["lock_pinned_by_name"], false);
+    let (stdout, _) = succeed(&p.workspace, &["status"]);
+    assert!(!stdout.contains("pinned by name"), "{stdout}");
+}
+
+#[test]
+fn doctor_locked_warns_beside_a_tag_pinned_entry() {
+    let p = published(false);
+    succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+    let (stdout, _) = succeed(&p.workspace, &["doctor", "--locked"]);
+    assert!(
+        stdout.contains(&format!("warning: {DEP}: lock pins `v1.0.0`")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_json_landing_still_warns_on_a_tag_pinned_entry() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    let dep_bare = tmp.path().join("dep.git");
+    tagged_remote(&dep_bare, "v1.0.0");
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            &dep_bare.to_string_lossy(),
+            &common::under(&root, DEP).to_string_lossy(),
+        ],
+    );
+    let project = root.join("projects").join(PROJECT);
+    std::fs::create_dir_all(&project).unwrap();
+    common::git_in(&project, &["init", "-b", "main"]);
+    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    std::fs::write(project.join(".gitignore"), "*.code-workspace\ngita/\n").unwrap();
+    let dep_url = common::file_url(&dep_bare);
+    std::fs::write(project.join("rwv.toml"), manifest_toml(&[(DEP, &dep_url)])).unwrap();
+    common::fixture_lock(&project, &[(DEP, &dep_url, "v1.0.0")]);
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "-m", "initial"]);
+    std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    succeed(&root, &["workweave", PROJECT, "create", "s1"]);
+    let seat = tmp
+        .path()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--s1"));
+
+    let (_, stderr) = succeed(&seat, &["sync-to", "--json"]);
+    assert!(
+        names_the_pin(&stderr, &format!("ws/{DEP}"), "v1.0.0"),
+        "sync-to --json must name the entry on stderr:\n{stderr}"
+    );
+}

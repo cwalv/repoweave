@@ -1677,6 +1677,12 @@ mod doctor_json {
             absolute_path: String,
             project: String,
         },
+        LockPinnedByName {
+            path: String,
+            absolute_path: String,
+            project: String,
+            version: String,
+        },
         LegacyManifestFormat {
             project: String,
             legacy_path: String,

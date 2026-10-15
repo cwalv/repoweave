@@ -155,6 +155,9 @@ pub struct RepoStatus {
     pub branch: Option<String>,
     pub tip: Option<String>,
     pub lock_sha: Option<String>,
+    /// `true` when the lock entry holds a tag or branch name rather than a
+    /// commit id; `rwv lock` records the commit id.
+    pub lock_pinned_by_name: bool,
     pub relation: LockRelation,
     pub mid_op: Option<String>,
     pub role: String,
@@ -321,15 +324,15 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                 // Clone directory is absent.  Retrieve the raw lock version
                 // for the `lock_sha` display field (the resolved map omits
                 // missing repos, but the raw lock still has the entry).
-                let raw_lock_sha = lock
-                    .as_ref()
-                    .and_then(|(raw, _)| raw.get_entry(repo_path))
-                    .map(|e| e.version.as_str().to_owned());
+                let raw_lock_entry = lock.as_ref().and_then(|(raw, _)| raw.get_entry(repo_path));
+                let raw_lock_sha = raw_lock_entry.map(|e| e.version.as_str().to_owned());
+                let lock_pinned_by_name = raw_lock_entry.is_some_and(|e| !e.version.is_commit_id());
                 entries.push(RepoStatus {
                     path: repo_path.to_string(),
                     branch: None,
                     tip: None,
                     lock_sha: raw_lock_sha,
+                    lock_pinned_by_name,
                     relation: LockRelation::Missing,
                     mid_op: None,
                     role: entry.role.as_str().to_string(),
@@ -350,10 +353,9 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
             if lock_resolve_failures.iter().any(|(p, _)| p == repo_path) {
                 // The raw lock has an entry for this repo (it was in
                 // `failures`) but the SHA cannot be resolved on disk.
-                let raw_lock_sha = lock
-                    .as_ref()
-                    .and_then(|(raw, _)| raw.get_entry(repo_path))
-                    .map(|e| e.version.as_str().to_owned());
+                let raw_lock_entry = lock.as_ref().and_then(|(raw, _)| raw.get_entry(repo_path));
+                let raw_lock_sha = raw_lock_entry.map(|e| e.version.as_str().to_owned());
+                let lock_pinned_by_name = raw_lock_entry.is_some_and(|e| !e.version.is_commit_id());
 
                 let branch = checkout_branch(vcs.as_ref(), &repo_abs);
 
@@ -378,6 +380,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                     branch,
                     tip: tip.map(|r| r.display_str().to_owned()),
                     lock_sha: raw_lock_sha,
+                    lock_pinned_by_name,
                     relation: LockRelation::Unreachable,
                     mid_op,
                     role: entry.role.as_str().to_string(),
@@ -422,6 +425,10 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                 branch,
                 tip: tip.map(|r| r.display_str().to_owned()),
                 lock_sha: lock_sha.map(|r| r.display_str().to_owned()),
+                lock_pinned_by_name: lock
+                    .as_ref()
+                    .and_then(|(raw, _)| raw.get_entry(repo_path))
+                    .is_some_and(|e| !e.version.is_commit_id()),
                 relation,
                 mid_op,
                 role: entry.role.as_str().to_string(),
@@ -523,15 +530,21 @@ fn print_table(entries: &[RepoStatus]) {
             .as_deref()
             .map(|s| format!("  [{s}]"))
             .unwrap_or_default();
+        let by_name = if entry.lock_pinned_by_name {
+            "  [pinned by name; run `rwv lock`]"
+        } else {
+            ""
+        };
 
         println!(
-            "{:<path_w$}  {:<branch_w$}  {:<tip_w$}  lock: {:<lock_w$}  [{}]{}",
+            "{:<path_w$}  {:<branch_w$}  {:<tip_w$}  lock: {:<lock_w$}  [{}]{}{}",
             entry.path,
             branch,
             tip,
             lock,
             entry.relation,
             mid,
+            by_name,
             path_w = path_w,
             branch_w = branch_w,
             tip_w = tip_w,
@@ -555,6 +568,7 @@ mod tests {
                 branch: Some("main".into()),
                 tip: Some("abc123".into()),
                 lock_sha: Some("abc123".into()),
+                lock_pinned_by_name: false,
                 relation: LockRelation::Ok,
                 mid_op: None,
                 role: "owned".into(),
@@ -652,6 +666,7 @@ mod tests {
                 branch: Some("app--wwb/app--wwa/main".into()),
                 tip: Some("deadbeef".into()),
                 lock_sha: Some("deadbeef".into()),
+                lock_pinned_by_name: false,
                 relation: LockRelation::Ok,
                 mid_op: None,
                 role: "owned".into(),

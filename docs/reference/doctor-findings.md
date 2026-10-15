@@ -207,6 +207,21 @@ repo with no locked revision to compare against, which reads as healthy.
 **What to do:** fetch the missing history, or `rwv lock` to re-pin from the
 working tips if the lock is the stale side.
 
+### `lock-pinned-by-name`
+
+**Warning. Report-only.** An `rwv.lock` entry holds a tag or branch name where a
+commit id belongs. The entry resolves to wherever the name points now, and to
+nothing once the name is gone, so it pins nothing. `path` names the repo,
+`project` the lock's project, and `version` the name the entry holds. An entry
+holding a full commit id raises nothing, and a lock that is absent or clean of
+names raises nothing.
+
+`rwv status` marks the same entry (`lock_pinned_by_name` in `--json`), and
+`rwv doctor --locked` prints the same warning beside the entry. `rwv fetch` and
+`rwv sync` warn about it on stderr and proceed.
+
+**What to do:** run `rwv lock`, which records the commit id each name points at.
+
 ### `head-unreadable`
 
 **Error. Report-only.** A repo present under a registry directory whose HEAD

@@ -7,7 +7,7 @@ use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::refusal::{refusal, RefusalKind};
-use crate::vcs::{ReplayExclusionState, ResolvedRevisionId};
+use crate::vcs::{RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
     project_dir, project_rel_path, projects_dir, strip_projects_prefix, Resolution,
 };
@@ -186,6 +186,15 @@ pub enum CheckViolation {
     UnresolvableLockEntry {
         project: ProjectName,
         repo: RepoPath,
+    },
+
+    /// An `rwv.lock` entry that names a tag or branch where a commit id
+    /// belongs. It resolves to wherever the name points now, so it pins
+    /// nothing. Report-only: `rwv lock` rewrites the entry.
+    LockPinnedByName {
+        project: ProjectName,
+        repo: RepoPath,
+        version: RawRevisionId,
     },
 
     /// A project directory holds the pre-TOML manifest and no
@@ -723,6 +732,7 @@ impl CheckViolation {
             | CheckViolation::ProjectlessDir { .. }
             | CheckViolation::UnnameableProject { .. }
             | CheckViolation::UnresolvableLockEntry { .. }
+            | CheckViolation::LockPinnedByName { .. }
             | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
@@ -840,6 +850,7 @@ impl CheckViolation {
             CheckViolation::ProjectlessDir { .. } => "projectless-dir",
             CheckViolation::UnnameableProject { .. } => "unnameable-project",
             CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry",
+            CheckViolation::LockPinnedByName { .. } => "lock-pinned-by-name",
             CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format",
             CheckViolation::DanglingActiveProject { .. } => "dangling-active-project",
             CheckViolation::WeaveRootIdentityConflict { .. } => "weave-root-identity-conflict",
@@ -1825,6 +1836,13 @@ pub enum ViolationOutput {
         absolute_path: String,
         project: String,
     },
+    LockPinnedByName {
+        path: String,
+        absolute_path: String,
+        project: String,
+        /// The tag or branch name the lock entry holds.
+        version: String,
+    },
     LegacyManifestFormat {
         project: String,
         legacy_path: String,
@@ -2240,6 +2258,16 @@ impl ViolationOutput {
                     project: project.to_string(),
                 }
             }
+            CheckViolation::LockPinnedByName {
+                project,
+                repo,
+                version,
+            } => Self::LockPinnedByName {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                project: project.to_string(),
+                version: version.as_str().to_owned(),
+            },
             CheckViolation::LegacyManifestFormat {
                 project,
                 legacy_path,
@@ -5437,6 +5465,23 @@ fn member_slots(
     slots
 }
 
+/// A `lock-pinned-by-name` finding for each entry of a project's `rwv.lock`
+/// that holds a tag or branch name rather than a commit id.
+fn scan_locks_pinned_by_name(projects: &[Project]) -> Vec<CheckViolation> {
+    projects
+        .iter()
+        .filter_map(|project| project.lock.as_ref().map(|lock| (project, lock)))
+        .flat_map(|(project, lock)| {
+            lock.entries_pinned_by_name()
+                .map(|(repo, version)| CheckViolation::LockPinnedByName {
+                    project: project.name.clone(),
+                    repo: repo.clone(),
+                    version: version.clone(),
+                })
+        })
+        .collect()
+}
+
 /// A `role-disagreement` finding for each canonical clone of the primary that
 /// the projects in scope list and the projects listing it disagree on, when
 /// doctor runs in the primary. Every project listing the clone is named, in
@@ -7465,6 +7510,17 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                          run `rwv lock` or fetch"
                     ),
                 ),
+                CheckViolation::LockPinnedByName {
+                    project,
+                    repo,
+                    version,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{project}: {}",
+                        crate::lock::pinned_by_name_warning(&repo, &version)
+                    ),
+                ),
                 CheckViolation::LegacyManifestFormat {
                     project,
                     legacy_path,
@@ -8612,6 +8668,13 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
                 .map(|e| vcs_for(e.vcs_type))
                 .unwrap_or_else(probe_vcs);
             let repo_abs = workspace_dir.join(repo_path.as_path());
+
+            if !raw_entry.version.is_commit_id() {
+                println!(
+                    "warning: {}",
+                    crate::lock::pinned_by_name_warning(repo_path, &raw_entry.version)
+                );
+            }
 
             let actual = match vcs.head_revision(&repo_abs) {
                 Ok(rev) => rev,
@@ -10005,6 +10068,7 @@ fn collect_doctor_violations(
             .filter_map(member_permissions_finding),
     );
     violations.extend(scan_role_disagreements(ctx, &input.projects));
+    violations.extend(scan_locks_pinned_by_name(&input.projects));
 
     {
         use crate::workspace::read_active_project;

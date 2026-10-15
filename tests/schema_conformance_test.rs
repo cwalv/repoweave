@@ -469,6 +469,7 @@ fn status_repos() -> Vec<RepoStatus> {
                 branch: (!sparse).then(|| "main".to_owned()),
                 tip: (!sparse).then(|| sha('a')),
                 lock_sha: (!sparse).then(|| sha('b')),
+                lock_pinned_by_name: sparse,
                 relation,
                 mid_op: sparse.then(|| "rebase".to_owned()),
                 role: "owned".to_owned(),

@@ -1683,6 +1683,37 @@
         {
           "type": "object",
           "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "project",
+            "version"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "lock-pinned-by-name"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            },
+            "version": {
+              "description": "The tag or branch name the lock entry holds.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "kind",
             "legacy_path",
             "project"

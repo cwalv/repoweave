@@ -271,6 +271,7 @@ Schema:
       "type": "object",
       "required": [
         "absolute_path",
+        "lock_pinned_by_name",
         "path",
         "project",
         "relation",
@@ -286,6 +287,10 @@ Schema:
             "string",
             "null"
           ]
+        },
+        "lock_pinned_by_name": {
+          "description": "`true` when the lock entry holds a tag or branch name rather than a commit id; `rwv lock` records the commit id.",
+          "type": "boolean"
         },
         "lock_sha": {
           "type": [

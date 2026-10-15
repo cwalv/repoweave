@@ -33,7 +33,7 @@ use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
 use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveName};
 use repoweave::op_state::OpVerb;
-use repoweave::vcs::ResolvedRevisionId;
+use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
 use repoweave::workspace::MarkerDefect;
 use std::path::PathBuf;
 
@@ -114,6 +114,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::ProjectlessDir { .. } => "projectless-dir".into(),
         CheckViolation::UnnameableProject { .. } => "unnameable-project".into(),
         CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry".into(),
+        CheckViolation::LockPinnedByName { .. } => "lock-pinned-by-name".into(),
         CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
         CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
@@ -364,6 +365,11 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::UnresolvableLockEntry {
             project: project(),
             repo: repo(),
+        },
+        CheckViolation::LockPinnedByName {
+            project: project(),
+            repo: repo(),
+            version: RawRevisionId::new("v1.2.0"),
         },
         CheckViolation::LegacyManifestFormat {
             project: project(),
