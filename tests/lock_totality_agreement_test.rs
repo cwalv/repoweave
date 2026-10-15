@@ -222,10 +222,13 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
     let stale = violations_for(&doc, DRIFTED);
     assert_eq!(
         kinds(&stale),
-        vec!["stale-lock".to_owned()],
-        "the drifted repo's only violation must be `stale-lock`; got:\n{doc}"
+        vec!["lock-pinned-by-name".to_owned(), "stale-lock".to_owned()],
+        "the drifted repo's violations must be `stale-lock` and the tag it pins; got:\n{doc}"
     );
-    let stale = &stale[0];
+    let stale = stale
+        .iter()
+        .find(|v| v["kind"] == "stale-lock")
+        .expect("a stale-lock record");
     let json_actual = stale.get("actual").and_then(|v| v.as_str()).unwrap();
     let json_locked = stale.get("locked").and_then(|v| v.as_str()).unwrap();
 
