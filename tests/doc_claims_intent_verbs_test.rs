@@ -144,8 +144,9 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
 }
 
 /// The `vscode-workspace` integration's file: default-enabled and declared
-/// unconditionally for the active project, so its presence after a verb
-/// runs is proof that intent-mode activation ran.
+/// unconditionally for the active project. Where the fixture's source has
+/// not activated, its presence after a verb runs shows that the verb
+/// authored it.
 fn code_workspace(project_dir: &Path, project: &str) -> PathBuf {
     project_dir.join(format!("{project}.code-workspace"))
 }

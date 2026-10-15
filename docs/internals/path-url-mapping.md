@@ -88,6 +88,19 @@ justification for why that file's sites are lookup-key or observed rather
 than derived; a new or grown site fails the pin until someone states which
 it is.
 
+**What the unknown-segment scan does not see.** `scan_unknown_segment_repos`
+shares `repos_under_segment` with `scan_repos_on_disk`, so it inherits that
+walk's shape:
+
+- It finds a repo only at exactly `segment/owner/repo` depth. A clone one
+  level shallower or deeper under an unknown top-level directory is not
+  reported.
+- A top-level directory whose name is not valid UTF-8 is dropped from the
+  candidate set without a finding.
+- Directory tests follow symlinks, so a symlink to a directory counts as a
+  top-level directory (and as an owner or repo directory below it); the
+  clone it leads to is reported at the symlink's path.
+
 **`run_add_new` is not on this list.** Before the creation surface below
 existed, it took the operator's typed path as a *layout assertion* — the one
 site in the tree that did. It no longer does: its `RepoPath` comes from

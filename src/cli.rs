@@ -144,10 +144,10 @@ pub enum Commands {
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON. Under `-j 1` (or no `-j`), emits a
+        /// Emit per-repo outcomes as JSON. Under `-j 1`, emits a
         /// `{ "$schema": ..., "outcomes": [...] }` envelope. Under `-j N` with
         /// `N > 1`, streams NDJSON (one self-describing record per repo as workers
-        /// finish). See `rwv explain fetch`.
+        /// finish). Without `-j` the count is min(nproc, 8). See `rwv explain fetch`.
         #[arg(long)]
         json: bool,
     },

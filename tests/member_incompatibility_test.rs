@@ -4,7 +4,7 @@
 //! `verify()` reports CLEAN. That is right for a *preference* and wrong for an
 //! *incompatibility*: a `go.work` pinned below what the members' `go.mod` files
 //! declare does not build, and rwv can see it. The category reports that second
-//! fact without touching rule 5.
+//! fact without touching the `DefaultOnly` ownership rule.
 //!
 //! Two surfacings, one predicate:
 //!
@@ -434,8 +434,8 @@ fn update_reports_breach_it_newly_created() {
     let line = the_finding(&combined);
     assert_finding_shape(&line, "1.21", "1.26");
 
-    // The pin itself is untouched: this is a report, not a repair. Rule 5
-    // still owns the go-line, so the regeneration `update` just ran left it
+    // The pin itself is untouched: this is a report, not a repair. The
+    // go-line is `DefaultOnly`, so the regeneration `update` just ran left it
     // exactly where the operator put it.
     let go_work = std::fs::read_to_string(fx.project_dir.join("go.work")).unwrap();
     assert!(
@@ -570,7 +570,7 @@ fn add_reports_new_member_incompatible_with_existing_pin() {
     let line = the_finding(&combined);
     assert_finding_shape(&line, "1.21", "1.26");
 
-    // The report is not a repair: rule 5 still owns the go-line.
+    // The report is not a repair: the go-line stays `DefaultOnly`.
     let go_work = std::fs::read_to_string(ws.join("projects/go-add-project/go.work")).unwrap();
     assert!(
         go_work.contains("go 1.21"),

@@ -3,8 +3,8 @@
 //! `scan_repos_on_disk`'s walk entirely — not orphan-reported, its lock and
 //! HEAD never compared against anything, because the walk never enumerates
 //! that directory's name in the first place. `unknown-segment-clone` is the
-//! finding that covers it; see `docs/internals/path-url-mapping.md` for the
-//! residue this leaves.
+//! finding that covers it; `docs/internals/path-url-mapping.md` states what the
+//! scan still does not see.
 //!
 //! What this scan must NOT report is as load-bearing as what it must:
 //! `projects/`, a dot-prefixed directory, and a directory shaped like build

@@ -776,12 +776,8 @@ pub fn run() -> anyhow::Result<()> {
             // fetch_one, where it gates the realign-detach refusal.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
-            // fetch's default is auto-resolve (min(nproc, 8)), unlike sync which
-            // defaults to serial to preserve envelope vs NDJSON contract. fetch's
-            // JSON contract follows the same shape: envelope when -j 1 or no -j
-            // with default resolution, NDJSON when -j > 1. Because the default
-            // can resolve to > 1 on multi-core hosts, agents should pass `-j 1`
-            // explicitly when they require the envelope shape.
+            // The default resolves to min(nproc, 8), so --json without -j is
+            // NDJSON on a multi-core host; the envelope needs an explicit -j 1.
             let jobs = crate::parallel::resolve_jobs(jobs);
             match source {
                 Some(src) => {

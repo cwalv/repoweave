@@ -106,8 +106,9 @@ Realignment refuses when it cannot do that: when the pin is not a fast-forward o
 The lock is **read-only**. To advance tips and re-snapshot, use `rwv update`.
 
 `--json` emits `{ "$schema": "...", "outcomes": [...] }` envelope in serial mode
-(`-j 1` or no `-j`). Under `-j N` with `N > 1`, switches to NDJSON (one
-self-describing record per repo as workers finish). See [JSON envelope
+(`-j 1`). Under `-j N` with `N > 1`, switches to NDJSON (one
+self-describing record per repo as workers finish). Without `-j` the worker
+count is `min(nproc, 8)`, so multi-core hosts get NDJSON. See [JSON envelope
 convention](#--json-envelope-convention).
 
 Anchored by `tests/doc_claims_fetch_test.rs`.

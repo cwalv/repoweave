@@ -293,19 +293,11 @@ fn an_inactive_project_is_not_verified_against_the_active_project_s_file() {
 
 /// The workweave arm of the same split.
 ///
-/// `Cargo.lock` is the file that still demonstrates it: `create_workweave`
-/// now carries a managed/generated file's bytes from the source into the
-/// seat when the seat lacks it, the source has it as a regular file, and the
-/// seat's project VCS does not track it (see `carry_untracked_managed_files`
-/// in `src/workweave.rs`) — so `web-app.code-workspace`, this test's
-/// original fixture, no longer demonstrates "absent in both": an activated
-/// source now carries it across. A lockfile still can demonstrate it,
-/// because this fixture avoids ever activating it there — `cargo
-/// generate-lockfile` runs only from the activate HOOK, not from the content
-/// step the carry's source-side check reads, so authoring primary's content
-/// via `activate_intent_with_options(..., no_materialize: true)` instead of
-/// through `rwv doctor --fix` leaves no `Cargo.lock` for either mechanism to
-/// find.
+/// `Cargo.lock` is absent in both the primary and the seat: it is written
+/// only by the activate hook, and `activate_intent_with_options(...,
+/// no_materialize: true)` skips hooks. The primary therefore has no lock for
+/// `create_workweave`'s carry of untracked managed files (see
+/// `carry_untracked_managed_files` in `src/workweave.rs`) to copy.
 #[test]
 fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     let tmp = common::tempdir().unwrap();

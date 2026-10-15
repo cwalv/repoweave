@@ -1,14 +1,11 @@
-//! Regression tests: `rwv workweave create` forked only what git tracks, so
-//! a managed file that is deliberately untracked — cargo-workspace's
-//! gitignored `.cargo/config.toml`, under `rustc-wrapper` — started every
-//! fresh seat missing, even when the source workspace had already activated
-//! it. `rwv doctor --fix` regenerated it immediately afterward, which is
-//! what made the gap easy to miss and annoying to live with.
+//! `rwv workweave create` carries a managed file that is deliberately
+//! untracked — cargo-workspace's gitignored `.cargo/config.toml`, under
+//! `rustc-wrapper` — from the source into the new seat.
 //!
-//! The fix carries bytes, not authorship: during `create_workweave`, before
-//! the verify pass, a declared managed/generated file is copied from the
-//! source into the seat when the seat lacks it, the source has it as a
-//! regular file, and the seat's project VCS does not track it. Workweave
+//! It carries bytes, not authorship: during `create_workweave`, before the
+//! verify pass, a declared managed/generated file is copied from the source
+//! into the seat when the seat lacks it, the source has it as a regular
+//! file, and the seat's project VCS does not track it. Workweave
 //! creation still never calls `Integration::activate()` — see
 //! `workweave_create_does_not_author_managed_content` in
 //! `doc_claims_intent_verbs_test.rs`, pinned unchanged.

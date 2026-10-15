@@ -2952,10 +2952,8 @@ mod tests {
 
     #[test]
     fn an_occupied_path_leaves_every_surfaced_link_in_place() {
-        // The incident: a tool replaced one surfaced link with a real file,
-        // and the next surfacing unlinked every link, re-made them in name
-        // order, and stopped at the occupant — so each link sorting after it
-        // was gone.
+        // A real file occupying one surfaced path must not cost the links
+        // that sort after it.
         let surfaced = [
             ".claude",
             "AGENTS.md",

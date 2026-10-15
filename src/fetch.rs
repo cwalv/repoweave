@@ -193,7 +193,7 @@ enum FetchOutcome {
 /// happen serially.
 ///
 /// When `json` is `true`:
-/// - `jobs == 1` (or no `-j`): emits a single `{ "$schema": ..., "outcomes":
+/// - `jobs == 1`: emits a single `{ "$schema": ..., "outcomes":
 ///   [...] }` envelope to stdout after all repos complete.
 /// - `jobs > 1`: streams one self-describing NDJSON line per repo to stdout
 ///   as each worker finishes, then emits no envelope wrapper.

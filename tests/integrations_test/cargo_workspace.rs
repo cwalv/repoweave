@@ -1068,9 +1068,8 @@ fn committed_paths_mode_unchanged_for_path_dep_member() {
 /// a registry dep whose name matches a reference-repo crate gets
 /// patched to the reference-repo path.
 ///
-/// Reference-role repos are symlinked to the canonical clone in
-/// workweaves; symlinks keep logical paths in `cargo metadata` with zero
-/// rebuild churn, so they are safe patch sources.
+/// Reference-role repos are read-only worktrees in workweaves, at stable
+/// paths under the weave, so they are safe patch sources.
 #[test]
 fn derived_patch_includes_reference_repos_as_sources() {
     let tmp = common::tempdir().unwrap();

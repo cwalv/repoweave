@@ -1778,9 +1778,9 @@ impl CargoWorkspace {
     ///
     /// 1. Build a package-name index over the entire weave: every active
     ///    workspace member **plus** every `reference`-role repo with a
-    ///    `Cargo.toml`. Reference-role repos are symlinked read-only study
-    ///    material in workweaves; symlinked directories keep logical paths,
-    ///    so they are safe patch sources with zero rebuild churn.
+    ///    `Cargo.toml`. Reference-role repos are read-only worktrees of the
+    ///    canonical clone; their paths under the weave are stable, so they are
+    ///    safe patch sources with zero rebuild churn.
     /// 2. For each workspace member (not reference — reference repos are
     ///    only patch *sources*, not scan targets), walk `[dependencies]`,
     ///    `[dev-dependencies]`, and `[build-dependencies]`. For every dep
