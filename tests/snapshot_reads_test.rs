@@ -334,6 +334,29 @@ fn read_file_at_revision_returns_committed_content() {
     );
 }
 
+/// The read returns the blob's bytes, surrounding whitespace included.
+#[test]
+fn read_file_at_revision_returns_the_blob_byte_exact() {
+    let tmp = common::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    common::git_in(&repo, &["init", "-b", "main"]);
+    let content = "\n  \tleading and trailing\n\n \t";
+    std::fs::write(repo.join("file.txt"), content).unwrap();
+    common::git_in(&repo, &["add", "file.txt"]);
+    common::git_in(&repo, &["commit", "-m", "padded"]);
+    let sha = common::git_in(&repo, &["rev-parse", "HEAD"]);
+
+    let read = repoweave::git::git_vcs()
+        .read_file_at_revision(
+            &repo,
+            &repoweave::vcs::ResolvedRevisionId::from_canonical(sha, None),
+            std::path::Path::new("file.txt"),
+        )
+        .expect("read at HEAD");
+    assert_eq!(read, content);
+}
+
 // ---------------------------------------------------------------------------
 // Lock entries resolve once, at pin time, against the SOURCE
 // ---------------------------------------------------------------------------

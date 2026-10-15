@@ -1520,16 +1520,7 @@ impl Vcs for GitVcs {
         Ok(Self::porcelain_status(repo, false)?
             .into_iter()
             .filter(|entry| entry.staged != b' ' && entry.staged != b'?')
-            .filter_map(|entry| {
-                // This caller reports what will land in the commit, so a
-                // rename resolves to the name after the arrow.
-                let field = entry.path_field.trim();
-                let path = match field.split_once(" -> ") {
-                    Some((_, new_name)) => new_name,
-                    None => field,
-                };
-                (!path.is_empty()).then(|| path.to_owned())
-            })
+            .map(|entry| entry.path)
             .collect())
     }
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
@@ -1548,6 +1539,31 @@ impl Vcs for GitVcs {
             Err(VcsError::CommandFailed { .. }) => Ok(false),
             Err(e) => Err(e),
         }
+    }
+
+    fn holds_committed_content(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
+        let is_file =
+            std::fs::symlink_metadata(repo.join(path)).is_ok_and(|meta| meta.file_type().is_file());
+        if !is_file || matches!(self.head_attachment(repo)?, HeadAttachment::Unborn(_)) {
+            return Ok(false);
+        }
+        let path = path_as_git_arg(path, "path")?;
+        let listing = Self::run(
+            &["--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", path],
+            repo,
+        )?;
+        let committed_blob = listing.split('\0').find_map(|record| {
+            let (meta, name) = record.split_once('\t')?;
+            let mut fields = meta.split(' ');
+            let (mode, kind, oid) = (fields.next()?, fields.next()?, fields.next()?);
+            (name == path && kind == "blob" && matches!(mode, "100644" | "100755")).then_some(oid)
+        });
+        Ok(match committed_blob {
+            Some(blob) => Self::unfiltered_hashes(repo, &[path])?
+                .first()
+                .is_some_and(|hash| hash == blob),
+            None => false,
+        })
     }
 
     fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
@@ -2462,7 +2478,7 @@ impl Vcs for GitVcs {
         // exist at that revision; both surface as CommandFailed and the
         // caller can inspect stderr.
         let rev_path = format!("{}:{}", revision.as_str(), path_str);
-        match Self::run_trimmed(&["show", &rev_path], repo) {
+        match Self::run(&["show", &rev_path], repo) {
             Ok(content) => Ok(content),
             Err(VcsError::CommandFailed { stderr, .. })
                 if is_revision_not_found(&stderr)
@@ -2878,7 +2894,7 @@ impl GitVcs {
     }
 }
 
-/// One record of `git status --porcelain` v1.
+/// One record of `git status --porcelain -z` v1.
 ///
 /// The working-tree column is not carried: no caller has needed it, and a
 /// field nothing reads is a claim about the grammar that nothing checks.
@@ -2886,26 +2902,24 @@ struct PorcelainEntry {
     /// Index column. `' '` when the index matches HEAD, `'?'` for a file git
     /// is not tracking.
     staged: u8,
-    /// Everything past the two status columns and the space after them. A
-    /// rename reads `old -> new`, and **which half a caller wants is the
-    /// caller's policy**, so both are left here: `lock` compares this against
-    /// paths it owns, and its refusal to bundle unrelated work depends on a
-    /// rename matching neither of them.
-    path_field: String,
+    /// The path the entry describes; for a rename or copy, the name after it.
+    path: String,
+    /// The name a rename moved `path` from, which the rename leaves changed
+    /// too. A copy's source is unchanged and is not carried.
+    renamed_from: Option<String>,
 }
 
 impl GitVcs {
-    /// Read `git status --porcelain`, preserving the status columns.
+    /// Read `git status --porcelain -z`, preserving the status columns.
     ///
-    /// Deliberately not routed through [`GitVcs::run`]. That trims the whole
-    /// output, which strips the leading space from a first line like
-    /// `" M foo"` and leaves an unstaged modification looking exactly like a
-    /// staged one. The columns are the grammar here, so nothing may trim them.
+    /// Decoded lossily rather than through [`GitVcs::run`], which refuses
+    /// output that is not UTF-8: a changed path git cannot spell in UTF-8
+    /// still leaves the tree dirty, and that answer must not become an error.
     fn porcelain_status(
         repo: &Path,
         include_untracked: bool,
     ) -> Result<Vec<PorcelainEntry>, VcsError> {
-        let mut args = vec!["status", "--porcelain"];
+        let mut args = vec!["status", "--porcelain", "-z"];
         if !include_untracked {
             args.push("--untracked-files=no");
         }
@@ -2924,32 +2938,35 @@ impl GitVcs {
                 stderr: String::from_utf8_lossy(&out.stderr).trim().to_owned(),
             });
         }
-        Ok(String::from_utf8_lossy(&out.stdout)
-            .lines()
-            .filter_map(|line| {
-                // `XY<space>path`: anything shorter carries no path.
-                let path_field = line.get(3..).filter(|p| !p.is_empty())?;
-                Some(PorcelainEntry {
-                    staged: line.as_bytes()[0],
-                    path_field: path_field.to_owned(),
-                })
-            })
-            .collect())
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut fields = stdout.split('\0').filter(|field| !field.is_empty());
+        let mut entries = Vec::new();
+        // `XY<space>path`, and for a rename or copy (`R` or `C` in either
+        // column) the source name follows as the next field.
+        while let Some(record) = fields.next() {
+            let (Some(columns), Some(path)) = (record.get(..2), record.get(3..)) else {
+                continue;
+            };
+            let source = if columns.contains(['R', 'C']) {
+                fields.next()
+            } else {
+                None
+            };
+            entries.push(PorcelainEntry {
+                staged: columns.as_bytes()[0],
+                path: path.to_owned(),
+                renamed_from: source.filter(|_| columns.contains('R')).map(str::to_owned),
+            });
+        }
+        Ok(entries)
     }
 
-    /// Return the list of dirty file paths in `repo` as reported by
-    /// `git status --porcelain`.
-    ///
-    /// Each entry is the path portion of the status line after the two-char
-    /// status code and its trailing space. Returns an empty vec when the tree
-    /// is clean; returns an `Err` only when git itself fails.
-    ///
-    /// A rename arrives whole (`old -> new`). Callers compare these against
-    /// paths they own, and a rename is meant to match neither half.
+    /// Every path `git status --porcelain` reports, with a rename naming
+    /// both its source and its destination.
     fn dirty_file_names_inner(repo: &Path, tracked_only: bool) -> Result<Vec<String>, VcsError> {
         Ok(Self::porcelain_status(repo, !tracked_only)?
             .into_iter()
-            .map(|entry| entry.path_field)
+            .flat_map(|entry| std::iter::once(entry.path).chain(entry.renamed_from))
             .collect())
     }
 }

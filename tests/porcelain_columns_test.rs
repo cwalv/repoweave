@@ -1,17 +1,15 @@
 //! `git status --porcelain` is a fixed-column grammar, and the seam's three
-//! readers now share one parse of it.
+//! readers share one parse of it.
 //!
-//! The reason they must is not tidiness. Porcelain v1 writes `XY<space>path`,
-//! where `X` is the index column and `Y` the working-tree column, and a
-//! *leading space* is meaningful: `" M foo"` is modified-but-not-staged.
-//! Trimming the output — which is what the seam's generic command runner does
-//! to every result — deletes that space on the first line and leaves `"M foo"`,
-//! which is what a *staged* modification looks like. Any reader that wants the
-//! staged/unstaged distinction therefore cannot be built on trimmed output at
-//! all.
+//! Porcelain v1 writes `XY<space>path`, where `X` is the index column and `Y`
+//! the working-tree column, and a *leading space* is meaningful: `" M foo"` is
+//! modified-but-not-staged. Trimming the output deletes that space on the
+//! first record and leaves `"M foo"`, which is what a *staged* modification
+//! looks like. Any reader that wants the staged/unstaged distinction therefore
+//! cannot be built on trimmed output at all.
 //!
 //! Only one dirty file is planted in each fixture below, because the hazard
-//! lives on the first line and a second entry would mask it.
+//! lives on the first record and a second entry would mask it.
 
 mod common;
 
@@ -110,14 +108,12 @@ fn an_untracked_file_is_dirty_but_not_staged() {
     );
 }
 
-/// The two listings disagree about renames on purpose.
+/// A staged rename changes two paths, and each listing says so in its own
+/// terms.
 ///
-/// `staged_paths` answers "what lands in the commit" and reports the name
-/// after the arrow. `dirty_file_names` answers "what is in the way" and hands
-/// back the raw field, which `lock` compares against the paths it owns —
-/// a rename matching neither is what makes it refuse to bundle. Unifying the
-/// two would turn that refusal into a silent commit, so this pins that they
-/// still differ.
+/// `staged_paths` answers "what lands in the commit under which name" and
+/// reports the name after the rename. `dirty_file_names` answers "is this path
+/// changed" and reports both, so a caller asking about either name hears yes.
 #[test]
 fn a_staged_rename_reads_differently_to_each_listing() {
     let tmp = common::tempdir().expect("tempdir");
@@ -131,12 +127,33 @@ fn a_staged_rename_reads_differently_to_each_listing() {
         "the commit will carry the post-rename name"
     );
 
-    let dirty = vcs.dirty_file_names(repo).expect("read dirty names");
-    assert_eq!(dirty.len(), 1, "one rename, one record: {dirty:?}");
-    assert!(
-        dirty[0].contains("tracked.txt") && dirty[0].contains("renamed.txt"),
-        "the dirt listing keeps both halves so an owned-path comparison \
-         cannot match one by accident, got {:?}",
-        dirty[0]
+    for listing in [
+        vcs.dirty_file_names(repo).expect("read dirty names"),
+        vcs.tracked_dirty_file_names(repo)
+            .expect("read tracked dirty names"),
+    ] {
+        let mut names = listing.clone();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["renamed.txt".to_owned(), "tracked.txt".to_owned()],
+            "a rename leaves both its names changed, got {listing:?}"
+        );
+    }
+}
+
+/// A path git would quote in line-oriented status comes back as the name
+/// itself, so a caller comparing it against a file it owns can match.
+#[test]
+fn a_dirty_path_comes_back_unquoted() {
+    let tmp = common::tempdir().expect("tempdir");
+    let repo = repo_with_one_commit(tmp.path());
+    std::fs::write(repo.join("caf\u{e9}.txt"), "new\n").unwrap();
+
+    assert_eq!(
+        repoweave::git::git_vcs()
+            .dirty_file_names(repo)
+            .expect("read dirty names"),
+        vec!["caf\u{e9}.txt".to_owned()],
     );
 }

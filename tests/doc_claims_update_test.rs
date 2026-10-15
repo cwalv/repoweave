@@ -672,6 +672,37 @@ fn update_commit_still_refuses_unrelated_dirt() {
         ));
 }
 
+/// A staged rename onto a path the verb authors still names the path it
+/// came from, which the verb does not own, so the commit is refused rather
+/// than carrying that path's removal.
+#[test]
+fn update_commit_refuses_a_rename_onto_an_authored_path() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+
+    std::fs::write(project_dir.join("notes.md"), "go 1.21\n").unwrap();
+    common::git_in(&project_dir, &["add", "notes.md"]);
+    common::git_in(&project_dir, &["commit", "-m", "notes"]);
+    common::git_in(&project_dir, &["mv", "notes.md", "go.work"]);
+
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main_adding_go_mod(bare, "example.com/a");
+
+    rwv()
+        .args(["update", "--dirty", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "uncommitted changes outside rwv.lock",
+        ));
+    assert!(
+        files_in_head_commit(&project_dir).contains(&"notes.md".to_string()),
+        "the rename's removal of notes.md was not committed"
+    );
+}
+
 /// A generated file the operator chose to gitignore is not part of the
 /// committed triple, so it is not part of the commit either — and its
 /// absence must not fail the staging step.

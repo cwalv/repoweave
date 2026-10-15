@@ -2031,25 +2031,42 @@ pub trait Vcs: Send + Sync {
     /// and untracked files.
     fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, VcsError>;
 
-    /// Return the path of every dirty file in `repo` — the same population
-    /// [`Vcs::has_uncommitted_changes`] collapses to a `bool`. Empty when the
-    /// working tree is clean.
+    /// Return every path the VCS's status reports as changed in `repo` — the
+    /// same population [`Vcs::has_uncommitted_changes`] collapses to a
+    /// `bool`. Empty when status reports nothing.
+    ///
+    /// A rename names both its source and its destination. A path whose
+    /// edits the VCS has been told not to look at is absent, so this answers
+    /// "is anything reported dirty", never "does this one file hold its
+    /// committed bytes"; that is [`Vcs::holds_committed_content`].
     ///
     /// Paths are repo-relative, in the implementation's own order.
     ///
-    /// For git: parses `git status --porcelain`.
+    /// For git: parses `git status --porcelain -z`. A file marked
+    /// assume-unchanged or skip-worktree is not reported.
     fn dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
-    /// Return the path of every dirty **tracked** file in `repo`, with
-    /// untracked files excluded.
+    /// [`Vcs::dirty_file_names`] with untracked files excluded.
     ///
     /// The source-side cleanliness signal a replay-based landing refuses on:
     /// tracked dirt would go stale under the replay, untracked scratch
     /// survives it untouched.
     ///
     /// For git: parses
-    /// `git status --porcelain --untracked-files=no`.
+    /// `git status --porcelain -z --untracked-files=no`.
     fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Return `true` when the regular file at `path` (relative to `repo`)
+    /// holds exactly the bytes the working copy's parent commit records for
+    /// it, so the VCS can give back what overwriting it would lose.
+    ///
+    /// Read from the file itself: no index state, status flag or staged
+    /// rename bears on the answer. `false` when either side has no regular
+    /// file at `path`, including before the first commit.
+    ///
+    /// For git: compares `git hash-object --no-filters` of the file against
+    /// the blob `git ls-tree HEAD` records at `path`.
+    fn holds_committed_content(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 
     /// Return `true` when `path` is under version control in `repo`. A
     /// relative `path` is resolved against `repo`.

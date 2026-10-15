@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
     /// The project has no copy, the same bytes, the generation the ledger
-    /// records rwv accepted, or a copy version control holds as it stands.
+    /// records rwv accepted, or a copy its last commit holds as it stands.
     Adopt,
     /// The project's copy differs, and neither the ledger nor version control
     /// holds it.
@@ -71,13 +71,16 @@ pub(crate) fn read(
 impl RootWrite {
     /// Adopt when taking this file in loses nothing: the project has no copy,
     /// the same bytes, the generation rwv recorded, or a copy `vcs` can give
-    /// back from history.
+    /// back from its last commit.
     pub(crate) fn verdict(&self, vcs: &dyn Vcs, root: &Path) -> Result<Verdict, VcsError> {
         let replaceable = match &self.project_copy {
             None => true,
             Some(copy) if *copy == self.bytes => true,
             Some(copy) if self.recorded.as_deref() == Some(owned_digest(copy).as_str()) => true,
-            Some(_) => held_as_it_stands(vcs, &project_dir(root, self.owner.as_str()), &self.name)?,
+            Some(_) => vcs.holds_committed_content(
+                &project_dir(root, self.owner.as_str()),
+                Path::new(&self.name),
+            )?,
         };
         Ok(if replaceable {
             Verdict::Adopt
@@ -135,16 +138,6 @@ impl RootWrite {
             project = self.in_project()
         )
     }
-}
-
-/// Whether `vcs` holds `name` in `repo` byte for byte as the working copy has
-/// it.
-fn held_as_it_stands(vcs: &dyn Vcs, repo: &Path, name: &str) -> Result<bool, VcsError> {
-    Ok(vcs.is_tracked(repo, Path::new(name))?
-        && !vcs
-            .tracked_dirty_file_names(repo)?
-            .iter()
-            .any(|dirty| dirty == name))
 }
 
 /// One file change, in order.
@@ -364,6 +357,49 @@ mod tests {
             }),
             Verdict::Conflict,
             "staged, which no commit holds"
+        );
+    }
+
+    fn hidden_edit_under(flag: &str) -> Verdict {
+        verdict_over(|repo| {
+            commit_lock(repo, "# committed\n");
+            git(repo, &["update-index", flag, "Cargo.lock"]);
+            std::fs::write(repo.join("Cargo.lock"), "# hidden edit\n").unwrap();
+        })
+    }
+
+    #[test]
+    fn an_edit_hidden_by_assume_unchanged_is_a_conflict() {
+        assert_eq!(hidden_edit_under("--assume-unchanged"), Verdict::Conflict);
+    }
+
+    #[test]
+    fn an_edit_hidden_by_skip_worktree_is_a_conflict() {
+        assert_eq!(hidden_edit_under("--skip-worktree"), Verdict::Conflict);
+    }
+
+    #[test]
+    fn an_edited_staged_rename_target_is_a_conflict() {
+        assert_eq!(
+            verdict_over(|repo| {
+                std::fs::write(repo.join("old.lock"), "# committed\n").unwrap();
+                git(repo, &["add", "old.lock"]);
+                commit(repo);
+                git(repo, &["mv", "old.lock", "Cargo.lock"]);
+                std::fs::write(repo.join("Cargo.lock"), "# edited on top\n").unwrap();
+            }),
+            Verdict::Conflict
+        );
+    }
+
+    #[test]
+    fn a_hiding_flag_over_the_committed_bytes_is_adopted() {
+        assert_eq!(
+            verdict_over(|repo| {
+                commit_lock(repo, "# committed\n");
+                git(repo, &["update-index", "--assume-unchanged", "Cargo.lock"]);
+            }),
+            Verdict::Adopt
         );
     }
 }

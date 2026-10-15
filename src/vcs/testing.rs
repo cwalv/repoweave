@@ -368,6 +368,10 @@ impl Vcs for FakeVcs {
         unsupported("is_tracked")
     }
 
+    fn holds_committed_content(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {
+        unsupported("holds_committed_content")
+    }
+
     fn stage_paths(&self, _repo: &Path, _paths: &[&str]) -> Result<(), VcsError> {
         unsupported("stage_paths")
     }
