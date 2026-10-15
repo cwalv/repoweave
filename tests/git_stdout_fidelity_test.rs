@@ -56,3 +56,16 @@ fn a_moved_member_reshares_the_file_whose_name_begins_with_whitespace() {
         "the rewritten file with a leading-space name is counted"
     );
 }
+
+#[test]
+fn a_directory_whose_git_entry_is_invalid_is_not_a_repo_inside_an_enclosing_one() {
+    let tmp = common::tempdir().unwrap();
+    let outer = tmp.path();
+    repo_with_one_commit(outer);
+    let inner = outer.join("inner");
+    std::fs::create_dir_all(inner.join(".git")).unwrap();
+
+    let vcs = repoweave::git::git_vcs();
+    assert!(vcs.is_repo(outer));
+    assert!(!vcs.is_repo(&inner));
+}

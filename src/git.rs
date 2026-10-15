@@ -1461,12 +1461,19 @@ impl Vcs for GitVcs {
     }
 
     fn is_repo(&self, path: &Path) -> bool {
-        // `git rev-parse --git-dir` walks up past `path` to an enclosing
-        // repo's `.git`, so run it only once `path` is already known to
-        // carry its own `.git` entry (directory for a normal repo, file for
-        // a worktree) — the trait promises `path` itself is the repo or
-        // worktree, not merely somewhere inside one.
-        path.join(".git").exists() && Self::run(&["rev-parse", "--git-dir"], path).is_ok()
+        // git skips an invalid `.git` entry and keeps walking up, so a
+        // successful `rev-parse` alone does not mean `path` is the repo: the
+        // top level it reports must be `path` itself.
+        if !path.join(".git").exists() {
+            return false;
+        }
+        let Ok(top) = Self::run_trimmed(&["rev-parse", "--show-toplevel"], path) else {
+            return false;
+        };
+        match (std::fs::canonicalize(top), std::fs::canonicalize(path)) {
+            (Ok(top), Ok(path)) => top == path,
+            _ => false,
+        }
     }
 
     fn list_worktrees(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
