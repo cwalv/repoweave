@@ -144,8 +144,8 @@ stderr. A final summary line reports how many repos are ready.
 
 Under `--json`, output switches to machine-readable format:
 
-- **`-j 1` or no `-j`** (serial / envelope mode): emits a single JSON envelope
-  after all repos finish:
+- **`-j 1`** (serial / envelope mode): emits a single JSON envelope after all
+  repos finish:
 
   ```
   {
@@ -158,6 +158,10 @@ Under `--json`, output switches to machine-readable format:
 - **`-j N` with `N > 1`** (NDJSON streaming mode): emits one self-describing
   JSON line per repo as workers finish, with no envelope wrapper. Each line
   carries its own `$schema` URL.
+
+Without `-j` the worker count is `min(nproc, 8)`, so the output is NDJSON on
+any host with more than one core. Pass `-j 1` when a consumer needs the
+envelope.
 
 Each per-repo record in the `outcomes` array (or in each NDJSON line) has the
 shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`

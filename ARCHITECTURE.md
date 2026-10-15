@@ -341,7 +341,7 @@ fan-out, so an op that parks defers it to `--continue`, and an aborted op
 has pruned nothing. That matters because savepoints are refs: `rwv abort`
 can move a ref back but cannot bring back a deleted checkout. The cost is
 that a prune waits on conflicts in repos unrelated to the pruned member,
-and a manifest-repo park now finds the project repo already replayed;
+and a manifest-repo park finds the project repo already replayed;
 abort's verified restore covers it through the project tip recorded right
 after Phase 1'.
 

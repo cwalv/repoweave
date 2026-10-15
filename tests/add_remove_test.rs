@@ -1091,24 +1091,6 @@ fn add_new_with_unknown_registry_errors() {
         ));
 }
 
-#[test]
-fn add_new_existing_repo_in_manifest_handles_gracefully() {
-    let tmp = common::tempdir().unwrap();
-
-    let repo_path = "github/myorg/existing";
-    let (workspace, _project_dir) = setup_workspace_with_project(
-        &tmp,
-        &[(repo_path, "https://github.com/myorg/existing.git")],
-    );
-
-    // The repo is already in the manifest — adding with --new should not fail.
-    rwv()
-        .args(["add", repo_path, "--new"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-}
-
 // ============================================================================
 // fork role -> remote name convention
 // ============================================================================

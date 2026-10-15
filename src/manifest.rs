@@ -974,7 +974,7 @@ pub struct WorkweaveConfig {
 /// table is added to [`Manifest`], add its TOML key here too.
 pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["repositories", "integrations", "workweave"];
 
-/// The sentence for a top-level key rwv once accepted and no longer does.
+/// The sentence for a retired top-level key.
 fn retired_manifest_key_hint(unknown: &str) -> Option<&'static str> {
     match unknown {
         "lock" => Some(
