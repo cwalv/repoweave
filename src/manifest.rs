@@ -974,6 +974,17 @@ pub struct WorkweaveConfig {
 /// table is added to [`Manifest`], add its TOML key here too.
 pub(crate) const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["repositories", "integrations", "workweave"];
 
+/// The sentence for a top-level key rwv once accepted and no longer does.
+fn retired_manifest_key_hint(unknown: &str) -> Option<&'static str> {
+    match unknown {
+        "lock" => Some(
+            "the `[lock]` table was retired: rwv.lock always records commit ids, so there is \
+             nothing left to configure; delete the `[lock]` table from rwv.toml",
+        ),
+        _ => None,
+    }
+}
+
 /// Return the element of [`MANIFEST_TOP_LEVEL_KEYS`] closest (by edit
 /// distance) to `unknown`, or `None` when no element is within the threshold.
 ///
@@ -1251,9 +1262,15 @@ impl Manifest {
             // "did you mean?" hint.  The TOML error already names the key and
             // its line; we add the nearest accepted spelling so the operator
             // can fix it in one read.
-            let suggestion = extract_unknown_key(&msg)
-                .and_then(nearest_manifest_key)
-                .map(|nearest| format!("; did you mean `{nearest}`?"))
+            let unknown_key = extract_unknown_key(&msg);
+            let suggestion = unknown_key
+                .and_then(retired_manifest_key_hint)
+                .map(|hint| format!("; {hint}"))
+                .or_else(|| {
+                    unknown_key
+                        .and_then(nearest_manifest_key)
+                        .map(|nearest| format!("; did you mean `{nearest}`?"))
+                })
                 .unwrap_or_default();
             let annotated = if suggestion.is_empty() {
                 anyhow::Error::new(e)
@@ -2155,6 +2172,25 @@ role = "primary"
             msg.contains("line 6"),
             "refusal should locate the offending line, got: {msg}"
         );
+    }
+
+    #[test]
+    fn a_retired_lock_table_is_refused_as_retired_with_the_fix_named() {
+        for table in ["[lock]\n", "[lock]\nforgo-tag-names = true\n"] {
+            let err = Manifest::from_toml_str(table).unwrap_err();
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("`[lock]` table was retired")
+                    && msg.contains("delete the `[lock]` table from rwv.toml"),
+                "refusal should say the table was retired and to delete it, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unrecognised_table_is_not_called_retired() {
+        let err = Manifest::from_toml_str("[lok]\n").unwrap_err();
+        assert!(!format!("{err:#}").contains("retired"));
     }
 
     /// Serialization is one-way: `Role::Owned` writes as `owned`, never

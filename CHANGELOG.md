@@ -4,6 +4,14 @@ This changelog starts at 0.23.0. Releases 0.4.0 through 0.22.0 shipped without
 entries, and none are reconstructed here — the gap is a gap in the record, not a
 claim that nothing changed in them.
 
+## Unreleased
+
+### Breaking: the `[lock]` table is gone from `rwv.toml`
+
+`[lock]` and its `forgo-tag-names` key were removed; `rwv.lock` always records
+commit ids. An `rwv.toml` still carrying the table fails to load with an error
+saying the table was retired. Delete it.
+
 ## 0.23.0
 
 ### Refusals carry stable names
