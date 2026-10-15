@@ -80,9 +80,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::RoleDisagreement { .. } => "role-disagreement".into(),
         CheckViolation::StaleLock { .. } => "stale-lock".into(),
         CheckViolation::IncompleteLock { .. } => "incomplete-lock".into(),
-        CheckViolation::WorkweaveDrift {
-            kind, workweave, ..
-        } => match kind {
+        CheckViolation::WorkweaveDrift { kind, .. } => match kind {
             DriftKind::Missing => "workweave-drift/missing".into(),
             DriftKind::MissingUnfetched => "workweave-drift/missing-unfetched".into(),
             DriftKind::Symlink => "workweave-drift/symlink".into(),
