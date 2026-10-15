@@ -1328,6 +1328,7 @@ fn carry_untracked_managed_files(
 ) -> anyhow::Result<()> {
     for name in crate::activate::own_copy_owned_paths(source_root, project, manifest) {
         let dest_file = dest_project_dir.join(&name);
+        refuse_symlinked_component(dest_project_dir, Path::new(&name))?;
         if dest_file.exists() {
             continue;
         }
@@ -1354,6 +1355,29 @@ fn carry_untracked_managed_files(
                 dest_file.display()
             )
         })?;
+    }
+    Ok(())
+}
+
+/// Fails if any component of `rel` under `root` is a symlink, dangling or not.
+/// A copy through one would land outside `root`; `symlink_metadata` needs no
+/// privilege and answers the same on every platform.
+fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
+    let mut walked = root.to_path_buf();
+    for component in rel.components() {
+        walked.push(component);
+        match std::fs::symlink_metadata(&walked) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "refusing to carry {}: {} is a symlink",
+                    rel.display(),
+                    walked.display()
+                );
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => return Err(e.into()),
+        }
     }
     Ok(())
 }

@@ -274,3 +274,92 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
          dirty uncommitted edit — a tracked file is never a carry target"
     );
 }
+
+/// Commits a symlink where the managed file's path (or its parent) will be,
+/// then restores the source's real, untracked bytes over it, so the source
+/// holds a regular file the seat's checkout sees as a symlink. Returns the
+/// seat and the directory the symlink points into.
+fn create_over_committed_symlink(link_parent: bool) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let tmp = common::tempdir().unwrap();
+    let (ws, project_dir) = fixture(tmp.path());
+    let path = path_with_sccache_stand_in(&tmp.path().join("bin"));
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+
+    rwv_with_path(&["doctor", "--fix"], &ws, &path);
+    let cargo_dir = project_dir.join(".cargo");
+    let config = cargo_dir.join("config.toml");
+    let bytes = std::fs::read(&config).expect("fixture: primary should have authored the config");
+
+    if link_parent {
+        std::fs::remove_dir_all(&cargo_dir).unwrap();
+        std::os::unix::fs::symlink(&outside, &cargo_dir).unwrap();
+    } else {
+        std::fs::remove_file(&config).unwrap();
+        std::os::unix::fs::symlink(outside.join("config.toml"), &config).unwrap();
+    }
+    common::git_in(&project_dir, &["add", "-f", "-A"]);
+    common::git_in(&project_dir, &["commit", "-m", "track a symlink"]);
+    if link_parent {
+        std::fs::remove_file(&cargo_dir).unwrap();
+        std::fs::create_dir_all(&cargo_dir).unwrap();
+    } else {
+        std::fs::remove_file(&config).unwrap();
+    }
+    std::fs::write(&config, bytes).unwrap();
+
+    rwv_with_path(
+        &[
+            "workweave",
+            "web-app",
+            "create",
+            "agent-1",
+            "--capture-dirty",
+        ],
+        &ws,
+        &path,
+    );
+    let seat = tmp.path().join(".workweaves/web-app--agent-1");
+    (tmp, seat, outside)
+}
+
+fn assert_nothing_written_outside(outside: &Path) {
+    let written: Vec<_> = std::fs::read_dir(outside)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert!(
+        written.is_empty(),
+        "the carry followed a symlink out of the seat and wrote {written:?}"
+    );
+}
+
+#[test]
+fn workweave_create_does_not_carry_through_a_symlinked_file() {
+    require_cargo!();
+    let (_tmp, seat, outside) = create_over_committed_symlink(false);
+    assert!(
+        seat.join("projects/web-app/.cargo/config.toml")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "fixture: the seat should have checked out the symlink"
+    );
+    assert_nothing_written_outside(&outside);
+}
+
+#[test]
+fn workweave_create_does_not_carry_through_a_symlinked_parent_directory() {
+    require_cargo!();
+    let (_tmp, seat, outside) = create_over_committed_symlink(true);
+    assert!(
+        seat.join("projects/web-app/.cargo")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "fixture: the seat should have checked out the symlinked directory"
+    );
+    assert_nothing_written_outside(&outside);
+}
