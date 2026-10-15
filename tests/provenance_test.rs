@@ -225,7 +225,7 @@ fn encoded_file_url_matches_the_bare_path_origin() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        !stdout.contains("origin-url-mismatch"),
+        !stdout.contains("origin URL mismatch"),
         "an encoded file URL and the bare path it encodes must agree; got:\n{stdout}"
     );
 }
