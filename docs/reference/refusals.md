@@ -1044,7 +1044,7 @@ they are not in any commit to recover from.
 
 **Condition.** An `rwv add --new` creation parameter's value cannot be used
 as given: a name the registry does not declare, a `--params-json` entry that
-is not a JSON string, a `root` directory that does not exist, a `root` inside
+is not a JSON string, a `root` that is not an absolute path, a `root` directory that does not exist, a `root` inside
 the weave it would create a member of, or a name supplied through more than
 one spelling (the address's own three-segment shorthand, `--param`, and
 `--params-json` all write into the same map, and a name given twice is a

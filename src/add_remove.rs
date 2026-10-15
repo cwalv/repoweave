@@ -1034,6 +1034,14 @@ pub fn run_add_new(
             let message = missing_creation_param_message(registry.as_ref(), &missing, &param_map);
             crate::refuse!(RefusalKind::MissingCreationParam, "{}", message);
         }
+        Err(CreationParamError::NotAbsolute(name)) => {
+            crate::refuse!(
+                RefusalKind::UnusableCreationParam,
+                "creation parameter '{}' must be an absolute path; got '{}'",
+                name,
+                param_map.get(name).unwrap_or_default()
+            );
+        }
         Err(CreationParamError::Unrecognized(name)) => {
             let declared: Vec<&str> = registry.creation_params().iter().map(|p| p.name).collect();
             crate::refuse!(

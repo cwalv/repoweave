@@ -108,10 +108,7 @@ pub fn mint_file_url(path: &str) -> String {
     {
         return format!("file://{}", encode_url_path(&unc.replace('\\', "/")));
     }
-    let bytes = path.as_bytes();
-    let is_drive_letter_path = bytes.first().is_some_and(u8::is_ascii_alphabetic)
-        && bytes.get(1) == Some(&b':')
-        && matches!(bytes.get(2), None | Some(b'/') | Some(b'\\'));
+    let is_drive_letter_path = starts_with_drive_letter(path);
     let forward_separated = if is_drive_letter_path {
         path.replace('\\', "/")
     } else {
@@ -123,6 +120,20 @@ pub fn mint_file_url(path: &str) -> String {
     } else {
         format!("file:///{encoded}")
     }
+}
+
+fn starts_with_drive_letter(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.get(1) == Some(&b':')
+        && matches!(bytes.get(2), None | Some(b'/') | Some(b'\\'))
+}
+
+/// Whether `path` is absolute in any platform's spelling — `/`-rooted, a
+/// drive letter, or a UNC `\\` prefix — judged from the string alone, like
+/// [`mint_file_url`].
+pub fn is_absolute_spelling(path: &str) -> bool {
+    path.starts_with('/') || path.starts_with(r"\\") || starts_with_drive_letter(path)
 }
 
 fn encode_url_path(path: &str) -> String {

@@ -298,6 +298,36 @@ fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
     );
 }
 
+/// A relative `--param root` would mint a `file://` URL naming a different
+/// directory than the one the bare upstream is created in, so it is refused
+/// before anything is created.
+#[test]
+fn add_new_local_registry_refuses_a_relative_root_and_creates_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args([
+            "add",
+            "local",
+            "--new",
+            "--param",
+            "root=rel/dir",
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ])
+        .current_dir(&workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("'root' must be an absolute path"));
+
+    assert!(!workspace.join("local").exists());
+    assert!(!workspace.join("rel").exists());
+    assert!(!tmp.path().join("rel").exists());
+}
+
 /// `rwv add local --new --param root=<lab> --param owner=acme --param
 /// repo=fresh` creates two things: a bare upstream under `<lab>`, and the
 /// member cloned from it. All five assertions matter — the first four alone

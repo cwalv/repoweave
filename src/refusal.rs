@@ -274,8 +274,8 @@ pub enum RefusalKind {
     /// supplied map has no entry for.
     MissingCreationParam,
     /// A creation parameter's value cannot be used as given — a `root` that
-    /// does not exist, one inside the weave, a name the registry does not
-    /// declare, or one supplied through more than one spelling (the address
+    /// is not an absolute path, does not exist, one inside the weave, a name
+    /// the registry does not declare, or one supplied through more than one spelling (the address
     /// shorthand, `--param`, `--params-json`).
     UnusableCreationParam,
     /// A creation address's placement already holds a different URL.

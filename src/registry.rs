@@ -7,7 +7,7 @@
 //! to have different URL parsing, authentication, and discovery behavior.
 
 use crate::manifest::{RepoPath, RepoUrl, VcsType};
-use crate::path_spelling::mint_file_url;
+use crate::path_spelling::{is_absolute_spelling, mint_file_url};
 use crate::refusal::RefusalKind;
 use std::path::PathBuf;
 
@@ -193,6 +193,8 @@ pub enum CreationParamError {
     /// The map carries a name this registry's [`Registry::creation_params`]
     /// does not declare.
     Unrecognized(String),
+    /// The named parameter must be an absolute path and is not.
+    NotAbsolute(&'static str),
 }
 
 /// What must exist upstream of a member this design creates, before the
@@ -603,6 +605,9 @@ impl Registry for LocalRegistry {
         // The upstream directory is named exactly as the URL spells it — no
         // `.git` suffix — so the URL and the path are the same string and
         // the mapping needs no rule.
+        if !is_absolute_spelling(root) {
+            return Err(CreationParamError::NotAbsolute("root"));
+        }
         let url: RepoUrl = mint_file_url(&format!("{root}/{owner}/{repo}"))
             .parse()
             .expect("RepoUrl::from_str is infallible");
@@ -1202,7 +1207,7 @@ mod tests {
 
             let mut full = ParamMap::new();
             for spec in specs {
-                full.insert(spec.name, "x");
+                full.insert(spec.name, "/x");
             }
             assert!(
                 reg.plan_creation(&full).is_ok(),
@@ -1272,5 +1277,23 @@ mod tests {
         let plan = local_reg().plan_creation(&params).unwrap();
 
         assert_eq!(plan.url.to_string(), "file://server/share/o/r");
+    }
+
+    #[test]
+    fn plan_creation_refuses_a_relative_root() {
+        for root in ["../up", "rel/dir", "", "~/x"] {
+            let mut params = ParamMap::new();
+            params.insert("root", root);
+            params.insert("owner", "o");
+            params.insert("repo", "r");
+
+            assert!(
+                matches!(
+                    local_reg().plan_creation(&params),
+                    Err(CreationParamError::NotAbsolute("root"))
+                ),
+                "root {root:?}"
+            );
+        }
     }
 }
