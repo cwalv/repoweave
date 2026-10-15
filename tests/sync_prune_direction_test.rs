@@ -311,8 +311,8 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     drop_and_commit(&s1, "seat drops extra");
     std::fs::write(project_dir(&s1).join("rwv.toml"), manifest).unwrap();
     succeed(&s1, &["lock"]);
-    common::git_in(&project_dir(&s1), &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&project_dir(&s1), &["commit", "-m", "re-add extra"]);
+    common::git_in(project_dir(&s1), &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(project_dir(&s1), &["commit", "-m", "re-add extra"]);
 
     drop_and_commit(&target, "target drops extra");
 
