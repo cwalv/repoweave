@@ -48,8 +48,7 @@ struct Weaves {
 impl Weaves {
     /// What a primary-sourced `.shared` link must read from any workweave.
     fn primary_copy(&self) -> PathBuf {
-        self.primary
-            .canonicalize()
+        dunce::canonicalize(&self.primary)
             .unwrap()
             .join("projects/alpha/.shared")
     }
@@ -221,7 +220,9 @@ fn the_link_ignores_which_project_the_primary_presents() {
     assert_eq!(link(&created, ".shared"), weaves.primary_copy());
     assert_ne!(
         link(&created, ".shared"),
-        weaves.primary.canonicalize().unwrap().join(".shared"),
+        dunce::canonicalize(&weaves.primary)
+            .unwrap()
+            .join(".shared"),
         "never the primary's weave-root slot"
     );
     let doctor = rwv_output(&existing, &["doctor"]);
@@ -395,9 +396,7 @@ fn a_workweave_link_into_the_primarys_projects_is_left_to_workweave_link() {
     let made = link(&ww, "linked.md");
     assert_eq!(
         made,
-        weaves
-            .primary
-            .canonicalize()
+        dunce::canonicalize(&weaves.primary)
             .unwrap()
             .join("projects/alpha/linked.md"),
         "fixture: workweave.link canonicalizes into the primary's project tree"
@@ -448,9 +447,7 @@ fn an_untracked_primary_sourced_file_is_not_copied_into_a_workweave() {
     );
     assert_eq!(
         link(&ww, "shared.db"),
-        weaves
-            .primary
-            .canonicalize()
+        dunce::canonicalize(&weaves.primary)
             .unwrap()
             .join("projects/alpha/shared.db")
     );

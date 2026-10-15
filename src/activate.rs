@@ -1976,11 +1976,17 @@ struct SurfacingSites {
 enum PrimaryProjects {
     /// The root is the primary, so its own `projects/` is the primary's.
     Here,
-    /// `<primary>/projects`, canonical, for a workweave whose marker witnesses
-    /// its primary.
+    /// `<primary>/projects`, canonical and in the spelling `read_link` returns,
+    /// for a workweave whose marker witnesses its primary.
     At(std::path::PathBuf),
     /// A marker that witnesses no primary: nothing can be linked from it.
     Unknown,
+}
+
+impl PrimaryProjects {
+    fn under(primary: &Path, read_back_spelling: fn(&Path) -> &Path) -> Self {
+        PrimaryProjects::At(read_back_spelling(primary).join(PROJECTS_DIR))
+    }
 }
 
 /// One link surfacing makes: what `<root>/<file>` reads, and the file that
@@ -2026,8 +2032,9 @@ impl SurfacingSites {
             };
         };
         Self {
-            primary: PrimaryProjects::At(
-                marker.primary_resolved().into_path_buf().join(PROJECTS_DIR),
+            primary: PrimaryProjects::under(
+                marker.primary_resolved().as_path(),
+                crate::path_spelling::link_target,
             ),
             workweave_links: manifest
                 .workweave
@@ -4318,6 +4325,41 @@ mod tests {
                 .unwrap();
             assert_eq!(planned.adopts_root_writes(&entry), adopts, "{copy:?}");
         }
+    }
+
+    /// Only Windows spells one path two ways, so a `/verbatim` prefix stands in
+    /// for `\\?\` here: what matters is that the plan is spelled the way the
+    /// link reads back, and that the read-back is recognised as rwv's.
+    #[test]
+    fn a_primary_sourced_link_is_planned_in_the_spelling_it_reads_back_in() {
+        fn as_read_back(path: &Path) -> &Path {
+            path.to_str()
+                .and_then(|s| s.strip_prefix("/verbatim"))
+                .map_or(path, Path::new)
+        }
+        let sites = workweave_sites(PrimaryProjects::under(
+            Path::new("/verbatim/primary"),
+            as_read_back,
+        ));
+        let project = ProjectName::new("alpha").unwrap();
+        let read_back = Path::new("/primary/projects/alpha/shared.db");
+
+        let planned = sites
+            .link(
+                Path::new("/ww"),
+                &project,
+                "shared.db",
+                SurfacedCopy::Primary,
+            )
+            .unwrap();
+        assert_eq!(planned.target, read_back);
+        assert_eq!(
+            sites
+                .primary_owner_dir(Path::new("shared.db"), read_back)
+                .as_deref(),
+            Some("alpha"),
+            "the link as read back must be recognised as rwv's own surfacing"
+        );
     }
 
     #[test]

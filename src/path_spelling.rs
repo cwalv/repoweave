@@ -57,6 +57,17 @@ pub fn operator_path(path: &Path) -> String {
     dunce::simplified(path).to_string_lossy().into_owned()
 }
 
+/// The spelling an absolute symlink target is written in, so that
+/// `std::fs::read_link` hands back the same path.
+///
+/// Windows stores an absolute target in NT form, and `read_link` returns a
+/// drive-letter target without the verbatim prefix whatever spelling created
+/// it. A link planned as `\\?\C:\…` therefore reads back as `C:\…`, and any
+/// comparison of the read-back against the plan misjudges rwv's own link.
+pub fn link_target(path: &Path) -> &Path {
+    dunce::simplified(path)
+}
+
 /// The spelling a location inside a weave takes: `/`-separated everywhere.
 ///
 /// Such a path is a name rwv already keeps, and rwv keeps it with slashes —
@@ -218,6 +229,18 @@ mod tests {
             wire.starts_with("//"),
             "a UNC path must keep the prefix Windows requires: {wire}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_link_written_in_the_link_target_spelling_reads_back_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let canonical = tmp.path().canonicalize().unwrap().join("shared.db");
+        std::fs::write(&canonical, "").unwrap();
+        let target = link_target(&canonical);
+        let link = tmp.path().join("link");
+        crate::symlink::create(target, &link, crate::symlink::LinkTarget::File).unwrap();
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
     }
 
     // -----------------------------------------------------------------------
