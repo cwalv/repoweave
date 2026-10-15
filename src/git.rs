@@ -774,7 +774,7 @@ pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
 
 /// Every tracked path whose working-tree content differs from HEAD.
 pub fn paths_differing_from_head(repo: &Path) -> Result<Vec<String>, VcsError> {
-    let out = GitVcs::run(&["diff-index", "--name-only", "HEAD"], repo)?;
+    let out = GitVcs::run_trimmed(&["diff-index", "--name-only", "HEAD"], repo)?;
     Ok(out
         .lines()
         .map(str::trim)
@@ -843,7 +843,11 @@ pub fn git_vcs() -> Box<dyn crate::vcs::Vcs> {
 }
 
 impl GitVcs {
-    /// Run a git command in `dir` and return trimmed stdout on success.
+    /// Run a git command in `dir` and return stdout exactly as git wrote it.
+    ///
+    /// Untrimmed: a `-z` stream's first record, or a porcelain line's leading
+    /// column, may begin with whitespace. Callers reading a single value want
+    /// [`GitVcs::run_trimmed`].
     ///
     /// Maps process I/O failure to [`VcsError::Io`] and non-zero exit to
     /// [`VcsError::CommandFailed`] with the args and stderr captured. Callers
@@ -869,13 +873,15 @@ impl GitVcs {
             });
         }
 
-        String::from_utf8(output.stdout)
-            .map(|s| s.trim().to_string())
-            .map_err(|_| VcsError::CommandFailed {
-                args: args.iter().map(|s| (*s).to_owned()).collect(),
-                repo: dir.to_path_buf(),
-                stderr: "git output not valid UTF-8".to_string(),
-            })
+        String::from_utf8(output.stdout).map_err(|_| VcsError::CommandFailed {
+            args: args.iter().map(|s| (*s).to_owned()).collect(),
+            repo: dir.to_path_buf(),
+            stderr: "git output not valid UTF-8".to_string(),
+        })
+    }
+
+    fn run_trimmed(args: &[&str], dir: &Path) -> Result<String, VcsError> {
+        Self::run(args, dir).map(|s| s.trim().to_string())
     }
 }
 
@@ -1023,7 +1029,7 @@ impl GitVcs {
     /// range.
     fn rev_parse(repo: &Path, rev: &str) -> Result<String, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        Self::run(&["rev-parse", "--verify", &deref], repo)
+        Self::run_trimmed(&["rev-parse", "--verify", &deref], repo)
     }
 
     /// Compute the merge-base (common ancestor) of `a` and `b` in `repo`.
@@ -1034,7 +1040,7 @@ impl GitVcs {
     /// advanced after the fork shows phantom reversals of the work the parent
     /// gained in the meantime.
     fn merge_base(repo: &Path, a: &str, b: &str) -> Result<String, VcsError> {
-        Self::run(&["merge-base", a, b], repo)
+        Self::run_trimmed(&["merge-base", a, b], repo)
     }
 
     /// List the commits reachable from `to` but not from `from` in `repo`,
@@ -1050,7 +1056,7 @@ impl GitVcs {
         // newline-delimited records, so subjects with spaces/tabs survive.
         let range = format!("{from}..{to}");
         let fmt = "--pretty=format:%H%x00%h%x00%s";
-        let out = Self::run(&["log", fmt, &range], repo)?;
+        let out = Self::run_trimmed(&["log", fmt, &range], repo)?;
         let entries = out
             .lines()
             .filter(|l| !l.is_empty())
@@ -1072,7 +1078,7 @@ impl GitVcs {
     /// workweave's unique work with no phantom reversals.
     fn diff_range(repo: &Path, from: &str, to: &str) -> Result<String, VcsError> {
         let range = format!("{from}..{to}");
-        Self::run(&["diff", &range], repo)
+        Self::run_trimmed(&["diff", &range], repo)
     }
 
     /// The directory to run ref-level git commands in for a canonical
@@ -1121,7 +1127,7 @@ impl GitVcs {
     /// the bisect with nothing to resume from. That is the state the
     /// detached-MOVE precondition exists to see.
     pub fn mid_op_state(repo: &Path) -> Option<String> {
-        let git_dir = match Self::run(&["rev-parse", "--git-dir"], repo) {
+        let git_dir = match Self::run_trimmed(&["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = std::path::PathBuf::from(&s);
                 if p.is_absolute() {
@@ -1164,7 +1170,7 @@ impl GitVcs {
         let fallback = "see in-flight rebase state for conflicting paths".to_owned();
 
         // Resolve the .git directory so we can locate rebase-merge/stopped-sha.
-        let git_dir = match Self::run(&["rev-parse", "--git-dir"], repo) {
+        let git_dir = match Self::run_trimmed(&["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = std::path::PathBuf::from(s.trim());
                 if p.is_absolute() {
@@ -1187,11 +1193,11 @@ impl GitVcs {
         }
 
         // Shorten the SHA for display.
-        let short_sha = Self::run(&["rev-parse", "--short", &full_sha], repo)
+        let short_sha = Self::run_trimmed(&["rev-parse", "--short", &full_sha], repo)
             .unwrap_or_else(|_| full_sha.chars().take(7).collect());
 
         // Fetch the commit subject line.
-        let subject = match Self::run(&["log", "-1", "--format=%s", &full_sha], repo) {
+        let subject = match Self::run_trimmed(&["log", "-1", "--format=%s", &full_sha], repo) {
             Ok(s) => s.trim().to_owned(),
             Err(_) => return format!("commit {short_sha}"),
         };
@@ -1223,7 +1229,7 @@ impl GitVcs {
         // separate rev-list call in the common case where total <= cap.
         let limit_arg = format!("-{}", cap + 1);
         let range = format!("{from}..{to}");
-        let log_out = match Self::run(&["log", "--oneline", &limit_arg, &range], repo) {
+        let log_out = match Self::run_trimmed(&["log", "--oneline", &limit_arg, &range], repo) {
             Ok(s) => s,
             Err(_) => return (vec![], 0),
         };
@@ -1239,7 +1245,8 @@ impl GitVcs {
             (lines, total)
         } else {
             // More than cap commits exist; count the full range.
-            let count_out = Self::run(&["rev-list", "--count", &range], repo).unwrap_or_default();
+            let count_out =
+                Self::run_trimmed(&["rev-list", "--count", &range], repo).unwrap_or_default();
             let total = count_out.trim().parse::<usize>().unwrap_or(lines.len());
             (lines[..cap].to_vec(), total)
         }
@@ -1252,14 +1259,14 @@ impl GitVcs {
     ///
     /// Returns `(0, 0)` on any git error.
     fn ahead_behind_impl(repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
-        let ahead = Self::run(
+        let ahead = Self::run_trimmed(
             &["rev-list", "--count", &format!("{savepoint}..{tip}")],
             repo,
         )
         .ok()
         .and_then(|s| s.trim().parse::<usize>().ok())
         .unwrap_or(0);
-        let behind = Self::run(
+        let behind = Self::run_trimmed(
             &["rev-list", "--count", &format!("{tip}..{savepoint}")],
             repo,
         )
@@ -1392,7 +1399,7 @@ impl Vcs for GitVcs {
     }
 
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
-        match Self::run(&["rev-parse", "HEAD"], repo) {
+        match Self::run_trimmed(&["rev-parse", "HEAD"], repo) {
             Err(VcsError::CommandFailed { stderr, .. })
                 if stderr.contains("ambiguous argument") =>
             {
@@ -1428,7 +1435,7 @@ impl Vcs for GitVcs {
 
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        match Self::run(&["rev-parse", "--verify", &deref], repo) {
+        match Self::run_trimmed(&["rev-parse", "--verify", &deref], repo) {
             Ok(canonical) => {
                 let display = if rev == canonical {
                     None
@@ -1463,7 +1470,7 @@ impl Vcs for GitVcs {
     }
 
     fn list_worktrees(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
-        let output = Self::run(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed(&["worktree", "list", "--porcelain"], repo)?;
         let paths = output
             .lines()
             .filter_map(|line| line.strip_prefix("worktree "))
@@ -1547,7 +1554,7 @@ impl Vcs for GitVcs {
         // Among remaining tags, prefer release-shape tags (e.g., `v1.2.3`)
         // over arbitrary lightweight tags, so a workspace with both
         // `v9.9.9` and `tmp-foo` writes `v9.9.9`.
-        let output = Self::run(&["tag", "--points-at", "HEAD"], repo)?;
+        let output = Self::run_trimmed(&["tag", "--points-at", "HEAD"], repo)?;
         let candidates: Vec<&str> = output
             .lines()
             .map(str::trim)
@@ -2006,7 +2013,7 @@ impl Vcs for GitVcs {
         to: &ResolvedRevisionId,
     ) -> Result<usize, VcsError> {
         let range = format!("{}..{}", from.as_str(), to.as_str());
-        let out = Self::run(&["rev-list", "--count", &range], repo)?;
+        let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
 
@@ -2027,7 +2034,7 @@ impl Vcs for GitVcs {
 
     fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId> {
         let ref_name = savepoint_ref(op_id);
-        let out = Self::run(&["rev-parse", &ref_name], repo).ok()?;
+        let out = Self::run_trimmed(&["rev-parse", &ref_name], repo).ok()?;
         ResolvedRevisionId::from_rev_parse_output(&out)
     }
 
@@ -2070,7 +2077,7 @@ impl Vcs for GitVcs {
 
     fn resolve_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Option<PreAbortRef> {
         let label = pre_abort_ref(op_id);
-        let canonical = Self::run(&["rev-parse", &label], repo).ok()?;
+        let canonical = Self::run_trimmed(&["rev-parse", &label], repo).ok()?;
         Some(PreAbortRef {
             revision: ResolvedRevisionId::from_rev_parse_output(&canonical)?,
             label,
@@ -2237,7 +2244,7 @@ impl Vcs for GitVcs {
             branch.as_str(),
             branch.as_str()
         );
-        let out = Self::run(&["rev-list", "--count", &range], repo)?;
+        let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
 
@@ -2340,7 +2347,7 @@ impl Vcs for GitVcs {
         if !workspace.exists() {
             return None;
         }
-        let raw = Self::run(
+        let raw = Self::run_trimmed(
             &["rev-parse", "--path-format=absolute", "--git-common-dir"],
             workspace,
         )
@@ -2361,7 +2368,7 @@ impl Vcs for GitVcs {
         //                         location); marks the record for pruning.
         // We collect the `worktree` path of every record that carries a
         // `prunable` line.
-        let output = Self::run(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed(&["worktree", "list", "--porcelain"], repo)?;
         let mut stale: Vec<PathBuf> = Vec::new();
         let mut current_path: Option<PathBuf> = None;
         let mut current_prunable = false;
@@ -2395,7 +2402,7 @@ impl Vcs for GitVcs {
         // Same records as `list_stale_worktree_registrations`, read for the
         // other two lines: `branch <fullref>`, absent on a detached record,
         // and `prunable`, which disqualifies the registration.
-        let output = Self::run(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed(&["worktree", "list", "--porcelain"], repo)?;
         let mut held: Vec<RawRefName> = Vec::new();
         let mut current_branch: Option<RawRefName> = None;
         let mut current_prunable = false;
@@ -2426,7 +2433,7 @@ impl Vcs for GitVcs {
         // savepoint ref this repo holds. Strip the prefix to recover the
         // opaque op-id the caller originally supplied to `create_savepoint`.
         let prefix = format!("{SAVEPOINT_NAMESPACE}/");
-        let output = Self::run(&["for-each-ref", "--format=%(refname)", &prefix], repo)?;
+        let output = Self::run_trimmed(&["for-each-ref", "--format=%(refname)", &prefix], repo)?;
         let op_ids = output
             .lines()
             .map(str::trim)
@@ -2448,7 +2455,7 @@ impl Vcs for GitVcs {
         // exist at that revision; both surface as CommandFailed and the
         // caller can inspect stderr.
         let rev_path = format!("{}:{}", revision.as_str(), path_str);
-        match Self::run(&["show", &rev_path], repo) {
+        match Self::run_trimmed(&["show", &rev_path], repo) {
             Ok(content) => Ok(content),
             Err(VcsError::CommandFailed { stderr, .. })
                 if is_revision_not_found(&stderr)
@@ -2532,7 +2539,7 @@ impl Vcs for GitVcs {
         // for the branch `main`, and that value is not a branch name — it
         // does not round-trip through `refs/heads/<name>`, so a witness
         // carrying it would report an existing branch as missing.
-        match Self::run(&["symbolic-ref", "HEAD"], repo) {
+        match Self::run_trimmed(&["symbolic-ref", "HEAD"], repo) {
             Ok(full) => {
                 let name = Self::local_branch_name_from_full_ref(full.trim(), repo)?;
                 // HEAD is symbolic. Whether the branch has commits is a
@@ -2549,7 +2556,7 @@ impl Vcs for GitVcs {
                 // HEAD is not symbolic — or the ref database is unreadable.
                 // Resolving HEAD tells us which: a detached HEAD resolves,
                 // a broken refdb does not, and the latter is an error.
-                match Self::run(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
+                match Self::run_trimmed(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
                     Ok(sha) => match ResolvedRevisionId::from_rev_parse_output(&sha) {
                         Some(at) => Ok(HeadObservation::Detached { at }),
                         None => Err(VcsError::CommandFailed {
@@ -2573,7 +2580,7 @@ impl Vcs for GitVcs {
         // Fully qualified: `refs/heads/<name>` cannot be answered by a tag
         // or a remote-tracking ref of the same name.
         let qualified = format!("refs/heads/{}^{{commit}}", name.as_str());
-        match Self::run(&["rev-parse", "--verify", "--quiet", &qualified], &repo) {
+        match Self::run_trimmed(&["rev-parse", "--verify", "--quiet", &qualified], &repo) {
             Ok(sha) => Ok(ResolvedRevisionId::from_rev_parse_output(&sha)),
             // `--quiet` makes "no such ref" an exit code with no stderr,
             // which is the absence this method reports rather than an error.
@@ -2764,7 +2771,7 @@ impl Vcs for GitVcs {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
         const NAMESPACE: &str = "refs/remotes/origin/";
-        match Self::run(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
+        match Self::run_trimmed(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
             // No fallback: an unset or malformed symref is an absence, not
             // a guess. A caller that invents a name here trades an honest
             // refusal for a comparison against a fabrication.
@@ -2801,7 +2808,7 @@ impl Vcs for GitVcs {
 
     fn list_local_branch_names(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
         // `lstrip=2`, not `short` — see `list_branch_names_with_prefix`.
-        let output = Self::run(
+        let output = Self::run_trimmed(
             &[
                 "for-each-ref",
                 "--format=%(refname:lstrip=2)",
@@ -3198,8 +3205,7 @@ impl GitVcs {
         Ok(true)
     }
 
-    /// [`GitVcs::run`] with `input` on stdin and stdout returned untrimmed,
-    /// which a `-z` stream needs: a first path may begin with whitespace.
+    /// [`GitVcs::run`] with `input` on stdin.
     fn run_with_stdin(args: &[&str], dir: &Path, input: &[u8]) -> Result<String, VcsError> {
         let mut child = git_command()
             .args(args)
@@ -3396,7 +3402,7 @@ impl GitVcs {
     }
 
     fn run_post_checkout_hook(workspace: &Path) -> Result<(), VcsError> {
-        let head = Self::run(&["rev-parse", "--verify", "HEAD"], workspace)?;
+        let head = Self::run_trimmed(&["rev-parse", "--verify", "HEAD"], workspace)?;
         let no_previous_head = "0".repeat(head.len());
         let args = [
             "hook",
