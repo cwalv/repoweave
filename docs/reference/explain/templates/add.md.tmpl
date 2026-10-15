@@ -135,10 +135,19 @@ Integration activation output (symlinks created/removed) goes to stderr.
 The manifest edit and the regeneration it drives land together or not at all.
 When activation refuses before the install hooks run — an integration rejects
 the new member, or a surfacing path is occupied — `rwv.toml` and every
-regenerated file are put back as they were, and the error says so; the clone
-stays on disk, and re-running the add after fixing the cause reuses it. The
+regenerated file are put back as they were, and the error says so. The
 install hooks run after that point and have no undo, so when one fails the
-error says `rwv.toml` was updated; re-running the add re-runs them.
+error says `rwv.toml` was updated; re-running the add re-runs them. A failed
+hook is not a refused add: the member stands.
+
+A refused add accounts for what it had created by then. A clone it fetched,
+and a workweave worktree it made, stay on disk: the error names each one,
+says that re-running the same add after fixing the cause reuses it, and names
+`rwv remove <path> --delete` as the way to remove it instead (in the
+workweave for its worktree, in the primary weave for the clone). What
+`--new` created — the bare upstream under `--param root`, the new member, and
+any directory made to hold them — holds nothing but what the add put there,
+so the refused add removes it and says so.
 
 ## Examples
 

@@ -270,12 +270,18 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                     .map(|e| e.role),
             }
             .unwrap_or(role);
-            place_member(vcs.as_ref(), ctx, &canonical, &repo_path, role)?;
-            settle_manifest(
-                ctx,
-                &project,
-                registration.as_ref().map(|(manifest, _)| manifest),
-            )?;
+            let mut left = AddLeftovers::default();
+            let added = (|| -> anyhow::Result<()> {
+                place_member_noting(vcs.as_ref(), ctx, &canonical, &repo_path, role, &mut left)?;
+                settle_manifest(
+                    ctx,
+                    &project,
+                    registration.as_ref().map(|(manifest, _)| manifest),
+                )
+            })();
+            added.map_err(|e| {
+                left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}"))
+            })?;
             if let Some((_, origin_url)) = registration {
                 eprintln!(
                     "Added '{}' to manifest (url: {})",
@@ -349,53 +355,161 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // Warn when this clone path is already registered by another project.
     // The physical clone is shared; the operator should know. This is not a
     // refusal — sharing is legitimate and supported.
-    {
-        warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
-    }
-    if dest.exists() {
-        eprintln!(
-            "Directory already exists at '{}', skipping clone",
-            dest.display()
-        );
-    } else {
-        clone_into(vcs.as_ref(), &parsed_url, &dest)?;
-    }
+    warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
+    let mut left = AddLeftovers::default();
+    let added = (|| -> anyhow::Result<()> {
+        if dest.exists() {
+            eprintln!(
+                "Directory already exists at '{}', skipping clone",
+                dest.display()
+            );
+        } else {
+            clone_into(vcs.as_ref(), &parsed_url, &dest)?;
+            left.clone = Some(dest.clone());
+        }
 
-    let Some(remote_default) = vcs
-        .remote_default_branch(&dest)
-        .with_context(|| format!("failed to determine default branch for {}", dest.display()))?
-    else {
-        crate::refuse!(
-            RefusalKind::NoRemoteDefaultBranch,
-            "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
-            repo_path.as_str(),
-            dest.display(),
-            vcs.remote_default_branch_repair_hint(),
-            url
-        );
-    };
-    let default_branch = RefName::new(remote_default.local_counterpart().to_string());
+        let Some(remote_default) = vcs.remote_default_branch(&dest).with_context(|| {
+            format!("failed to determine default branch for {}", dest.display())
+        })?
+        else {
+            crate::refuse!(
+                RefusalKind::NoRemoteDefaultBranch,
+                "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
+                repo_path.as_str(),
+                dest.display(),
+                vcs.remote_default_branch_repair_hint(),
+                url
+            );
+        };
+        let default_branch = RefName::new(remote_default.local_counterpart().to_string());
 
-    // Add entry to manifest.
-    let entry = RepoEntry {
-        vcs_type,
-        url: parsed_url,
-        version: default_branch,
-        role,
-    };
-    manifest.insert_repo(repo_path.clone(), entry);
+        // Add entry to manifest.
+        let entry = RepoEntry {
+            vcs_type,
+            url: parsed_url,
+            version: default_branch,
+            role,
+        };
+        manifest.insert_repo(repo_path.clone(), entry);
 
-    // In a workweave, also create a worktree at the workweave so the new
-    // repo is materialized there. Before the manifest names it, because the
-    // regeneration that follows authors only from members it finds on disk.
-    place_member(vcs.as_ref(), ctx, &dest, &repo_path, role)?;
+        // In a workweave, also create a worktree at the workweave so the new
+        // repo is materialized there. Before the manifest names it, because the
+        // regeneration that follows authors only from members it finds on disk.
+        place_member_noting(vcs.as_ref(), ctx, &dest, &repo_path, role, &mut left)?;
 
-    // Per-workspace state: the workweave's own copy when CWD is in one,
-    // primary's otherwise.
-    settle_manifest(ctx, &project, Some(&manifest))?;
+        // Per-workspace state: the workweave's own copy when CWD is in one,
+        // primary's otherwise.
+        settle_manifest(ctx, &project, Some(&manifest))
+    })();
+    added.map_err(|e| left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}")))?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
     Ok(())
+}
+
+/// [`place_member`], noting in `left` a workweave worktree it created.
+fn place_member_noting(
+    vcs: &dyn Vcs,
+    ctx: &WorkspaceContext,
+    canonical: &Path,
+    repo_path: &RepoPath,
+    role: Role,
+    left: &mut AddLeftovers,
+) -> anyhow::Result<()> {
+    let checkout = ctx.active_path().join(repo_path.as_path());
+    let fresh = matches!(ctx.checkout, Checkout::Workweave { .. }) && !checkout.exists();
+    let placed = place_member(vcs, ctx, canonical, repo_path, role);
+    if fresh && checkout.exists() {
+        left.worktree = Some(checkout);
+    }
+    placed
+}
+
+enum Made {
+    Dir(PathBuf),
+    Repo(PathBuf),
+}
+
+/// What an add created on its way to a refusal. A creation's own
+/// directories and repositories hold nothing but what the add put there, so
+/// they are taken back; a clone fetched from an existing remote, and a
+/// workweave worktree, are kept for a re-run to reuse, and named.
+#[derive(Default)]
+struct AddLeftovers {
+    made: Vec<Made>,
+    clone: Option<PathBuf>,
+    worktree: Option<PathBuf>,
+}
+
+impl AddLeftovers {
+    fn make_dir_all(&mut self, dir: &Path) -> anyhow::Result<()> {
+        let missing: Vec<PathBuf> = dir
+            .ancestors()
+            .take_while(|d| !d.exists())
+            .map(Path::to_path_buf)
+            .collect();
+        std::fs::create_dir_all(dir)
+            .with_context(|| format!("failed to create directory {}", dir.display()))?;
+        self.made.extend(missing.into_iter().rev().map(Made::Dir));
+        Ok(())
+    }
+
+    /// `err`, accounting for what this add left behind. Nothing is left
+    /// behind once the manifest names the member: past the install hooks the
+    /// add stands, and what it created is the member.
+    fn refused(
+        self,
+        err: anyhow::Error,
+        manifest_path: &Path,
+        repo_path: &RepoPath,
+        rerun: &str,
+    ) -> anyhow::Error {
+        let registered = Manifest::from_path(manifest_path)
+            .map(|m| m.contains_repo(repo_path))
+            .unwrap_or(false);
+        if registered {
+            return err;
+        }
+        let mut lines = Vec::new();
+        for made in self.made.into_iter().rev() {
+            match made {
+                Made::Repo(repo) if repo.exists() => match std::fs::remove_dir_all(&repo) {
+                    Ok(()) => {
+                        lines.push(format!("removed {}, which it had created", repo.display()))
+                    }
+                    Err(e) => lines.push(format!(
+                        "{} was created by it and could not be removed ({e}); delete it by hand",
+                        repo.display()
+                    )),
+                },
+                Made::Repo(_) => {}
+                Made::Dir(dir) => {
+                    let _ = std::fs::remove_dir(dir);
+                }
+            }
+        }
+        if let Some(worktree) = &self.worktree {
+            lines.push(format!(
+                "kept the worktree it made at {}: `{rerun}` reuses it, and \
+                 `rwv remove {repo_path} --delete` in this workweave removes it",
+                worktree.display()
+            ));
+        }
+        if let Some(clone) = &self.clone {
+            lines.push(format!(
+                "kept the clone it made at {}: `{rerun}` reuses it, and \
+                 `rwv remove {repo_path} --delete` in the primary weave removes it",
+                clone.display()
+            ));
+        }
+        if lines.is_empty() {
+            return err;
+        }
+        err.context(format!(
+            "the add did not complete and rwv.toml does not list '{repo_path}'; this add\n  {}",
+            lines.join("\n  ")
+        ))
+    }
 }
 
 fn clone_into(vcs: &dyn Vcs, url: &RepoUrl, dest: &Path) -> anyhow::Result<()> {
@@ -964,115 +1078,125 @@ pub fn run_add_new(
     // operator should know. This is not a refusal.
     warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
 
-    match &plan.upstream {
-        Upstream::InitBareAt(bare_path) => {
-            let root = bare_path
-                .parent()
-                .and_then(|p| p.parent())
-                .expect("InitBareAt is always root/owner/repo");
-            if !root.is_dir() {
-                crate::refuse!(
-                    RefusalKind::UnusableCreationParam,
-                    "the root '{}' does not exist; rwv creates '<root>/<owner>/<repo>' but \
+    let mut left = AddLeftovers::default();
+    let added = (|| -> anyhow::Result<()> {
+        match &plan.upstream {
+            Upstream::InitBareAt(bare_path) => {
+                let root = bare_path
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .expect("InitBareAt is always root/owner/repo");
+                if !root.is_dir() {
+                    crate::refuse!(
+                        RefusalKind::UnusableCreationParam,
+                        "the root '{}' does not exist; rwv creates '<root>/<owner>/<repo>' but \
                      not '<root>' itself — create it first",
-                    root.display()
-                );
-            }
-            let root_canon = root
-                .canonicalize()
-                .with_context(|| format!("failed to resolve root {}", root.display()))?;
-            let weave_canon = ctx.primary_path().canonicalize().with_context(|| {
-                format!(
-                    "failed to resolve weave root {}",
-                    ctx.primary_path().display()
-                )
-            })?;
-            if root_canon.starts_with(&weave_canon) {
-                crate::refuse!(
-                    RefusalKind::UnusableCreationParam,
-                    "the root '{}' is inside the weave at '{}'; the upstream it would \
+                        root.display()
+                    );
+                }
+                let root_canon = root
+                    .canonicalize()
+                    .with_context(|| format!("failed to resolve root {}", root.display()))?;
+                let weave_canon = ctx.primary_path().canonicalize().with_context(|| {
+                    format!(
+                        "failed to resolve weave root {}",
+                        ctx.primary_path().display()
+                    )
+                })?;
+                if root_canon.starts_with(&weave_canon) {
+                    crate::refuse!(
+                        RefusalKind::UnusableCreationParam,
+                        "the root '{}' is inside the weave at '{}'; the upstream it would \
                      create would then be walked, deletable, and reportable as a member \
                      of the very weave it backs — choose a root outside the weave",
-                    root.display(),
-                    weave_canon.display()
-                );
-            }
+                        root.display(),
+                        weave_canon.display()
+                    );
+                }
 
-            if !bare_path.is_dir() {
-                if let Some(parent) = bare_path.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("failed to create directory {}", parent.display())
+                if !bare_path.is_dir() {
+                    if let Some(parent) = bare_path.parent() {
+                        left.make_dir_all(parent)?;
+                    }
+                    left.made.push(Made::Repo(bare_path.clone()));
+                    vcs.init_bare_repo(bare_path).with_context(|| {
+                        format!("failed to init bare upstream at {}", bare_path.display())
                     })?;
                 }
-                vcs.init_bare_repo(bare_path).with_context(|| {
-                    format!("failed to init bare upstream at {}", bare_path.display())
-                })?;
-            }
 
-            if dest.exists() {
-                eprintln!(
-                    "Directory already exists at '{}', skipping clone",
-                    dest.display()
-                );
-            } else {
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("failed to create directory {}", parent.display())
-                    })?;
+                if dest.exists() {
+                    eprintln!(
+                        "Directory already exists at '{}', skipping clone",
+                        dest.display()
+                    );
+                } else {
+                    if let Some(parent) = dest.parent() {
+                        left.make_dir_all(parent)?;
+                    }
+                    left.made.push(Made::Repo(dest.clone()));
+                    vcs.clone_repo(&plan.url.to_string(), &dest)
+                        .with_context(|| {
+                            format!("failed to clone '{}' into {}", plan.url, dest.display())
+                        })?;
                 }
-                vcs.clone_repo(&plan.url.to_string(), &dest)
-                    .with_context(|| {
-                        format!("failed to clone '{}' into {}", plan.url, dest.display())
-                    })?;
+            }
+            Upstream::Named => {
+                if dest.exists() {
+                    eprintln!(
+                        "Directory already exists at '{}', skipping init",
+                        dest.display()
+                    );
+                } else {
+                    if let Some(parent) = dest.parent() {
+                        left.make_dir_all(parent)?;
+                    }
+                    left.made.push(Made::Repo(dest.clone()));
+                    vcs.init_repo(&dest)
+                        .with_context(|| format!("failed to init repo at {}", dest.display()))?;
+                    vcs.add_remote(&dest, &plan.url.to_string())
+                        .with_context(|| {
+                            format!("failed to add the remote in {}", dest.display())
+                        })?;
+                }
             }
         }
-        Upstream::Named => {
-            if dest.exists() {
-                eprintln!(
-                    "Directory already exists at '{}', skipping init",
-                    dest.display()
-                );
-            } else {
-                if let Some(parent) = dest.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| {
-                        format!("failed to create directory {}", parent.display())
-                    })?;
-                }
-                vcs.init_repo(&dest)
-                    .with_context(|| format!("failed to init repo at {}", dest.display()))?;
-                vcs.add_remote(&dest, &plan.url.to_string())
-                    .with_context(|| format!("failed to add the remote in {}", dest.display()))?;
-            }
-        }
-    }
 
-    let default_branch = match vcs.head_attachment(&dest)? {
-        HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
-        HeadAttachment::Attached(a) => RefName::new(a.to_string()),
-        HeadAttachment::Detached(_) => anyhow::bail!(
-            "rwv add: repo at {} has a detached HEAD right after creation; \
+        let default_branch = match vcs.head_attachment(&dest)? {
+            HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
+            HeadAttachment::Attached(a) => RefName::new(a.to_string()),
+            HeadAttachment::Detached(_) => anyhow::bail!(
+                "rwv add: repo at {} has a detached HEAD right after creation; \
              inspect with `git -C {} status` before retrying `rwv add {} --new`",
-            dest.display(),
-            dest.display(),
-            address
-        ),
-    };
+                dest.display(),
+                dest.display(),
+                address
+            ),
+        };
 
-    let entry = RepoEntry {
-        vcs_type,
-        url: plan.url,
-        version: default_branch,
-        role,
-    };
-    manifest.insert_repo(repo_path.clone(), entry);
+        let entry = RepoEntry {
+            vcs_type,
+            url: plan.url.clone(),
+            version: default_branch,
+            role,
+        };
+        manifest.insert_repo(repo_path.clone(), entry);
 
-    // In a workweave, attempt to create a worktree at the workweave so the
-    // new repo is materialized there. An unborn HEAD (both creation shapes
-    // start unborn) means create_worktree_in_workweave skips until the first
-    // commit lands.
-    place_member(vcs.as_ref(), ctx, &dest, &repo_path, role)?;
+        // In a workweave, attempt to create a worktree at the workweave so the
+        // new repo is materialized there. An unborn HEAD (both creation shapes
+        // start unborn) means create_worktree_in_workweave skips until the first
+        // commit lands.
+        place_member_noting(vcs.as_ref(), ctx, &dest, &repo_path, role, &mut left)?;
 
-    settle_manifest(ctx, &project, Some(&manifest))?;
+        settle_manifest(ctx, &project, Some(&manifest))
+    })();
+    added.map_err(|e| {
+        left.refused(
+            e,
+            &manifest_path,
+            &repo_path,
+            &format!("rwv add {address} --new"),
+        )
+    })?;
 
     eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
     Ok(())

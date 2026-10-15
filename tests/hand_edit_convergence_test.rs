@@ -473,3 +473,169 @@ fn remove_refuses_a_path_that_holds_nothing() {
         "{stderr}"
     );
 }
+
+/// Put a directory where `workspace`'s surfaced `Cargo.lock` link belongs,
+/// which no regeneration may take over, so the next add refuses before its
+/// install hooks.
+fn occupy_cargo_lock(workspace: &Path) {
+    let link = workspace.join("Cargo.lock");
+    assert!(
+        link.symlink_metadata().unwrap().is_symlink(),
+        "fixture: the weave surfaces a Cargo.lock link"
+    );
+    std::fs::remove_file(&link).unwrap();
+    std::fs::create_dir(&link).unwrap();
+    std::fs::write(link.join("mine"), "# not rwv's\n").unwrap();
+}
+
+fn vacate_cargo_lock(workspace: &Path) {
+    std::fs::remove_dir_all(workspace.join("Cargo.lock")).unwrap();
+}
+
+fn refused(args: &[&str], workspace: &Path) -> String {
+    let out = run(args, workspace);
+    let stderr = stderr_of(&out);
+    assert!(
+        !out.status.success(),
+        "`rwv {}` must refuse; {stderr}",
+        args.join(" ")
+    );
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("rwv explain surfacing-path-occupied"),
+        "{stderr}"
+    );
+    stderr
+}
+
+#[test]
+fn a_refused_url_add_names_the_clone_it_keeps_and_the_command_that_removes_it() {
+    let weave = Weave::new();
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    occupy_cargo_lock(&weave.ws);
+
+    let stderr = refused(&["add", &beta_url], &weave.ws);
+
+    let clone = weave.ws.join(&beta);
+    assert!(
+        clone.join(".git").is_dir(),
+        "the clone is kept for a re-run"
+    );
+    assert!(
+        stderr.contains(&format!("kept the clone it made at {}", clone.display()))
+            && stderr.contains(&format!("`rwv add {beta_url}` reuses it"))
+            && stderr.contains(&format!(
+                "`rwv remove {beta} --delete` in the primary weave"
+            )),
+        "{stderr}"
+    );
+
+    vacate_cargo_lock(&weave.ws);
+    succeed(&["remove", &beta, "--delete"], &weave.ws);
+    assert!(!clone.exists(), "the named command removes what was named");
+}
+
+#[test]
+fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    occupy_cargo_lock(&workweave);
+
+    let stderr = refused(&["add", &beta_url], &workweave);
+
+    let worktree = workweave.join(&beta);
+    let clone = weave.ws.join(&beta);
+    assert!(worktree.join(".git").is_file() && clone.join(".git").is_dir());
+    assert!(
+        stderr.contains(&format!(
+            "kept the worktree it made at {}",
+            worktree.display()
+        )) && stderr.contains(&format!("`rwv remove {beta} --delete` in this workweave"))
+            && stderr.contains(&format!("kept the clone it made at {}", clone.display())),
+        "{stderr}"
+    );
+
+    vacate_cargo_lock(&workweave);
+    succeed(&["remove", &beta, "--delete"], &workweave);
+    assert!(!worktree.exists());
+}
+
+#[test]
+fn a_refused_local_path_add_in_a_workweave_names_only_the_worktree_it_made() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    let clone = weave.ws.join(&beta);
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    common::git_in(
+        &weave.ws,
+        &["clone", "-q", &beta_url, clone.to_str().unwrap()],
+    );
+    occupy_cargo_lock(&workweave);
+
+    let stderr = refused(&["add", &beta], &workweave);
+
+    let worktree = workweave.join(&beta);
+    assert!(
+        stderr.contains(&format!(
+            "kept the worktree it made at {}",
+            worktree.display()
+        )),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("kept the clone"),
+        "the clone was there before the add; {stderr}"
+    );
+}
+
+#[test]
+fn a_refused_url_add_over_an_existing_clone_names_nothing() {
+    let weave = Weave::new();
+    let beta_url = weave.origin("beta");
+    let clone = weave.ws.join(placed("beta"));
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    common::git_in(
+        &weave.ws,
+        &["clone", "-q", &beta_url, clone.to_str().unwrap()],
+    );
+    occupy_cargo_lock(&weave.ws);
+
+    let stderr = refused(&["add", &beta_url], &weave.ws);
+
+    assert!(!stderr.contains("kept the"), "{stderr}");
+    assert!(clone.join(".git").is_dir());
+}
+
+#[test]
+fn a_refused_add_new_takes_back_its_upstream_and_its_member() {
+    let weave = Weave::new();
+    let root = weave.tmp.path().join("upstreams");
+    std::fs::create_dir_all(&root).unwrap();
+    let root_param = format!("root={}", root.display());
+    occupy_cargo_lock(&weave.ws);
+
+    let stderr = refused(
+        &["add", "local/acme/fresh", "--new", "--param", &root_param],
+        &weave.ws,
+    );
+
+    let upstream = root.join("acme/fresh");
+    let member = weave.ws.join("local/acme/fresh");
+    assert!(
+        !upstream.exists() && !root.join("acme").exists(),
+        "the bare upstream and the directory made for it are gone"
+    );
+    assert!(!member.exists() && !weave.ws.join("local/acme").exists());
+    assert!(root.is_dir(), "the root existed before the add");
+    assert!(
+        stderr.contains(&format!("removed {}", upstream.display()))
+            && stderr.contains(&format!("removed {}", member.display())),
+        "{stderr}"
+    );
+}
