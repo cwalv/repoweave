@@ -198,7 +198,7 @@ fn park_in_relock(weave: &Weave) -> PathBuf {
         "a Phase 3 refusal parks the op:\n{stderr}"
     );
     assert_eq!(
-        common::git_in(&project_dir(&s1), &["diff", "--cached", "--name-only"]),
+        common::git_in(project_dir(&s1), &["diff", "--cached", "--name-only"]),
         "",
         "a refused lock commit must not leave rwv.lock staged"
     );
@@ -216,7 +216,7 @@ fn a_refused_phase3_relock_parks_and_resumes() {
     let lock = std::fs::read_to_string(project_dir(&s1).join("rwv.lock")).unwrap();
     assert!(lock.contains(&lib_tip), "{lock}");
     assert_eq!(
-        common::git_in(&project_dir(&s1), &["status", "--porcelain"]),
+        common::git_in(project_dir(&s1), &["status", "--porcelain"]),
         ""
     );
 }
@@ -228,7 +228,7 @@ fn abort_after_a_refused_phase3_relock_leaves_no_staged_lock() {
 
     succeed(&s1, &["abort"]);
     assert_eq!(
-        common::git_in(&project_dir(&s1), &["diff", "--cached", "--name-only"]),
+        common::git_in(project_dir(&s1), &["diff", "--cached", "--name-only"]),
         "",
         "abort must not leave rwv.lock staged"
     );
