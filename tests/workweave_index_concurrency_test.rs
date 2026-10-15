@@ -204,49 +204,47 @@ fn concurrent_recorders_keep_every_receipt_and_serial_ones_are_the_control() {
     );
 
     // Drive: all N released together against one index.
-    let (root, store) = seeded_primary(tmp.path(), "concurrent");
-    let windows = tmp.path().join("windows");
-    std::fs::create_dir_all(&windows).expect("windows dir");
-    let barrier = common::start_gate::gate_in(&windows);
-    let children: Vec<_> = (0..N)
-        .map(|i| {
-            recorder(&root, &store, &windows, &seat(i), Some(&barrier))
-                .spawn()
-                .expect("concurrent recorder spawns")
-        })
-        .collect();
-    let names: Vec<String> = (0..N).map(seat).collect();
-    common::start_gate::open_when_all_ready(&barrier, &names);
-    for (i, child) in children.into_iter().enumerate() {
-        let out = child.wait_with_output().expect("concurrent recorder exits");
-        assert!(
-            out.status.success(),
-            "concurrent recorder {i} failed: {}\n{}",
-            out.status,
-            transcript(&out)
+    // Every attempt asserts the loss invariant, overlapping or not; only an
+    // overlapping attempt counts as evidence, and the first one ends the drive.
+    common::start_gate::drive_until_overlap("recorder", |attempt| {
+        let (root, store) = seeded_primary(tmp.path(), &format!("concurrent{attempt}"));
+        let windows = tmp.path().join(format!("windows{attempt}"));
+        std::fs::create_dir_all(&windows).expect("windows dir");
+        let barrier = common::start_gate::gate_in(&windows);
+        let children: Vec<_> = (0..N)
+            .map(|i| {
+                recorder(&root, &store, &windows, &seat(i), Some(&barrier))
+                    .spawn()
+                    .expect("concurrent recorder spawns")
+            })
+            .collect();
+        let names: Vec<String> = (0..N).map(seat).collect();
+        common::start_gate::open_when_all_ready(&barrier, &names);
+        for (i, child) in children.into_iter().enumerate() {
+            let out = child.wait_with_output().expect("concurrent recorder exits");
+            assert!(
+                out.status.success(),
+                "attempt {attempt}: concurrent recorder {i} failed: {}\n{}",
+                out.status,
+                transcript(&out)
+            );
+        }
+        assert_eq!(
+            common::start_gate::early_arrivals(&barrier, &names),
+            Vec::<String>::new(),
+            "every recorder must reach the barrier before it opens"
         );
-    }
 
-    assert_eq!(
-        common::start_gate::early_arrivals(&barrier, &names),
-        Vec::<String>::new(),
-        "every recorder must reach the barrier before it opens"
-    );
-    let kept = receipt_names(&root);
-    let concurrent = windows_in(&windows);
-    assert!(
-        share_an_instant(&concurrent),
-        "no instant had every recorder in flight, so this drive did not \
-         exercise the read-modify-write against itself and its result is not \
-         evidence either way: {concurrent:?}"
-    );
-    assert_eq!(
-        kept.len(),
-        N,
-        "every concurrent receipt must survive: a whole-file publish that lost \
-         one returns Ok, and the ref it named is then disowned for good. \
-         Kept {kept:?}"
-    );
+        let kept = receipt_names(&root);
+        assert_eq!(
+            kept.len(),
+            N,
+            "attempt {attempt}: every concurrent receipt must survive: a \
+             whole-file publish that lost one returns Ok, and the ref it named \
+             is then disowned for good. Kept {kept:?}"
+        );
+        common::start_gate::overlap_miss(&windows_in(&windows))
+    });
 }
 
 fn rwv_at(bin: &Path, root: &Path, args: &[&str]) -> Command {
