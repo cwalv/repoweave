@@ -34,7 +34,7 @@ use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Driven rounds: one index write racing one ledger stamp on a fresh fixture.
 /// Under [`BALLAST_LINES`]'s window a whole-file publish loses a name in
@@ -76,16 +76,8 @@ fn now_nanos() -> u128 {
 
 fn wait_for_barrier() {
     if let Ok(barrier) = std::env::var(CHILD_BARRIER) {
-        let barrier = PathBuf::from(barrier);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !barrier.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "the parent never opened the barrier at {}",
-                barrier.display()
-            );
-            std::hint::spin_loop();
-        }
+        let who = std::env::var(CHILD_WHO).expect("a child is told its window file");
+        common::start_gate::arrive(Path::new(&barrier), &who);
     }
 }
 
@@ -289,7 +281,7 @@ fn concurrent_index_write_and_ledger_stamp_keep_every_ignore_line() {
     let mut overlapped = 0usize;
     for round in 0..ROUNDS {
         let fixture = seeded_fixture(tmp.path(), &format!("round{round}"));
-        let barrier = fixture.windows.join("go");
+        let barrier = common::start_gate::gate_in(&fixture.windows);
         let children: Vec<_> = ["receipt_child", "stamp_child"]
             .iter()
             .map(|child| {
@@ -301,7 +293,11 @@ fn concurrent_index_write_and_ledger_stamp_keep_every_ignore_line() {
                 )
             })
             .collect();
-        std::fs::write(&barrier, b"go").expect("barrier must be writable");
+        let names: Vec<String> = children
+            .iter()
+            .map(|(child, _)| child.to_string())
+            .collect();
+        common::start_gate::open_when_all_ready(&barrier, &names);
         for (child, handle) in children {
             let out = handle.wait_with_output().expect("concurrent child exits");
             assert!(
@@ -312,6 +308,11 @@ fn concurrent_index_write_and_ledger_stamp_keep_every_ignore_line() {
             );
         }
 
+        assert_eq!(
+            common::start_gate::early_arrivals(&barrier, &names),
+            Vec::<String>::new(),
+            "round {round}: every writer must reach the barrier before it opens"
+        );
         let receipt = window_in(&fixture.windows, "receipt_child");
         let stamp = window_in(&fixture.windows, "stamp_child");
         if share_an_instant(receipt, stamp) {

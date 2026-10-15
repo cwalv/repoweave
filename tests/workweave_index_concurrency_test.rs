@@ -32,7 +32,7 @@ use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Recorders in the primitive drive.
 const N: usize = 8;
@@ -56,8 +56,8 @@ fn now_nanos() -> u128 {
 /// Not a test: the child half of the receipt drive. Inert in an ordinary suite
 /// run — without [`CHILD_ROOT`] set it returns immediately.
 ///
-/// A barrier, when named, is a file the parent creates once every child is
-/// spawned. Spinning on it rather than sleeping keeps the children's start
+/// A barrier, when named, is a file the parent creates once every child has
+/// signalled that it reached the barrier. Spinning on it rather than sleeping keeps the children's start
 /// times within microseconds, so the recorded windows measure contention
 /// rather than staggered launches.
 #[test]
@@ -68,16 +68,7 @@ fn receipt_child() {
     let store = std::env::var(CHILD_STORE).expect("a child is given a store");
     let name = std::env::var(CHILD_NAME).expect("a child is given a name");
     if let Ok(barrier) = std::env::var(CHILD_BARRIER) {
-        let barrier = PathBuf::from(barrier);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !barrier.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "the parent never opened the barrier at {}",
-                barrier.display()
-            );
-            std::hint::spin_loop();
-        }
+        common::start_gate::arrive(Path::new(&barrier), &name);
     }
 
     let project = ProjectName::new(PROJECT).expect("project name");
@@ -216,7 +207,7 @@ fn concurrent_recorders_keep_every_receipt_and_serial_ones_are_the_control() {
     let (root, store) = seeded_primary(tmp.path(), "concurrent");
     let windows = tmp.path().join("windows");
     std::fs::create_dir_all(&windows).expect("windows dir");
-    let barrier = windows.join("go");
+    let barrier = common::start_gate::gate_in(&windows);
     let children: Vec<_> = (0..N)
         .map(|i| {
             recorder(&root, &store, &windows, &seat(i), Some(&barrier))
@@ -224,7 +215,8 @@ fn concurrent_recorders_keep_every_receipt_and_serial_ones_are_the_control() {
                 .expect("concurrent recorder spawns")
         })
         .collect();
-    std::fs::write(&barrier, b"go").expect("barrier must be writable");
+    let names: Vec<String> = (0..N).map(seat).collect();
+    common::start_gate::open_when_all_ready(&barrier, &names);
     for (i, child) in children.into_iter().enumerate() {
         let out = child.wait_with_output().expect("concurrent recorder exits");
         assert!(
@@ -235,6 +227,11 @@ fn concurrent_recorders_keep_every_receipt_and_serial_ones_are_the_control() {
         );
     }
 
+    assert_eq!(
+        common::start_gate::early_arrivals(&barrier, &names),
+        Vec::<String>::new(),
+        "every recorder must reach the barrier before it opens"
+    );
     let kept = receipt_names(&root);
     let concurrent = windows_in(&windows);
     assert!(

@@ -28,7 +28,7 @@ mod common;
 use repoweave::owned_state::{attested_owned_files, stamp_owned_digest};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How many stampers each drive runs. The measurement that filed this defect
 /// used eight.
@@ -59,10 +59,11 @@ fn now_nanos() -> u128 {
 /// run — without [`CHILD_DIR`] set it returns immediately — and a single
 /// stamper when a parent selects it by name.
 ///
-/// A barrier, when named, is a file the parent creates once every child is
-/// spawned. Waiting on it with a spin rather than a sleep is what keeps the
-/// children's start times within microseconds of each other, so the recorded
-/// windows measure contention rather than staggered launches.
+/// A barrier, when named, is a file the parent creates once every child has
+/// signalled that it reached the barrier. Waiting on it with a spin rather
+/// than a sleep keeps the children's start times within microseconds of each
+/// other, so the recorded windows measure contention rather than staggered
+/// launches.
 #[test]
 fn stamper_child() {
     let Ok(dir) = std::env::var(CHILD_DIR) else {
@@ -71,16 +72,7 @@ fn stamper_child() {
     let entry = std::env::var(CHILD_ENTRY).expect("a stamper child is given an entry name");
 
     if let Ok(barrier) = std::env::var(CHILD_BARRIER) {
-        let barrier = PathBuf::from(barrier);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !barrier.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "the parent never opened the barrier at {}",
-                barrier.display()
-            );
-            std::hint::spin_loop();
-        }
+        common::start_gate::arrive(Path::new(&barrier), &entry);
     }
 
     let start = now_nanos();
@@ -189,7 +181,7 @@ fn concurrent_processes_keep_every_stamp_and_serial_ones_are_the_control() {
 
     // The drive: all N released together, contending on one ledger.
     let (_tmp, ledger, windows) = ledger_dirs();
-    let barrier = windows.join("go");
+    let barrier = common::start_gate::gate_in(&windows);
     let children: Vec<_> = (0..STAMPERS)
         .map(|i| {
             stamper(&ledger, &windows, &entry_name(i), Some(&barrier))
@@ -197,7 +189,8 @@ fn concurrent_processes_keep_every_stamp_and_serial_ones_are_the_control() {
                 .expect("concurrent stamper spawns")
         })
         .collect();
-    std::fs::write(&barrier, b"go").expect("barrier must be writable");
+    let names: Vec<String> = (0..STAMPERS).map(entry_name).collect();
+    common::start_gate::open_when_all_ready(&barrier, &names);
     for (i, child) in children.into_iter().enumerate() {
         let out = child.wait_with_output().expect("concurrent stamper exits");
         assert!(
@@ -208,6 +201,11 @@ fn concurrent_processes_keep_every_stamp_and_serial_ones_are_the_control() {
         );
     }
 
+    assert_eq!(
+        common::start_gate::early_arrivals(&barrier, &names),
+        Vec::<String>::new(),
+        "every stamper must reach the barrier before it opens"
+    );
     let retained = attested_owned_files(&ledger);
     let concurrent = windows_in(&windows);
     assert!(
