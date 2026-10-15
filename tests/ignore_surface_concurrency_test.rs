@@ -16,10 +16,12 @@
 //! an open handle to that file, runs one writer of each family, and requires
 //! that
 //!
-//! - the surface is still the file the handle names (a rename-over republish
-//!   gives it a new identity, and the handle then reads the stale original);
-//! - the bytes that were there are still a prefix of it;
-//! - every name both families contribute is present.
+//! - the bytes that were there are still a prefix of what the handle reads;
+//! - every name both families contribute is present in what the handle reads.
+//!
+//! The handle names the file that existed before the writers ran, so a writer
+//! that republishes the surface as a new file leaves the handle reading the
+//! stale original, without the names it added.
 //!
 //! Each holds under every scheduling of the writers, because it is a property
 //! of one writer's effect on the surface, not of how two writers interleave.
@@ -33,7 +35,6 @@ use repoweave::owned_state::stamp_owned_digest;
 use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
 use std::io::Read;
-use std::os::unix::fs::MetadataExt;
 
 const PROJECT: &str = "web-app";
 
@@ -70,7 +71,6 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
     std::fs::create_dir_all(exclude.parent().expect("info dir")).expect("info dir");
     std::fs::write(&exclude, PEER_LINE).expect("seed the peer's line");
     let mut held = std::fs::File::open(&exclude).expect("open handle on the surface");
-    let identity = held.metadata().expect("handle metadata").ino();
 
     let project = ProjectName::new(PROJECT).expect("project name");
     let mut registry = RefRegistry::for_project(&root, &project);
@@ -84,12 +84,6 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
     stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 4\n")
         .expect("the ledger stamp succeeds");
 
-    assert_eq!(
-        std::fs::metadata(&exclude).expect("surface").ino(),
-        identity,
-        "the surface was republished as a new file: a writer that replaces it \
-         from a read taken earlier drops whatever a peer appended since"
-    );
     let mut through_handle = String::new();
     held.read_to_string(&mut through_handle)
         .expect("read through the held handle");
