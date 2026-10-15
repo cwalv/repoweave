@@ -668,6 +668,7 @@ pub fn run_remove(
             ctx,
             &repo_path,
             &project,
+            crate::sync::RemovalCause::RemoveDelete,
         )?)
     } else {
         None

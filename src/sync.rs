@@ -1706,7 +1706,9 @@ fn check_store_unclaimed(
     primary_root: &Path,
     project: &ProjectName,
     repo_path: &RepoPath,
+    cause: RemovalCause,
 ) -> anyhow::Result<()> {
+    let (dropped, rerun) = (cause.situation(), cause.rerun());
     let registered = vcs
         .list_worktrees(store)
         .with_context(|| {
@@ -1730,12 +1732,12 @@ fn check_store_unclaimed(
     if !live.is_empty() {
         crate::refuse!(
             RefusalKind::StoreStillClaimed,
-            "{repo_path}: dropped from lock, but {} still has live worktrees registered \
+            "{repo_path}: {dropped}, but {} still has live worktrees registered \
              against it:\n  {}\n\
              \n\
              Removing the store would delete their object database and worktree \
              administration along with it. Remove those workweaves first \
-             (`rwv workweave delete <name>`), then re-run.",
+             (`rwv workweave delete <name>`), then {rerun}.",
             store.display(),
             live.join("\n  "),
         );
@@ -1755,12 +1757,12 @@ fn check_store_unclaimed(
         let names: Vec<String> = standing.iter().map(|r| r.to_string()).collect();
         crate::refuse!(
             RefusalKind::StoreStillClaimed,
-            "{repo_path}: dropped from lock, but rwv still holds ownership receipts for \
+            "{repo_path}: {dropped}, but rwv still holds ownership receipts for \
              refs in {}:\n  {}\n\
              \n\
              Each receipt must be retracted through its own ref delete — with a receipt \
              and a warrant — before the store itself may be destroyed. Delete the \
-             workweaves that own these refs, then re-run.",
+             workweaves that own these refs, then {rerun}.",
             store.display(),
             names.join("\n  "),
         );
@@ -1794,7 +1796,37 @@ fn prune_dropped_repo(
     repo_path: &RepoPath,
     project_name: &ProjectName,
 ) -> anyhow::Result<()> {
-    plan_checkout_removal(vcs, ctx, repo_path, project_name)?.perform(vcs, repo_path)
+    plan_checkout_removal(
+        vcs,
+        ctx,
+        repo_path,
+        project_name,
+        RemovalCause::DroppedFromLock,
+    )?
+    .perform(vcs, repo_path)
+}
+
+/// What is removing a checkout, as a refusal of that removal tells it.
+#[derive(Clone, Copy)]
+pub(crate) enum RemovalCause {
+    DroppedFromLock,
+    RemoveDelete,
+}
+
+impl RemovalCause {
+    fn situation(self) -> &'static str {
+        match self {
+            Self::DroppedFromLock => "dropped from lock",
+            Self::RemoveDelete => "named for `rwv remove --delete`",
+        }
+    }
+
+    fn rerun(self) -> &'static str {
+        match self {
+            Self::DroppedFromLock => "re-run sync",
+            Self::RemoveDelete => "re-run `rwv remove --delete`",
+        }
+    }
 }
 
 /// How a dropped repo's checkout in this workspace comes off disk. Only
@@ -1844,7 +1876,9 @@ pub(crate) fn plan_checkout_removal(
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
     project_name: &ProjectName,
+    cause: RemovalCause,
 ) -> anyhow::Result<CheckoutRemoval> {
+    let (dropped, rerun) = (cause.situation(), cause.rerun());
     let dest = ctx.active_path().join(repo_path.as_path());
     if !dest.exists() {
         return Ok(CheckoutRemoval(Removal::Absent));
@@ -1852,8 +1886,8 @@ pub(crate) fn plan_checkout_removal(
     if vcs.has_uncommitted_changes(&dest).unwrap_or(true) {
         crate::refuse!(
             RefusalKind::DirtyCheckout,
-            "{repo_path}: dropped from lock but worktree has uncommitted changes; \
-             commit/discard and re-run sync, or remove manually"
+            "{repo_path}: {dropped} but worktree has uncommitted changes; \
+             commit/discard and {rerun}, or remove manually"
         );
     }
 
@@ -1870,8 +1904,8 @@ pub(crate) fn plan_checkout_removal(
                         let is_ancestor = vcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
                         if !is_ancestor {
                             crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
-                                "{repo_path}: dropped from lock but worktree has commits not in canonical clone; \
-                                 push/merge them and re-run, or remove manually"
+                                "{repo_path}: {dropped} but worktree has commits not in canonical clone; \
+                                 push/merge them and {rerun}, or remove manually"
                             );
                         }
                     }
@@ -1902,7 +1936,7 @@ pub(crate) fn plan_checkout_removal(
                 if store == dest_canonical {
                     crate::refuse!(
                         RefusalKind::CloneTopology,
-                        "{repo_path}: dropped from lock, but the checkout at {} is itself a \
+                        "{repo_path}: {dropped}, but the checkout at {} is itself a \
                          canonical store rather than a workspace linked into one — inverted \
                          clone topology (precondition: a workweave checkout is a linked \
                          workspace). There is no canonical clone at {} either, so removing \
@@ -1947,10 +1981,10 @@ pub(crate) fn plan_checkout_removal(
                             .count_commits_ahead_of_remote(&dest, &short)
                             .with_context(|| {
                                 format!(
-                                    "{repo_path}: dropped from lock, but counting {short}'s \
+                                    "{repo_path}: {dropped}, but counting {short}'s \
                                      commits against its remote counterpart failed; refusing \
                                      to remove a clone whose unpushed work could not be \
-                                     ruled out — push and re-run, or remove manually"
+                                     ruled out — push and {rerun}, or remove manually"
                                 )
                             })
                             .map_err(|e| {
@@ -1971,14 +2005,21 @@ pub(crate) fn plan_checkout_removal(
             if any_local_only {
                 crate::refuse!(
                     RefusalKind::DroppedRepoHasUniqueCommits,
-                    "{repo_path}: dropped from lock but clone has local-only commits; \
-                     push them and re-run, or remove manually"
+                    "{repo_path}: {dropped} but clone has local-only commits; \
+                     push them and {rerun}, or remove manually"
                 );
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
             // store — the refdb and object database every workweave worktree
             // of this repo is registered in. R4 gates it.
-            check_store_unclaimed(vcs, &dest, ctx.primary_path(), project_name, repo_path)?;
+            check_store_unclaimed(
+                vcs,
+                &dest,
+                ctx.primary_path(),
+                project_name,
+                repo_path,
+                cause,
+            )?;
             Ok(CheckoutRemoval(Removal::Store(dest)))
         }
     }
@@ -7975,8 +8016,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
 
-        check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
-            .expect("no worktrees registered and no receipts standing");
+        check_store_unclaimed(
+            git_vcs().as_ref(),
+            &store,
+            &primary,
+            &project,
+            &dropped(),
+            RemovalCause::DroppedFromLock,
+        )
+        .expect("no worktrees registered and no receipts standing");
     }
 
     #[test]
@@ -7994,8 +8042,15 @@ mod tests {
             &["worktree", "add", "--detach", live.to_str().unwrap()],
         );
 
-        let err = check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
-            .expect_err("a store with a live worktree registered against it is claimed");
+        let err = check_store_unclaimed(
+            git_vcs().as_ref(),
+            &store,
+            &primary,
+            &project,
+            &dropped(),
+            RemovalCause::DroppedFromLock,
+        )
+        .expect_err("a store with a live worktree registered against it is claimed");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("still has live worktrees registered"),
@@ -8022,8 +8077,15 @@ mod tests {
             )
             .unwrap();
 
-        let err = check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
-            .expect_err("a standing receipt is rwv still accounting for a ref in there");
+        let err = check_store_unclaimed(
+            git_vcs().as_ref(),
+            &store,
+            &primary,
+            &project,
+            &dropped(),
+            RemovalCause::DroppedFromLock,
+        )
+        .expect_err("a standing receipt is rwv still accounting for a ref in there");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("still holds ownership receipts"),
@@ -8038,8 +8100,15 @@ mod tests {
         registry
             .retract(&store, &crate::vcs::RawRefName::new("web-app--hotfix"))
             .unwrap();
-        check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
-            .expect("with the receipt retracted the store is unclaimed");
+        check_store_unclaimed(
+            git_vcs().as_ref(),
+            &store,
+            &primary,
+            &project,
+            &dropped(),
+            RemovalCause::DroppedFromLock,
+        )
+        .expect("with the receipt retracted the store is unclaimed");
     }
 
     #[test]
@@ -8055,6 +8124,7 @@ mod tests {
             tmp.path(),
             &ProjectName::new("web-app").unwrap(),
             &dropped(),
+            RemovalCause::DroppedFromLock,
         )
         .expect_err("an unreadable store must not be destroyed on the strength of a guess");
         assert!(
