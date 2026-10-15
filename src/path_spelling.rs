@@ -102,7 +102,10 @@ pub fn weave_relative(path: &Path) -> String {
 /// `/`-rooted path (its `\` is filename content, not a separator) keeps its
 /// bytes.
 pub fn mint_file_url(path: &str) -> String {
-    if let Some(unc) = path.strip_prefix(r"\\").filter(|rest| !rest.starts_with('?')) {
+    if let Some(unc) = path
+        .strip_prefix(r"\\")
+        .filter(|rest| !rest.starts_with('?'))
+    {
         return format!("file://{}", encode_url_path(&unc.replace('\\', "/")));
     }
     let bytes = path.as_bytes();
