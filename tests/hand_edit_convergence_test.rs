@@ -639,3 +639,123 @@ fn a_refused_add_new_takes_back_its_upstream_and_its_member() {
         "{stderr}"
     );
 }
+
+/// A `PATH` holding `git` and a `cargo` that fails every command.
+#[cfg(unix)]
+fn failing_cargo_path(bin: &Path) -> std::ffi::OsString {
+    use std::os::unix::fs::PermissionsExt;
+    let path = common::cargo_stand_in_path(bin);
+    let cargo = bin.join("cargo");
+    std::fs::write(
+        &cargo,
+        "#!/bin/sh\necho 'stand-in cargo: failing' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_install_hook_leaves_the_add_standing_and_says_so() {
+    let weave = Weave::new();
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    let path = failing_cargo_path(&weave.tmp.path().join("failing-bin"));
+
+    let out = common::rwv()
+        .args(["add", &beta_url])
+        .current_dir(&weave.ws)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    let stderr = stderr_of(&out);
+
+    assert!(
+        !out.status.success(),
+        "the hook failure must surface; {stderr}"
+    );
+    assert!(
+        stderr.contains("stand-in cargo: failing"),
+        "fixture: the failure is the install hook's; {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "rwv.toml was updated and the integration files were regenerated from it; \
+             only the install hooks did not complete"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        std::fs::read_to_string(manifest(&weave.ws))
+            .unwrap()
+            .contains(&beta),
+        "the manifest edit stands"
+    );
+    assert!(generated_members(&weave.ws).contains(&beta));
+    assert!(
+        !stderr.contains("kept the"),
+        "a standing member is not residue; {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_install_hook_after_add_new_keeps_what_it_created() {
+    let weave = Weave::new();
+    let root = weave.tmp.path().join("upstreams");
+    std::fs::create_dir_all(&root).unwrap();
+    let root_param = format!("root={}", root.display());
+    let path = failing_cargo_path(&weave.tmp.path().join("failing-bin"));
+
+    let out = common::rwv()
+        .args(["add", "local/acme/fresh", "--new", "--param", &root_param])
+        .current_dir(&weave.ws)
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    let stderr = stderr_of(&out);
+
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("only the install hooks did not complete"),
+        "{stderr}"
+    );
+    assert!(
+        root.join("acme/fresh").is_dir() && weave.ws.join("local/acme/fresh/.git").is_dir(),
+        "the manifest lists the member, so nothing it created is taken back; {stderr}"
+    );
+}
+
+#[test]
+fn a_url_add_refused_before_its_hooks_converges_on_a_rerun_reusing_its_checkouts() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    occupy_cargo_lock(&workweave);
+    refused(&["add", &beta_url], &workweave);
+    let clone = weave.ws.join(&beta);
+    let worktree = workweave.join(&beta);
+    std::fs::write(clone.join("kept-clone"), "").unwrap();
+    std::fs::write(worktree.join("kept-worktree"), "").unwrap();
+    vacate_cargo_lock(&workweave);
+
+    let out = succeed(&["add", &beta_url], &workweave);
+
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("skipping clone"), "{stderr}");
+    assert!(
+        clone.join("kept-clone").exists() && worktree.join("kept-worktree").exists(),
+        "the re-run reuses the clone and the worktree the refused run made"
+    );
+    assert!(std::fs::read_to_string(manifest(&workweave))
+        .unwrap()
+        .contains(&beta));
+    assert!(generated_members(&workweave).contains(&beta));
+    assert!(workweave
+        .join("Cargo.lock")
+        .symlink_metadata()
+        .unwrap()
+        .is_symlink());
+}
