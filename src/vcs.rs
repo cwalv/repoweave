@@ -2393,18 +2393,6 @@ pub trait Vcs: Send + Sync {
         descendant: &ResolvedRevisionId,
     ) -> Result<bool, VcsError>;
 
-    /// The newest revision both `a` and `b` descend from in `repo`, or `None`
-    /// when their histories share no revision.
-    ///
-    /// For git: `git merge-base <a> <b>`, which picks one when criss-cross
-    /// merges leave several.
-    fn common_ancestor(
-        &self,
-        repo: &Path,
-        a: &ResolvedRevisionId,
-        b: &ResolvedRevisionId,
-    ) -> Result<Option<ResolvedRevisionId>, VcsError>;
-
     /// Count commits reachable from `to` but not from `from` in `repo`
     /// (i.e. the size of the `from..to` range).
     ///

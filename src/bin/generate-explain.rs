@@ -100,7 +100,8 @@ use repoweave::push::{
 };
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
-    auto_relock_commit_message, SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncToJsonOutput,
+    auto_relock_commit_message, AdvanceNdjsonRecord, MemberNdjsonRecord, SyncJsonOutput,
+    SyncOutcomeNdjsonRecord, SyncToJsonOutput, ADVANCE_RECORD_SCHEMA_URL, MEMBER_RECORD_SCHEMA_URL,
     SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
     SYNC_TO_RECORD_SCHEMA_URL,
 };
@@ -300,6 +301,18 @@ fn schema_fetch_record() -> String {
 fn schema_placement_record() -> String {
     let schema = schema_for!(PlacementNdjsonRecord<'static>);
     serde_json::to_string_pretty(&schema).expect("placement-record schema serializes")
+}
+
+fn schema_member_record() -> String {
+    let schema = schema_for!(MemberNdjsonRecord<'static>);
+    let schema = inject_schema_field_into_oneof_branches(schema);
+    serde_json::to_string_pretty(&schema).expect("member-record schema serializes")
+}
+
+fn schema_advance_record() -> String {
+    let schema = schema_for!(AdvanceNdjsonRecord<'static>);
+    let schema = inject_schema_field_into_oneof_branches(schema);
+    serde_json::to_string_pretty(&schema).expect("advance-record schema serializes")
 }
 
 fn schema_update_record() -> String {
@@ -3246,6 +3259,17 @@ fn main() -> anyhow::Result<()> {
         &placement_record,
     )?;
 
+    // Replay's member lines are streamed by both sync verbs; advance-target's
+    // lines by sync-to.
+    for (name, generate) in [
+        ("member-record", schema_member_record as fn() -> String),
+        ("advance-record", schema_advance_record),
+    ] {
+        let mut content = generate();
+        content.push('\n');
+        write_if_changed(&schemas_dir.join(format!("{name}.json")), &content)?;
+    }
+
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
@@ -3300,6 +3324,14 @@ fn main() -> anyhow::Result<()> {
     assert!(
         PLACEMENT_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/placement-record.json"),
         "PLACEMENT_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        MEMBER_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/member-record.json"),
+        "MEMBER_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        ADVANCE_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/advance-record.json"),
+        "ADVANCE_RECORD_SCHEMA_URL no longer points at the committed artifact"
     );
 
     let index = render_index(&verbs);

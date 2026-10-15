@@ -603,7 +603,7 @@ fn emit_ndjson(cwd: &Path, args: &[&str]) -> Vec<Value> {
 
 /// Validate each NDJSON record against the committed artifact its own
 /// `$schema` URL names, asserting that artifact is `expected_record_artifact`
-/// or the placement record every file-placing verb streams beside its own.
+/// or one of the shared records a verb streams beside its own.
 ///
 /// A record URL pointing at a different artifact causes the `assert_eq` to
 /// fire, naming both the expected and the actual artifact path so the failure
@@ -627,7 +627,8 @@ fn assert_ndjson_conforms(verb: &str, records: &[Value], expected_record_artifac
                 )
             });
         assert!(
-            named == expected_record_artifact || named == "placement-record",
+            named == expected_record_artifact
+                || ["placement-record", "member-record", "advance-record"].contains(&named),
             "rwv {verb} --json -j 2 record[{i}] points consumers at {}, expected {}",
             json_schema::schema_path(named),
             json_schema::schema_path(expected_record_artifact),
@@ -706,4 +707,53 @@ fn sync_to_ndjson_records_conform() {
 
     let records = emit_ndjson(&ww, &["sync-to", "--json", "-j", "2"]);
     assert_ndjson_conforms("sync-to", &records, "sync-to-record");
+}
+
+/// The advance-target fast-forwards a serial envelope reports as
+/// `step3_advance` and `project_repo_advance` each arrive as their own line,
+/// carrying the target's tip before and CWD's after.
+#[test]
+fn sync_to_ndjson_streams_both_advance_records() {
+    let weave = weave();
+    let ww = workweave(&weave);
+    let target_member_before = common::git_in(weave.member(), &["rev-parse", "HEAD"]);
+    let target_project_before = common::git_in(weave.project(), &["rev-parse", "HEAD"]);
+
+    std::fs::write(ww.join(MEMBER).join("NOTES.md"), "workweave\n").unwrap();
+    common::git_in(ww.join(MEMBER), &["add", "-A"]);
+    common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
+
+    let records = emit_ndjson(&ww, &["sync-to", "--json", "-j", "2"]);
+    let advances: Vec<&Value> = records
+        .iter()
+        .filter(|r| {
+            r["$schema"]
+                .as_str()
+                .is_some_and(|url| url.ends_with("/advance-record.json"))
+        })
+        .collect();
+    let of_kind = |kind: &str| -> Vec<&Value> {
+        advances
+            .iter()
+            .copied()
+            .filter(|r| r["kind"] == kind)
+            .collect()
+    };
+
+    let member = of_kind("step3-advance");
+    assert_eq!(member.len(), 1, "one manifest repo advanced:\n{records:#?}");
+    assert_eq!(member[0]["path"], MEMBER);
+    assert_eq!(member[0]["from_sha"], target_member_before.as_str());
+    assert_eq!(
+        member[0]["to_sha"],
+        common::git_in(weave.member(), &["rev-parse", "HEAD"]).as_str()
+    );
+
+    let project = of_kind("project-repo-advance");
+    assert_eq!(project.len(), 1, "the project repo advanced:\n{records:#?}");
+    assert_eq!(project[0]["from_sha"], target_project_before.as_str());
+    assert_eq!(
+        project[0]["to_sha"],
+        common::git_in(weave.project(), &["rev-parse", "HEAD"]).as_str()
+    );
 }

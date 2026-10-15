@@ -717,10 +717,15 @@ when `-j N` is set with `N > 1`.
 - **Parallel / NDJSON mode** (`-j N > 1` with `--json`): each per-repo
   outcome is streamed as one JSON line to stdout the moment its worker
   finishes. The envelope wrapper is dropped, and each line carries its
-  own `"$schema"` field.
+  own `"$schema"` field. What the envelope carries outside `outcomes`
+  arrives as lines of its own: a placement (`placement-record.json`), a
+  replay member (`member-record.json`), and for `sync-to` each
+  advance-target fast-forward (`advance-record.json`).
 
 Exit semantics under `--json` are the same in both modes: non-zero iff
-at least one per-repo outcome is `failed`.
+at least one per-repo outcome is `failed`. A refused prune is not a
+failed outcome: the op completes, and the refusal is a `prune-refused`
+member record, under the envelope's `members` or as its own line.
 
 ## `--retire` — close out a workweave in one step
 

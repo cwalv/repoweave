@@ -86,10 +86,11 @@ use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
 use repoweave::sync::{
-    ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, Step3AdvanceOutput,
-    SyncFailureOutput, SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncOutcomeOutput,
-    SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
-    SYNC_TO_RECORD_SCHEMA_URL,
+    AdvanceNdjsonRecord, AdvanceOutput, ContainmentOutput, ContainmentVerdictOutput,
+    MemberNdjsonRecord, MemberOutput, ReplayBaseline, Step3AdvanceOutput, SyncFailureOutput,
+    SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncOutcomeOutput, SyncToJsonOutput,
+    ADVANCE_RECORD_SCHEMA_URL, MEMBER_RECORD_SCHEMA_URL, SYNC_JSON_SCHEMA_URL,
+    SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL, SYNC_TO_RECORD_SCHEMA_URL,
 };
 use repoweave::update::{
     RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UpdateNdjsonRecord, UPDATE_RECORD_SCHEMA_URL,
@@ -180,6 +181,16 @@ fn cases() -> Vec<VerbCase> {
             verb: "placement-record",
             schema_url: PLACEMENT_RECORD_SCHEMA_URL,
             corpus: placement_record_corpus,
+        },
+        VerbCase {
+            verb: "member-record",
+            schema_url: MEMBER_RECORD_SCHEMA_URL,
+            corpus: member_record_corpus,
+        },
+        VerbCase {
+            verb: "advance-record",
+            schema_url: ADVANCE_RECORD_SCHEMA_URL,
+            corpus: advance_record_corpus,
         },
     ]
 }
@@ -728,6 +739,32 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
     outcomes
 }
 
+/// Every member kind, and a refused prune both with and without a token.
+fn members() -> Vec<MemberOutput> {
+    vec![
+        MemberOutput::Kept {
+            path: REPO.to_owned(),
+            absolute_path: ABS.to_owned(),
+        },
+        MemberOutput::Pruned {
+            path: REPO.to_owned(),
+            absolute_path: ABS.to_owned(),
+        },
+        MemberOutput::PruneRefused {
+            path: REPO.to_owned(),
+            absolute_path: ABS.to_owned(),
+            refusal: Some("dirty-checkout".to_owned()),
+            message: "worktree has uncommitted changes".to_owned(),
+        },
+        MemberOutput::PruneRefused {
+            path: REPO.to_owned(),
+            absolute_path: ABS.to_owned(),
+            refusal: None,
+            message: "worktree remove failed".to_owned(),
+        },
+    ]
+}
+
 fn sync_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -736,6 +773,7 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
                 schema: SYNC_JSON_SCHEMA_URL.to_owned(),
                 outcomes: sync_outcomes(false),
                 placements: placements(),
+                members: members(),
                 advisories: advisories(),
                 resolution: Some(resolution()),
             }),
@@ -746,6 +784,7 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
                 schema: SYNC_JSON_SCHEMA_URL.to_owned(),
                 outcomes: sync_outcomes(true),
                 placements: Vec::new(),
+                members: Vec::new(),
                 advisories: Vec::new(),
                 resolution: None,
             }),
@@ -766,6 +805,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 resumed: None,
                 outcomes: sync_outcomes(true),
                 placements: placements(),
+                members: members(),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
             }),
@@ -782,6 +822,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 resumed: Some(OpPhase::Replay),
                 outcomes: sync_outcomes(false),
                 placements: Vec::new(),
+                members: Vec::new(),
                 project_repo_advance: None,
                 resolution: None,
             }),
@@ -800,6 +841,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 resumed: Some(OpPhase::Relock),
                 outcomes: Vec::new(),
                 placements: Vec::new(),
+                members: Vec::new(),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
             }),
@@ -814,6 +856,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 resumed: Some(OpPhase::AdvanceTarget),
                 outcomes: Vec::new(),
                 placements: placements(),
+                members: members(),
                 project_repo_advance: None,
                 resolution: Some(resolution()),
             }),
@@ -828,6 +871,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 resumed: Some(OpPhase::Retire),
                 outcomes: Vec::new(),
                 placements: Vec::new(),
+                members: Vec::new(),
                 project_repo_advance: None,
                 resolution: Some(resolution()),
             }),
@@ -997,6 +1041,45 @@ fn sync_to_record_corpus() -> Vec<(&'static str, Value)> {
             (label, v)
         })
         .collect()
+}
+
+fn member_record_corpus() -> Vec<(&'static str, Value)> {
+    members()
+        .iter()
+        .zip(["kept", "pruned", "prune-refused", "prune-refused-untokened"])
+        .map(|(member, label)| {
+            let v = value(MemberNdjsonRecord {
+                schema: MEMBER_RECORD_SCHEMA_URL,
+                member,
+            });
+            (label, v)
+        })
+        .collect()
+}
+
+fn advance_record_corpus() -> Vec<(&'static str, Value)> {
+    let manifest_repo = AdvanceOutput::Step3Advance {
+        path: REPO.to_owned(),
+        from_sha: sha('a'),
+        to_sha: sha('b'),
+    };
+    let project_repo = AdvanceOutput::ProjectRepoAdvance {
+        from_sha: sha('c'),
+        to_sha: sha('d'),
+    };
+    [
+        (manifest_repo, "manifest-repo"),
+        (project_repo, "project-repo"),
+    ]
+    .iter()
+    .map(|(advance, label)| {
+        let v = value(AdvanceNdjsonRecord {
+            schema: ADVANCE_RECORD_SCHEMA_URL,
+            advance,
+        });
+        (*label, v)
+    })
+    .collect()
 }
 
 fn placement_record_corpus() -> Vec<(&'static str, Value)> {

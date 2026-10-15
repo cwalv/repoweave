@@ -109,7 +109,8 @@ pretty-printed envelope:
 {
   "$schema": "<url>",
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
-  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
 }
 ```
 
@@ -133,6 +134,15 @@ checkout the files are in), and `files` (`reflinked`, `hardlinked`,
 `written`). The envelope lists them under `placements`, empty when nothing
 was placed.
 
+`members` lists what replay did with each member checkout that its manifest
+decides rather than a per-repo strategy: `kept` (the source's lock lacks the
+member and the replayed manifest names it), `pruned` (the replayed manifest
+no longer names it and its checkout was removed), and `prune-refused` (the
+same, but removing the checkout was refused). A `prune-refused` record
+carries the refusal's `refusal` token and the full `message`; its checkout is
+left on disk with no manifest naming it, and the sync still exits 0, so
+branch on this record. The list is empty, not absent, when there are none.
+
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
 moment each repo's sync completes. Lines arrive in completion order (not
@@ -140,7 +150,9 @@ input order); consumers demux by `path`. Every line is self-describing:
 each record embeds its own `"$schema"` URL alongside the per-repo fields,
 so a consumer can identify any line without out-of-band context. A
 placement is streamed as its own line when it happens, often after its
-repo's outcome line; its `$schema` names `placement-record.json`. Lines
+repo's outcome line; its `$schema` names `placement-record.json`. A member
+record is streamed as its own line too, with `$schema` naming
+`member-record.json`. Lines
 are mutex-guarded so concurrent workers can't tear a single record's
 bytes. The text-prefix Reporter wrapper (`[<repo>] <line>`) used by
 `fetch`/`update` under `-j > 1` is **bypassed** in JSON mode — workers

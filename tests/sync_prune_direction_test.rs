@@ -439,3 +439,107 @@ fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() 
     assert!(!common::under(&s1, EXTRA).exists());
     assert!(!names_extra(&s1));
 }
+
+/// The `members` array of a `--json` envelope, after asserting the op
+/// succeeded.
+fn members_of(dir: &Path, args: &[&str]) -> Vec<serde_json::Value> {
+    let stdout = succeed(dir, args);
+    let envelope: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("rwv {args:?} printed no envelope ({e}):\n{stdout}"));
+    envelope["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the envelope must carry `members`:\n{stdout}"))
+        .clone()
+}
+
+fn assert_one_member(members: &[serde_json::Value], kind: &str, workspace: &Path) {
+    assert_eq!(members.len(), 1, "{members:#?}");
+    assert_eq!(members[0]["kind"], kind, "{members:#?}");
+    assert_eq!(members[0]["path"], EXTRA, "{members:#?}");
+    assert!(
+        members[0]["absolute_path"]
+            .as_str()
+            .is_some_and(|p| Path::new(p) == common::under(workspace, EXTRA)),
+        "{members:#?}"
+    );
+}
+
+#[test]
+fn json_records_a_member_kept_because_this_side_added_it() {
+    let weave = weave();
+    let s1 = seat(&weave, &weave.root, "s1");
+    add_and_commit(&s1, &weave.extra_url, "owned");
+
+    let members = members_of(&s1, &["sync-to", "--json"]);
+    assert_one_member(&members, "kept", &s1);
+}
+
+#[test]
+fn json_records_a_member_kept_across_histories_with_no_commit_in_common() {
+    let weave = weave();
+    let s1 = seat(&weave, &weave.root, "s1");
+    let project = project_dir(&s1);
+    let root = common::git_in(
+        &project,
+        &["commit-tree", "HEAD^{tree}", "-m", "unrelated root"],
+    );
+    common::git_in(&project, &["reset", "--soft", &root]);
+    add_and_commit(&s1, &weave.extra_url, "owned");
+
+    let members = members_of(&s1, &["sync-to", "--json"]);
+    assert_one_member(&members, "kept", &s1);
+}
+
+/// A seat holding the member, after the primary dropped it.
+fn seat_behind_a_drop(weave: &Weave) -> PathBuf {
+    add_and_commit(&weave.root, &weave.extra_url, "owned");
+    let s1 = seat(weave, &weave.root, "s1");
+    drop_and_commit(&weave.root, "drop extra");
+    s1
+}
+
+#[test]
+fn json_records_a_pruned_member() {
+    let weave = weave();
+    let s1 = seat_behind_a_drop(&weave);
+
+    let members = members_of(&s1, &["sync", "primary", "--json"]);
+    assert_one_member(&members, "pruned", &s1);
+    assert!(!common::under(&s1, EXTRA).exists());
+}
+
+#[test]
+fn json_records_a_refused_prune_with_its_token() {
+    let weave = weave();
+    let s1 = seat_behind_a_drop(&weave);
+    std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
+
+    let members = members_of(&s1, &["sync", "primary", "--json"]);
+    assert_one_member(&members, "prune-refused", &s1);
+    assert_eq!(members[0]["refusal"], "dirty-checkout", "{members:#?}");
+    assert!(
+        members[0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("uncommitted changes")),
+        "{members:#?}"
+    );
+    assert!(common::under(&s1, EXTRA).is_dir());
+}
+
+#[test]
+fn ndjson_streams_a_member_line() {
+    let weave = weave();
+    let s1 = seat_behind_a_drop(&weave);
+
+    let stdout = succeed(&s1, &["sync", "primary", "--json", "-j", "2"]);
+    let members: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|r| {
+            r["$schema"]
+                .as_str()
+                .is_some_and(|url| url.ends_with("/member-record.json"))
+        })
+        .collect();
+    assert_one_member(&members, "pruned", &s1);
+}

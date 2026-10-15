@@ -669,6 +669,11 @@ pub struct SyncJsonOutput {
     /// How the files of each checkout the sync created or moved were placed.
     /// Empty, not absent, when it placed none.
     pub placements: Vec<PlacementOutput>,
+    /// What replay did with each member checkout its per-repo outcomes do
+    /// not cover: kept, pruned, or a prune that was refused. Empty, not
+    /// absent, when there are none. A `prune-refused` entry is a checkout left
+    /// on disk that no manifest names; branch on it.
+    pub members: Vec<MemberOutput>,
     /// Standing advisories raised during this sync (e.g. delivered changes
     /// touching a materialized input). Empty, not absent, when there are
     /// none — a consumer branches on length rather than presence.
@@ -736,6 +741,11 @@ pub struct SyncToJsonOutput {
     /// Empty, not absent, when it placed none. Unlike `step3_advance`, a
     /// placement a resume makes is reported whatever phase it re-entered at.
     pub placements: Vec<PlacementOutput>,
+    /// What replay did with each member checkout its per-repo outcomes do
+    /// not cover: kept, pruned, or a prune that was refused. Empty, not
+    /// absent, when there are none. A `prune-refused` entry is a checkout left
+    /// on disk that no manifest names; branch on it.
+    pub members: Vec<MemberOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -767,6 +777,119 @@ pub struct SyncOutcomeNdjsonRecord<'a> {
     pub schema: &'a str,
     #[serde(flatten)]
     pub outcome: &'a SyncOutcomeOutput,
+}
+
+/// What replay did with a member checkout outside its per-repo strategy: the
+/// member set the replayed manifest decides.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum MemberOutput {
+    /// The source's lock does not name this member and the manifest replay
+    /// produced does, so its checkout stays.
+    Kept { path: String, absolute_path: String },
+    /// The replayed manifest no longer names this member, and its checkout
+    /// was removed.
+    Pruned { path: String, absolute_path: String },
+    /// The replayed manifest no longer names this member, but removing its
+    /// checkout was refused. The checkout is still on disk, and once the op
+    /// relocks no manifest or lock names it.
+    PruneRefused {
+        path: String,
+        absolute_path: String,
+        /// The refusal token, resolvable with `rwv explain <token>`. Absent
+        /// when the removal failed without a classified refusal.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refusal: Option<String>,
+        /// Free-form display message, the full cause chain. Not a typed
+        /// discriminant.
+        message: String,
+    },
+}
+
+impl MemberOutput {
+    fn kept(repo_path: &RepoPath, checkout: &Path) -> Self {
+        Self::Kept {
+            path: repo_path.to_string(),
+            absolute_path: crate::path_spelling::wire_path(checkout),
+        }
+    }
+
+    fn pruned(repo_path: &RepoPath, checkout: &Path) -> Self {
+        Self::Pruned {
+            path: repo_path.to_string(),
+            absolute_path: crate::path_spelling::wire_path(checkout),
+        }
+    }
+
+    fn prune_refused(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
+        Self::PruneRefused {
+            path: repo_path.to_string(),
+            absolute_path: crate::path_spelling::wire_path(checkout),
+            refusal: crate::refusal::kind_of(error).map(RefusalKind::token),
+            message: format!("{error:#}"),
+        }
+    }
+}
+
+/// One member line streamed by `rwv sync --json -j N` and `rwv sync-to --json
+/// -j N` with `N > 1`, beside the per-repo lines: a flat object whose `$schema`
+/// names `member-record.json`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MemberNdjsonRecord<'a> {
+    #[serde(rename = "$schema")]
+    pub schema: &'a str,
+    #[serde(flatten)]
+    pub member: &'a MemberOutput,
+}
+
+/// One advance-target fast-forward that moved a branch pointer in the target.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum AdvanceOutput {
+    /// A manifest repo; the envelope carries it as that repo's
+    /// `step3_advance`.
+    Step3Advance {
+        path: String,
+        /// Target repo's HEAD SHA before the fast-forward.
+        from_sha: String,
+        /// Target repo's HEAD SHA after the fast-forward (== CWD's tip).
+        to_sha: String,
+    },
+    /// The project repo; the envelope carries it as `project_repo_advance`.
+    ProjectRepoAdvance {
+        /// Target project repo's HEAD SHA before the fast-forward.
+        from_sha: String,
+        /// Target project repo's HEAD SHA after the fast-forward.
+        to_sha: String,
+    },
+}
+
+/// One advance line streamed by `rwv sync-to --json -j N` with `N > 1`: a flat
+/// object whose `$schema` names `advance-record.json`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AdvanceNdjsonRecord<'a> {
+    #[serde(rename = "$schema")]
+    pub schema: &'a str,
+    #[serde(flatten)]
+    pub advance: &'a AdvanceOutput,
+}
+
+/// Schema URL embedded in each streamed member line. Pins to
+/// `docs/reference/schemas/member-record.json`.
+pub const MEMBER_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("member-record");
+
+/// Schema URL embedded in each streamed advance line. Pins to
+/// `docs/reference/schemas/advance-record.json`.
+pub const ADVANCE_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("advance-record");
+
+fn stream_ndjson_line(stdout_lock: &Mutex<()>, record: &impl Serialize) {
+    if let Ok(line) = serde_json::to_string(record) {
+        let _guard = stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        let _ = writeln!(handle, "{line}");
+        let _ = handle.flush();
+    }
 }
 
 /// Schema URL embedded in `rwv sync --json` output. Pins to the committed
@@ -2091,6 +2214,13 @@ pub trait OutputHandler: Send + Sync {
     /// at the call site.
     fn record_placement(&self, _placement: PlacementOutput) {}
 
+    /// Record what replay did with one member checkout outside its per-repo
+    /// strategy.
+    ///
+    /// Default implementation is a no-op: the text handler prints at the call
+    /// site.
+    fn record_member(&self, _member: MemberOutput) {}
+
     /// Record a standing advisory raised during cleanup.
     ///
     /// Default implementation is a no-op: text-mode handlers print the
@@ -2209,6 +2339,7 @@ pub struct JsonEnvelopeHandler<'a> {
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     advisories: &'a Mutex<Vec<AdvisoryOutput>>,
     placements: &'a Mutex<Vec<PlacementOutput>>,
+    members: &'a Mutex<Vec<MemberOutput>>,
 }
 
 impl OutputHandler for JsonEnvelopeHandler<'_> {
@@ -2238,6 +2369,11 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
         guard.push(advisory);
     }
 
+    fn record_member(&self, member: MemberOutput) {
+        let mut guard = self.members.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(member);
+    }
+
     fn record_placement(&self, placement: PlacementOutput) {
         let mut guard = self.placements.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(placement);
@@ -2252,7 +2388,8 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
 /// `stdout_lock` serialises concurrent writes so parallel workers cannot
 /// interleave bytes. Text chatter is suppressed (`emit_text` returns `false`).
 ///
-/// A placement is streamed as its own line when it is recorded.
+/// A placement, a member and an advance-target fast-forward are each streamed
+/// as their own line when recorded.
 pub struct JsonNdjsonHandler<'a> {
     stdout_lock: &'a Mutex<()>,
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
@@ -2277,26 +2414,49 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
             outcome,
             containment,
         );
-        let record = SyncOutcomeNdjsonRecord {
-            schema: self.schema_url,
-            outcome: &out,
-        };
-        // Best-effort: a serialization failure here would mean the outcome
-        // type itself is malformed; we still want to buffer the record so
-        // the post-loop any_failure check works correctly.
-        if let Ok(line) = serde_json::to_string(&record) {
-            let _guard = self.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
-            let stdout = std::io::stdout();
-            let mut handle = stdout.lock();
-            let _ = writeln!(handle, "{line}");
-            let _ = handle.flush();
-        }
+        stream_ndjson_line(
+            self.stdout_lock,
+            &SyncOutcomeNdjsonRecord {
+                schema: self.schema_url,
+                outcome: &out,
+            },
+        );
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(out);
     }
 
     fn record_placement(&self, placement: PlacementOutput) {
         placement.stream(self.stdout_lock);
+    }
+
+    fn record_member(&self, member: MemberOutput) {
+        stream_ndjson_line(
+            self.stdout_lock,
+            &MemberNdjsonRecord {
+                schema: MEMBER_RECORD_SCHEMA_URL,
+                member: &member,
+            },
+        );
+    }
+
+    fn record_step3_advance(&self, path: &str, from_sha: &str, to_sha: &str) {
+        let (from_sha, to_sha) = (from_sha.to_owned(), to_sha.to_owned());
+        let advance = if path == project_repo_key() {
+            AdvanceOutput::ProjectRepoAdvance { from_sha, to_sha }
+        } else {
+            AdvanceOutput::Step3Advance {
+                path: path.to_owned(),
+                from_sha,
+                to_sha,
+            }
+        };
+        stream_ndjson_line(
+            self.stdout_lock,
+            &AdvanceNdjsonRecord {
+                schema: ADVANCE_RECORD_SCHEMA_URL,
+                advance: &advance,
+            },
+        );
     }
 }
 
@@ -2323,6 +2483,7 @@ pub struct JsonEnvelopeSyncToHandler<'a> {
     /// The phase the resumed op's record stood at, `None` on a fresh run.
     resumed: &'a Mutex<Option<op_state::OpPhase>>,
     placements: &'a Mutex<Vec<PlacementOutput>>,
+    members: &'a Mutex<Vec<MemberOutput>>,
 }
 
 impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
@@ -2343,6 +2504,11 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
     fn record_resumed(&self, phase: op_state::OpPhase) {
         let mut guard = self.resumed.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(phase);
+    }
+
+    fn record_member(&self, member: MemberOutput) {
+        let mut guard = self.members.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(member);
     }
 
     fn record(
@@ -5153,21 +5319,25 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     for repo_path in replayed.manifest.iter_repo_paths() {
-        if emit_text
-            && !snapshot.raw_source_lock.contains_repo(repo_path)
-            && ctx.cwd_workspace_dir.join(repo_path.as_path()).exists()
-        {
+        let checkout = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        if snapshot.raw_source_lock.contains_repo(repo_path) || !checkout.exists() {
+            continue;
+        }
+        if emit_text {
             println!(
                 "  {repo_path}: kept (not in the source's lock; the replayed manifest names it)"
             );
         }
+        ctx.handler
+            .record_member(MemberOutput::kept(repo_path, &checkout));
     }
 
     for (repo_path, entry) in pre_op_manifest.iter_entries() {
-        if replayed.manifest.contains_repo(repo_path) {
+        let checkout = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        if replayed.manifest.contains_repo(repo_path) || !checkout.exists() {
             continue;
         }
-        match prune_dropped_repo(
+        let member = match prune_dropped_repo(
             vcs_for(entry.vcs_type).as_ref(),
             &ctx.cwd_ctx,
             repo_path,
@@ -5177,13 +5347,16 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 if emit_text {
                     println!("  {repo_path}: pruned (dropped from lock)");
                 }
+                MemberOutput::pruned(repo_path, &checkout)
             }
             Err(e) => {
                 if emit_text {
                     eprintln!("  {repo_path}: prune skipped: {e:#}");
                 }
+                MemberOutput::prune_refused(repo_path, &checkout, &e)
             }
-        }
+        };
+        ctx.handler.record_member(member);
     }
 
     settle_members(
@@ -6982,6 +7155,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
+    let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
@@ -6998,6 +7172,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
             records: &records,
             advisories: &advisories,
             placements: &placements,
+            members: &members,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     };
@@ -7005,12 +7180,14 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
     let advisories = advisories.into_inner().unwrap_or_else(|e| e.into_inner());
     let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
+    let members = members.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
         ndjson,
         records,
         advisories,
         placements,
+        members,
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
         false,
@@ -7062,6 +7239,7 @@ fn run_sync_json_impl(
     records: Vec<SyncOutcomeOutput>,
     advisories: Vec<AdvisoryOutput>,
     placements: Vec<PlacementOutput>,
+    members: Vec<MemberOutput>,
     schema_url: &str,
     project_level_result: anyhow::Result<()>,
     emit_empty_envelope: bool,
@@ -7084,6 +7262,7 @@ fn run_sync_json_impl(
             schema: schema_url.to_owned(),
             outcomes: records,
             placements,
+            members,
             advisories,
             resolution,
         };
@@ -7172,6 +7351,7 @@ pub struct SyncToJsonRun {
 pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
+    let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
     let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
@@ -7184,9 +7364,6 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     // the CLI, so a resume always resolves to serial envelope mode.
     let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs).is_ndjson();
     let project_level_result = if ndjson {
-        // NDJSON mode: use the standard NDJSON handler (step3 SHAs are not
-        // surfaced per-line in NDJSON; the envelope-level fields are only
-        // emitted in serial mode).
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
@@ -7201,12 +7378,14 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             retired: &retired,
             resumed: &resumed,
             placements: &placements,
+            members: &members,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
     let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
+    let members = members.into_inner().unwrap_or_else(|e| e.into_inner());
     let mut step3_map = step3_advances
         .into_inner()
         .unwrap_or_else(|e| e.into_inner());
@@ -7254,6 +7433,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             resumed,
             outcomes,
             placements,
+            members,
             project_repo_advance,
             resolution: ctx.resolution(),
         })

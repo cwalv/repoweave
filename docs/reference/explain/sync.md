@@ -109,7 +109,8 @@ pretty-printed envelope:
 {
   "$schema": "<url>",
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
-  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
 }
 ```
 
@@ -133,6 +134,15 @@ checkout the files are in), and `files` (`reflinked`, `hardlinked`,
 `written`). The envelope lists them under `placements`, empty when nothing
 was placed.
 
+`members` lists what replay did with each member checkout that its manifest
+decides rather than a per-repo strategy: `kept` (the source's lock lacks the
+member and the replayed manifest names it), `pruned` (the replayed manifest
+no longer names it and its checkout was removed), and `prune-refused` (the
+same, but removing the checkout was refused). A `prune-refused` record
+carries the refusal's `refusal` token and the full `message`; its checkout is
+left on disk with no manifest naming it, and the sync still exits 0, so
+branch on this record. The list is empty, not absent, when there are none.
+
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
 moment each repo's sync completes. Lines arrive in completion order (not
@@ -140,7 +150,9 @@ input order); consumers demux by `path`. Every line is self-describing:
 each record embeds its own `"$schema"` URL alongside the per-repo fields,
 so a consumer can identify any line without out-of-band context. A
 placement is streamed as its own line when it happens, often after its
-repo's outcome line; its `$schema` names `placement-record.json`. Lines
+repo's outcome line; its `$schema` names `placement-record.json`. A member
+record is streamed as its own line too, with `$schema` naming
+`member-record.json`. Lines
 are mutex-guarded so concurrent workers can't tear a single record's
 bytes. The text-prefix Reporter wrapper (`[<repo>] <line>`) used by
 `fetch`/`update` under `-j > 1` is **bypassed** in JSON mode — workers
@@ -157,6 +169,7 @@ Schema:
   "required": [
     "$schema",
     "advisories",
+    "members",
     "outcomes",
     "placements"
   ],
@@ -169,6 +182,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/AdvisoryOutput"
+      }
+    },
+    "members": {
+      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MemberOutput"
       }
     },
     "outcomes": {
@@ -399,6 +419,92 @@ Schema:
           "minimum": 0.0
         }
       }
+    },
+    "MemberOutput": {
+      "description": "What replay did with a member checkout outside its per-repo strategy: the member set the replayed manifest decides.",
+      "oneOf": [
+        {
+          "description": "The source's lock does not name this member and the manifest replay produced does, so its checkout stays.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "kept"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The replayed manifest no longer names this member, and its checkout was removed.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pruned"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "prune-refused"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message, the full cause chain. Not a typed discriminant.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "refusal": {
+              "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the removal failed without a classified refusal.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
     },
     "PlacementOutput": {
       "description": "How the files of one checkout were placed when a verb created or moved it.",

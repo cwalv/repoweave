@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MemberNdjsonRecord",
+  "description": "One member line streamed by `rwv sync --json -j N` and `rwv sync-to --json -j N` with `N > 1`, beside the per-repo lines: a flat object whose `$schema` names `member-record.json`.",
+  "type": "object",
+  "oneOf": [
+    {
+      "description": "The source's lock does not name this member and the manifest replay produced does, so its checkout stays.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "kept"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "The replayed manifest no longer names this member, and its checkout was removed.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "pruned"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "kind",
+        "message",
+        "path"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "absolute_path": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "prune-refused"
+          ]
+        },
+        "message": {
+          "description": "Free-form display message, the full cause chain. Not a typed discriminant.",
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "refusal": {
+          "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the removal failed without a classified refusal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  ],
+  "required": [
+    "$schema"
+  ]
+}

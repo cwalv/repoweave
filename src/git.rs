@@ -2001,37 +2001,6 @@ impl Vcs for GitVcs {
         Ok(status.success())
     }
 
-    fn common_ancestor(
-        &self,
-        repo: &Path,
-        a: &ResolvedRevisionId,
-        b: &ResolvedRevisionId,
-    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
-        let args = ["merge-base", a.as_str(), b.as_str()];
-        let output = git_command()
-            .args(args)
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!("failed to spawn git merge-base in {}", repo.display()),
-                source: e,
-            })?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // Disjoint histories exit 1 with nothing on either stream; an
-        // unknown revision exits 128.
-        if output.status.code() == Some(1) && stdout.trim().is_empty() {
-            return Ok(None);
-        }
-        match ResolvedRevisionId::from_rev_parse_output(&stdout) {
-            Some(base) if output.status.success() => Ok(Some(base)),
-            _ => Err(VcsError::CommandFailed {
-                args: args.iter().map(|s| (*s).to_owned()).collect(),
-                repo: repo.to_path_buf(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            }),
-        }
-    }
-
     fn count_commits_in_range(
         &self,
         repo: &Path,

@@ -594,15 +594,6 @@ impl Vcs for FakeVcs {
         unsupported("read_file_at_revision")
     }
 
-    fn common_ancestor(
-        &self,
-        _repo: &Path,
-        _a: &ResolvedRevisionId,
-        _b: &ResolvedRevisionId,
-    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
-        unsupported("common_ancestor")
-    }
-
     fn rebase_stopped_commit_detail(&self, _repo: &Path) -> String {
         unsupported("rebase_stopped_commit_detail")
     }

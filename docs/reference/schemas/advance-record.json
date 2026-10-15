@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AdvanceNdjsonRecord",
+  "description": "One advance line streamed by `rwv sync-to --json -j N` with `N > 1`: a flat object whose `$schema` names `advance-record.json`.",
+  "type": "object",
+  "oneOf": [
+    {
+      "description": "A manifest repo; the envelope carries it as that repo's `step3_advance`.",
+      "type": "object",
+      "required": [
+        "from_sha",
+        "kind",
+        "path",
+        "to_sha"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "from_sha": {
+          "description": "Target repo's HEAD SHA before the fast-forward.",
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "step3-advance"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "to_sha": {
+          "description": "Target repo's HEAD SHA after the fast-forward (== CWD's tip).",
+          "type": "string"
+        }
+      }
+    },
+    {
+      "description": "The project repo; the envelope carries it as `project_repo_advance`.",
+      "type": "object",
+      "required": [
+        "from_sha",
+        "kind",
+        "to_sha"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "from_sha": {
+          "description": "Target project repo's HEAD SHA before the fast-forward.",
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "project-repo-advance"
+          ]
+        },
+        "to_sha": {
+          "description": "Target project repo's HEAD SHA after the fast-forward.",
+          "type": "string"
+        }
+      }
+    }
+  ],
+  "required": [
+    "$schema"
+  ]
+}

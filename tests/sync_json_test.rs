@@ -853,6 +853,7 @@ fn sync_json_envelope_round_trips() {
             ),
         ],
         placements: Vec::new(),
+        members: Vec::new(),
         advisories: Vec::new(),
         resolution: None,
     };

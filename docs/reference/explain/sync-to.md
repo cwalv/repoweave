@@ -180,12 +180,21 @@ pretty-printed envelope:
 {
   "$schema": "<url>",
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
-  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
 }
 ```
 
 Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
 — only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
+
+Under `--json -j N` with `N > 1`, each advance-target fast-forward that
+moved a branch pointer is streamed as its own line, with `$schema` naming
+`advance-record.json`: `kind: "step3-advance"` with the repo's `path`, or
+`kind: "project-repo-advance"` for the project repo, each with `from_sha` and
+`to_sha`. These are the envelope's per-outcome `step3_advance` and its
+`project_repo_advance`.
 
 `placements` covers both workspaces: a checkout here that replay moved or
 created, and one in the target that advance-target moved or created. Each is
@@ -213,6 +222,7 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
+    "members",
     "outcomes",
     "placements",
     "retired",
@@ -221,6 +231,13 @@ Schema:
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "members": {
+      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MemberOutput"
+      }
     },
     "outcomes": {
       "type": "array",
@@ -450,6 +467,92 @@ Schema:
           "minimum": 0.0
         }
       }
+    },
+    "MemberOutput": {
+      "description": "What replay did with a member checkout outside its per-repo strategy: the member set the replayed manifest decides.",
+      "oneOf": [
+        {
+          "description": "The source's lock does not name this member and the manifest replay produced does, so its checkout stays.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "kept"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The replayed manifest no longer names this member, and its checkout was removed.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pruned"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "prune-refused"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message, the full cause chain. Not a typed discriminant.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "refusal": {
+              "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the removal failed without a classified refusal.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
     },
     "OpPhase": {
       "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
