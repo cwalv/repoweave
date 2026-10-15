@@ -80,9 +80,16 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "sync.rs",
         pattern: "remove_dir_all",
-        count: 2,
+        count: 1,
         callers: &[],
-        justification: "prune_dropped_repo, both arms behind the \
+        justification: "CheckoutRemoval::perform, for the two variants \
+            that delete a directory. A CheckoutRemoval is a sealed type: its \
+            variants are private to sync.rs and plan_checkout_removal is \
+            its only constructor, so every caller of perform (sync's \
+            prune_dropped_repo, and rwv remove --delete, which in the \
+            primary also runs the shared-clone check and \
+            refuse_claimed_store before it) holds a removal that passed \
+            these guards. plan_checkout_removal: both arms behind the \
             uncommitted-changes refusal at the top of the function (fails \
             safe: unwrap_or(true) refuses when git cannot be asked). \
             Each arm additionally establishes WHAT it is about to delete \
@@ -192,31 +199,6 @@ const ALLOWLIST: &[Allowed] = &[
             file failed; and a new link whose file turned out to have write \
             bits, which removes only that new name, never the source's. The \
             member file a staged name would have replaced is untouched.",
-    },
-    Allowed {
-        file: "add_remove.rs",
-        pattern: "remove_dir_all",
-        count: 1,
-        callers: &[],
-        justification: "rwv remove --delete on the canonical clone. A \
-            DESTROY-STORE: it removes an entire ref \
-            store and object database at once, so no ref-level rule can gate \
-            it and none is read as permitting it. Gated by \
-            refuse_claimed_store, which is R4 — refuses while any live \
-            worktree is registered against the store (git worktree list \
-            reporting anything beyond the store itself) or while any \
-            ownership receipt keyed to it still stands, checked across every \
-            project on disk because a clone is shared by path. On top of \
-            that: refuses while other projects reference the repo unless \
-            --delete-shared-clone. Unreadable worktree registrations refuse \
-            rather than being assumed unclaimed — with one measured caveat: \
-            that refusal is itself conditioned on is_repo(), which is \
-            `rev-parse --git-dir` and returns false on ANY git failure, so a \
-            store git cannot be run against at all skips the worktree half. \
-            The receipt half still bails on any Err, so the call as a whole \
-            stays fail-closed. The \
-            verb-level dirty/unpushed preconditions are Q11, narrowed and \
-            still open.",
     },
     Allowed {
         file: "git.rs",

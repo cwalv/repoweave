@@ -1797,10 +1797,12 @@ fn prune_dropped_repo(
     plan_checkout_removal(vcs, ctx, repo_path, project_name)?.perform(vcs, repo_path)
 }
 
-/// How a dropped repo's checkout in this workspace comes off disk, decided by
-/// [`plan_checkout_removal`] once every guard has passed.
+/// How a dropped repo's checkout in this workspace comes off disk. Only
+/// [`plan_checkout_removal`] makes one, and only once every guard has passed.
 #[must_use]
-pub(crate) enum CheckoutRemoval {
+pub(crate) struct CheckoutRemoval(Removal);
+
+enum Removal {
     Absent,
     /// A worktree registered against the canonical clone at `store`.
     RegisteredWorktree {
@@ -1814,15 +1816,19 @@ pub(crate) enum CheckoutRemoval {
 }
 
 impl CheckoutRemoval {
+    pub(crate) fn removes_anything(&self) -> bool {
+        !matches!(self.0, Removal::Absent)
+    }
+
     pub(crate) fn perform(self, vcs: &dyn Vcs, repo_path: &RepoPath) -> anyhow::Result<()> {
-        match self {
-            Self::Absent => {}
-            Self::RegisteredWorktree { store, checkout } => {
+        match self.0 {
+            Removal::Absent => {}
+            Removal::RegisteredWorktree { store, checkout } => {
                 vcs.remove_worktree(&store, &checkout)
                     .with_context(|| format!("worktree remove for {repo_path} failed"))?;
                 let _ = vcs.worktree_prune(&store);
             }
-            Self::LinkedWorkspace(dest) | Self::Store(dest) => {
+            Removal::LinkedWorkspace(dest) | Removal::Store(dest) => {
                 std::fs::remove_dir_all(&dest)
                     .with_context(|| format!("failed to remove {}", dest.display()))?;
             }
@@ -1841,7 +1847,7 @@ pub(crate) fn plan_checkout_removal(
 ) -> anyhow::Result<CheckoutRemoval> {
     let dest = ctx.active_path().join(repo_path.as_path());
     if !dest.exists() {
-        return Ok(CheckoutRemoval::Absent);
+        return Ok(CheckoutRemoval(Removal::Absent));
     }
     if vcs.has_uncommitted_changes(&dest).unwrap_or(true) {
         crate::refuse!(
@@ -1870,10 +1876,10 @@ pub(crate) fn plan_checkout_removal(
                         }
                     }
                 }
-                Ok(CheckoutRemoval::RegisteredWorktree {
+                Ok(CheckoutRemoval(Removal::RegisteredWorktree {
                     store: canonical,
                     checkout: dest,
-                })
+                }))
             } else {
                 // No canonical at the primary-side slot. That is a fact about
                 // the PRIMARY and says nothing about what `dest` is: under
@@ -1913,7 +1919,7 @@ pub(crate) fn plan_checkout_removal(
                 // `dest` is a linked workspace: its refdb and objects live in
                 // `store`, which this delete does not touch. Removing the
                 // directory removes a working tree only.
-                Ok(CheckoutRemoval::LinkedWorkspace(dest))
+                Ok(CheckoutRemoval(Removal::LinkedWorkspace(dest)))
             }
         }
         Checkout::Primary { .. } => {
@@ -1973,7 +1979,7 @@ pub(crate) fn plan_checkout_removal(
             // store — the refdb and object database every workweave worktree
             // of this repo is registered in. R4 gates it.
             check_store_unclaimed(vcs, &dest, ctx.primary_path(), project_name, repo_path)?;
-            Ok(CheckoutRemoval::Store(dest))
+            Ok(CheckoutRemoval(Removal::Store(dest)))
         }
     }
 }

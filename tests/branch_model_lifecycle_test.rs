@@ -413,6 +413,18 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
         .current_dir(&ws)
         .assert()
         .success();
+    // Publish the clone's one branch, so the unpushed-work refusal that sits
+    // beside R4 has nothing to say and the delete turns on R4 alone.
+    let origin = tmp.path().join("origin.git");
+    common::git_in(
+        tmp.path(),
+        &["init", "-q", "--bare", origin.to_str().unwrap()],
+    );
+    common::git_in(
+        &repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    common::git_in(&repo, &["push", "-q", "-u", "origin", "HEAD"]);
 
     rwv()
         .args([

@@ -572,7 +572,7 @@ pub fn run_remove(
 
     if let Some(removal) = removal {
         let checkout = ctx.active_path().join(repo_path.as_path());
-        let deleted = !matches!(removal, crate::sync::CheckoutRemoval::Absent);
+        let deleted = removal.removes_anything();
         removal.perform(vcs.as_ref(), &repo_path)?;
         if deleted {
             eprintln!("Deleted '{}'", checkout.display());
