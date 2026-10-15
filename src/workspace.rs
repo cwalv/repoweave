@@ -711,6 +711,16 @@ fn observe_active_pointer(root: &Path) -> ActivePointer {
 /// The built-ins stay in so a weave whose manifests name no `github/` member
 /// still reports a stray clone sitting there as orphaned.
 pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTreeSet<String> {
+    registry_segments_and_unparseable(root).0
+}
+
+/// The segments of [`scannable_registry_segments`], and whether any project
+/// manifest failed to parse: an unparseable manifest contributes no segments,
+/// so the set is then a lower bound, not the full answer.
+fn registry_segments_and_unparseable(
+    root: &Path,
+) -> (std::collections::BTreeSet<String>, bool) {
+    let mut any_unparseable = false;
     let mut segments: std::collections::BTreeSet<String> = builtin_registry_names()
         .iter()
         .map(|n| n.as_str().to_owned())
@@ -719,6 +729,7 @@ pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTre
     for project in discover_projects(root) {
         let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
         let Ok(manifest) = Manifest::from_path(&manifest_path) else {
+            any_unparseable = true;
             continue;
         };
         for repo_path in manifest.iter_repo_paths() {
@@ -730,7 +741,7 @@ pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTre
         }
     }
 
-    segments
+    (segments, any_unparseable)
 }
 
 /// VCS repos directly under `root/{segment}/{owner}/{repo}`, filtered by
@@ -812,8 +823,14 @@ pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
 /// project, not to this scan. A dot-prefixed name is excluded the same way
 /// — every registry segment this tree mints is a bare host or `local`, never
 /// dot-prefixed, so a dot-dir is never a candidate worth descending into.
+///
+/// Empty while any project manifest fails to parse: that manifest may name
+/// the segment, so no directory can be called unnamed.
 pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
-    let known = scannable_registry_segments(root);
+    let (known, any_unparseable) = registry_segments_and_unparseable(root);
+    if any_unparseable {
+        return Vec::new();
+    }
 
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,

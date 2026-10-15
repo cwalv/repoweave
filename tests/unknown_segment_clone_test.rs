@@ -310,3 +310,63 @@ fn an_unknown_segment_clone_is_reported_from_inside_a_workweave() {
          the workweave's own root, got: {findings:?}"
     );
 }
+
+/// Plants a clone under `codeberg.org/acme/lib`, declares it in `project`'s
+/// manifest, then replaces that manifest with text that does not parse. The
+/// segment is now named only by a manifest nothing can read.
+fn member_of_broken_project(tmp: &tempfile::TempDir, ws: &Path, project: &str) {
+    let origin = tmp.path().join("origins").join("lib.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    let dest = ws.join("codeberg.org").join("acme").join("lib");
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    common::git_in(
+        dest.parent().unwrap(),
+        &["clone", origin.to_str().unwrap(), dest.to_str().unwrap()],
+    );
+
+    let manifest_path = ws.join("projects").join(project).join("rwv.toml");
+    std::fs::write(&manifest_path, "[repositories.\"codeberg.org/acme/lib\"\n").unwrap();
+}
+
+fn assert_broken_manifest_never_reads_as_unknown_segment(ws: &Path, args: &[&str]) {
+    let findings = doctor_findings(ws, args);
+    assert!(
+        !findings.iter().any(|(k, _)| k == "unknown-segment-clone"),
+        "a member of a project whose manifest does not parse must not read as an \
+         unknown-segment clone: {findings:?}"
+    );
+    assert!(
+        findings.iter().any(|(k, _)| k == "unparseable-project"),
+        "the unparseable manifest is reported in the same run: {findings:?}"
+    );
+}
+
+#[test]
+fn an_unparseable_active_manifest_never_yields_unknown_segment_clone() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    member_of_broken_project(&tmp, &ws, "demo");
+
+    assert_broken_manifest_never_reads_as_unknown_segment(&ws, &[]);
+    assert_broken_manifest_never_reads_as_unknown_segment(&ws, &["--all"]);
+}
+
+#[test]
+fn an_unparseable_non_active_manifest_never_yields_unknown_segment_clone() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    common::rwv()
+        .args(["init", "other"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    common::rwv()
+        .args(["activate", "demo"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    member_of_broken_project(&tmp, &ws, "other");
+
+    assert_broken_manifest_never_reads_as_unknown_segment(&ws, &[]);
+}
