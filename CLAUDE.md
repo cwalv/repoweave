@@ -6,6 +6,12 @@ Rust community consensus; the first one runs against common advice deliberately.
 `CONTRIBUTING.md` covers whether to send a change at all. This file covers how
 the code and documentation read once you do.
 
+Two companions in `docs/internals/` carry the rest: `code-style.md` for source
+conventions clippy and rustfmt do not enforce, and `testing.md` for what a test
+must evidence to enter the suite, survive review, or be deleted — mutation
+evidence, fixture discipline, reading instrument output. Read the one that
+applies before you write or review either.
+
 
 ## Comments are extremely sparse
 
@@ -297,6 +303,19 @@ stated normatively is the reader's judgment, and a matcher for "numerals near
 plurals in comments" reports correct code, which is the property that gets
 matchers turned off. When a sweep turns one up, prefer deleting the
 enumeration to correcting it — a corrected count is the same defect re-armed.
+
+## Prose uses rwv's own vocabulary
+
+`check_no_consumer_vocabulary` in `src/bin/generate-explain.rs` rejects words
+naming the workflow rwv is built in — `CONSUMER_VOCABULARY` is the list
+(`bead`, `epic`, `subagent`, `tl`, …) — as whole words across `src/`, `tests/`,
+`docs/` and shipped scripts: comments, fixture literals, and probe markers
+alike. `check_no_foreign_vocabulary` holds one deployment's terms
+(`FOREIGN_VOCABULARY`) out of `docs/` and shipped files. Read the lists rather
+than guessing, and name the mechanism, not the process around it: "while this
+machinery was built", not "in this epic". In the gate a hit surfaces late, as
+`generator exited non-zero` after the test stage; `cargo run --quiet --bin
+generate-explain` names the file, line and word in seconds.
 
 ## A green gate is not coverage
 

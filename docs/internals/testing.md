@@ -160,6 +160,12 @@ defect it guards:
   named assertion fired; record which.
 - **Undo mutations by reversing the patch, never by checkout** — checkout
   restores the committed state and destroys uncommitted work.
+- **A seeding script guards before it writes and proves its restore.** Before
+  writing, check that the anchor matched exactly once and that the
+  replacement is non-empty — an empty replacement leaves the reverse patch
+  nothing to anchor on. After restoring, and after any interrupted run,
+  compare the file to its pre-run bytes and require a clean
+  `git status --porcelain`.
 - **Check which assertion fired.** An older assertion may catch the
   mutation first, leaving the new pin unexercised behind a red that looks
   like proof.
