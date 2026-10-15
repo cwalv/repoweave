@@ -80,11 +80,11 @@ const ALLOWLIST: &[Allowed] = &[
              manifest. None derives a layout from an identity.",
     },
     Allowed {
-        file: "share.rs",
+        file: "settle.rs",
         count: 1,
         justification: "An observed location: the path of a checkout already on \
              disk, taken relative to the workspace root found above it, and looked \
-             up in that workspace's manifest to read the role it gives that \
+             up in that workspace's manifests to read the roles they give that \
              checkout. Nothing is derived from an identity.",
     },
     Allowed {
