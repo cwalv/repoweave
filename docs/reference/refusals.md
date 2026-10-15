@@ -82,6 +82,25 @@ own.
 **Exits.** Run the tool once so it writes its own settings file, then re-run
 `rwv setup claude`.
 
+### `conflicting-root-write`
+
+**Condition.** `rwv activate` was asked to switch the weave root to another
+project while a tool of the project it presents left a lock file as a real
+file at the root, and the project's own copy differs from it with neither
+version control nor rwv's record holding that copy as it stands.
+
+**Why.** Either way of taking that file loses one of the two copies, so rwv
+takes neither. Left at the root over a switch, nothing would say which project
+wrote it, and the next project to surface that name would take it in as its
+own. rwv keeps no record of whose a root file is; refusing the switch is what
+keeps the file with the project whose tool wrote it.
+
+**Exits.** Keep the root's copy by committing or deleting the project's, or
+keep the project's by deleting the file at the weave root. Then run `rwv doctor
+--fix` and re-run the switch. Nothing was changed, so there is nothing to undo.
+
+**Where this sits.** [Weave root](../explanation/joints/weave-root.md).
+
 ### `dangling-primary`
 
 **Condition.** A workweave marker records a `primary:` path that no longer

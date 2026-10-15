@@ -116,7 +116,11 @@ absent, identical, still the generation rwv recorded, or committed with no
 edit since, so version control can give it back. Otherwise rwv names both
 copies and changes neither. `rwv activate` names the file
 and leaves it, except on a project switch, where the outgoing project's file
-goes home first.
+goes home first. When it cannot go home because it conflicts with the
+outgoing project's copy, the switch is refused (`conflicting-root-write`) and
+nothing moves: the root keeps no record of which project wrote a file, so a
+conflicting one left behind would be taken in by the next project to surface
+that name.
 
 Links are also the cheapest honest mechanism for a view. Minting one moves no
 data; removing one destroys no data; the set of links is recomputable at any

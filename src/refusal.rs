@@ -263,6 +263,9 @@ pub enum RefusalKind {
     ClaudeSettingsMissing,
     /// Something rwv did not create sits where a link belongs.
     SurfacingPathOccupied,
+    /// A switch away from a project whose tool write at the weave root
+    /// conflicts with that project's own copy.
+    ConflictingRootWrite,
     /// Per-item failures stopped a run, and the artifact it would have
     /// written is withheld.
     PartialRunAborted,

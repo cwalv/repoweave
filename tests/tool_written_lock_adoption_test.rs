@@ -377,3 +377,68 @@ fn materialize_reads_a_lock_written_past_its_link_as_drift_to_settle() {
         "the drift check reads the project copy, which must hold the tool's write"
     );
 }
+
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, vec![token], "stderr was:\n{stderr}");
+    assert!(
+        stderr.ends_with(&format!("\n\nrwv explain {token}\n")),
+        "the route line must be the last line, after a blank one, stderr was:\n{stderr}"
+    );
+}
+
+/// A lock the outgoing project's tool wrote past its link, over a project copy
+/// no commit holds, belongs to neither side yet. Switching would leave it at
+/// the root with nothing saying whose it is, so the switch is refused until
+/// the conflict is resolved.
+#[test]
+fn activate_refuses_to_switch_away_from_a_conflicting_lock_written_past_its_link() {
+    let weave = Weave::new();
+    let init = weave.rwv(&["init", "other"]);
+    assert!(init.status.success(), "fixture init: {}", stderr_of(&init));
+    let back = weave.rwv(&["activate", "demo"]);
+    assert!(
+        back.status.success(),
+        "fixture activate: {}",
+        stderr_of(&back)
+    );
+    weave.add_cargo_member();
+    weave.commit_project_file("Cargo.lock");
+    weave.write_past_the_link("# the tool's\n");
+    std::fs::write(weave.ws.join("projects/demo/Cargo.lock"), "# edited\n").unwrap();
+    let active = || std::fs::read_to_string(weave.ws.join(".rwv-active")).unwrap();
+
+    let switch = weave.rwv(&["activate", "other"]);
+    let stderr = stderr_of(&switch);
+
+    assert!(!switch.status.success(), "{stderr}");
+    assert_routes_to(&stderr, "conflicting-root-write");
+    assert!(
+        stderr.contains("projects/demo/Cargo.lock") && stderr.contains("rwv activate other"),
+        "{stderr}"
+    );
+    assert_eq!(active().trim(), "demo");
+    assert!(weave.is_real_file("Cargo.lock"));
+    assert_eq!(
+        std::fs::read_to_string(weave.ws.join("Cargo.lock")).unwrap(),
+        "# the tool's\n"
+    );
+    assert_eq!(
+        weave.project_file("Cargo.lock").as_deref(),
+        Some("# edited\n")
+    );
+
+    std::fs::remove_file(weave.ws.join("Cargo.lock")).unwrap();
+    let switch = weave.rwv(&["activate", "other"]);
+
+    assert!(switch.status.success(), "{}", stderr_of(&switch));
+    assert_eq!(active().trim(), "other");
+    assert!(!weave.ws.join("Cargo.lock").exists());
+    assert_eq!(
+        weave.project_file("Cargo.lock").as_deref(),
+        Some("# edited\n")
+    );
+}

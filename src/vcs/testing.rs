@@ -39,6 +39,7 @@ pub(crate) enum VcsCall {
     MaterializeWorktreeOnRef,
     MaterializeUnpopulatedWorktreeOnRef,
     DestroyLocalRef,
+    HoldsCommittedContent,
 }
 
 type Hook = Box<dyn FnOnce(&FakeVcs) + Send>;
@@ -368,8 +369,10 @@ impl Vcs for FakeVcs {
         unsupported("is_tracked")
     }
 
+    /// The double keeps no file content, so it holds none.
     fn holds_committed_content(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {
-        unsupported("holds_committed_content")
+        self.enter(VcsCall::HoldsCommittedContent)?;
+        Ok(false)
     }
 
     fn stage_paths(&self, _repo: &Path, _paths: &[&str]) -> Result<(), VcsError> {

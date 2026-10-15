@@ -126,16 +126,42 @@ impl RootWrite {
         )
     }
 
+    fn conflict_reason(&self) -> String {
+        format!(
+            "`{name}` at the weave root and `{project}` differ, and neither version control nor \
+             rwv's record holds the project's copy as it stands",
+            name = self.name,
+            project = self.in_project()
+        )
+    }
+
+    fn conflict_remedy(&self) -> String {
+        format!(
+            "To keep the root's, commit the project's copy or delete it; to keep the project's, \
+             delete `{}` at the weave root",
+            self.name
+        )
+    }
+
     /// What is said when the root file cannot be taken over the project's copy.
     pub(crate) fn conflict_message(&self) -> String {
         format!(
-            "`{name}` at the weave root and `{project}` differ, and neither version control nor \
-             rwv's record holds the project's copy as it stands, so neither is taken over the \
-             other and the link is left out. To keep the root's, commit the project's copy or delete it; to \
-             keep the project's, delete `{name}` at the weave root. Then re-run `rwv doctor \
-             --fix`",
+            "{}, so neither is taken over the other and the link is left out. {}. Then re-run \
+             `rwv doctor --fix`",
+            self.conflict_reason(),
+            self.conflict_remedy()
+        )
+    }
+
+    /// Why selecting `incoming` in place of this file's owner is refused.
+    pub(crate) fn switch_refusal_message(&self, incoming: &ProjectName) -> String {
+        format!(
+            "{reason}; switching would leave `{name}` at the root for whichever project next \
+             surfaces that name to take in. {remedy}. Then run `rwv doctor --fix` and re-run \
+             `rwv activate {incoming}`",
+            reason = self.conflict_reason(),
             name = self.name,
-            project = self.in_project()
+            remedy = self.conflict_remedy(),
         )
     }
 }

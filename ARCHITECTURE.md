@@ -201,6 +201,16 @@ receipt with it (`src/workweave_index.rs`).
 `.rwv-active` and `.rwv-workweave` are **mutually exclusive**; `rwv doctor`
 reports the conflict.
 
+**Surfacing persists nothing.** Which file at the weave root belongs to which
+project is read off the disk each time: a link names its project, and a real
+file a tool wrote past its link (`src/root_write.rs`) is judged against the
+project `.rwv-active` names. So a switch that would leave such a file behind is
+refused rather than recorded: `surface_with_notices` (`src/activate.rs`) takes
+the outgoing project's root writes home first, and refuses with
+`conflicting-root-write` when one conflicts with that project's copy. Recording
+an owner for the file instead would be the one persisted piece of surfacing
+state, with its own staleness and repair to carry.
+
 ### What is guarded against a second writer, and what is not
 
 Git is the reference budget, in both directions: a surface where rwv is

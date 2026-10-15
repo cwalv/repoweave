@@ -1710,24 +1710,41 @@ fn surface_with_notices(
 
     // A root write is adopted where the verb may write — a repair, or taking
     // the outgoing project's file home — and otherwise named and left, with its
-    // link left out rather than made over it.
+    // link left out rather than made over it. An outgoing project's conflicting
+    // write refuses the switch instead: left at the root, nothing would record
+    // whose it is, and the next project to surface its name would take it in.
     let mut adoption = Vec::new();
     let mut left_unlinked: BTreeSet<String> = BTreeSet::new();
     let mut notices = Vec::new();
+    let mut outgoing_conflicts = Vec::new();
     for write in &root_writes {
-        let may_adopt = mode == SurfacingMode::Repair || &write.owner != project;
-        if !may_adopt {
+        let outgoing = &write.owner != project;
+        if mode != SurfacingMode::Repair && !outgoing {
             left_unlinked.insert(write.name.clone());
             notices.push(write.unadopted_message());
             continue;
         }
         match write.verdict(project_vcs, root)? {
             crate::root_write::Verdict::Adopt => adoption.extend(write.adoption(root)),
+            crate::root_write::Verdict::Conflict if outgoing => outgoing_conflicts.push(write),
             crate::root_write::Verdict::Conflict => {
                 left_unlinked.insert(write.name.clone());
                 notices.push(write.conflict_message());
             }
         }
+    }
+    if let Some(first) = outgoing_conflicts.first() {
+        crate::refuse!(
+            RefusalKind::ConflictingRootWrite,
+            "refusing to switch the weave root from project `{}` to `{project}`, and nothing \
+             was changed: {}",
+            first.owner,
+            outgoing_conflicts
+                .iter()
+                .map(|write| write.switch_refusal_message(project))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
     }
 
     // 2b. Shared names surfaced out of some other project — left behind by a
@@ -1778,8 +1795,15 @@ fn root_write_notices(root: &Path, project: &ProjectName, manifest: &Manifest) -
     compute_owned_set(root, project, manifest)
         .into_iter()
         .filter(|(_, entry)| entry.source == SurfacedSource::WrittenThroughLink)
-        .filter_map(|(name, _)| crate::root_write::read(root, project, &name).ok().flatten())
-        .map(|write| write.unadopted_message())
+        .filter_map(
+            |(name, _)| match crate::root_write::read(root, project, &name) {
+                Ok(write) => write.map(|write| write.unadopted_message()),
+                Err(e) => Some(format!(
+                    "`{name}` at the weave root could not be read to tell whether a tool \
+                     wrote it past its link: {e}"
+                )),
+            },
+        )
         .collect()
 }
 
@@ -2497,24 +2521,40 @@ pub fn verify_surfacing(
         };
 
         if planned.adopts_root_writes(entry) && link_meta.is_file() {
-            if let Ok(Some(write)) = crate::root_write::read(root, project, file) {
-                let conflict = matches!(
-                    write.verdict(project_vcs, root),
-                    Ok(crate::root_write::Verdict::Conflict)
-                );
+            let judged = match crate::root_write::read(root, project, file) {
+                Ok(None) => None,
+                Ok(Some(write)) => Some(
+                    write
+                        .verdict(project_vcs, root)
+                        .map(|verdict| (verdict, write))
+                        .map_err(anyhow::Error::from),
+                ),
+                Err(e) => Some(Err(e.into())),
+            };
+            if let Some(judged) = judged {
+                let (severity, message, safe_to_fix) = match judged {
+                    Ok((crate::root_write::Verdict::Adopt, write)) => {
+                        (Severity::Warning, write.unadopted_message(), true)
+                    }
+                    Ok((crate::root_write::Verdict::Conflict, write)) => {
+                        (Severity::Warning, write.conflict_message(), false)
+                    }
+                    Err(e) => (
+                        Severity::Error,
+                        format!(
+                            "`{file}` at the weave root is a real file where its link belongs, \
+                             and whether taking it into the project loses anything could not be \
+                             determined: {e:#}"
+                        ),
+                        false,
+                    ),
+                };
                 issues.push(Issue {
                     integration: integration.clone(),
-                    severity: Severity::Warning,
-                    message: format!(
-                        "surfacing: {}",
-                        if conflict {
-                            write.conflict_message()
-                        } else {
-                            write.unadopted_message()
-                        }
-                    ),
+                    severity,
+                    message: format!("surfacing: {message}"),
                     kind: IssueKind::Surfacing,
-                    safe_to_fix: !conflict,
+                    safe_to_fix,
                 });
                 continue;
             }
@@ -3809,30 +3849,142 @@ mod tests {
         assert!(is_lock_link(root, "api"));
     }
 
-    #[test]
-    fn switching_away_from_a_conflicting_root_write_keeps_it_and_the_incoming_link_out() {
+    /// Every entry directly under `root`, with what a link reads and what a
+    /// file holds, and both projects' locks.
+    fn snapshot(root: &Path) -> Vec<(String, String)> {
+        let mut entries: Vec<(String, String)> = std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let state = match std::fs::read_link(&path) {
+                    Ok(target) => format!("link {}", target.display()),
+                    Err(_) => format!("{:?}", std::fs::read_to_string(&path).ok()),
+                };
+                (
+                    path.file_name().unwrap().to_string_lossy().into_owned(),
+                    state,
+                )
+            })
+            .collect();
+        for project in ["web-app", "api"] {
+            entries.push((
+                format!("{project}/Cargo.lock"),
+                format!(
+                    "{:?}",
+                    read(&root.join("projects").join(project).join("Cargo.lock"))
+                ),
+            ));
+        }
+        entries.sort();
+        entries
+    }
+
+    fn conflicting_root_write_in_web_app() -> (tempfile::TempDir, ProjectName) {
         let (tmp, _web) = make_cargo_surfacing_workspace();
         let root = tmp.path();
         commit_project_lock(root, "web-app", "# web\n");
         write_project_lock(root, "web-app", "# edited\n");
         write_root_lock(root, "# the tool's\n");
         let api = add_cargo_project(root, "api", "# api\n");
+        (tmp, api)
+    }
 
-        surface(root, &api, SurfacingMode::Select).expect("a conflict is named, not refused");
+    #[test]
+    fn switching_away_from_a_conflicting_root_write_is_refused_and_moves_nothing() {
+        let (tmp, api) = conflicting_root_write_in_web_app();
+        let root = tmp.path();
+        let before = snapshot(root);
+
+        let err = surface(root, &api, SurfacingMode::Select).unwrap_err();
 
         assert_eq!(
-            read(&root.join("Cargo.lock")).as_deref(),
-            Some("# the tool's\n")
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::ConflictingRootWrite),
+            "{err:#}"
         );
-        assert!(root
-            .join("Cargo.lock")
-            .symlink_metadata()
-            .unwrap()
-            .is_file());
+        let message = format!("{err:#}");
+        for named in [
+            "Cargo.lock",
+            "projects/web-app/Cargo.lock",
+            "rwv activate api",
+        ] {
+            assert!(message.contains(named), "{named} unnamed in: {message}");
+        }
+        assert_eq!(snapshot(root), before);
+    }
+
+    #[test]
+    fn a_switch_refused_over_a_conflict_proceeds_once_it_is_resolved() {
+        let (tmp, api) = conflicting_root_write_in_web_app();
+        let root = tmp.path();
+        surface(root, &api, SurfacingMode::Select).unwrap_err();
+
+        std::fs::remove_file(root.join("Cargo.lock")).unwrap();
+        surface(root, &api, SurfacingMode::Select).unwrap();
+        std::fs::write(root.join(".rwv-active"), "api\n").unwrap();
+        surface(root, &api, SurfacingMode::Repair).unwrap();
+
+        assert!(is_lock_link(root, "api"));
+        assert_eq!(
+            read(&root.join("projects/api/Cargo.lock")).as_deref(),
+            Some("# api\n"),
+            "no pass after the switch takes anything into the incoming project"
+        );
         assert_eq!(
             read(&root.join("projects/web-app/Cargo.lock")).as_deref(),
             Some("# edited\n")
         );
+    }
+
+    #[test]
+    fn a_root_write_whose_verdict_errs_is_reported_as_an_error_not_as_adoptable() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_project_lock(root, "web-app", "# project's\n");
+        write_root_lock(root, "# the tool's\n");
+        let vcs = crate::vcs::testing::FakeVcs::new();
+        vcs.fail_next(
+            crate::vcs::testing::VcsCall::HoldsCommittedContent,
+            crate::vcs::VcsError::NotARepo(root.join("projects/web-app")),
+        );
+
+        let issues = verify_surfacing(&vcs, root, &project, &load_manifest(root, &project));
+
+        let issue = issues
+            .iter()
+            .find(|issue| issue.message.contains("Cargo.lock"))
+            .unwrap_or_else(|| panic!("the root write must be reported: {issues:?}"));
+        assert_eq!(
+            issue.severity,
+            crate::integration::Severity::Error,
+            "{issue:?}"
+        );
+        assert!(!issue.safe_to_fix, "{issue:?}");
+    }
+
+    #[test]
+    fn a_root_write_that_cannot_be_read_is_reported() {
+        let (tmp, project) = make_cargo_surfacing_workspace();
+        let root = tmp.path();
+        write_root_lock(root, "# the tool's\n");
+        std::fs::create_dir(root.join("projects/web-app/Cargo.lock")).unwrap();
+        let manifest = load_manifest(root, &project);
+
+        let notices = root_write_notices(root, &project, &manifest);
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("could not be read"), "{notices:?}");
+
+        let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
+        let issue = issues
+            .iter()
+            .find(|issue| issue.message.contains("could not be determined"))
+            .unwrap_or_else(|| panic!("the read error must be reported: {issues:?}"));
+        assert_eq!(
+            issue.severity,
+            crate::integration::Severity::Error,
+            "{issue:?}"
+        );
+        assert!(!issue.safe_to_fix, "{issue:?}");
     }
 
     #[test]
