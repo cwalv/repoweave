@@ -277,19 +277,18 @@ fn a_seat_with_no_history_in_common_with_its_target_keeps_its_members() {
 }
 
 /// `rwv remove` (checkout kept), `rwv lock`, then commit both files.
-fn drop_and_commit(workspace: &Path) {
+fn drop_and_commit(workspace: &Path, message: &str) {
     succeed(workspace, &["remove", EXTRA]);
     succeed(workspace, &["lock"]);
     let project = project_dir(workspace);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&project, &["commit", "-m", "drop extra"]);
+    common::git_in(&project, &["commit", "-m", message]);
 }
 
-fn commit_note(workspace: &Path, text: &str) {
-    let project = project_dir(workspace);
-    std::fs::write(project.join("notes.txt"), text).unwrap();
-    common::git_in(&project, &["add", "notes.txt"]);
-    common::git_in(&project, &["commit", "-m", "note"]);
+fn commit_note(repo: &Path, text: &str) {
+    std::fs::write(repo.join("notes.txt"), text).unwrap();
+    common::git_in(repo, &["add", "notes.txt"]);
+    common::git_in(repo, &["commit", "-m", "note"]);
 }
 
 fn head(repo: &Path) -> String {
@@ -309,13 +308,13 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     let own = head(&common::under(&s1, EXTRA));
 
     let manifest = std::fs::read_to_string(project_dir(&s1).join("rwv.toml")).unwrap();
-    drop_and_commit(&s1);
+    drop_and_commit(&s1, "seat drops extra");
     std::fs::write(project_dir(&s1).join("rwv.toml"), manifest).unwrap();
     succeed(&s1, &["lock"]);
     common::git_in(&project_dir(&s1), &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&project_dir(&s1), &["commit", "-m", "re-add extra"]);
 
-    drop_and_commit(&target);
+    drop_and_commit(&target, "target drops extra");
 
     let canonical = common::under(&weave.root, EXTRA);
     std::fs::write(canonical.join("later.txt"), "later\n").unwrap();
@@ -342,14 +341,15 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     }
 }
 
-/// The source drops the member and its project history conflicts with the
-/// seat's, so the replay parks on the project repo.
-fn parked_pull_of_a_drop(weave: &Weave) -> PathBuf {
+/// The source drops the member, and the repo `conflicted` picks out holds a
+/// commit on each side that conflicts, so the replay parks on that repo.
+fn parked_pull_of_a_drop(weave: &Weave, conflicted: fn(&Path) -> PathBuf) -> PathBuf {
     add_and_commit(&weave.root, &weave.extra_url, "owned");
     let s1 = seat(weave, &weave.root, "s1");
-    commit_note(&s1, "seat\n");
-    commit_note(&weave.root, "primary\n");
-    drop_and_commit(&weave.root);
+    commit_note(&conflicted(&s1), "seat\n");
+    commit_note(&conflicted(&weave.root), "primary\n");
+    succeed(&weave.root, &["lock"]);
+    drop_and_commit(&weave.root, "drop extra");
 
     let out = run(&s1, &["sync", "primary", "--strategy", "rebase"]);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -362,10 +362,30 @@ fn parked_pull_of_a_drop(weave: &Weave) -> PathBuf {
     s1
 }
 
+fn lib_dir(workspace: &Path) -> PathBuf {
+    common::under(workspace, LIB)
+}
+
 #[test]
 fn a_replay_parked_on_the_project_repo_prunes_nothing_and_abort_keeps_the_checkout() {
     let weave = weave();
-    let s1 = parked_pull_of_a_drop(&weave);
+    let s1 = parked_pull_of_a_drop(&weave, project_dir);
+
+    succeed(&s1, &["abort"]);
+    assert!(
+        common::under(&s1, EXTRA).is_dir(),
+        "abort must leave the checkout the parked op found"
+    );
+    assert!(
+        names_extra(&s1),
+        "abort must leave the seat naming the member"
+    );
+}
+
+#[test]
+fn a_replay_parked_on_a_member_repo_prunes_nothing_and_abort_keeps_the_checkout() {
+    let weave = weave();
+    let s1 = parked_pull_of_a_drop(&weave, lib_dir);
 
     succeed(&s1, &["abort"]);
     assert!(
@@ -381,7 +401,7 @@ fn a_replay_parked_on_the_project_repo_prunes_nothing_and_abort_keeps_the_checko
 #[test]
 fn a_prune_deferred_by_a_parked_replay_runs_on_continue() {
     let weave = weave();
-    let s1 = parked_pull_of_a_drop(&weave);
+    let s1 = parked_pull_of_a_drop(&weave, project_dir);
 
     let project = project_dir(&s1);
     std::fs::write(project.join("notes.txt"), "resolved\n").unwrap();
@@ -402,7 +422,7 @@ fn a_member_this_side_dropped_is_not_materialized_from_a_source_that_names_it() 
     add_and_commit(&weave.root, &weave.extra_url, "owned");
     let s1 = seat(&weave, &weave.root, "s1");
     let s2 = seat(&weave, &weave.root, "s2");
-    drop_and_commit(&s2);
+    drop_and_commit(&s2, "drop extra");
 
     let s2_dir = s2.to_string_lossy().into_owned();
     let stdout = succeed(&s1, &["sync", &s2_dir]);
