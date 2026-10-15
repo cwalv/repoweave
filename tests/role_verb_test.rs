@@ -189,6 +189,29 @@ fn assert_writable(checkout: &Path, when: &str) {
     }
 }
 
+/// The lines of `stderr` rwv itself wrote, without the target banner or the
+/// progress cargo prints when a regeneration's cargo waits on a lock another
+/// cargo holds.
+fn rwv_lines(stderr: &str) -> Vec<&str> {
+    stderr
+        .lines()
+        .filter(|line| !line.starts_with("target: "))
+        .filter(|line| !line.starts_with("    Blocking waiting for file lock on "))
+        .collect()
+}
+
+#[test]
+fn rwv_lines_drops_cargo_lock_waits_and_keeps_rwv_output() {
+    let stderr = "target: workspace /w · project demo (.rwv-active)\n    \
+                  Blocking waiting for file lock on package cache\n\
+                  'a/b/c' is already owned; nothing to change\n    \
+                  Blocking waiting for file lock on build directory\n";
+    assert_eq!(
+        rwv_lines(stderr),
+        vec!["'a/b/c' is already owned; nothing to change"]
+    );
+}
+
 fn assert_routes_to(stderr: &str, token: &str) {
     let routes: Vec<&str> = stderr
         .lines()
@@ -286,10 +309,7 @@ fn an_unchanged_role_changes_nothing() {
     let out = succeed(&["role", &weave.alpha, "owned"], &weave.ws);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        stderr
-            .lines()
-            .filter(|line| !line.starts_with("target: "))
-            .collect::<Vec<_>>(),
+        rwv_lines(&stderr),
         vec![format!(
             "'{}' is already owned; nothing to change",
             weave.alpha
