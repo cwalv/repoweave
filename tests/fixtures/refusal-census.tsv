@@ -19,7 +19,7 @@ src/add_remove.rs	shared-clone-referenced	-	1
 src/add_remove.rs	store-claims-unreadable	-	2
 src/add_remove.rs	store-still-claimed	-	1
 src/add_remove.rs	unknown-registry	-	1
-src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	8
+src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	9
 src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
