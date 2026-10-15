@@ -578,22 +578,6 @@ const LOCAL_CREATION_PARAMS: &[ParamSpec] = &[
     },
 ];
 
-fn anchored_at_invocation_dir(root: &str) -> String {
-    let bytes = root.as_bytes();
-    let textually_absolute = root.starts_with('/')
-        || root.starts_with(r"\\")
-        || (bytes.first().is_some_and(u8::is_ascii_alphabetic)
-            && bytes.get(1) == Some(&b':')
-            && matches!(bytes.get(2), Some(b'/') | Some(b'\\')));
-    if textually_absolute {
-        return root.to_owned();
-    }
-    match std::env::current_dir() {
-        Ok(cwd) => crate::path_spelling::wire_path(&cwd.join(root)),
-        Err(_) => root.to_owned(),
-    }
-}
-
 impl Registry for LocalRegistry {
     fn name(&self) -> &RegistryName {
         &self.registry_name
@@ -619,7 +603,6 @@ impl Registry for LocalRegistry {
         // The upstream directory is named exactly as the URL spells it — no
         // `.git` suffix — so the URL and the path are the same string and
         // the mapping needs no rule.
-        let root = anchored_at_invocation_dir(root);
         let url: RepoUrl = mint_file_url(&format!("{root}/{owner}/{repo}"))
             .parse()
             .expect("RepoUrl::from_str is infallible");
@@ -1277,23 +1260,6 @@ mod tests {
             "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmp8MlRUw/lab/acme/fresh"
         );
         assert!(!plan.url.to_string().contains('\\'));
-    }
-
-    #[test]
-    fn plan_creation_anchors_a_relative_root_at_the_invocation_directory() {
-        let mut params = ParamMap::new();
-        params.insert("root", "../up");
-        params.insert("owner", "o");
-        params.insert("repo", "r");
-
-        let plan = local_reg().plan_creation(&params).unwrap();
-
-        let expected = std::env::current_dir().unwrap().join("../up/o/r");
-        assert_eq!(
-            plan.url.to_string(),
-            mint_file_url(&crate::path_spelling::wire_path(&expected))
-        );
-        assert!(matches!(plan.upstream, Upstream::InitBareAt(ref p) if p == &expected));
     }
 
     #[test]
