@@ -1718,15 +1718,17 @@ fn surface_with_notices(
     let mut notices = Vec::new();
     let mut outgoing_conflicts = Vec::new();
     for write in &root_writes {
-        let outgoing = &write.owner != project;
-        if mode != SurfacingMode::Repair && !outgoing {
+        let owned_by_outgoing = &write.owner != project;
+        if mode != SurfacingMode::Repair && !owned_by_outgoing {
             left_unlinked.insert(write.name.clone());
             notices.push(write.unadopted_message());
             continue;
         }
         match write.verdict(project_vcs, root)? {
             crate::root_write::Verdict::Adopt => adoption.extend(write.adoption(root)),
-            crate::root_write::Verdict::Conflict if outgoing => outgoing_conflicts.push(write),
+            crate::root_write::Verdict::Conflict if owned_by_outgoing => {
+                outgoing_conflicts.push(write)
+            }
             crate::root_write::Verdict::Conflict => {
                 left_unlinked.insert(write.name.clone());
                 notices.push(write.conflict_message());
