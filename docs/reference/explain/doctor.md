@@ -922,7 +922,7 @@ Schema:
           ]
         },
         {
-          "description": "Worktree exists, but manifest doesn't list it.",
+          "description": "A checkout exists for a path `rwv.lock` names and the manifest does not: a member removed by hand from `rwv.toml`.",
           "type": "string",
           "enum": [
             "extra"
@@ -1602,8 +1602,7 @@ Schema:
             "absolute_path",
             "kind",
             "path",
-            "sub_kind",
-            "workweave"
+            "sub_kind"
           ],
           "properties": {
             "absolute_path": {
@@ -1622,7 +1621,11 @@ Schema:
               "$ref": "#/definitions/DriftKind"
             },
             "workweave": {
-              "type": "string"
+              "description": "`None` for the canonical clone in the primary weave.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         },

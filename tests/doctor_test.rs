@@ -1362,7 +1362,7 @@ mod doctor_json {
     #[test]
     fn wire_workweave_drift_missing_sub_kind() {
         let v = CheckViolation::WorkweaveDrift {
-            workweave: WorkweaveName::new("ww1").unwrap(),
+            workweave: Some(WorkweaveName::new("ww1").unwrap()),
             kind: DriftKind::Missing,
             repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
@@ -1400,7 +1400,7 @@ mod doctor_json {
     #[test]
     fn wire_workweave_drift_extra_sub_kind() {
         let v = CheckViolation::WorkweaveDrift {
-            workweave: WorkweaveName::new("ww1").unwrap(),
+            workweave: Some(WorkweaveName::new("ww1").unwrap()),
             kind: DriftKind::Extra,
             repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
@@ -1624,7 +1624,7 @@ mod doctor_json {
         WorkweaveDrift {
             path: String,
             absolute_path: String,
-            workweave: String,
+            workweave: Option<String>,
             sub_kind: String,
         },
         IndexDrift {

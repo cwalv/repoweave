@@ -92,10 +92,12 @@ pub enum CheckViolation {
     },
 
     /// A workweave without the worktree a member its `rwv.lock` pins needs —
-    /// nothing at the slot, or a symlink there — or an extra worktree not in
-    /// the manifest.
+    /// nothing at the slot, or a symlink there — or, for [`DriftKind::Extra`],
+    /// a checkout the lock still names and the manifest no longer does.
     WorkweaveDrift {
-        workweave: WorkweaveName,
+        /// Workweave name; `None` for the canonical clone in the primary
+        /// weave, which only [`DriftKind::Extra`] reports.
+        workweave: Option<WorkweaveName>,
         kind: DriftKind,
         repo: RepoPath,
     },
@@ -942,7 +944,8 @@ pub enum DriftKind {
     /// A symlink at the slot, and the canonical clone does not hold the pinned
     /// revision, or is not on disk.
     SymlinkUnfetched,
-    /// Worktree exists, but manifest doesn't list it.
+    /// A checkout exists for a path `rwv.lock` names and the manifest does
+    /// not: a member removed by hand from `rwv.toml`.
     Extra,
 }
 
@@ -1776,7 +1779,8 @@ pub enum ViolationOutput {
     WorkweaveDrift {
         path: String,
         absolute_path: String,
-        workweave: String,
+        /// `None` for the canonical clone in the primary weave.
+        workweave: Option<String>,
         #[serde(rename = "sub_kind")]
         sub_kind: DriftKind,
     },
@@ -2168,20 +2172,12 @@ impl ViolationOutput {
                 workweave,
                 kind,
                 repo,
-            } => {
-                let dir_for_ww = workweave_dirs
-                    .get(&workweave)
-                    .cloned()
-                    .unwrap_or_else(|| workspace_dir.to_path_buf());
-                Self::WorkweaveDrift {
-                    absolute_path: crate::path_spelling::wire_path(
-                        &dir_for_ww.join(repo.as_path()),
-                    ),
-                    path: repo.to_string(),
-                    workweave: workweave.to_string(),
-                    sub_kind: kind,
-                }
-            }
+            } => Self::WorkweaveDrift {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                sub_kind: kind,
+            },
             CheckViolation::IndexDrift {
                 workweave,
                 repo,
@@ -5597,7 +5593,7 @@ impl MemberGap {
             (true, false) => DriftKind::SymlinkUnfetched,
         };
         CheckViolation::WorkweaveDrift {
-            workweave: self.workweave.clone(),
+            workweave: Some(self.workweave.clone()),
             kind,
             repo: self.repo.clone(),
         }
@@ -5657,6 +5653,65 @@ fn scan_member_gaps(
         }
     }
     gaps
+}
+
+/// An [`DriftKind::Extra`] finding for each checkout a project's `rwv.lock`
+/// names and its manifest no longer does: the canonical clone, when doctor
+/// runs in the primary and no other project's manifest lists it, and the
+/// worktree in each workweave [`workweaves_in_scope`] names. A path neither
+/// file names is not this scan's: the orphan walk reports it under `--all`.
+fn scan_leftover_checkouts(
+    ctx: &crate::workspace::WorkspaceContext,
+    project_scope: Option<&str>,
+    projects: &[Project],
+) -> Vec<CheckViolation> {
+    let mut found = Vec::new();
+    let leftovers = |project: &Project, root: &Path| -> Vec<RepoPath> {
+        let Some(lock) = project.lock.as_ref() else {
+            return Vec::new();
+        };
+        lock.iter_entries()
+            .filter(|(repo, _)| project.manifest.get_entry(repo).is_none())
+            .filter(|(repo, entry)| {
+                crate::vcs::vcs_for(entry.vcs_type).is_repo(&root.join(repo.as_path()))
+            })
+            .map(|(repo, _)| repo.clone())
+            .collect()
+    };
+    let drift = |workweave: Option<WorkweaveName>, repo: RepoPath| CheckViolation::WorkweaveDrift {
+        workweave,
+        kind: DriftKind::Extra,
+        repo,
+    };
+
+    if matches!(ctx.checkout, crate::workspace::Checkout::Primary { .. }) {
+        let primary_manifests: Vec<(ProjectName, Manifest)> =
+            crate::workspace::discover_projects(ctx.primary_path())
+                .into_iter()
+                .filter_map(|name| {
+                    let dir = project_dir(ctx.primary_path(), name.as_str());
+                    Manifest::from_path(&dir.join(Manifest::FILE_NAME))
+                        .ok()
+                        .map(|manifest| (name, manifest))
+                })
+                .collect();
+        for project in projects {
+            for repo in leftovers(project, ctx.primary_path()) {
+                let listed_elsewhere = primary_manifests
+                    .iter()
+                    .any(|(name, m)| name != &project.name && m.get_entry(&repo).is_some());
+                if !listed_elsewhere {
+                    found.push(drift(None, repo));
+                }
+            }
+        }
+    }
+    for (workweave, workweave_dir, project) in workweaves_in_scope(ctx, project_scope) {
+        for repo in leftovers(&project, &workweave_dir) {
+            found.push(drift(Some(workweave.clone()), repo));
+        }
+    }
+    found
 }
 
 /// `--fix` for the [`MemberGap`]s whose revision is local: create each
@@ -7379,9 +7434,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              `rwv doctor --fix` can",
                         ),
                         DriftKind::Extra => (
-                            "extra worktree",
-                            "; this worktree has no manifest entry — \
-                             run `rwv add` to register it or remove it manually",
+                            "leftover checkout of",
+                            " — rwv.lock still names it and rwv.toml no longer does; \
+                             `rwv remove <path> --delete` deletes the checkout, and \
+                             `rwv add <url>` keeps it as a member",
                         ),
                     };
                     let severity = match kind {
@@ -7393,7 +7449,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     };
                     (
                         severity,
-                        format!("workweave drift in {workweave}: {kind_str} {repo}{hint}"),
+                        format!(
+                            "workweave drift in {}: {kind_str} {repo}{hint}",
+                            workweave.as_ref().map_or("the primary", |w| w.as_str())
+                        ),
                     )
                 }
                 CheckViolation::IndexDrift {
@@ -10068,6 +10127,14 @@ fn collect_doctor_violations(
             .filter_map(member_permissions_finding),
     );
     violations.extend(scan_role_disagreements(ctx, &input.projects));
+    let leftovers = scan_leftover_checkouts(ctx, project_scope, &input.projects);
+    violations.retain(|v| match v {
+        CheckViolation::OrphanedClone { path } => !leftovers.iter().any(|l| {
+            matches!(l, CheckViolation::WorkweaveDrift { workweave: None, repo, .. } if repo == path)
+        }),
+        _ => true,
+    });
+    violations.extend(leftovers);
     violations.extend(scan_locks_pinned_by_name(&input.projects));
 
     {

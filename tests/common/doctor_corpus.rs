@@ -275,27 +275,32 @@ pub fn corpus() -> Vec<CheckViolation> {
             files: 1,
         },
         CheckViolation::WorkweaveDrift {
-            workweave: workweave(),
+            workweave: Some(workweave()),
             kind: DriftKind::Missing,
             repo: repo(),
         },
         CheckViolation::WorkweaveDrift {
-            workweave: workweave(),
+            workweave: Some(workweave()),
             kind: DriftKind::MissingUnfetched,
             repo: repo(),
         },
         CheckViolation::WorkweaveDrift {
-            workweave: workweave(),
+            workweave: Some(workweave()),
             kind: DriftKind::Symlink,
             repo: repo(),
         },
         CheckViolation::WorkweaveDrift {
-            workweave: workweave(),
+            workweave: Some(workweave()),
             kind: DriftKind::SymlinkUnfetched,
             repo: repo(),
         },
         CheckViolation::WorkweaveDrift {
-            workweave: workweave(),
+            workweave: Some(workweave()),
+            kind: DriftKind::Extra,
+            repo: repo(),
+        },
+        CheckViolation::WorkweaveDrift {
+            workweave: None,
             kind: DriftKind::Extra,
             repo: repo(),
         },

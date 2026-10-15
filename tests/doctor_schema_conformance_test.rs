@@ -89,7 +89,7 @@ fn corpus() -> Vec<CheckViolation> {
             actual: ResolvedRevisionId::from_canonical("b".repeat(40), None),
         },
         CheckViolation::WorkweaveDrift {
-            workweave: workweave(),
+            workweave: Some(workweave()),
             kind: DriftKind::Missing,
             repo: repo(),
         },

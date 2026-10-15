@@ -664,8 +664,8 @@ migrate a live one in place.
 
 ### `workweave-drift`
 
-A workweave has no worktree for a member its `rwv.lock` pins, or holds a
-worktree the manifest does not list. Every member of a workweave, whatever its
+A workweave has no worktree for a member its `rwv.lock` pins, or a checkout
+remains for a member the manifest no longer lists. Every member of a workweave, whatever its
 `role`, is a worktree of the canonical clone on the workweave's ephemeral
 branch. Doctor checks the workweave it runs in; from the primary, every
 workweave of the projects in scope.
@@ -713,9 +713,17 @@ clone does not hold the pinned revision, or is not on disk.
 
 #### `extra`
 
-**Warning. Report-only.** A worktree exists that the manifest does not list.
+**Warning. Report-only.** A checkout remains for a path `rwv.lock` names and
+`rwv.toml` no longer does: a member removed by hand. Doctor reports it in its
+default scope, from the primary (the canonical clone, with no `workweave`) and
+from each workweave (that workweave's worktree). A clone another project's
+manifest still lists is not a leftover, and a path neither file names raises
+nothing here; `--all` reports such a clone as
+[`orphaned-clone`](#orphaned-clone). `--fix` never deletes it.
 
-**What to do:** it is either a repo to `rwv add` or a directory to remove.
+**What to do:** `rwv remove <path> --delete` deletes the checkout, keeping the
+guards that refuse a dirty tree, unpushed commits or a clone another project
+uses. `rwv add <url>` keeps it as a member again.
 
 ### `member-permissions`
 
