@@ -24,8 +24,8 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Canonical tip** | The vetted cross-repo state of a project on a given branch (encoded by that branch's `rwv.lock`). |
 | **Lens** | A motivational way of looking at rwv targeted at one audience. Three lenses: [workspace](../explanation/lenses/workspace.md), [monorepo](../explanation/lenses/monorepo.md), [agent](../explanation/lenses/agent.md). |
 | **Joint** | A cross-cutting concept that all lenses reference (Diátaxis-explanation, audience-neutral). See [joints/](../explanation/joints/). |
-| **Phase 2** | First runtime phase of `rwv sync`: advance manifest repos to the source's lock targets. |
-| **Phase 1'** | Second runtime phase of `rwv sync`: replay CWD's unique project commits onto source's project tip, with `rwv.lock` excluded. |
+| **Phase 1'** | First runtime phase of `rwv sync`: replay CWD's unique project commits onto source's project tip, with `rwv.lock` excluded. Its manifest decides which member checkouts replay adds and prunes. |
+| **Phase 2** | Second runtime phase of `rwv sync`: advance manifest repos to the source's lock targets. |
 | **Phase 3** | Third runtime phase of `rwv sync`: regenerate `rwv.lock` from post-Phase-2 manifest tips. |
 | **Strategy** | Sync strategy: `ff` (fast-forward, default) or `rebase`. Applies uniformly to project and manifest repos. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | **Retire** | `rwv sync-to --retire` — post-sync-to cleanup that deletes the workweave on success. The `--retire` flag lives on `rwv sync-to` (the landing direction), not `rwv sync`. |

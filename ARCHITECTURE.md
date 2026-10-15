@@ -308,6 +308,33 @@ one phase function and returns the next phase, with `None` terminal.
 Per phase: `run_replay`, `run_relock`,
 `run_advance_target`, `run_retire`.
 
+### Replay's member set
+
+`run_replay` (`src/sync.rs`) runs Phase 1', the project repo, before it
+touches any member checkout. It then loads the manifest that replay
+produced and decides the member set against it: `materialize_missing_repo`
+for a member that manifest names, the source's lock names, and CWD lacks;
+then the Phase 2 fan-out over the manifest repos; then `prune_dropped_repo`
+for a member the pre-op manifest named and the replayed one does not. The
+pre-op manifest is read at the project repo's savepoint, so a `--continue`
+weighs the same set the interrupted run did. Relock regenerates the lock
+from the same replayed manifest, so the checkouts and the lock agree by
+construction.
+
+The member set is read, never predicted. A rule over the two locks and the
+lock at their common ancestor misreads a member CWD dropped and added back,
+and has no answer when the histories share no lock; only the replay's own
+result covers both.
+
+The trade-off is when a prune lands. It follows the rebase and the whole
+fan-out, so an op that parks defers it to `--continue`, and an aborted op
+has pruned nothing. That matters because savepoints are refs: `rwv abort`
+can move a ref back but cannot bring back a deleted checkout. The cost is
+that a prune waits on conflicts in repos unrelated to the pruned member,
+and a manifest-repo park now finds the project repo already replayed;
+abort's verified restore covers it through the project tip recorded right
+after Phase 1'.
+
 ### Why the loop reads from disk
 
 `op_state::set_phase` (`src/op_state.rs`) is the **single persistence

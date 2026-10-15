@@ -197,7 +197,14 @@ restore both sides independently.
 
 ### replay
 
-Runs Phase 2 (manifest repos) and Phase 1' (project repo):
+Runs Phase 1' (project repo), then Phase 2 (manifest repos):
+
+- **Phase 1' — project repo, lock-excluded**: replay CWD's unique
+  project commits onto the named workspace's project tip using
+  `--strategy`, with `rwv.lock` excluded from each commit's effective
+  diff. With `--strategy=rebase`, lock-only commits become empty patches
+  and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
+  branch pointer advances without replaying anything.
 
 - **Phase 2 — manifest repos**: advance each of CWD's manifest repo
   branches to the named workspace's lock target, using the chosen
@@ -218,30 +225,28 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
   containing the baseline has not thereby caught up with the source, and
   a line stating only the first reads as though it had.
 
-- **Phase 1' — project repo, lock-excluded**: replay CWD's unique
-  project commits onto the named workspace's project tip using
-  `--strategy`, with `rwv.lock` excluded from each commit's effective
-  diff. With `--strategy=rebase`, lock-only commits become empty patches
-  and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
-  branch pointer advances without replaying anything.
+**Replay's member set follows the manifest Phase 1' produces.** Once the
+project repo has replayed, its `rwv.toml` is the manifest CWD ends the op
+with, and it alone decides which checkouts replay adds and removes. A
+member the source's lock names, this manifest names, and CWD lacks on disk
+is materialized before Phase 2 advances anything, born at its replay
+target. A member CWD's manifest named when the op started and this
+manifest no longer names is pruned, behind the dirty, unique-commit and
+store-claim refusals. A member it still names is kept, with a `kept` line
+when the source's lock lacks it. So a member CWD dropped is not brought
+back because the source still names it, and a member CWD added, or
+dropped and added back, survives a source that dropped it. Histories with
+no commit in common follow the same rule: Phase 1' replays the whole of
+CWD's history, so CWD's members stay in the manifest.
+`--discard-local-commits` hands CWD the source's manifest, so every member
+that manifest lacks is pruned. Role plays no part.
 
-**Replay prunes a member only when the op drops it from CWD's lock.**
-Before advancing anything, Phase 2 materializes members the source's lock
-names and CWD lacks on disk, and weighs pruning members CWD's lock names
-and the source's does not. That absence is ambiguous: the source may have
-dropped the member, or CWD may have added it and the source not taken it
-yet. The lock committed at the common ancestor of the two project tips
-tells them apart. A member that lock names was dropped by the source, and
-its checkout is pruned behind the dirty, unique-commit and store-claim
-refusals. A member it lacks was added on CWD's side; Phase 1' replays the
-add onto the source's tip, so the member stays in CWD's next lock and its
-checkout is kept, with a `kept` line saying so. Role plays no part. When
-no shared lock can be read — histories with no common commit, no lock at
-the common ancestor — nothing shows the source dropped the member, and it
-is kept with the reason; replaying the whole of CWD's history keeps it in
-CWD's lock in that case too. `--discard-local-commits` is the exception:
-it hands CWD the source's lock as it stands, so every member that lock
-lacks is pruned.
+**Nothing is pruned until every repo has replayed.** The prune runs after
+Phase 2, so an op that parks, on a project-repo conflict or a
+manifest-repo one, has removed no checkout yet, and the prune runs on
+`--continue`. `rwv abort` restores refs and cannot bring back a deleted
+checkout, so this ordering is what lets an aborted op leave CWD's
+checkouts as it found them.
 
 **A pull does not refuse a destination whose own lock is behind its
 HEAD.** That lock is not replay's input — the targets come from the

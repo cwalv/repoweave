@@ -129,8 +129,8 @@ and not `publish`.
 
 A direction-explicit pair. `rwv sync <source>` aligns CWD with another
 workspace's committed state; `rwv sync-to <target>` pushes CWD's
-committed state into another workspace. Both run Phase 2 (manifest
-repos), Phase 1' (project repo, lock-excluded), Phase 3 (re-lock) on
+committed state into another workspace. Both run Phase 1' (project
+repo, lock-excluded), Phase 2 (manifest repos), Phase 3 (re-lock) on
 the destination workspace.
 See [sync-semantics](./sync-semantics.md).
 
@@ -138,7 +138,8 @@ See [sync-semantics](./sync-semantics.md).
   follow different strategies for the same `--strategy` choice (the
   project repo excludes the lock from the merge; manifest repos
   don't).
-- *Cross-repo ordering?* Yes — Phase 2 must complete before Phase 3
+- *Cross-repo ordering?* Yes — Phase 1' must complete before replay
+  can read the member set its manifest names, and Phase 2 before Phase 3
   can capture the resulting manifest tips into the new lock.
 - *rwv-owned state?* The lock is the principal output of Phase 3.
 

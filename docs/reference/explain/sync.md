@@ -4,11 +4,14 @@
 
 Absorb a named workspace's committed state into CWD. `<source>` is required:
 `rwv sync` always names an explicit source (`primary`, a bare workweave name,
-or a path). The source workspace's `rwv.lock` drives Phase 2: each manifest
-repo in CWD is advanced to the SHA the source has locked. Phase 1' then
-replays CWD's unique project-repo commits onto the source's tip (with
-`rwv.lock` excluded so lock-only commits become no-ops). Phase 3 regenerates
-CWD's `rwv.lock` from the now-merged manifest tips and commits it. Per-repo
+or a path). Phase 1' replays CWD's unique project-repo commits onto the
+source's tip (with `rwv.lock` excluded so lock-only commits become no-ops).
+The manifest that replay produces decides CWD's members: one it names that
+CWD lacks is materialized, and one it no longer names is pruned after every
+repo has replayed, so a parked op removes no checkout. The source workspace's
+`rwv.lock` drives Phase 2: each manifest repo in CWD is advanced to the SHA
+the source has locked. Phase 3 regenerates CWD's `rwv.lock` from the
+now-merged manifest tips and commits it. Per-repo
 conflicts are reported with non-zero exit; already-converged repos are
 no-ops, so re-runs are cheap.
 
