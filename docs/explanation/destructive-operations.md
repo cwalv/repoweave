@@ -29,8 +29,10 @@ Examples in the current tree:
 - `rwv workweave delete` checks for uncommitted changes and unmerged
   commits before removing the workweave directory. Both refusals fire
   with actionable error messages.
-- `rwv remove --delete` refuses to delete the canonical store while
-  another project's manifest still references the repo.
+- `rwv remove --delete` refuses to delete a checkout with uncommitted
+  changes or commits no other clone reaches, and refuses to delete the
+  canonical store while another project's manifest still references the
+  repo.
 - `rwv sync --discard-local-commits` Phase 1' discards commits only after the
   clean-project precondition has passed; the discarded commits remain
   recoverable via the `refs/rwv/pre-op/<op-id>` savepoint.

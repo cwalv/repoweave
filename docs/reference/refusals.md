@@ -161,8 +161,8 @@ accepts.
 
 ### `dropped-repo-has-unique-commits`
 
-**Condition.** A checkout being dropped from the lock carries commits no other
-clone reaches.
+**Condition.** A checkout being dropped from the lock, or deleted by `rwv
+remove --delete`, carries commits no other clone reaches.
 
 **Why.** Dropping a repo removes its checkout. If it holds the only copy of
 some commits, removal destroys them, and no `rwv abort` recovers work that was
@@ -697,14 +697,17 @@ abandon the commits, then re-run. The refusal lists what it found.
 
 ### `repo-not-in-manifest`
 
-**Condition.** `rwv remove` names a path the manifest does not carry.
+**Condition.** `rwv remove` names a path the manifest does not carry, and
+this workspace holds no checkout there that is this project's to finish
+removing: one this project's lock still names, or one no other project lists.
 
 **Why.** Removing something absent is either a typo or a stale script. Silently
-succeeding would let both go unnoticed.
+succeeding would let both go unnoticed. A checkout another project lists is
+that project's, not this one's leftover.
 
-**Exits.** Check the spelling against `rwv status`. The clone may still exist
-on disk without a manifest entry — that is `rwv doctor`'s orphaned-clone
-finding rather than this.
+**Exits.** Check the spelling against `rwv status`. An entry removed from
+`rwv.toml` by hand is finished by `rwv remove <path>` while its checkout is
+still on disk; this refusal means there is no such checkout here.
 
 ### `repo-without-commits`
 
@@ -752,7 +755,8 @@ dropped the repo would break the others without their asking.
 
 **Exits.** Drop the repo from the manifest without `--delete` to leave the
 clone in place, or pass `--delete-shared-clone` to accept removing it for
-every project that references it.
+every project that references it. This refusal is only raised at the primary
+weave, the one place `--delete` removes the canonical clone.
 
 ### `shared-name-contested`
 

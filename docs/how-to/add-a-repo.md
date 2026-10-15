@@ -79,13 +79,15 @@ Note that `--adopt` is a *single-project* clone flag; it does not walk the worki
 rwv remove github/example/some-lib
 ```
 
-Removes the entry from `rwv.toml` and re-runs integrations. The clone stays on disk — other projects might depend on it. To also delete the clone:
+Removes the entry from `rwv.toml` and re-runs integrations. The checkout stays on disk — other projects might depend on the clone. To also delete it:
 
 ```bash
 rwv remove github/example/some-lib --delete
 ```
 
-`--delete` checks that no other project's manifest references the path, then removes the directory. Use `--delete-shared-clone` to remove it even when another project still references it.
+`--delete` removes the checkout in the workspace you run it in: the canonical clone in the primary weave, or that workweave's worktree in a workweave. It refuses over uncommitted changes or commits no other clone reaches, and in the primary it checks that no other project's manifest references the path. Use `--delete-shared-clone` to remove the clone even when another project still references it.
+
+If you already deleted the entry from `rwv.toml` by hand, the same `rwv remove <path> [--delete]` finishes the job.
 
 ## Related
 

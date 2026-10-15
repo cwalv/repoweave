@@ -278,3 +278,198 @@ fn re_running_add_new_with_the_same_address_repairs_the_surfacing() {
     );
     assert_eq!(root_links(&weave.ws), surfaced);
 }
+
+fn hand_remove(workspace: &Path, path: &str) {
+    let mut listed = repoweave::manifest::Manifest::from_path(&manifest(workspace)).unwrap();
+    listed
+        .remove_repo(&repoweave::manifest::RepoPath::new(path).unwrap())
+        .expect("fixture: the manifest lists the entry being hand-removed");
+    listed.write(&manifest(workspace)).unwrap();
+}
+
+#[test]
+fn remove_over_a_hand_removed_entry_regenerates_and_keeps_the_clone_in_the_primary() {
+    let weave = Weave::new();
+    let alpha = placed("alpha");
+    hand_remove(&weave.ws, &alpha);
+    assert!(
+        generated_members(&weave.ws).contains(&alpha),
+        "fixture: a hand edit alone regenerates nothing"
+    );
+    let manifest_before = std::fs::read(manifest(&weave.ws)).unwrap();
+
+    let out = succeed(&["remove", &alpha], &weave.ws);
+
+    assert!(
+        stderr_of(&out).contains("already out of the manifest"),
+        "{}",
+        describe(&out)
+    );
+    assert!(!generated_members(&weave.ws).contains(&alpha));
+    assert!(weave.ws.join(&alpha).join(".git").is_dir());
+    assert_eq!(std::fs::read(manifest(&weave.ws)).unwrap(), manifest_before);
+}
+
+#[test]
+fn remove_delete_over_a_hand_removed_entry_deletes_the_clone_in_the_primary() {
+    let weave = Weave::new();
+    let alpha = placed("alpha");
+    hand_remove(&weave.ws, &alpha);
+
+    succeed(&["remove", &alpha, "--delete"], &weave.ws);
+
+    assert!(!weave.ws.join(&alpha).exists());
+    assert!(!generated_members(&weave.ws).contains(&alpha));
+}
+
+#[test]
+fn remove_over_a_hand_removed_entry_in_a_workweave_keeps_then_deletes_its_worktree() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let alpha = placed("alpha");
+    hand_remove(&workweave, &alpha);
+
+    succeed(&["remove", &alpha], &workweave);
+    assert!(!generated_members(&workweave).contains(&alpha));
+    assert!(workweave.join(&alpha).join(".git").is_file());
+
+    succeed(&["remove", &alpha, "--delete"], &workweave);
+    assert!(!workweave.join(&alpha).exists());
+    assert!(
+        weave.ws.join(&alpha).join(".git").is_dir(),
+        "a workweave's delete removes its own worktree, never the canonical clone"
+    );
+}
+
+#[test]
+fn remove_delete_in_a_workweave_removes_its_worktree_and_never_the_canonical_clone() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let alpha = placed("alpha");
+
+    succeed(&["remove", &alpha, "--delete"], &workweave);
+
+    assert!(!workweave.join(&alpha).exists());
+    assert!(weave.ws.join(&alpha).join(".git").is_dir());
+    assert!(generated_members(&weave.ws).contains(&alpha));
+    assert!(!generated_members(&workweave).contains(&alpha));
+}
+
+/// `rwv remove <alpha> --delete` in `workspace` refuses with `token`,
+/// leaving `rwv.toml` and the checkout as they were.
+fn assert_delete_refused(workspace: &Path, token: &str) {
+    let alpha = placed("alpha");
+    let manifest_before = std::fs::read(manifest(workspace)).unwrap();
+
+    let out = run(&["remove", &alpha, "--delete"], workspace);
+    let stderr = stderr_of(&out);
+
+    assert!(!out.status.success(), "the delete must refuse; {stderr}");
+    assert!(
+        stderr.trim_end().ends_with(&format!("rwv explain {token}")),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read(manifest(workspace)).unwrap(), manifest_before);
+    assert!(workspace.join(&alpha).exists());
+}
+
+fn commit_in(checkout: &Path) {
+    common::git_in(checkout, &["config", "user.email", "test@test.com"]);
+    common::git_in(checkout, &["config", "user.name", "Test"]);
+    std::fs::write(checkout.join("NEW"), "unique\n").unwrap();
+    common::git_in(checkout, &["add", "NEW"]);
+    common::git_in(checkout, &["commit", "-qm", "unique"]);
+}
+
+#[test]
+fn remove_delete_refuses_a_dirty_clone_in_the_primary() {
+    let weave = Weave::new();
+    std::fs::write(weave.ws.join(placed("alpha")).join("src/lib.rs"), "dirty\n").unwrap();
+    assert_delete_refused(&weave.ws, "dirty-checkout");
+}
+
+#[test]
+fn remove_delete_refuses_a_dirty_worktree_in_a_workweave() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    std::fs::write(
+        workweave.join(placed("alpha")).join("src/lib.rs"),
+        "dirty\n",
+    )
+    .unwrap();
+    assert_delete_refused(&workweave, "dirty-checkout");
+}
+
+#[test]
+fn remove_delete_refuses_a_clone_with_unpushed_commits_in_the_primary() {
+    let weave = Weave::new();
+    commit_in(&weave.ws.join(placed("alpha")));
+    assert_delete_refused(&weave.ws, "dropped-repo-has-unique-commits");
+}
+
+#[test]
+fn remove_delete_refuses_a_worktree_with_unique_commits_in_a_workweave() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    commit_in(&workweave.join(placed("alpha")));
+    assert_delete_refused(&workweave, "dropped-repo-has-unique-commits");
+}
+
+#[test]
+fn remove_delete_over_a_hand_removed_entry_refuses_a_clone_another_project_lists() {
+    let weave = Weave::new();
+    let alpha = placed("alpha");
+    let other = weave.ws.join("projects/other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::copy(manifest(&weave.ws), other.join("rwv.toml")).unwrap();
+    hand_remove(&weave.ws, &alpha);
+    assert_delete_refused(&weave.ws, "shared-clone-referenced");
+}
+
+#[test]
+fn remove_refuses_a_path_whose_clone_another_project_lists() {
+    let weave = Weave::new();
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    let other = weave.ws.join("projects/other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(
+        other.join("rwv.toml"),
+        format!(
+            "[repositories.\"{beta}\"]\ntype = \"git\"\nurl = \"{beta_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    let clone = weave.ws.join(&beta);
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    common::git_in(
+        &weave.ws,
+        &["clone", "-q", &beta_url, clone.to_str().unwrap()],
+    );
+
+    let out = run(&["remove", &beta, "--delete"], &weave.ws);
+    let stderr = stderr_of(&out);
+
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("rwv explain repo-not-in-manifest"),
+        "{stderr}"
+    );
+    assert!(clone.join(".git").is_dir());
+}
+
+#[test]
+fn remove_refuses_a_path_that_holds_nothing() {
+    let weave = Weave::new();
+    let out = run(&["remove", "local/origin/ghost"], &weave.ws);
+    let stderr = stderr_of(&out);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("rwv explain repo-not-in-manifest"),
+        "{stderr}"
+    );
+}

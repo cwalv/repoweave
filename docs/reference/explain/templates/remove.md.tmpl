@@ -10,27 +10,42 @@ updated to no longer include the removed member.
 integration-managed content so the resulting files can be committed alongside
 the `rwv.toml` change.
 
-Removing from the manifest does **not** delete the clone from disk by default.
-The clone remains at its canonical path under the primary weave root (shared
-infrastructure — other projects may reference it). Use `--delete` to also
-remove the on-disk directory.
+Removing from the manifest does **not** delete the checkout from disk by
+default. Use `--delete` to also remove it.
 
-### `--delete` refusal rules
+### Finishing a hand edit
 
-`--delete` removes the clone directory after unregistering it from the
-manifest. It will refuse (with an error) if another project's `rwv.toml`
-references the same path — deleting shared infrastructure would break that
-project's fetch/sync operations.
+An entry already removed from `rwv.toml` by hand is finished by the same
+command. When the path is no longer in the manifest but this workspace still
+holds a checkout there that is this project's — this project's `rwv.lock`
+still names it, or no other project lists it — `remove` regenerates the
+integration files without it and says it was already out of the manifest.
+`--delete` then deletes that checkout exactly as it would have deleted a
+listed one. A path with no such checkout refuses (`repo-not-in-manifest`).
 
-Use `--delete-shared-clone` alongside `--delete` to remove the clone directory
-regardless. Use this only when you have verified that no other project uses the
-repo, or when you intend to break those references.
+### What `--delete` deletes
 
-### Clone placement
+`--delete` removes the checkout in the workspace the command runs in:
 
-Clones live at the canonical path under the primary weave root, not inside
-workweaves (which use `git worktree`). `remove --delete` therefore removes the
-canonical clone, which also invalidates any live worktrees pointing at it.
+- **In the primary weave**, the canonical clone at its path under the weave
+  root.
+- **In a workweave**, that workweave's worktree of the repo. The canonical
+  clone in the primary is never touched from a workweave; it is removed when
+  the change lands and the primary drops the repo.
+
+Every guard runs before the manifest is written, so a refused delete leaves
+`rwv.toml` and the checkout as they were:
+
+- *uncommitted changes* in the checkout refuse (`dirty-checkout`);
+- *commits no other clone reaches* refuse
+  (`dropped-repo-has-unique-commits`): in the primary, any branch with no
+  remote counterpart or with commits ahead of it; in a workweave, a worktree
+  tip the canonical clone does not contain;
+- in the primary, a clone **another project's `rwv.toml` lists** refuses
+  (`shared-clone-referenced`) unless `--delete-shared-clone` is given, and a
+  clone that **live workweave worktrees or standing receipts** still claim
+  refuses (`store-still-claimed`).
+
 (See `rwv explain workweave` for the workweave topology model.)
 
 ## Invocation
@@ -41,8 +56,8 @@ rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>]
 
 - `<path>` — manifest-relative path of the repo to remove (as listed in
   `rwv.toml`, e.g. `github/myorg/myrepo`).
-- `--delete` — also remove the clone directory from disk. Errors if another
-  project references the same path; waive with `--delete-shared-clone`.
+- `--delete` — also remove this workspace's checkout from disk (see "What
+  `--delete` deletes" above).
 - `--delete-shared-clone` — delete the clone even when another project still
   references it. Has no effect without `--delete`.
 - `--project <name>` — operate on this project rather than the active project.
@@ -54,16 +69,17 @@ Run `rwv --help remove` for the full clap surface.
 
 Progress messages to stderr:
 
-- Manifest rewrite confirmation.
+- `Removed '<path>' from manifest`, or `'<path>' was already out of the
+  manifest; regenerated without it` for an entry removed by hand.
 - Integration activation output (symlinks created/removed).
-- When `--delete` removes the directory: confirmation or error.
+- `Deleted '<checkout>'` when `--delete` removed one.
 
 ## Exit codes
 
-- `0` — repo removed from manifest, activation succeeded.
-- non-zero — path not found in manifest, `--delete` cross-project check
-  failed (without `--delete-shared-clone`), directory removal failed, or
-  activation returned an error.
+- `0` — repo removed from manifest (or already out of it), activation
+  succeeded.
+- non-zero — no entry and no leftover checkout at the path, a `--delete`
+  guard refused, directory removal failed, or activation returned an error.
 
 The manifest edit and the regeneration it drives land together or not at all.
 When activation refuses before the install hooks run, `rwv.toml` and every
@@ -79,7 +95,7 @@ Remove from manifest (keep clone on disk):
 rwv remove github/myorg/old-repo
 ```
 
-Remove from manifest and delete the clone:
+Remove from manifest and delete this workspace's checkout:
 
 ```
 rwv remove github/myorg/old-repo --delete
@@ -93,10 +109,13 @@ rwv remove github/myorg/old-repo --delete --delete-shared-clone
 
 ## Common errors
 
-- *path not in manifest* — the given path does not appear in `rwv.toml`. Check
-  the exact manifest path with `rwv status`.
+- *path not in manifest* — the given path does not appear in `rwv.toml` and no
+  leftover checkout of this project's is there. Check the exact manifest path
+  with `rwv status`.
+- *uncommitted changes* or *unique commits* — `--delete` would lose work.
+  Commit and push it, or discard it, then re-run.
 - *another project references this path; refusing --delete without
   --delete-shared-clone* — the clone is shared. Verify the other project and
   use `--delete-shared-clone` only when safe.
 - *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
-  is valid YAML.
+  is valid TOML.

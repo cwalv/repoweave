@@ -2,7 +2,9 @@
 
 use crate::activate::{activate_intent_for, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
-use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
+use crate::manifest::{
+    LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType,
+};
 use crate::path_spelling::mint_file_url;
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
@@ -507,6 +509,15 @@ fn run_add_from_local_path(
 
 /// Execute `rwv remove PATH [--delete] [--delete-shared-clone]`.
 ///
+/// An entry already gone from the manifest is finished the same way, as long
+/// as its checkout is still on disk in this workspace and is this project's:
+/// the lock still names it, or no other project lists it.
+///
+/// `--delete` removes the checkout in the workspace `ctx` resolves to: the
+/// canonical clone at primary, this workweave's worktree in a workweave. Every
+/// guard runs before the manifest is written, so a refused delete leaves it as
+/// it was.
+///
 /// `ctx` is the already-resolved invocation context. Handlers must not
 /// re-resolve.
 pub fn run_remove(
@@ -520,81 +531,121 @@ pub fn run_remove(
 
     let repo_path = RepoPath::new(path)?;
 
-    // Load existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    let Some(removed) = manifest.remove_repo(&repo_path) else {
-        crate::refuse!(
-            RefusalKind::RepoNotInManifest,
-            "path '{}' not found in manifest",
-            repo_path.as_str()
-        );
+    let removed = manifest.remove_repo(&repo_path);
+    let vcs_type = match &removed {
+        Some(entry) => entry.vcs_type,
+        None => leftover_checkout_vcs(ctx, &project, &project_dir, &repo_path)?,
+    };
+    let vcs = vcs_for(vcs_type);
+
+    let removal = if delete {
+        if let Checkout::Primary { .. } = ctx.checkout {
+            refuse_shared_clone_delete(ctx, &project, &repo_path, delete_shared_clone)?;
+            let repo_dir = ctx.primary_path().join(repo_path.as_path());
+            if repo_dir.exists() {
+                refuse_claimed_store(vcs.as_ref(), ctx.primary_path(), &repo_dir)?;
+            }
+        }
+        Some(crate::sync::plan_checkout_removal(
+            vcs.as_ref(),
+            ctx,
+            &repo_path,
+            &project,
+        )?)
+    } else {
+        None
     };
 
-    // Before writing anything, check for cross-project references when --delete
-    // is requested.  If another project references the repo and
-    // --delete-shared-clone is not set, bail early so the manifest is left
-    // untouched. The cross-project
-    // scan walks primary's `projects/` directory — that is the canonical
-    // enumeration of project manifests regardless of CWD.
-    if delete {
-        let repo_dir = ctx.primary_path().join(repo_path.as_path());
-        if repo_dir.exists() {
-            // Pass the primary-side project_dir so the scan correctly skips
-            // the active project even when CWD is in a workweave (where
-            // `project_dir` lives under the workweave, not primary).
-            let referencing_projects =
-                find_other_projects_referencing(ctx.primary_path(), &project, &repo_path);
+    settle_manifest(ctx, &project, removed.is_some().then_some(&manifest))?;
 
-            if !referencing_projects.is_empty() {
-                for proj in &referencing_projects {
-                    eprintln!("warning: repo also referenced by project '{proj}'");
-                }
-                if !delete_shared_clone {
-                    crate::refuse!(
-                        RefusalKind::SharedCloneReferenced,
-                        "refusing to delete '{}': referenced by other projects. Remove the entry from those projects first, or use `--delete-shared-clone` if you intend to delete the shared clone anyway.",
-                        repo_path.as_str()
-                    );
-                }
-            }
+    if removed.is_some() {
+        eprintln!("Removed '{}' from manifest", repo_path.as_str());
+    } else {
+        eprintln!(
+            "'{}' was already out of the manifest; regenerated without it",
+            repo_path.as_str()
+        );
+    }
 
-            // R4, checked in the same pre-flight and for the same reason:
-            // a refused DESTROY-STORE must leave the manifest as it found it,
-            // so `rwv remove --delete` is retryable after the operator clears
-            // the claims rather than leaving them holding a store the manifest
-            // no longer declares.
-            refuse_claimed_store(
-                vcs_for(removed.vcs_type).as_ref(),
-                ctx.primary_path(),
-                &repo_dir,
-            )?;
+    if let Some(removal) = removal {
+        let checkout = ctx.active_path().join(repo_path.as_path());
+        let deleted = !matches!(removal, crate::sync::CheckoutRemoval::Absent);
+        removal.perform(vcs.as_ref(), &repo_path)?;
+        if deleted {
+            eprintln!("Deleted '{}'", checkout.display());
         }
     }
 
-    // Write back the manifest (after all pre-flight checks pass), and re-run
-    // activation so ecosystem files (Cargo.toml, package.json, etc.) are
-    // updated.
-    settle_manifest(ctx, &project, Some(&manifest))?;
+    Ok(())
+}
 
-    eprintln!("Removed '{}' from manifest", repo_path.as_str());
-
-    // Optionally delete the clone directory. Always targets primary's
-    // canonical path — `--delete` semantics mean "remove the shared clone",
-    // independent of CWD's workspace. Operators in a workweave who want to
-    // drop just their workweave's view should use `rwv remove` without
-    // `--delete` (manifest-only) plus `rwv workweave delete` to clean up
-    // the worktree.
-    if delete {
-        let repo_dir = ctx.primary_path().join(repo_path.as_path());
-        if repo_dir.exists() {
-            std::fs::remove_dir_all(&repo_dir)
-                .with_context(|| format!("failed to delete directory {}", repo_dir.display()))?;
-            eprintln!("Deleted '{}'", repo_dir.display());
+/// The backend of the checkout `repo_path` names in this workspace when the
+/// manifest no longer lists it, refusing unless that checkout is this
+/// project's to finish removing: this project's lock still names it, or no
+/// other project lists it.
+fn leftover_checkout_vcs(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    project_dir: &Path,
+    repo_path: &RepoPath,
+) -> anyhow::Result<VcsType> {
+    let not_in_manifest = || {
+        refusal(
+            RefusalKind::RepoNotInManifest,
+            format!("path '{}' not found in manifest", repo_path.as_str()),
+        )
+    };
+    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    let locked = if lock_path.exists() {
+        LockFile::from_path(&lock_path)
+            .with_context(|| format!("failed to load lock at {}", lock_path.display()))?
+            .get_entry(repo_path)
+            .map(|entry| entry.vcs_type)
+    } else {
+        None
+    };
+    let vcs_type = match locked {
+        Some(vcs_type) => vcs_type,
+        None if find_other_projects_referencing(ctx.primary_path(), project, repo_path)
+            .is_empty() =>
+        {
+            VcsType::Git
         }
+        None => return Err(not_in_manifest()),
+    };
+    let checkout = ctx.active_path().join(repo_path.as_path());
+    if !vcs_for(vcs_type).is_repo(&checkout) {
+        return Err(not_in_manifest());
     }
+    Ok(vcs_type)
+}
 
+/// Refuse to delete the canonical clone of `repo_path` while another project
+/// lists it, unless `delete_shared_clone` waives that.
+fn refuse_shared_clone_delete(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    repo_path: &RepoPath,
+    delete_shared_clone: bool,
+) -> anyhow::Result<()> {
+    if !ctx.primary_path().join(repo_path.as_path()).exists() {
+        return Ok(());
+    }
+    let referencing_projects =
+        find_other_projects_referencing(ctx.primary_path(), project, repo_path);
+    for proj in &referencing_projects {
+        eprintln!("warning: repo also referenced by project '{proj}'");
+    }
+    if !referencing_projects.is_empty() && !delete_shared_clone {
+        crate::refuse!(
+            RefusalKind::SharedCloneReferenced,
+            "refusing to delete '{}': referenced by other projects. Remove the entry from those projects first, or use `--delete-shared-clone` if you intend to delete the shared clone anyway.",
+            repo_path.as_str()
+        );
+    }
     Ok(())
 }
 
@@ -616,9 +667,6 @@ pub fn run_remove(
 ///   across *all* projects in the weave, not just the active one: a clone is
 ///   shared by path, so another project's workweave can hold a ref in this
 ///   same store.
-///
-/// The verb's own named preconditions (dirty state, unpushed work) sit on top
-/// of this and are separate work, still open.
 fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> anyhow::Result<()> {
     let mut claims: Vec<String> = Vec::new();
 

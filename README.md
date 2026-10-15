@@ -89,7 +89,7 @@ cd ../.workweaves/web-app--payments
 | `rwv init <project>` | Create a new project with empty `rwv.toml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — generate ecosystem files, symlink to weave directory, run install |
 | `rwv add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations. `--role` sets the role, `--new` for `git init` |
-| `rwv remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes the clone |
+| `rwv remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes this workspace's checkout |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
