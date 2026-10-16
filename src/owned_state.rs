@@ -186,15 +186,16 @@ pub fn unreadable_ledger(dir: &Path) -> Option<String> {
 /// the cost of an exclusion with no daemon to expire it, and it is paid in
 /// full view — the alternative, treating an old claim as abandoned, is a
 /// second writer stamping over a first that is merely slow.
-struct LedgerClaim {
+#[derive(Debug)]
+pub struct LedgerClaim {
     dir: std::path::PathBuf,
 }
 
 impl LedgerClaim {
-    /// Claim `dir`'s ledger, waiting up to [`crate::durable_file::CLAIM_WAIT`]
+    /// Claim `dir`'s ledger, waiting up to `crate::durable_file::CLAIM_WAIT`
     /// for a peer holding
     /// it, then refusing with the path to remove.
-    fn acquire(dir: &Path) -> anyhow::Result<Self> {
+    pub fn acquire(dir: &Path) -> anyhow::Result<Self> {
         let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
         let holder = format!("pid {}\n", std::process::id());
         let deadline = std::time::Instant::now() + crate::durable_file::CLAIM_WAIT;
@@ -237,6 +238,35 @@ impl Drop for LedgerClaim {
     }
 }
 
+/// Read the ledger of the directory `claim` covers, for a read-modify-write.
+///
+/// ```no_run
+/// use repoweave::owned_state::{read_owned_digests_for_edit, LedgerClaim};
+/// use std::path::Path;
+/// let claim = LedgerClaim::acquire(Path::new("/ws/projects/p")).unwrap();
+/// let _entries = read_owned_digests_for_edit(&claim);
+/// ```
+///
+/// ```compile_fail
+/// use repoweave::owned_state::read_owned_digests_for_edit;
+/// use std::path::Path;
+/// let _entries = read_owned_digests_for_edit(Path::new("/ws/projects/p"));
+/// ```
+///
+/// ```compile_fail
+/// use repoweave::owned_state::{read_owned_digests_for_edit, LedgerClaim};
+/// use std::path::PathBuf;
+/// let forged = LedgerClaim { dir: PathBuf::from("/ws/projects/p") };
+/// let _entries = read_owned_digests_for_edit(&forged);
+/// ```
+pub fn read_owned_digests_for_edit(claim: &LedgerClaim) -> BTreeMap<String, LedgerEntry> {
+    read_owned_digests(claim.dir.as_path())
+}
+
+fn unreadable_ledger_for_edit(claim: &LedgerClaim) -> Option<String> {
+    unreadable_ledger(claim.dir.as_path())
+}
+
 /// Whether a ledger edit changed the map, and so whether the whole-file write
 /// happens at all.
 enum LedgerEdit {
@@ -254,7 +284,7 @@ fn edit_owned_digests(
     edit: impl FnOnce(&mut BTreeMap<String, LedgerEntry>) -> anyhow::Result<LedgerEdit>,
 ) -> anyhow::Result<()> {
     let claim = LedgerClaim::acquire(dir)?;
-    let mut entries = read_owned_digests(dir);
+    let mut entries = read_owned_digests_for_edit(&claim);
     match edit(&mut entries)? {
         LedgerEdit::Changed => write_owned_digests(&claim, &entries),
         LedgerEdit::Unchanged => Ok(()),
@@ -745,7 +775,7 @@ pub fn reset_unreadable_ledger(dir: &Path) -> anyhow::Result<Option<String>> {
         return Ok(None);
     }
     let claim = LedgerClaim::acquire(dir)?;
-    let fault_under_claim = unreadable_ledger(dir);
+    let fault_under_claim = unreadable_ledger_for_edit(&claim);
     if fault_under_claim.is_some() {
         write_owned_digests(&claim, &BTreeMap::new())?;
     }

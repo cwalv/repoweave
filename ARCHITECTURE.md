@@ -227,9 +227,10 @@ in a different spelling. Two shapes, and they are not the same guarantee:
 
 - **The owned-digest ledger and the workweave index take a claim per
   read-modify-write**, released when it drops. That one is a type rather than a
-  discipline: `write_owned_digests` takes a `&LedgerClaim` and
-  `workweave_index::write` takes an `&IndexClaim`, so a writer that skips the
-  exclusion does not compile.
+  discipline: `read_owned_digests_for_edit` and `write_owned_digests` take a
+  `&LedgerClaim`, and `workweave_index::read_for_edit` and
+  `workweave_index::write` take an `&IndexClaim`, so an edit path that reads or
+  writes outside the exclusion does not compile.
 - **The op record and its lease are claimed once, by creation.** `acquire_op`
   creates them with `link(2)` and a loser gets `EEXIST`, so for the operation's
   lifetime there is exactly one writer and its later phase writes need no

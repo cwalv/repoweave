@@ -409,6 +409,41 @@ pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::
     Ok(canonical_recorded_path(&default_container(primary_root)))
 }
 
+/// Read the index of the `(primary_root, project)` pair `claim` covers, for a
+/// read-modify-write.
+///
+/// ```no_run
+/// use repoweave::manifest::ProjectName;
+/// use repoweave::workweave_index::{read_for_edit, IndexClaim};
+/// use std::path::Path;
+/// let project = ProjectName::new("p").unwrap();
+/// let claim = IndexClaim::acquire(Path::new("/ws"), &project).unwrap();
+/// let _index = read_for_edit(&claim).unwrap();
+/// ```
+///
+/// ```compile_fail
+/// use repoweave::manifest::ProjectName;
+/// use repoweave::workweave_index::read_for_edit;
+/// use std::path::Path;
+/// let project = ProjectName::new("p").unwrap();
+/// let _index = read_for_edit(Path::new("/ws"), &project);
+/// ```
+///
+/// ```compile_fail
+/// use repoweave::manifest::ProjectName;
+/// use repoweave::workweave_index::{read_for_edit, IndexClaim};
+/// use std::path::PathBuf;
+/// let project = ProjectName::new("p").unwrap();
+/// let forged = IndexClaim {
+///     primary_root: PathBuf::from("/ws"),
+///     project,
+/// };
+/// let _index = read_for_edit(&forged);
+/// ```
+pub fn read_for_edit(claim: &IndexClaim) -> anyhow::Result<Option<WorkweaveIndex>> {
+    read(&claim.primary_root, &claim.project)
+}
+
 /// Set the container in the index for `(primary_root, project)`, creating
 /// the index file with an empty `workweaves` map if it did not exist.
 ///
@@ -428,7 +463,7 @@ pub fn set_container(
     let claim = IndexClaim::acquire(primary_root, project)?;
     let container = canonical_recorded_path(&container);
     let mut index =
-        read(primary_root, project)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
+        read_for_edit(&claim)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
     index.container = container.clone();
     write(&claim, &index)?;
     Ok(container)
@@ -452,7 +487,7 @@ pub fn record_workweave(
     path: PathBuf,
 ) -> anyhow::Result<()> {
     let claim = IndexClaim::acquire(primary_root, project)?;
-    let mut index = read_or_seed(primary_root, project)?;
+    let mut index = read_or_seed(&claim)?;
     index.workweaves.insert(name.to_string(), path);
     write(&claim, &index)
 }
@@ -468,12 +503,12 @@ pub fn record_workweave(
 /// could have missed; the refs of a workweave that predates the index file
 /// entirely are reached by that pass's per-repo arms, which enumerate refs
 /// per store rather than reading this file.
-fn read_or_seed(primary_root: &Path, project: &ProjectName) -> anyhow::Result<WorkweaveIndex> {
-    if let Some(idx) = read(primary_root, project)? {
+fn read_or_seed(claim: &IndexClaim) -> anyhow::Result<WorkweaveIndex> {
+    if let Some(idx) = read_for_edit(claim)? {
         return Ok(idx);
     }
     Ok(WorkweaveIndex::new(canonical_recorded_path(
-        &default_container(primary_root),
+        &default_container(&claim.primary_root),
     )))
 }
 
@@ -489,7 +524,7 @@ pub fn forget_workweave(
     name: &str,
 ) -> anyhow::Result<()> {
     let claim = IndexClaim::acquire(primary_root, project)?;
-    let mut index = match read(primary_root, project)? {
+    let mut index = match read_for_edit(&claim)? {
         Some(idx) => idx,
         None => return Ok(()),
     };
@@ -712,7 +747,7 @@ impl RefRegistry {
         })?;
 
         let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
-        let mut index = read_or_seed(&self.primary_root, &self.project)?;
+        let mut index = read_or_seed(&claim)?;
         let receipts = index
             .receipts
             .as_mut()
@@ -786,7 +821,7 @@ impl RefRegistry {
     /// field and hide that the migration is still pending.
     pub fn retract(&mut self, store: &Path, name: &RawRefName) -> anyhow::Result<bool> {
         let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
-        let Some(mut index) = read(&self.primary_root, &self.project)? else {
+        let Some(mut index) = read_for_edit(&claim)? else {
             return Ok(false);
         };
         let Some(receipts) = index.receipts.as_mut() else {
@@ -822,7 +857,7 @@ impl RefRegistry {
     /// version that removes them (see [`crate::health_floor`]).
     pub fn migrate_legacy_index(&mut self) -> anyhow::Result<bool> {
         let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
-        let Some(mut index) = read(&self.primary_root, &self.project)? else {
+        let Some(mut index) = read_for_edit(&claim)? else {
             // No file: nothing recorded, nothing legacy. The next write
             // seeds a current-shape index.
             return Ok(false);
