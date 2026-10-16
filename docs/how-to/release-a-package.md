@@ -1,39 +1,31 @@
 # Release a package
 
-Workspace wiring eliminates the version dance *during* development: cross-repo imports resolve to local clones, so editing `protocol` and testing `server` needs no bump, no publish, no install. The version dance only kicks in *at release time* — when a repo publishes to npm, crates.io, PyPI, etc.
-
-This page is the release-time recipe per ecosystem. For repos consumed only inside the project (no external publish), the lock file is the whole release — no per-repo tagging needed.
-
-## Capture the cross-repo state first
+Snapshot every member repository's 40-character commit SHA into `rwv.lock`, publish the cross-repo state, and tag any packages that publish to external registries:
 
 ```bash
-rwv lock
-cd projects/web-app
-git add rwv.lock && git commit -m "lock: payment feature"
-git push
+rwv lock --commit
+rwv push
 ```
 
-`rwv.lock` pins every repo to an exact revision. `sha256sum rwv.lock` is the project fingerprint — two machines with the same checksum have identical source.
-
-For internal-only repos this is the whole release. Reproduce anywhere with:
+`rwv.lock` records the exact 40-character commit SHA of every member repository unconditionally. For internal-only repositories that do not publish to an external package registry, committing `rwv.lock` (and tagging `projects/<project>/` if you cut release tags at the project level) is the entire release. Any machine or CI job reproduces that exact source tree with:
 
 ```bash
 rwv fetch chatly/web-app --frozen
 ```
 
-## Per-ecosystem publish
+## Publish to external registries
 
-The pattern is the same — tag, publish — but the exact invocations differ.
+During development, workspace integrations resolve cross-repo imports to local checkouts without version bumps or registry publishes. When a member repository is published externally (crates.io, npm, PyPI, Go module proxy), tag and publish in dependency order after locking.
 
 ### Cargo (crates.io)
 
 ```bash
 cd github/chatly/protocol
-cargo publish                          # publishes from Cargo.toml version
+cargo publish                          # publishes the version in Cargo.toml
 git tag v1.1.0 && git push origin v1.1.0
 ```
 
-`cargo check` in the workspace catches version-constraint mismatches before publish.
+`cargo check` at the weave root catches version-constraint mismatches across workspace members before publish.
 
 ### Go (module proxy)
 
@@ -43,95 +35,49 @@ git tag v1.1.0 && git push origin v1.1.0
 # consumers: go get github.com/chatly/protocol@v1.1.0
 ```
 
-Module path conventions (`v2` = different path) force explicit migration on majors.
-
 ### npm
 
 ```bash
 cd github/chatly/web
-npm version 1.1.0                      # bumps package.json, creates git tag
+npm version 1.1.0                      # bumps package.json and creates a git commit + tag
 npm publish
-git push origin v1.1.0
+cd ../..
+rwv lock --commit
+rwv push && git -C github/chatly/web push origin v1.1.0
 ```
-
-`npm install` in the workspace catches "no matching version" before publish.
 
 ### Python (PyPI)
 
 ```bash
 cd github/chatly/ml-service
-# bump version in pyproject.toml
+# bump version in pyproject.toml and commit
 git tag v1.1.0 && git push origin v1.1.0
 uv build && uv publish
+cd ../..
+rwv lock --commit
 ```
 
-Watch out: uv's `workspace = true` silently overrides version constraints, so version-mismatch only surfaces *outside* the workspace. Test the published artifact in a separate environment.
+Note that `uv`'s `[tool.uv.sources]` `workspace = true` overrides version constraints inside the weave; test the published wheel in a clean environment to verify external version ranges.
 
-## Compatible bumps
+## Compatible vs. breaking version bumps
 
-If `protocol` bumps from 1.0.0 to 1.1.0 and `server` depends on `protocol ^1.0`, no constraint update is needed:
+- **Compatible bump (`protocol` `1.0.0` → `1.1.0`, `server` requires `^1.0`):** Bump `protocol`, commit, tag `v1.1.0`, and run `rwv lock --commit` to record the new commit SHAs in `rwv.lock` alongside the updated ecosystem lockfile (`Cargo.lock`, `package-lock.json`, `uv.lock`).
+- **Breaking bump (`protocol` `2.0.0`, `server` requires `^1.0`):**
+  1. Update `protocol` to `2.0.0` and `server`'s dependency constraint to `^2.0`, and commit both.
+  2. Run `rwv lock --commit` to snapshot both repositories' commit SHAs into `rwv.lock`.
+  3. Tag and publish `protocol` `v2.0.0` first, then `server`.
 
-```bash
-rwv lock
-cd github/chatly/protocol
-git tag v1.1.0 && git push origin v1.1.0
-cd ../server
-git tag v2.1.0 && git push origin v2.1.0
-```
+## Include the commit SHA in binary versions
 
-The ecosystem lock file (`Cargo.lock`, `package-lock.json`) resolves the range to the new version at install time.
+Embedding the git revision as semver build metadata (`2.1.0+7a3b2c1`) makes it immediately clear which commit a deployed binary was built from:
 
-## Breaking bumps
-
-If `protocol` bumps to 2.0.0 and `server` depends on `^1.0`:
-
-1. The workspace's ecosystem tool catches it during development (`cargo check`, `npm install` fail).
-2. Update `server`'s constraint to `^2.0`.
-3. `rwv lock` to recapture state.
-4. Release `protocol` first, then `server`.
-
-```bash
-# server/Cargo.toml already updated to ^2.0 during development
-rwv lock
-cd github/chatly/protocol
-git tag v2.0.0 && git push origin v2.0.0
-cd ../server
-git tag v3.0.0 && git push origin v3.0.0
-```
-
-## Include the revision in package versions
-
-A useful convention: include the git revision in your published version via semver build metadata (`2.1.0+7a3b2c1`). The `+` suffix doesn't affect version precedence but carries provenance.
-
-```
-$ my-server --version
-my-server 2.1.0+7a3b2c1
-```
-
-When debugging across repos you can immediately tell which commit each binary was built from. Most ecosystems support this:
-
-- **npm**: `version` in `package.json` supports semver build metadata
-- **Cargo**: `version` in `Cargo.toml` supports `+` metadata
-- **Python**: PEP 440 uses `+local` for local version identifiers
-- **Go**: `runtime/debug.BuildInfo` embeds VCS info via build flags
-
-## What the lock file tells you
-
-`rwv.lock` encodes release state per repo: entries with tag names are released, entries with revision IDs are unreleased.
-
-```json
-{
-  "repositories": {
-    "github/chatly/protocol": { "version": "v1.5.0" },
-    "github/chatly/server": { "version": "e1f2a3b4c5d6..." }
-  }
-}
-```
-
-Read the lock to see what needs attention. `rwv doctor` flags unreleased entries the same way.
+- **Cargo / npm:** Both `Cargo.toml` and `package.json` accept `+` build metadata in `version`.
+- **Python:** PEP 440 supports `+local` version identifiers.
+- **Go:** `runtime/debug.BuildInfo` embeds VCS revision metadata automatically during `go build`.
 
 ## Related
 
-- [lock-as-derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` is the canonical release artifact
-- [reference/formats](../reference/formats.md) — `rwv.lock` shape
-- [monorepo lens](../explanation/lenses/monorepo.md) — the "zero-version change" rationale
+- [Lock as derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` records exact commit SHAs derived from member checkouts
+- [Pyramid of stability](../explanation/joints/pyramid-of-stability.md) — project branches and tags as release channels
+- [File formats reference](../reference/formats.md) — `rwv.lock` schema
+- [Monorepo lens](../explanation/lenses/monorepo.md) — developing across repositories without intermediate registry publishes

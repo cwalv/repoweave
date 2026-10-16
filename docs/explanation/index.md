@@ -1,32 +1,31 @@
-# Explanation — lenses and joints
+# Explanation
 
-The explanation section is divided into two complementary kinds of page.
+**Perspectives** introduce repoweave through three common workflows — multi-repo workspaces, monorepo-style cross-repo editing, and parallel agent isolation. **Concepts** and **Design notes** explain the invariants and architectural boundaries that hold the model together.
 
-**Lenses** are motivational entry points organised by reader persona. Each lens asks "what is the most useful frame for someone arriving with *this* particular need?" A lens is not exhaustive — it is a curated path into the system that highlights the concepts most relevant to one kind of work. The three lenses (workspace, monorepo, agent) cover the three most common reasons someone reaches for repoweave, but they share the same underlying model; reading one lens does not exclude the others.
+## Perspectives
 
-**Joints** are cross-cutting design seams: the decisions and invariants that hold the system together regardless of which lens you arrived through. A joint answers "why is the system shaped this way?" and "what would break if this invariant were violated?" Joints are written for readers who need to understand the model deeply — integrations authors, contributors, or anyone debugging a surprising behaviour. Unlike lenses, joints are not organised by persona; they are organised by the seam they describe.
+- [Multi-repo workspaces](./lenses/workspace.md) — the version-controlled project repository as the answer to "what do I need to work on X?"
+- [Monorepo speed without migration](./lenses/monorepo.md) — cross-repo builds, workweaves, and lock pins without collapsing repositories
+- [Parallel agent orchestration](./lenses/agent.md) — isolated workweaves, `rwv prime`, `rwv explain`, and deterministic landing for AI coding sessions
 
-If you are new, start with the lens that matches your situation (linked below); move to the joints when you hit a behaviour you want to understand at a deeper level.
+## Concepts
 
-## Lenses
+- [Pyramid of stability](./joints/pyramid-of-stability.md) — how workweaves, branch tracking (`rwv.toml`), and pinned channels (`rwv.lock`) layer stability
+- [Clone topology](./joints/clone-topology.md) — Tier-0 invariants: one canonical store per member repo, linked worktrees, and disjoint branches
+- [Branch model](./joints/branches.md) — what a branch is for in the project repo, the canonical member store, and a workweave checkout
+- [Weave root as presentation](./joints/weave-root.md) — why the weave root is a derived view of the active project rather than a git repository
+- [Symlinks as structure](./joints/symlinks-as-structure.md) — how weave-root symlinks surface ecosystem workspace files and shared directories
+- [Workweave hierarchy](./joints/workweave-hierarchy.md) — parent-child relationships between workweaves and flat `<project>--<workweave>` branch naming
+- [Workweave lifecycle](./joints/workweave-lifecycle.md) — creating, syncing, landing (`sync-to --retire`), and deleting workweaves
+- [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` is computed from member HEADs on mutation and authoritative only at `fetch`
+- [Sync semantics](./joints/sync-semantics.md) — the three-phase replay, savepoint, and op-state recovery model behind `rwv sync` and `rwv sync-to`
+- [Shared-refs drift](./joints/shared-refs-drift.md) — what happens when a checked-out branch ref moves underneath a worktree and how `rwv` classifies drift
+- [File ownership](./joints/file-ownership.md) — Axis-1 (surfaced symlink) vs. Axis-2 (owned or hybrid content) and per-key ownership modes
+- [Destructive operations](./destructive-operations.md) — why every state-discarding path requires a narrow, single-check override flag
 
-- [Workspace lens](./lenses/workspace.md) — the version-controlled project repo as the answer to "what do I need to work on X?"
-- [Monorepo lens](./lenses/monorepo.md) — monorepo speed without a monorepo migration
-- [Agent lens](./lenses/agent.md) — agent-safe multi-repo orchestration via `rwv prime`, `rwv explain`, and workweave isolation
+## Design notes
 
-## Joints
-
-- [Pyramid of stability](./joints/pyramid-of-stability.md)
-- [Clone topology](./joints/clone-topology.md)
-- [Weave root as presentation](./joints/weave-root.md)
-- [Symlinks as structure](./joints/symlinks-as-structure.md)
-- [Workweave hierarchy](./joints/workweave-hierarchy.md)
-- [Workweave lifecycle](./joints/workweave-lifecycle.md)
-- [Lock-as-derived](./joints/lock-as-derived.md)
-- [Sync semantics](./joints/sync-semantics.md)
-- [Shared-refs drift](./joints/shared-refs-drift.md)
-- [Verb vs composition](./joints/verb-vs-composition.md)
-- [Verb vs vocabulary](./joints/verb-vs-vocabulary.md)
-- [VCS as seam](./joints/vcs-as-seam.md)
-- [File ownership](./joints/file-ownership.md)
-- [Plugin boundary](./joints/plugin-boundary.md)
+- [Verb vs composition](./joints/verb-vs-composition.md) — why `rwv` provides workspace verbs and leaves per-repo git porcelain to `git` and `gita`
+- [Verb vs vocabulary](./joints/verb-vs-vocabulary.md) — why `sync` and `sync-to` are separate directional verbs rather than flags on one command
+- [VCS as seam](./joints/vcs-as-seam.md) — the internal `Vcs` trait boundary that isolates git command mechanics from workspace logic
+- [Plugin boundary](./joints/plugin-boundary.md) — when a feature belongs in `rwv` core vs. an external `rwv-<name>` plugin executable

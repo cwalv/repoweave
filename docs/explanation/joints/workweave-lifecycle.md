@@ -33,14 +33,15 @@ against the primary weave root. The source must be a workspace whose
 ### What create writes
 
 1. One `git worktree` per manifest repo, whatever its role (plus the project
-   repo), at `{workweave}/{repo-path}/`, each on a fresh ephemeral branch
-   named `{project}--{name}/{source-branch}`. Each worktree belongs to the
-   canonical weave-root clone, so a nested workweave's worktrees belong to
-   the same store as its parent's. A `role: reference` repo's tracked files
-   are read-only. Where the filesystem allows, a member's files share storage
-   with another workspace's copy rather than being written afresh.
-2. `workweave:` artifacts from `rwv.toml` (`copy:` entries deep-copied;
-   `link:` entries are absolute symlinks into the source root).
+   repo), at `{workweave}/{repo-path}/`, each on a fresh flat ephemeral branch
+   named `{project}--{name}` (with `/` in scoped project names encoded as `+`).
+   Each worktree belongs to the canonical weave-root clone, so a nested
+   workweave's worktrees belong to the same store as its parent's. A
+   `role = "reference"` repo's tracked files are read-only. Where the
+   filesystem allows, a member's files share storage with another workspace's
+   copy rather than being written afresh.
+2. `[workweave]` artifacts from `rwv.toml` (`copy = [...]` entries deep-copied;
+   `link = [...]` entries are absolute symlinks into the source root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
    `parent` is the workspace forked from — it becomes the auto-target for
    bare `rwv sync-to` from inside the workweave. This is the workweave
@@ -50,12 +51,9 @@ against the primary weave root. The source must be a workspace whose
    and the two files are mutually exclusive, one tier of the resolution
    chain rather than two. `rwv doctor` reports a root carrying both as a
    `weave-root-identity-conflict`.
-4. Integration activation (context verb: surfaces symlinks, skips install
-   hooks). Context mode's project-selection step is skipped for a workweave
-   root, per (3).
-
-The `.rwv-workweave` parent field is anchored at
-`src/workspace.rs::WorkweaveMarker`.
+4. Integration surfacing (surfaces symlinks to the workweave root without
+   running install hooks; run `rwv materialize` inside the workweave when you
+   want install hooks to execute).
 
 ### Dirty-source check
 
@@ -83,9 +81,6 @@ dirty state becomes an obstacle at retire time — if the same changes are
 present in the parent, the project-repo replay will hit a conflict. Commit
 or stash them inside the workweave before running `rwv sync-to`.
 
-The dirty-source check is anchored at
-`src/workweave.rs::create_workweave`.
-
 ### Re-invocation (idempotent path)
 
 If the workweave already exists and is clean, re-invoking `create` without
@@ -110,18 +105,16 @@ git commit -am "protocol: add payment fields"
 
 cd ../server
 git commit -am "server: add /payments endpoint"
-
-cd ../..
-rwv lock
-git -C projects/web-app commit -am "lock: payments feature"
 ```
 
-`rwv lock` is per-workspace: it updates the workweave's `rwv.lock`, not
-primary's. Each workspace owns its own lock; see
-[lock-as-derived](./lock-as-derived.md).
+If you want to checkpoint the cross-repo state while working, `rwv lock`
+updates the workweave's `rwv.lock` (not primary's); each workspace owns its
+own lock (see [lock-as-derived](./lock-as-derived.md)). Before landing with
+`rwv sync-to`, a manual `rwv lock` is optional because `rwv sync-to`
+auto-relocks CWD at op-start.
 
-The workweave's project repo runs on an ephemeral branch
-(`{project}--{name}/main`). This branch name is what allows `rwv sync-to`
+The workweave's project and member repos run on a flat ephemeral branch
+(`{project}--{name}`). This branch name is what allows `rwv sync-to`
 to push cleanly into primary's `main` without a detach-or-stash dance —
 two worktrees never compete for the same branch name. See
 [workweave-hierarchy](./workweave-hierarchy.md#ephemeral-branch-names-and-the-git-worktree-constraint).
@@ -150,42 +143,9 @@ cd ../.workweaves/web-app--payments
 rwv sync-to --retire
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`. Bare `rwv sync-to --retire` follows the single recorded `parent` edge in `.rwv-workweave` (see [workweave-hierarchy — One hop, not transitive](./workweave-hierarchy.md#one-hop-not-transitive)).
 
-`rwv sync-to --retire` is the centerpiece of the bring-work-home flow. It
-runs the full sync-to machine then deletes the workweave on success. The
-sequence:
-
-```
-guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
-```
-
-1. **replay** — CWD's unique project commits are replayed onto the parent's
-   project tip (with `rwv.lock` excluded from each commit's diff). Manifest
-   repos in CWD are aligned to the parent's lock targets. CWD advances to
-   the new tip, linearly on top of the parent's prior state.
-2. **relock** — `rwv.lock` is regenerated from post-replay manifest tips
-   and committed into CWD automatically if it changed.
-3. **advance-target** — the parent's project repo (and manifest repos)
-   fast-forward to CWD's new tip.
-4. **retire** — merged-check and dirty-check; then delete the workweave.
-
-The retire phase is the only place the workweave is deleted. The first
-three steps are identical to a plain `rwv sync-to`; `--retire` adds step 4.
-
-### Preconditions
-
-Before step 1 runs, `rwv sync-to --retire` verifies both workspaces
-satisfy `rwv doctor --locked`: every repo's tip must match its `rwv.lock`.
-Concretely, in the workweave:
-
-```bash
-rwv lock
-git -C projects/web-app commit -am "lock: payments feature"
-```
-
-The lock-precondition check is the guard phase. Precondition failures
-leave no trace.
+`rwv sync-to --retire` runs the `sync-to` phase machine ([sync-semantics](./sync-semantics.md)) — auto-relocking CWD if its member repos moved ahead of `rwv.lock`, rebasing CWD onto the target (whose lock must be fresh per `rwv doctor --locked`), regenerating `rwv.lock`, and fast-forwarding the target — and then runs the **retire** phase to delete the workweave on success.
 
 ### The retire contract
 
@@ -199,13 +159,11 @@ tips, so this should hold. Retire refuses (with the diverged repos listed)
 if it does not.
 
 The check compares **manifest repo tips**, not project repo tips. The
-project repo's post-sync state can diverge from the target by exactly
-the auto-relock commit Phase 3 writes. That commit is purely derived
+project repo's post-sync state can diverge from the target by the
+auto-relock commit Phase 3 writes. That commit is purely derived
 and will be regenerated on the parent's next sync, so comparing project
 tips would refuse every retire, including the happy path. Manifest tip
-equality is the honest convergence signal.
-
-Anchored at `src/sync.rs::retire_workweave_after_sync_to`.
+equality is the accurate convergence signal.
 
 **Dirty-check** — no worktree in the workweave may have uncommitted
 changes. Any dirty path blocks retire.
@@ -217,11 +175,12 @@ On success, retire calls `delete_workweave` with `force: false`:
 - Every manifest-repo worktree is removed (`git worktree remove`), whatever
   its role.
 - Stale `.git/worktrees/` entries are pruned.
-- All ephemeral branches (`{project}--{name}/*`) are force-deleted.
-- The project-repo worktree and its ephemeral branches are removed.
+- Each repo's ephemeral branch (`{project}--{name}`) is deleted if its
+  creation receipt is recorded in `.rwv-workweave-index`.
+- The project-repo worktree and its ephemeral branch are removed.
 - The workweave directory is removed.
 
-Ephemeral branch force-deletion is what makes the `git branch -D` analogy
+Ephemeral branch deletion is what makes the `git branch -D` analogy
 exact: once retire runs, the only refs to the workweave's commits are the
 ones that landed in the parent during `advance-target`. Any commit not
 reachable from the parent is permanently lost. The pre-op savepoints
@@ -240,33 +199,9 @@ shape, and one that would silently delete something outside CWD.
 
 "Land" overloads PR-merge vocabulary and misleads when the parent is not
 primary. A nested workweave lands into its parent workweave, not into the
-project's main branch. "Retire" is honest about what the flag does —
+project's main branch. "Retire" states directly what the flag does —
 close out this workweave — regardless of where in the workweave tree it
 sits.
-
-### One hop, not transitive
-
-Bare `rwv sync-to --retire` follows the single recorded parent edge. From
-a nested workweave, landing into the grandparent (primary) takes two
-invocations:
-
-```bash
-cd ../.workweaves/web-app--feat-child
-rwv sync-to --retire               # → parent workweave; deletes child
-
-cd ../web-app--feat
-rwv sync-to --retire               # → primary; deletes parent
-```
-
-Or one invocation with an explicit target:
-
-```bash
-cd ../.workweaves/web-app--feat-child
-rwv sync-to primary --retire
-```
-
-Explicit-target `sync-to` always works; the one-hop default is a
-discipline guard against accidental skip-edge landings.
 
 ### If retire fails
 
@@ -317,8 +252,6 @@ The diverged-commit check uses **both** the recorded parent and the primary
 weave as baselines: work counts as merged when it is reachable from either.
 This means a nested workweave's commits that have landed in the parent
 workweave (but not yet in primary) are not flagged as unmerged.
-
-Anchored at `src/workweave.rs::delete_workweave`.
 
 ## Lifecycle in one view
 

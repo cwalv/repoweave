@@ -124,12 +124,11 @@ regenerate `rwv.lock` in Phase 3, and handle workspace lifecycle
 (`--retire`). The sync vocabulary is doing real work, not inventing a new
 direction concept.
 
-The naming convention is the `cp`/`rsync` source-first vs. dest-first
-pattern: `sync <source>` identifies what CWD will absorb (argument is
-source); `sync-to <target>` identifies where CWD's state will land
-(argument is destination). That argument-position convention is the right
-mental model for the pair. See [sync-semantics](./sync-semantics.md) for
-the direction-explicit pair contract.
+The argument-position convention mirrors `git merge <source>` versus `git push
+<target>`: `sync <source>` identifies what CWD will absorb (argument is the
+source); `sync-to <target>` identifies where CWD's state will land (argument is
+the destination). See [sync-semantics](./sync-semantics.md) for the
+direction-explicit pair contract.
 
 ## Implication for future verbs
 
@@ -149,18 +148,6 @@ The internal counterpart to this principle —
 [vcs-as-seam](./vcs-as-seam.md) — applies to *implementation*: anywhere
 the verb's code is about to use a VCS-specific name or mechanism, the
 abstraction lives in the Vcs trait.
-
-## Origin
-
-Surfaced during `rwv push` design review. The `publish` → `push` rename
-made the asymmetry with `update` visible. The resolution was not to
-chase consistency (renaming `update` → `pull` would have lost the
-cargo/npm analogue that makes the verb's behavior obvious); it was to
-state the two-vocabulary choice explicitly. The `sync`/`sync-to`
-analysis was added when the direction-explicit pair was introduced; its
-third worked example consolidates the prior reasoning from the `rwv pull`
-rejection in [verb-vs-composition](./verb-vs-composition.md) and the
-`sync --retire` direction fix.
 
 ## Related joints
 

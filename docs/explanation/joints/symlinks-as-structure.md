@@ -1,6 +1,6 @@
 # Symlinks as structure
 
-rwv creates symbolic links in two places: a workweave `link:` entry, and the
+rwv creates symbolic links in two places: a `[workweave]` `link = [...]` entry, and the
 surfacing of a project's owned files at a workspace root. Neither is a
 space-saving convenience. In each, the link *is* the fact some other part of
 rwv later reads off the disk, and a link that failed to appear is not a
@@ -109,11 +109,11 @@ rule: every site classifies the source path on disk. A directory yields a
 directory link, and anything else — including a path that does not exist yet —
 yields a file link.
 
-The absent case is not a guess about the unknown. Surfacing deliberately
-creates dangling links so that a lock file an ecosystem tool has not written
-yet lands in the project directory when it appears, and those are files. (A
-tool that renames its first lock over the dangling link leaves a real file
-instead, which the next verb that may write takes into the project — see
+The absent case is not a guess about the unknown. Surfacing creates dangling
+links so that a lock file an ecosystem tool has not written yet lands in the
+project directory when it appears, and those are files. (A tool that renames
+its first lock over the dangling link leaves a real file instead, which the
+next verb that may write takes into the project — see
 [the weave root](./weave-root.md).) What
 the rule genuinely cannot cover is a target that changes kind after the link
 was made; that is a broken link on Windows and a working one on Unix, and no
@@ -150,3 +150,9 @@ whom the precondition cannot be met.** Windows CI does not trigger it — GitHub
 Windows runner images enable Developer Mode at image build time and run the job
 as an administrator with UAC disabled, so both sufficient conditions hold there
 and the full-parity path is what CI exercises.
+
+## Related joints
+
+- [weave-root](./weave-root.md) — why the weave root is a presentation view rather than a repository.
+- [file-ownership](./file-ownership.md) — Axis 1 (surfacing) and Axis 2 (content ownership) behind surfaced links.
+- [clone-topology](./clone-topology.md) — why member-repo checkouts in workweaves are git worktrees rather than symlinks.

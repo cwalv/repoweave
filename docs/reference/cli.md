@@ -17,11 +17,6 @@ Resolve the workspace as if `rwv` were invoked from `<path>`. Any path
 ceiling) runs from there. Relative path arguments elsewhere on the command line
 resolve against this directory.
 
-Prior art for the semantics: `make -C`, `tar -C` (Unix-wide), `git -C`,
-`hg`/`sl --cwd` — resolve as if invoked from the given directory. The long
-spelling `--cwd` follows `hg`/`sl` (names the semantics precisely: "resolve
-as if cwd were this").
-
 ```
 rwv -C /path/to/weave status
 rwv -C /path/to/workweave resolve
@@ -39,11 +34,8 @@ workweave by path, pass the full path to the workweave directory.
 
 ### `-w <project>--<name>` / `--workweave <project>--<name>` — name addressing
 
-The agent-native addressing form. A workweave's identity is the
-`<project>--<name>` string that appears in every path, branch name, and
-tooling artifact an agent touches. The CLI already addresses workweaves by
-name inside the `workweave` verb family; this flag makes that addressing
-global:
+Address a registered workweave by its `<project>--<name>` identifier from
+anywhere in the workspace:
 
 ```
 rwv -w myproj--hotfix sync-to --retire   # from anywhere inside the ecosystem
@@ -87,11 +79,17 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 Two modes, keyed on whether `<source>` is given:
 
 - **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed manifest repo to its canonical slot.
-- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.toml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here). Run from the workspace root.
+- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.toml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `missing-canonical-clone` and `dangling-reference` findings from `rwv doctor` point here). Run from the workspace root.
 
-An already-present clone is **realigned, not skipped**: when the lock covers the repo, `fetch` resolves the locked revision in that clone's own object store and moves the checkout onto it *without changing what HEAD is attached to* — fast-forwarding the local counterpart of the branch `version:` declares, and leaving the checkout on it. No network fetch happens for a present clone, so a locked revision missing from the local object store is an error, not a re-fetch. When the lock has no entry for the repo, or there is no lock at all, the clone is left as it is and the lock records its current HEAD. A clone that is materialized by this run is *born* attached at the lock revision, not at the remote tip.
+How `rwv fetch` handles each manifest repository:
 
-Realignment refuses when it cannot do that: when the pin is not a fast-forward of the branch (an older lock, or a branch carrying commits `origin` has not seen), and when the checkout is on a branch the manifest does not declare. `--detach-checkouts` waives both by materializing the pin on a detached HEAD — it discards nothing and moves no branch. Because `rwv sync-to` refuses to land onto a detached target, `git checkout <branch>` in the member is what puts it back on its branch.
+| Clone & lock state | `rwv fetch` behavior |
+|---|---|
+| Absent on disk | Clones from remote and attaches the declared `version` branch at the locked SHA (or remote tip if unlocked) |
+| Present, locked SHA is a fast-forward of the declared `version` branch | Fast-forwards the local branch to the locked SHA and leaves HEAD attached (local object store only; no network fetch) |
+| Present, locked SHA is missing from the local object store | Errors (`fetch` does not contact the remote for an already-present clone; run `git -C <repo> fetch` first) |
+| Present, locked SHA is not a fast-forward or checkout is on another branch | Refuses (`fetch-realign-refused`), unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`) |
+| Present, no lock entry (or no `rwv.lock`) | Leaves the clone at its current HEAD and records that SHA in `rwv.lock` (unless `--frozen` is passed) |
 
 | Flag | Effect |
 |---|---|
@@ -100,10 +98,10 @@ Realignment refuses when it cannot do that: when the pin is not a fast-forward o
 | `--no-reference` | Skip cloning/fetching repositories with `role: reference` |
 | `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A filtered run skips the lock write |
-| `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
-| `--json` | Structured output / NDJSON when `-j N` with `N > 1` |
+| `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
+| `--json` | Structured output: single JSON envelope when `-j 1`, self-describing NDJSON lines when `-j > 1` (default on multi-core hosts) |
 
-The lock is **read-only**. To advance tips and re-snapshot, use `rwv update`.
+The lock is **read-only** for covered entries. To advance tips and re-snapshot, use `rwv update`.
 
 `--json` emits `{ "$schema": "...", "outcomes": [...] }` envelope in serial mode
 (`-j 1`). Under `-j N` with `N > 1`, switches to NDJSON (one
@@ -139,7 +137,7 @@ Anchored by `tests/doc_claims_update_test.rs`.
 
 Checkpoint current local state into `rwv.lock`. No network access.
 
-Reads HEAD from each repo and records its commit id, even where a tag names it. Errors on uncommitted changes (use `--dirty` to bypass).
+Reads HEAD from each repo and records its resolved 40-character hex commit SHA in `rwv.lock` (never a tag or branch name, even when a tag points at HEAD). Errors on uncommitted changes (use `--dirty` to bypass).
 
 | Flag | Effect |
 |---|---|
@@ -147,11 +145,11 @@ Reads HEAD from each repo and records its commit id, even where a tag names it. 
 | `--commit` | Commit `rwv.lock` after writing it |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv activate`.
+Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv materialize` (or `rwv activate <project>` when switching the active project).
 
 ### `rwv activate <project>`
 
-Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace files in the project directory, symlinks them to the weave directory, then runs integration install hooks (`npm install`, `uv sync`, `cargo fetch`, etc.).
+Switch the active project in the primary weave: updates `.rwv-active`, surfaces weave-root symlinks for the project's existing integration and static files, and runs integration install hooks (`npm install`, `uv sync`, `cargo fetch`, etc.). Does not author or regenerate integration workspace files in the project directory.
 
 | Flag | Effect |
 |---|---|
@@ -165,23 +163,18 @@ Refuses if an operation elsewhere holds op-state covering this workspace (`op-in
 
 Anchored by `tests/doc_claims_activate_test.rs`.
 
-### `rwv materialize [--regenerate-drifted | --adopt-drifted] [--remove-undeclared-links]`
+### `rwv materialize [...]`
 
-Run the integration install hooks for the project this checkout already presents, and nothing else. No arguments.
+Reconcile integration-managed workspace files, weave-root symlinks, and install hooks for the project this checkout already presents. Valid in both a primary weave (for `.rwv-active`) and a workweave (for `.rwv-workweave`). Takes no project name; at a primary with no active project it refuses and points to `rwv activate <project>`. Refuses if an operation elsewhere holds op-state covering this workspace (`op-in-progress`).
 
-Activation is two operations: **selection** (`.rwv-active`, the weave root's shared names) and **materialization** (the install hooks). Only a primary can express selection, which is why `rwv activate` is refused inside a workweave. Materialization is meaningful wherever the project identity is already fixed — a workweave always, a primary for the project it currently presents — so this verb is valid in both.
+`rwv materialize` executes four steps in order:
 
-Hooks materialize; they never move a pin. A lock file gains what a new member requires and a version it already pins stays put. Advancing a dependency is `cargo update` / `npm update` / `uv lock --upgrade`, never a repoweave verb.
-
-It takes no project name, because naming one would be a selection. At a primary with no active project it refuses and names `rwv activate`.
-
-Refuses if an operation elsewhere holds op-state covering this workspace (`op-in-progress`).
-
-Generated state whose recorded inputs have moved is re-derived, and an attestation for a file nothing enabled here generates any more is dropped (the file is left alone). `rwv doctor` reports the first as `derived-state-stale`.
-
-An integration disabled in `rwv.toml` implies the absence of what it authored, and this verb is where that absence is made real: a marked region is stripped out of the file you co-own, a file rwv wrote whole is removed, and the weave-root symlinks go with them. `rwv doctor` reports them under `disabled-integration-artifact` and has no `--fix` arm for it — deletion stays behind the explicit verb.
-
-A generated file rwv attests whose content differs from the generation rwv accepted stops the run: the two exits destroy opposite things, so the operator picks.
+| Step | Contract |
+|---|---|
+| 1. Disabled-integration cleanup | Strips marked regions from co-owned files and deletes whole files authored by integrations now disabled in `rwv.toml`, along with their weave-root symlinks (`disabled-integration-artifact` in `rwv doctor`, which has no auto-fix arm so deletion stays explicit here) |
+| 2. Drift settlement | Re-derives generated files whose inputs changed (`derived-state-stale`) and drops attestations for files no enabled integration generates. If an attested file's bytes differ from the accepted generation (`integration-file-drifted`), refuses unless `--regenerate-drifted` or `--adopt-drifted` is passed |
+| 3. Surfacing repair | Re-creates missing or broken weave-root symlinks for the active project; with `--remove-undeclared-links`, unlinks weave-root symlinks at names the project no longer declares |
+| 4. Install hooks | Runs each enabled integration's non-advancing install command (`cargo fetch`, `npm install`, `pnpm install`, `uv sync`, `go work sync`, etc.) without moving existing dependency pins |
 
 | Flag | Effect |
 |---|---|
@@ -189,15 +182,11 @@ A generated file rwv attests whose content differs from the generation rwv accep
 | `--adopt-drifted` | Record the drifted content as the accepted generation |
 | `--remove-undeclared-links` | Unlink weave-root symlinks at names the active project no longer declares (the files they point at are untouched) |
 
-Passing both is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through rwv — those bytes are content rwv never accepted, so nothing in the workspace holds a copy. `rwv doctor` reports the same files and names the same two flags.
-
-The hooks are what settles drift, so this is where the consent is given but not the only verb it binds: `rwv activate`, `rwv add`, `rwv remove`, `rwv update` and `rwv doctor --fix` run the same hooks and withhold them, naming both flags, while drift stands.
-
-`rwv activate --no-materialize` is the mirror: select without materializing.
+Passing both `--regenerate-drifted` and `--adopt-drifted` is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through `rwv`. `rwv activate`, `rwv add`, `rwv remove`, `rwv role`, `rwv update`, and `rwv doctor --fix` run the same hooks and withhold them (naming both flags) while drift stands. `rwv activate --no-materialize` selects a project without running `materialize`.
 
 ### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 
-Create a new project repo at `projects/<name>/` with an empty `rwv.toml`. With `--provider`, configures the project repo's remote URL.
+Create a new project repo at `projects/<name>/` with an empty `rwv.toml`, configure `rwv.lock merge=rwv-ours` in `.gitattributes` and the `merge.rwv-ours` git driver in the project repo's config (checked by `rwv doctor` as `missing-replay-exclusion` and `missing-merge-driver-config`), and activate the project. With `--provider`, configures the project repo's remote URL.
 
 When invoked in an **empty directory**, `init` bootstraps that directory as a workspace root (no pre-existing `rwv.toml` required) and creates the project inside it. Running in a non-empty directory without an existing workspace refuses.
 
@@ -205,7 +194,7 @@ With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` cl
 
 ### `rwv add <url> [...]`
 
-Clone a repo (if not present), register it in the *active workspace*'s `rwv.toml`, run integration hooks.
+Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks. If the repo entry was already added to `rwv.toml` by hand, `rwv add` converges the on-disk clone, permissions, and integration files to match.
 
 | Flag | Effect |
 |---|---|
@@ -223,7 +212,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.toml
 
 ### `rwv remove <path> [...]`
 
-Remove from `rwv.toml`, re-run activation (regenerates ecosystem workspace files).
+Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, and re-run integration install hooks (when targeting the active project or a workweave). If the entry was already removed from `rwv.toml` by hand, `rwv remove` converges the integration files and optional clone deletion (`--delete`) to match.
 
 | Flag | Effect |
 |---|---|
@@ -233,7 +222,7 @@ Remove from `rwv.toml`, re-run activation (regenerates ecosystem workspace files
 
 ### `rwv role <path> <role>`
 
-Change the repo's `role` in `rwv.toml`, re-run activation (a `reference` repo leaves every ecosystem's build graph), and settle the repo's files: a `reference` repo's tracked files lose their write bits; any other role gets the owner's back. Refuses a change to `reference` while the repo has uncommitted changes to tracked files. Does nothing when the repo already has the role.
+Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files.
 
 | Flag | Effect |
 |---|---|
@@ -293,7 +282,12 @@ The `<source>` argument in `rwv sync` is always required — there is no auto-ta
 
 ### `rwv push [...]`
 
-Coordinated cross-repo push. Default scope: `owned` and `fork` repos (the roles the operator controls). `dependency` and `reference` repos are skipped unless `--role` or `--repo` selectors override the default. Project repo is pushed last.
+Coordinated cross-repo push from the primary weave. Default scope: `owned` and `fork` repos (the roles the operator controls). `dependency` and `reference` repos are skipped unless `--role` or `--repo` selectors override the default. Project repo is pushed last.
+
+**Preconditions** (evaluated before any network call):
+- **Primary weave only** — refused inside a workweave (`push-from-workweave`); land work into primary with `rwv sync-to` first.
+- **Lock freshness** — every manifest repo's HEAD must match its `rwv.lock` entry (`stale-lock`).
+- **Project repo branch** — `projects/<project>` must be on its canonical default branch (`main` / `master`), not on a detached HEAD or non-default branch.
 
 | Flag | Effect |
 |---|---|
@@ -318,6 +312,11 @@ Restore CWD's workspace to its pre-sync state using savepoint refs at `refs/rwv/
 
 Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset.
 
+**Exit codes:**
+- `0` — all repositories restored cleanly to `refs/rwv/pre-op/<op-id>` and `.rwv-op` removed.
+- `1` — precondition refusal (no `.rwv-op` in progress, or foreign tip detected without `--abandon-foreign-tip <repo>`).
+- `2` — partial restore failure (at least one repository failed to reset; `.rwv-op` is retained so `rwv abort` can be retried).
+
 ### `rwv status [--json] [...]`
 
 Show per-repo state for the CWD workspace.
@@ -336,15 +335,15 @@ Show per-repo state for the CWD workspace.
 | relation | `ok` / `ahead` / `behind` / `diverged` / `no-lock` / `unknown` / `missing` / `unreachable` |
 | mid-op | Present if mid-rebase, mid-merge, etc. |
 
-`--json` emits the envelope `{"$schema": "...", "repos": [...]}`. See [JSON envelope convention](#--json-envelope-convention).
+`--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each record includes `lock_pinned_by_name` (`true` when an older or hand-edited `rwv.lock` entry holds a tag or branch name rather than a 40-character hex commit SHA; `rwv lock` rewrites it to a commit SHA). See [JSON envelope convention](#--json-envelope-convention).
 
-A `missing` relation names a clone directory that has vanished; the repair is `rwv fetch` with no source — the in-place re-materialize mode — run from the workspace root (see [`rwv fetch`](#rwv-fetch-source-) above and `rwv doctor` for the paired detection: `MissingCanonicalClone`, `DanglingReference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; in-place `rwv fetch` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
+A `missing` relation names a clone directory that has vanished; the repair is `rwv fetch` with no source — the in-place re-materialize mode — run from the workspace root (see [`rwv fetch`](#rwv-fetch-source-) above and `rwv doctor` for the paired detection: `missing-canonical-clone`, `dangling-reference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; in-place `rwv fetch` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
 
 Anchored by `tests/doc_claims_status_test.rs`.
 
 ### `rwv doctor [...]`
 
-Convention audit. Reports orphaned clones, dangling references, missing roles, stale locks, workweave drift, index drift, working-tree drift, dead op-leases, cargo version-skew across workspace members, cargo patch shadowing, missing canonical clones (workweave worktrees whose primary clone has vanished), uninitialized submodules, and integration health.
+Convention and health audit across clones, `rwv.toml`, `rwv.lock`, workweaves, op-state leases, git attributes/merge drivers, and enabled integrations.
 
 | Flag | Effect |
 |---|---|
@@ -357,27 +356,15 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | `--kind <kind>` | Filter the report to the named finding kind (repeatable; text and `--json` both). Kind names are the wire spellings `--json` emits (e.g. `branch-discipline`, `orphaned-savepoint`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-| Check | Description |
-|---|---|
-| Orphaned clones | Directories under registry paths not listed in any project's `rwv.toml` |
-| Dangling references | Entries in an `rwv.toml` pointing to paths not on disk |
-| Missing role | `rwv.toml` entries without a `role` field |
-| Stale lock | Project's `rwv.lock` doesn't match current HEAD revisions |
-| Workweave drift | Worktrees missing from a workweave or extra worktrees not in manifest |
-| Index drift | A repo's index doesn't match HEAD tree (shared-refs side effect) |
-| Working-tree drift | A repo's on-disk files don't match HEAD tree (shared-refs side effect) |
-| Missing replay-exclusion | A project repo's `.gitattributes` lacks `rwv.lock merge=rwv-ours`, still carries the legacy `merge=ours` spelling, or carries both (`--fix` adds/migrates/de-duplicates the line and, where it migrates, commits it) |
-| Legacy `role: primary` | A project `rwv.toml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
-| Dead op-lease | A `.rwv-op-lease` file whose recorded owner has no matching `.rwv-op` for the same op id — structurally impossible to belong to any in-flight operation. `--fix` removes the lease. |
-| Cargo version skew | The same crate is required at different version-req strings across workspace members (post `workspace = true` indirection); warning-severity observatory, report-only |
-| Cargo patch shadowing | A member's `.cargo/config.toml` declares a `[patch.<registry>].<crate>` key that shadows a weave-level entry for the same key (cargo's closest-config-wins per-key). Warning-severity; report-only |
-| Missing canonical clone | A workweave worktree whose canonical clone (the primary-weave clone it was linked from) is no longer on disk. Repair: `rwv fetch` (in-place) to re-materialize |
-| Uninitialized submodule | A repo checkout has a `.gitmodules` entry whose submodule path is absent or empty on disk (submodule init never ran there). Warning-severity; the finding message names the exact `git submodule update` invocation to run |
-| Integration checks | Per-integration check hooks (tool availability, stale config) |
+See [Doctor findings](./doctor-findings.md) for the complete catalog of wire `--kind` / `sub_kind` tokens, their severities (`error` vs `warning`), and their `--fix` dispositions.
 
 ### `rwv workweave <project> create <name>`
 
-Create a workweave: a worktree on its ephemeral branch for every repo, whatever its role, generated ecosystem files, per-workweave tool state.
+Create an isolated workweave for `<project>`:
+
+1. **Manifest worktrees** — creates a git worktree on an ephemeral `<project>--<name>` branch for every `owned`, `fork`, and `dependency` repo, and a detached-HEAD git worktree at the locked SHA for every `reference` repo with tracked regular files set read-only (`chmod -w`, preserving symlinks).
+2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on `<project>--<name>` and writes `.rwv-workweave` at the workweave root.
+3. **Integrations & local excludes** — generates integration-managed workspace files in `projects/<project>/`, surfaces workweave-root symlinks, lists ephemeral weave-root entries in the project worktree's `.git/info/exclude` (never `.gitignore`), and runs integration install hooks.
 
 | Flag | Effect |
 |---|---|
@@ -409,7 +396,7 @@ Show this workweave's unique commits versus its recorded parent, per repo, inclu
 | `--diff` | Show the unique diff versus the parent instead of the commit listing. Anchored at the common ancestor, so commits the parent gained after the fork are not shown as reversals |
 | `--json` | Emit machine-readable JSON |
 
-Text output includes one `=== <path> ===` section per manifest repo followed by `=== (project) ===` for the project repo. JSON output adds a `project_repo` field at the top level (same shape as each element of `repos[]`, `path` set to `"(project)"`).
+Text output includes one `=== <path> ===` section per manifest repo followed by `=== (project) ===` for the project repo. `--json` emits an object with `workweave`, `parent`, `diff` (boolean), `repos[]` (each carrying `path`, `role`, `head`, `parent_tip`, `unique_commits[]` with `{ "sha", "subject" }`, `diff_base`, and `diff`), and `project_repo` (same shape as each element of `repos[]`, with `path` set to `"(project)"`).
 
 ### `rwv workweave [--hook-mode] [--claude-hook] <project> <action>`
 
@@ -457,7 +444,7 @@ The rendered bundles are checked in at `docs/reference/explain/` for offline bro
 
 ### `rwv setup claude [--uninstall]`
 
-Register `rwv prime` as a Claude Code hook (`SessionStart` + `PreCompact`). `--uninstall` removes all rwv hooks.
+Register Claude Code hooks in `~/.claude/settings.json` (`SessionStart` and `PreCompact` running `rwv prime`; `WorktreeCreate` and `WorktreeRemove` running `rwv workweave --claude-hook`). Requires `~/.claude/settings.json` to exist already (refuses if absent). `--uninstall` removes all `rwv` hooks from `~/.claude/settings.json`.
 
 ### `rwv completions <shell>`
 
@@ -465,7 +452,7 @@ Generate shell completions (bash, zsh, fish, etc.). Source the output in your sh
 
 ## Project resolution
 
-Project-scoped verbs (`add`, `remove`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
+Project-scoped verbs (`add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
 
 1. `--project <name>` — the explicit override on the invocation.
 2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
@@ -487,7 +474,7 @@ target: workspace /home/cwa/weaveroot/foundations · project tmuxcc (.rwv-active
 
 Explicitly (`--project` or `-w`) or structurally (workweave marker) resolved invocations stay silent — the operator already named the target, or the workweave did.
 
-Stderr, not stdout, so the line never contaminates a `--json` verb's output. The line is prose, not a parse surface — no schema, no version, no consumer contract. The `resolution` block in `--json` output *(later change)* carries the resolved coordinate as machine data; provenance stays out of the JSON deliberately so agents assert on results, not on how they were reached.
+Stderr, not stdout, so the line never contaminates a `--json` verb's output. The line is prose, not a parse surface — no schema, no version, no consumer contract. The `resolution` block in `--json` output carries the resolved coordinate as machine data; provenance stays out of the JSON so agents assert on results, not on how they were reached.
 
 ### Corrective errors
 
@@ -516,7 +503,7 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 
 | Category | Verbs | Resolution behaviour |
 |---|---|---|
-| Project-scoped | `add`, `remove`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
+| Project-scoped | `add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
 | Project named positionally | `activate <project>`, `workweave <project> …` | Explicit already; no chain consulted |
 | Workspace-scoped, no project | `init`, `abort`, `resolve`, `prime`, `explain`, `doctor` (cross-project scan) | No project selection involved |
 
@@ -542,7 +529,7 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 | Prefix | Form | Example |
 |---|---|---|
 | (none) | Exact match | `--repo github/chatly/server` |
-| `re:` | Regex | `--repo re:'^github/chatly/(server|web)$'` |
+| `re:` | Regex | `--repo re:'^github/chatly/(server\|web)$'` |
 | `glob:` | Glob | `--repo glob:'github/chatly/*'` |
 
 ### Union semantics

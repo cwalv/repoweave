@@ -59,44 +59,42 @@ A weave can hold multiple projects. Only one is active at a time. The active pro
 
 Selection is primary-only. A workweave's project is fixed when the workweave is created and cannot be switched, so a workweave root carries a `.rwv-workweave` marker naming its project *instead of* a pointer — the two files are mutually exclusive, and `rwv doctor` reports a root carrying both as a `weave-root-identity-conflict`.
 
-`rwv activate <project>` does three things:
+Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
 
 1. Updates `.rwv-active`.
-2. Merges managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file.
-3. Symlinks those files to the weave root so ecosystem tools see them where they expect.
+2. Verifies integration files in `projects/<project>/` and surfaces symlinks at the weave root so ecosystem tools see them where they expect.
+3. Runs integration install hooks (`--no-materialize` skips hooks; `rwv materialize` runs hooks and settles drifted generated files inside any workspace without switching projects).
 
 This is the antidote to manual wiring hell:
 
-- **No `npm link`.** You don't have to manually link packages every time you open a terminal. `rwv activate` ensures `package.json` workspaces (or `go.work`, or `Cargo.toml`) are always correctly aligned with the project's intent.
+- **No `npm link`.** You don't have to manually link packages every time you open a terminal. Intent verbs keep `package.json` workspaces (or `go.work`, or `Cargo.toml`) aligned with `rwv.toml`, and `rwv activate` surfaces them at the weave root.
 - **Deterministic paths.** Build tools see a consistent view. Two projects that use different versions of a shared library can't accidentally cross-contaminate.
-- **Low overhead.** Symlinks are cheap and ephemeral — losing one costs nothing, because the source of truth always remains in the project repo. `rwv activate` re-creates them at the weave root; inside a workweave, where `activate` is refused, `rwv doctor --fix` re-surfaces them.
+- **Low overhead.** Symlinks are cheap and ephemeral — losing one costs nothing, because the source of truth always remains in the project repo. `rwv activate` re-creates them at the weave root; inside a workweave, where `activate` is refused, `rwv doctor --fix` re-surfaces them and `rwv materialize` runs install hooks.
 
-`.rwv-active` is the single source of truth for what's active in a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. (This used to be a CWD special case; it's been removed.) Action verbs read `.rwv-active`; if you want to operate on a non-active project, use `--project <name>` for a one-shot or `rwv activate <name>` to switch.
+`.rwv-active` is the single source of truth for what's active in a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. Action verbs read `.rwv-active`; if you want to operate on a non-active project, use `--project <name>` for a one-shot or `rwv activate <name>` to switch.
 
 See [switch projects](../../how-to/switch-projects.md) for the operational recipe.
 
 ## Reproducibility: `rwv.lock`
 
-The lock file pins each repo to an exact revision. When a tag exists at HEAD, the lock records the tag name (human-readable, auditable); otherwise the revision ID:
+The lock file pins each manifest repo to an exact 40-character commit SHA — never a tag or branch name, even when a tag points at `HEAD` (tags and branches can move; a commit SHA cannot):
 
 `projects/web-app/rwv.lock`, with the entry fields not under discussion elided:
 
 ```json
 {
   "repositories": {
-    "github/chatly/protocol": { "version": "v1.5.0" },
-    "github/chatly/server": { "version": "e1f2a3b4c5d6..." }
+    "github/chatly/protocol": { "version": "7a3b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b" },
+    "github/chatly/server":   { "version": "c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3" }
   }
 }
 ```
 
-The first is tagged, so it is released; the second carries a revision ID and is not.
-
-The format encodes release state per repo: tag = released, revision ID = unreleased. Reading `rwv.lock` tells you what's published and what isn't.
+Release channels and milestones are represented at the project layer by branches and tags on the project repo (`projects/<name>/`), each carrying its own committed `rwv.lock` (see [pyramid of stability](../joints/pyramid-of-stability.md)).
 
 `sha256sum rwv.lock` is the project fingerprint. Two machines with the same checksum have identical source for every repo in the project. This is the multi-repo analog of `git rev-parse HEAD` on a monorepo.
 
-The lock file is *derived state*: produced by `rwv lock`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which version), but it is regenerated by `rwv lock` or `rwv sync` whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why this property is load-bearing.
+The lock file is *derived state*: produced by `rwv lock`, `rwv update`, or `rwv sync`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which revision), and regenerated whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why the lock is always derived.
 
 ## Provenance: the registry/owner/repo path
 
@@ -120,7 +118,7 @@ Integrations (`npm-workspaces`, `go-work`, `cargo-workspace`, `uv-workspace`, `p
 
 ## The shape, in one paragraph
 
-A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned revisions), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. One project is *active* in a workspace at a time (`.rwv-active`); activating merges managed keys into ecosystem workspace files and symlinks them to the workspace root, preserving any user-authored content. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
+A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. Intent verbs (`add`, `remove`, `update`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
 
 ## Related
 

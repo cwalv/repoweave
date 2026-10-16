@@ -1,216 +1,59 @@
 # Resume or abort a mid-op sync
 
-When `rwv sync` or `rwv sync-to` is interrupted — by a conflict, a crash, or
-a Ctrl-C — op-state is left in place so you can either pick up where you left
-off or roll everything back to the pre-op position. This guide covers both
-paths.
-
-## Step 1 — inspect what is in flight
+When `rwv sync` or `rwv sync-to` is interrupted by a conflict, crash, or `Ctrl-C`, inspect the in-flight operation with `rwv status`, then either finish it with `--continue` or roll back to the pre-op savepoints with `rwv abort`:
 
 ```bash
-rwv status
+rwv status                # inspect per-repo mid_op state
+rwv sync --continue       # or: rwv sync-to --continue
+rwv abort                 # roll back all involved workspaces to pre-op savepoints
 ```
 
-`rwv status` is read-only and never mutates anything. It reports each repo's
-branch tip, lock relation, and mid-op state. A repo that is mid-rebase,
-mid-merge, or mid-cherry-pick will show a non-null `mid_op` field (text output:
-bracketed annotation on the row; JSON: `"mid_op": "<op>"`).
+## Inspect what is in flight
 
-To see the raw op-state records, check the workspace root for the `.rwv-op`
-file (owner record) or `.rwv-op-lease` file (thin lease pointer written in the
-target workspace of a `sync-to`):
+`rwv status` is read-only and marks any repository that is mid-rebase, mid-merge, or mid-cherry-pick (in `--json` output, `"mid_op": "<op>"`).
 
-```bash
-# Is an operation in progress in this workspace?
-ls -la .rwv-op .rwv-op-lease 2>/dev/null
+For `rwv sync-to`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace; `rwv abort` can be run from either workspace and rolls back both.
 
-# Inspect the owner record (present in CWD for sync; in CWD for sync-to)
-cat .rwv-op
+## Resume with `--continue`
 
-# Inspect the lease (present in the target workspace for sync-to)
-cat .rwv-op-lease
-```
+If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv sync-to --continue` from the workspace root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
 
-The owner record names the operation id, the phase the machine was in when the
-crash occurred, the recorded target (for `sync-to`), and any overrides
-(`--allow-stale-lock`, `--discard-local-commits`) that were consented to at
-invocation time. These are the parameters `--continue` uses — you do not need
-to re-supply them.
+`--continue` loads all parameters (source or target, `--strategy`, `--retire`, `--allow-stale-lock`, `--discard-local-commits`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
 
-For `rwv sync-to`, if you are in the **target** workspace (not CWD), the lease
-file points back to the owner workspace. Run the commands below from the owner
-workspace (the one that has `.rwv-op`, not `.rwv-op-lease`).
+## Roll back with `rwv abort`
 
-## Step 2a — resume with `--continue`
+`rwv abort` restores every repository in the involved workspaces to its pre-op savepoint (`refs/rwv/pre-op/<op-id>`), cancels any in-progress VCS rebase/merge/cherry-pick, and clears the op-state record:
 
-If you want to finish the operation, resolve any conflict first (the error
-message names the repo and the exact next steps), then re-run with bare
-`--continue`:
-
-**After a `rwv sync` rebase conflict:**
-
-```bash
-# 1. Resolve the conflict in the named repo
-cd github/chatly/server
-# edit conflicted files
-git add <files>
-
-# 2. Resume the sync from the workspace root — rwv drives the rest
-cd <workspace-root>
-rwv sync --continue
-```
-
-**After a `rwv sync-to` rebase conflict:**
-
-```bash
-# 1. Resolve the conflict in the named repo
-cd github/chatly/server
-# edit conflicted files
-git add <files>
-
-# 2. Resume the sync-to from the workweave root — rwv drives the rest
-cd <workweave-root>
-rwv sync-to --continue
-```
-
-For merge or cherry-pick conflicts (rare, non-rebase strategies), the error
-message includes `git merge --continue` or `git cherry-pick --continue` as the
-intermediate VCS step before re-running `rwv <verb> --continue`.
-
-**Fallback: bare `git rebase --continue`.** If you need to resume a stopped
-rebase outside rwv, bare `git rebase --continue` is safe — the durable
-`merge.rwv-ours.driver` repo-local config keeps the lock exclusion active. After
-the bare-git resume finishes, re-run `rwv sync --continue` (or
-`rwv sync-to --continue`) so rwv can complete relocking and clean up op-state.
-This is a fallback path; prefer the `resolve → git add → rwv --continue` loop.
-
-### What `--continue` does (and does not) need
-
-`--continue` reads all parameters — source/target, strategy,
-`--allow-stale-lock`, `--discard-local-commits`, `--retire` — from the
-persisted op-state owner record. **Do not re-supply the original flags.** A
-mismatch between the command line and the recorded op-state is an error, so
-bare `--continue` is the safe default.
-
-The driver re-enters whichever phase was in progress at the time of the
-interruption and continues from there. Already-converged repos are no-ops, so
-re-running is cheap and idempotent.
-
-## Step 2b — give up with `rwv abort`
-
-If you want to discard the in-flight operation and return both workspaces to
-their pre-op state:
-
-```bash
-rwv abort
-```
-
-`rwv abort` reads the `.rwv-op` file to identify the operation and the
-involved workspaces. No flags are required. The one it accepts,
-`--abandon-foreign-tip`, is for a refusal you have not hit yet — see
-[below](#if-rwv-abort-reports-a-foreign-tip-violation).
-
-Before restoring any repo, `rwv abort` writes a durable pre-abort reference at
-`refs/rwv/pre-abort/<op-id>` in that repo (first-write-wins-along-divergence
-across abort re-runs — a prior capture is preserved, except under
-`--abandon-foreign-tip` where an ancestor capture is advanced to the current
-tip; the earlier captured commits stay reachable through the advanced ref).
-This means **abort is itself undoable**: even after `rwv abort` completes, the
-pre-abort ref is there and you can recover the tip manually.
-
-For each repo, abort then performs a HEAD-verified restore:
-
-| Current tip | Outcome |
+| Current repository tip | `rwv abort` outcome |
 |---|---|
-| Equal to the savepoint | `untouched` — op never moved this repo |
-| Equal to the recorded converged tip | `restored` — reset to savepoint |
-| Repo mid-rebase / mid-merge / mid-cherry-pick | `restored` — native abort cancelled; reset to savepoint |
+| Equal to the savepoint | `untouched` — the operation never moved this repository |
+| Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
+| Mid-rebase / mid-merge / mid-cherry-pick | `restored` — VCS operation cancelled and reset to the savepoint |
 | Anything else | `foreign-tip violation` — restore refused; op-state retained |
 
-For `rwv sync-to`, **abort rolls back both CWD and the recorded target
-workspace** — run it from either side of the pair; it reads the lease to find
-the other workspace.
+Before resetting any repository, `rwv abort` writes a durable reference at `refs/rwv/pre-abort/<op-id>` pointing to the pre-abort tip. That reference is kept after abort finishes, so commits discarded by `rwv abort` remain reachable in git (`git log refs/rwv/pre-abort/<op-id>`).
 
-Savepoints live at `refs/rwv/pre-op/<op-id>`. After a clean abort, both
-workspaces are at their exact pre-op tips and the savepoint refs are gone —
-abort removes them along with the op-state. Commits it discarded survive only
-as unreferenced objects until git's collection runs, and retrieving them is
-ordinary per-repo git work: no rwv verb undoes an abort.
+Uncommitted working-tree edits that existed before the sync started and untracked tool directories (`node_modules/`, `.venv/`, `target/`) are not snapshotted by savepoints and are not modified by `rwv abort`.
 
-### If `rwv abort` reports a foreign-tip violation
+### Handling a `foreign-tip` refusal
 
-A foreign-tip violation means a repo's HEAD does not match any state the op
-recorded (savepoint, converged tip, or a VCS-native mid-op marker). This
-happens when another agent or manual git operation advanced the branch after
-the crash. Abort reports the violation, preserves op-state, and exits non-zero.
+If a commit was made in a repository after the sync paused, `rwv abort` refuses to overwrite that unattributed tip and retains op-state:
 
-The question the refusal is asking you is whether those foreign commits are
-wanted. Only you can answer it, which is why abort will not guess.
+- **To discard the post-crash commits and roll back to the savepoint**, pass `--abandon-foreign-tip=<repo>` (repeatable per repository; use `(project)` for the project repo):
+  ```bash
+  rwv abort --abandon-foreign-tip=github/foo/bar
+  ```
+  The abandoned commits remain reachable at `refs/rwv/pre-abort/<op-id>`. If a foreign rebase or reset caused the branch to diverge from an earlier `refs/rwv/pre-abort/<op-id>` capture, abort refuses so the earlier capture is not orphaned; the refusal names the workspace-runnable path to reconcile or delete the ref first.
+- **To keep the post-crash commits**, move the branch back to the tip recorded by the op (or finish resolving manually) and re-run `rwv abort`.
 
-**If they are not wanted**, re-run naming the repo:
+### When no operation is in progress
 
-```bash
-rwv abort
-# ... foreign-tip violation for github/foo/bar ...
-rwv abort --abandon-foreign-tip=github/foo/bar   # op-state was retained
-```
-
-The branch returns to the savepoint and the abandoned commits stay reachable
-at the pre-abort ref the first run wrote (`refs/rwv/pre-abort/<op-id>`, named
-in the refusal). Repeat the flag per repo — it consents for the repo it names
-and no other, and there is no all-repos form. Spell the repo as abort's own
-output does: the workspace-relative path, or `(project)` for the project repo.
-
-**If they are wanted**, move the branch back to them yourself and re-run
-`rwv abort` with no flag, so the tip abort sees is one it can attribute to
-the op.
-
-Abort refuses even with `--abandon-foreign-tip` when the pre-abort ref has
-DIVERGED from the tip being left behind — which happens when a foreign rebase
-or reset between two abort runs moved the branch onto a history that does not
-include the earlier capture. The captured commits are reachable only through
-the reference, so moving the branch off would orphan them; the flag consents
-to abandoning commits, not to destroying them. The refusal names the
-divergence and points at the seat-runnable path: reconcile the foreign branch
-by hand first (move HEAD to a commit whose history includes the captured tip,
-or delete the pre-abort ref if the captured commits are safe to lose), then
-re-run.
-
-The linear case (a foreign agent committed on top of the earlier capture
-between abort runs) does NOT hit this refusal — under
-`--abandon-foreign-tip` the capture is advanced to the observed tip
-automatically, ancestry keeping the earlier capture reachable through the
-advanced ref.
-
-### If `rwv abort` reports "no operation in progress"
-
-When no `.rwv-op` file is present, `rwv abort` prints `Error: no operation in progress` to stderr and exits with status 0 (the `Error:` prefix is shared with real failures; the zero exit distinguishes the "nothing to do" case). Reasons this can happen:
-
-- No sync or sync-to was started.
-- The operation already completed successfully and cleaned up op-state.
-- Op-state was removed manually.
-- A prior `rwv abort` ran cleanly and cleared it.
-
-There is nothing to abort — the exit code is the load-bearing signal.
-
-## What abort does not restore
-
-- **Uncommitted working-tree changes** that existed before the sync started.
-  The savepoint is a git commit pointer — staged or unstaged edits are not
-  snapshotted.
-- **Side effects outside git history** — generated files, `node_modules/`,
-  `.venv/`, and so on are not rolled back.
+If no op-state record is present in the workspace, `rwv abort` exits with status `1` and prints `Error: no operation in progress`.
 
 ## Related
 
-- [Recover from a sync conflict](./recover-from-sync-conflict.md) — conflict
-  resolution steps and the `--continue` resume flow
-- [Bring workweave work home](./bring-workweave-work-home.md) — the normal
-  `sync-to` landing workflow and what to do when it hits a conflict
-- `rwv explain abort` (rendered at `docs/reference/explain/abort.md`) — full
-  abort semantics, the two-rail verified-restore contract, and foreign-tip
-  violation recovery
-- `rwv explain sync` (rendered at `docs/reference/explain/sync.md`) —
-  `--continue` flag, phase machine, and op-state overrides
-- `rwv explain sync-to` (rendered at `docs/reference/explain/sync-to.md`) —
-  multi-workspace op-state, `--continue`, and step-3 FF-advance failure
+- [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts before running `--continue`
+- [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave work with `rwv sync-to`
+- [`rwv explain abort`](../reference/explain/abort.md) — two-rail verified restore and foreign-tip recovery contract
+- [`rwv explain sync`](../reference/explain/sync.md) — `rwv sync --continue` and op-state flags
+- [`rwv explain sync-to`](../reference/explain/sync-to.md) — multi-workspace op-state and `--continue`

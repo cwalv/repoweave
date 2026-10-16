@@ -6,8 +6,10 @@
 # How-to
 
 - [Overview](./how-to/index.md)
+- [Create a project](./how-to/create-a-project.md)
 - [Switch projects](./how-to/switch-projects.md)
 - [Add a repo](./how-to/add-a-repo.md)
+- [Migrate from submodules](./how-to/migrate-from-submodules.md)
 - [Run a command across repos](./how-to/run-a-command-across-repos.md)
 - [Create a feature workweave](./how-to/create-feature-workweave.md)
 - [Bring workweave work home](./how-to/bring-workweave-work-home.md)
@@ -24,17 +26,18 @@
 - [Upgrade to a new rwv on an existing weave](./how-to/upgrade-rwv.md)
 - [Write a plugin](./how-to/write-a-plugin.md)
 
-# Explanation — Lenses
+# Perspectives
 
-- [Lenses and joints](./explanation/index.md)
-- [Workspace lens](./explanation/lenses/workspace.md)
-- [Monorepo lens](./explanation/lenses/monorepo.md)
-- [Agent lens](./explanation/lenses/agent.md)
+- [Overview](./explanation/index.md)
+- [Multi-repo workspaces](./explanation/lenses/workspace.md)
+- [Monorepo speed without migration](./explanation/lenses/monorepo.md)
+- [Parallel agent orchestration](./explanation/lenses/agent.md)
 
-# Explanation — Joints
+# Concepts
 
 - [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)
 - [Clone topology](./explanation/joints/clone-topology.md)
+- [Branch model](./explanation/joints/branches.md)
 - [Weave root as presentation](./explanation/joints/weave-root.md)
 - [Symlinks as structure](./explanation/joints/symlinks-as-structure.md)
 - [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
@@ -42,15 +45,15 @@
 - [Lock-as-derived](./explanation/joints/lock-as-derived.md)
 - [Sync semantics](./explanation/joints/sync-semantics.md)
 - [Shared-refs drift](./explanation/joints/shared-refs-drift.md)
+- [File ownership](./explanation/joints/file-ownership.md)
+- [Destructive operations](./explanation/destructive-operations.md)
+
+# Design notes
+
 - [Verb vs composition](./explanation/joints/verb-vs-composition.md)
 - [Verb vs vocabulary](./explanation/joints/verb-vs-vocabulary.md)
 - [VCS as seam](./explanation/joints/vcs-as-seam.md)
-- [File ownership](./explanation/joints/file-ownership.md)
 - [Plugin boundary](./explanation/joints/plugin-boundary.md)
-
-# Explanation — Policies
-
-- [Destructive operations](./explanation/destructive-operations.md)
 
 # Reference
 

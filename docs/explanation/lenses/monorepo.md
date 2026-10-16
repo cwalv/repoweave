@@ -51,10 +51,10 @@ No bump, no publish, no install. This collapses the feedback loop enough that sm
 | Cadence | Frequency | Version dance? |
 |---|---|---|
 | **Dev iteration** (edit-test-iterate) | Many per day | None. Workspace points at local clones. |
-| **Project release / deploy** | Many per week | None. The project's `rwv.lock` *is* the release artifact: it pins every constituent repo at a specific SHA. Cutting a tag on the project repo names a coherent multi-repo state without bumping any constituent-repo version. |
-| **External-consumer release** of a constituent repo | Monthly, quarterly, or on demand | The dance lives here, at the *external consumer's* cadence. |
+| **Project release / deploy** | Many per week | None. The project's `rwv.lock` *is* the release artifact: it pins every member repo at a specific 40-character commit SHA. Cutting a tag on the project repo names a coherent multi-repo state without bumping any member-repo version. |
+| **External-consumer release** of a member repo | Monthly, quarterly, or on demand | The dance lives here, at the *external consumer's* cadence. |
 
-For constituent repos with no external consumers — common in proprietary projects where most repos are services or internal components — no semver is needed at all; the project lock is sufficient. For repos that do publish externally, the dance moves from every-dev-iteration cadence (painful) to external-consumer cadence (rare, usually negligible).
+For member repos with no external consumers — common in proprietary projects where most repos are services or internal components — no semver is needed at all; the project lock is sufficient. For repos that do publish externally, the dance moves from every-dev-iteration cadence (painful) to external-consumer cadence (rare, usually negligible).
 
 Ecosystem tools (Cargo, Go, npm) catch incompatible bumps during development — you discover constraint mismatches in the workspace before publishing, not after. See [release a package](../../how-to/release-a-package.md) for the external-release recipe.
 
@@ -62,7 +62,7 @@ Ecosystem tools (Cargo, Go, npm) catch incompatible bumps during development —
 
 In a monorepo, "the tip" is a single SHA. In a polyrepo, "the tip" is a moving target across N repos. What does "stable" mean when your system spans ten repositories that each move independently?
 
-repoweave's answer is the project repo and its lock. A `rwv.lock` is a single artifact that captures the state of the entire cross-repo world — every manifest repo at an exact revision, every ecosystem dependency pinned. `sha256sum rwv.lock` is the project fingerprint. Two operators with the same checksum have identical source.
+repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every manifest repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum have identical commits checked out across every member repo.
 
 Branches of the project repo carry their own lock files. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; an `rc` branch's lock points at a release candidate. Cross-repo "channels" are just branches of the project repo, each carrying a coherent lock.
 
@@ -72,11 +72,11 @@ This is the [pyramid of stability](../joints/pyramid-of-stability.md): canonical
 
 Traditional isolation means cloning a repo into a temp folder — but then you lose the rest of the project context. The `git worktree` primitive solves this for one repo; repoweave extends the pattern across the project.
 
-A **workweave** is a worktree-derived copy of an entire workspace, made and unmade with `rwv workweave <project> create` and `rwv workweave <project> delete`. Every repo gets a git worktree on an ephemeral branch; a `role: reference` repo's tracked files are read-only. Ecosystem files are symlinked from the project directory (managed keys are merged, preserving user-authored content); `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
+A **workweave** is a worktree-derived copy of an entire workspace, made and unmade with `rwv workweave <project> create` and `rwv workweave <project> delete`. Every member repo gets a git worktree on a flat ephemeral branch (`<project>--<workweave>`); a `role = "reference"` repo's tracked files are read-only on disk, and file storage is shared automatically via copy-on-write reflinks (or hardlinks for read-only `reference` files on Linux) where the filesystem supports them. Ecosystem workspace files authored in `projects/<name>/` are surfaced to the workweave root via symlinks; `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
 
-The hero moments:
+Where this pays off day-to-day:
 
-- **Cross-repo feature branch** without contaminating your main workspace. Edit `protocol` and `server` on `feat/payments` worktrees side by side.
+- **Cross-repo feature branch** without contaminating your main workspace. Edit `protocol` and `server` in an isolated workweave side by side.
 - **PR review** in isolation. Check out a PR's branches into a fresh workweave, run the build, throw the workweave away — no `git stash`, no dependency-state corruption.
 - **Agent sandbox.** Give an agent a workweave so its experimental refactors are quarantined from the human's in-progress edits. See the [agent lens](./agent.md).
 - **Parallel projects.** Work on two projects without `rwv activate` churn. A workweave on `mobile-app` lives alongside the primary weave on `web-app`.
@@ -89,10 +89,10 @@ In a monorepo, "merging your feature back to trunk" is one operation. In a polyr
 
 repoweave's sync surface is a direction-explicit verb pair:
 
-- **`rwv sync <source>`** — CWD absorbs the source workspace's state; CWD's unique commits land on top of source's tip. CWD changes; source is read-only. Use this to pull work in (e.g., absorb primary's new commits into a feature workweave before landing).
-- **`rwv sync-to <target>`** — CWD's committed state lands in the target workspace. CWD absorbs the target's state first (CWD's commits on top), then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
+- **`rwv sync <source>`** (default strategy `ff`) — CWD absorbs the source workspace's state; under `--strategy rebase`, CWD's unique commits land on top of source's tip. CWD changes; source is read-only. Use this to pull work in (e.g., absorb primary's new commits into a feature workweave before landing).
+- **`rwv sync-to [<target>]`** (default strategy `rebase`) — CWD's committed state lands in the target workspace. CWD first rebases onto the target's state and auto-relocks, then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
 
-Both verbs run the same phase machine: first the manifest repos are advanced to the named workspace's lock targets using the chosen strategy (`ff` / `rebase`); then CWD's unique project commits are replayed onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff (lock-only commits become empty patches and are dropped); then `rwv.lock` is regenerated from the post-replay manifest tips. For `rwv sync-to`, a final step advances the target to CWD's new tip via fast-forward.
+Both verbs run the same phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff, so lock-only commits become empty patches and are dropped, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the manifest repos to the named workspace's lock targets using the chosen strategy (`ff` or `rebase`); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips. For `rwv sync-to`, a final step fast-forwards the target workspace to CWD's converged tips.
 
 `rwv.lock` is never merged. It is recomputed fresh every time. Lock-file conflicts are prevented by a per-project-repo `rwv.lock merge=rwv-ours` invariant in `.gitattributes` that `rwv doctor --fix` installs; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry the committed attribute. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
@@ -119,11 +119,11 @@ The gita integration is an opt-in alternative for users who prefer a dedicated m
 
 ## Atomic-ish project snapshots
 
-`rwv lock` produces a single artifact (`rwv.lock`) that records every repo at an exact revision plus the ecosystem lock files (`Cargo.lock`, `package-lock.json`, `uv.lock`, etc.) that pin external dependencies. Together they capture both layers — which commit of each repo, which versions of external deps — so reproducing the lock means reproducing the whole world.
+`rwv lock` snapshots every manifest repo's git `HEAD` into `projects/<name>/rwv.lock`, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, etc.) are maintained alongside it in `projects/<name>/` by integration install hooks. Committed together in the project repo, they pin both layers — which commit of each member repo and which versions of external dependencies — so reproducing the project repo's commit reproduces the whole world.
 
-This is monorepo atomic-ness without monorepo storage cost. The commit-and-lock dance is two phases (commit each repo, then `rwv lock` + commit the lock), not atomic the way a single monorepo commit is, but the result is the same: a coherent point-in-time snapshot of the entire system.
+This is monorepo atomic-ness without monorepo storage cost. The commit-and-lock dance is two phases (commit each repo, then `rwv lock --commit`), not atomic the way a single monorepo commit is, but the result is the same: a coherent point-in-time snapshot of the entire system.
 
-For projects where this matters more than the two-phase commit is worth, scripting it as a single command is straightforward — `rwv lock` is idempotent and the lock commit is mechanical.
+For projects where this matters more than the two-phase commit is worth, scripting it as a single command is straightforward — `rwv lock` is idempotent and `rwv lock --commit` makes the lock commit a single step.
 
 ## The exporter tax: sharing a slice
 
@@ -133,7 +133,7 @@ An exporter is the tax a system pays when its *unit of composition* differs from
 
 In a weave the two units coincide, so the tax vanishes. A shareable slice is just a **project**: an `rwv.toml` listing member repos, roles assigned, a lock naming the blessed combination. Publishing it is an ACL decision per repo plus making the project manifest visible — a *subset*, not a copy. Provenance can't be erased because identity was never path-based to begin with: each member already *is* its upstream, so the backchannel (issues, PRs, independent releases) stays intact. "Accept PRs, or not" is per-repo policy — which is exactly what the role axis expresses.
 
-The same asymmetry read from the other side: a monorepo pays the exporter tax per boundary, lossily, on a schedule; a weave pays a reconciliation tax instead — continuous, automatable (`rwv sync`, `rwv doctor`), and lossless. See [Alternatives](../../comparison.md) for where that trade is honestly hard.
+The same asymmetry read from the other side: a monorepo pays the exporter tax per boundary, lossily, on a schedule; a weave pays a reconciliation tax instead — continuous, automatable (`rwv sync`, `rwv doctor`), and lossless. See [Alternatives](../../comparison.md) for where that trade-off bites in practice.
 
 ## Where the monorepo equivalence holds (and where it doesn't)
 

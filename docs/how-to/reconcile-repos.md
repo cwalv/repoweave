@@ -1,77 +1,66 @@
 # Reconcile repos with the lock
 
-After a sync, a reset, or any operation that may have moved repo tips, you may need to verify that every clone matches what `rwv.lock` records — and repair the ones that don't.
+Check whether every member repository matches `rwv.lock`, and repair missing or drifted checkouts:
 
-Two kinds of divergence show up here: a clone that has drifted from the locked revision, and a clone that has been deleted entirely. Both share the same detect-then-repair pattern.
+```bash
+rwv status            # inspect per-repo lock relation
+rwv doctor --locked   # exit 0 iff every repo HEAD matches rwv.lock
+rwv fetch             # re-clone missing repos and fast-forward behind checkouts to rwv.lock
+```
 
 ## Step 1 — detect with `rwv status`
 
-```bash
-rwv status
-```
-
-`rwv status` is read-only. It compares each repo's current HEAD against the pinned revision in `rwv.lock` and reports a `relation` for every repo:
+`rwv status` is read-only. It compares each repository's current `HEAD` against `rwv.lock` and reports a `relation`:
 
 | Relation | Meaning |
 |---|---|
-| `ok` | HEAD matches the lock |
-| `ahead` | Local commits not yet recorded in the lock |
-| `behind` | Lock records commits not yet in the local clone |
-| `diverged` | Local and locked histories have parted ways |
-| `no-lock` | No `rwv.lock` present for this project |
-| `unreachable` | Clone is present but the locked SHA is not in its object store |
-| `missing` | Clone directory is absent entirely |
+| `ok` | `HEAD` matches `rwv.lock` |
+| `ahead` | Local commits exist beyond the locked revision |
+| `behind` | `rwv.lock` pins a newer commit than the local checkout |
+| `diverged` | Local and locked histories have diverged |
+| `no-lock` | No `rwv.lock` entry exists for this repository |
+| `unreachable` | Checkout is present, but the locked SHA is not in its local object store |
+| `missing` | Checkout directory is absent from disk |
 
-A clean workspace shows all repos at `[ok]`. Any other relation identifies something to investigate. `missing` and `unreachable` both point toward the repair path below.
+## Step 2 — reconcile `ahead` or `diverged` repos
 
-## Step 2 — confirm with `rwv doctor --locked`
-
-```bash
-rwv doctor --locked
-```
-
-`--locked` exits zero if and only if every repo tip matches its lock entry. Use this as a programmatic gate — in CI, in pre-op scripts, or after any recovery step:
+Use `rwv doctor --locked` as a scriptable check that exits `0` only when every member repository's `HEAD` equals its `rwv.lock` entry:
 
 ```bash
 rwv doctor --locked && echo "lock clean"
 ```
 
-For repos that are `ahead` (local commits exist beyond the lock), the correct response depends on intent:
+When a repository is `ahead` or `diverged`, pick the action that matches your intent:
 
-- **The local commits are deliberate and the lock should catch up:** run `rwv lock --commit` to re-derive the lock from current tips. See [lock-as-derived](../explanation/joints/lock-as-derived.md) for why this is always safe.
-- **The local commits are unintended:** `rwv fetch --detach-checkouts` puts the checkout on the locked revision without moving or discarding the branch — enough to build and test against the lock. Plain `rwv fetch` refuses, and no verb rewinds the branch itself: that stays a deliberate act of yours (`git reset --hard <lock-sha>` in the affected repo). Re-run `rwv doctor --locked` afterwards to confirm.
+- **Keep the local commits and update the lock:** Run `rwv lock --commit` to record the current repository tips in `rwv.lock` and commit the updated lock.
+- **Inspect or build at the locked revision without moving the branch:** Run `rwv fetch --detach-checkouts` to check out the locked SHA on a detached `HEAD`.
+- **Discard unintended local commits on the branch:** Run `git -C <repo> reset --hard <lock-sha>`, then verify with `rwv doctor --locked`. `rwv` provides no resting-workspace rewind verb because resting workspaces have no pre-op savepoint to recover discarded commits from; see [Destructive operations](../explanation/destructive-operations.md).
+- **Finish a hand-edited `rwv.toml` removal:** If you deleted a repository entry from `rwv.toml` by hand and its checkout or `rwv.lock` entry is still present, run `rwv remove <path> [--delete]` to regenerate integration files and remove the leftover checkout, then `rwv lock --commit`.
 
-  The absence of a verb there is a decision, and the reason is that rwv's destructive verbs are all paired with a savepoint — `rwv abort` can undo itself because `rwv sync` wrote one first, and `rwv sync --discard-local-commits` savepoints what it discards. A rewind-to-lock verb has no such pairing: it is reached from a resting workspace, with no operation in flight to have recorded a pre-op tip, so it would destroy commits held nowhere else and offer nothing to recover them from. `sync --discard-local-commits` is the near-verb for the case that actually recurs — divergence found during a sync, where the savepoint exists — and it is the one to reach for where it fits. Raw `git reset --hard` here is not a gap in the command surface; it is the operation staying where its consequences are visible.
+## Step 3 — repair `missing`, `behind`, or `unreachable` repos
 
-## Repair — re-materialize missing or deleted clones
-
-When `rwv status` shows `[missing]` and `rwv doctor` reports a `dangling reference`, the clone directory is gone. `rwv fetch` with no source re-clones every absent manifest member from the URL in `rwv.toml` and checks out the revision pinned by the lock:
+When `rwv status` shows `missing` or `behind`, run in-place `rwv fetch` (with no source argument) from the workspace root:
 
 ```bash
 rwv fetch
-```
-
-Run from the workspace root (where `.rwv-active` lives). It does not act only on the absent ones: a present clone the lock covers is realigned too, and that realignment can refuse — see [What `rwv fetch` does not do](#what-rwv-fetch-does-not-do) below. After it completes, verify:
-
-```bash
 rwv doctor --locked
 ```
 
-`[unreachable]` has two sub-cases, and in-place `rwv fetch` repairs neither (with the clone present it performs a local checkout, no network fetch). If the remote still has the locked revision (the local object store lost it — a prune, a shallow history), plain `git fetch` in the affected repo re-pulls the object; re-run `rwv status` to confirm `ok`. If the lock SHA is not in the remote's history either (the upstream was force-pushed or history was rewritten), `rwv fetch` will error on that repo. In that case, update the lock to reflect a reachable state: if the correct revision is on the branch tip, run `rwv lock --commit`; if the project needs to track a specific upstream commit, update the manifest's `version` field and re-run `rwv fetch`.
+In-place `rwv fetch`:
 
-## What `rwv fetch` does not do
+- Clones any missing member repository from its `url` in `rwv.toml` (creating the worktree in a workweave when run inside one), attached to the branch declared in `version = "..."` and positioned at the revision in `rwv.lock`.
+- Fast-forwards existing checkouts that are `behind` the lock without changing their branch attachment (refusing if the move is not a fast-forward or the checkout is on a different branch, unless `--detach-checkouts` is passed).
+- Does **not** contact the network when the locked SHA is already in the local object store, and never modifies `rwv.lock`.
 
-`rwv fetch` with no source is the in-place repair mode. It:
+When `rwv status` shows `unreachable`, the locked SHA is missing from the local object store:
 
-- Clones repos whose canonical directory is absent, born attached to the branch `version:` declares, positioned at the lock revision.
-- Moves repos that already exist onto the lock revision *without changing what HEAD is attached to* — it fast-forwards the branch the checkout is on, and a repo already at the pin is left alone.
-- Refuses when it cannot do that: when the pin is not a fast-forward of that branch, and when the checkout is on a branch the manifest does not declare. `--detach-checkouts` waives both by materializing the pin on a detached HEAD, moving no branch.
-- Does **not** fetch from the network when the lock SHA is already in the local object store.
-- Does **not** advance lock entries — the lock is read-only during fetch; see [lock-as-derived](../explanation/joints/lock-as-derived.md).
+1. If the remote still holds the commit, run `git -C <repo> fetch` to pull the missing objects, then `rwv fetch` to align the checkout.
+2. If upstream rewrote history and the locked SHA no longer exists on the remote, align the checkout to the desired commit and run `rwv lock --commit` (or `rwv update --commit`) to record a reachable revision.
 
 ## Related
 
-- [lock-as-derived](../explanation/joints/lock-as-derived.md) — why the lock is output-only and why `rwv lock` always produces the right answer
-- [CLI reference: `rwv status`](../reference/cli.md#rwv-status---json-) — full column definitions
-- [CLI reference: `rwv doctor`](../reference/cli.md#rwv-doctor-) — `--locked` flag and check descriptions
-- [CLI reference: `rwv fetch`](../reference/cli.md#rwv-fetch-source-) — in-place repair mode and `--frozen` flag
+- [Lock as derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` is output-only during normal work and read-only during `rwv fetch`
+- [Destructive operations](../explanation/destructive-operations.md) — why resting-workspace branch rewinds require explicit `git` commands
+- [CLI reference — `rwv status`](../reference/cli.md#rwv-status---json-) — status columns and JSON output
+- [CLI reference — `rwv doctor`](../reference/cli.md#rwv-doctor-) — `--locked` and `--fix` behavior
+- [CLI reference — `rwv fetch`](../reference/cli.md#rwv-fetch-source-) — in-place repair mode and `--detach-checkouts`

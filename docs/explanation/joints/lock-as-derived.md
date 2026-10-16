@@ -41,10 +41,8 @@ The last point matters: `rwv lock` does not respect or honor or
 "update" the prior lock. It overwrites with whatever HEAD says. The
 previous file is replaced by the current snapshot.
 
-Install behavior used to be wired into `rwv lock` via integration
-hooks. That coupling was removed; installs now belong to `rwv activate`,
-which is the natural "make this workspace ready" verb. `rwv lock` is
-pure write.
+Integration install hooks belong to `rwv activate` and `rwv materialize`,
+which prepare the workspace on disk. `rwv lock` is a pure git snapshot.
 
 The other "advancement" verbs — `rwv update` and `rwv sync` — emit
 fresh locks internally as part of their own work, but the locks they
@@ -99,8 +97,8 @@ records. The lock is the *artifact*; manifest commits are the *source*.
 ## What the lock contains
 
 The persisted shape is small: one entry per manifest repo, pinning it to
-one revision (canonical SHA, with optional display form when a tag
-pointed at HEAD). Detailed schema lives in
+its 40-character commit SHA (never a tag or branch name, even when a tag
+points at `HEAD`). Detailed schema lives in
 [reference/formats](../../reference/formats.md); the conceptual point
 here is that *every* field in the file is a function of state recorded
 elsewhere.

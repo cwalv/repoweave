@@ -39,7 +39,7 @@ pub trait Integration {
 ### Required methods
 
 - **`name`** — unique identifier (e.g., `"npm-workspaces"`). Used as the config
-  key in `rwv.toml`'s `integrations:` block.
+  key in `rwv.toml`'s `[integrations]` table.
 - **`default_enabled`** — whether the integration runs without explicit opt-in.
 - **`activate`** — author the managed content. Called from the *intent* verbs
   only; see [the trigger model](../explanation/joints/file-ownership.md#the-trigger-model)
@@ -74,7 +74,7 @@ bail there is a second line of defence, never the only report.
 - **`managed_files`** — the wider set including hybrid files, which are
   surfaced by symlink, never gitignored, and only ever strip-edited. Defaults
   to `generated_files()`, so a fully-owned integration implements just the one.
-- **`verify`** — drift detection, deliberately separate from `check`: `check`
+- **`verify`** — drift detection, separate from `check`: `check`
   answers "is the environment able to do this", `verify` answers "has what we
   wrote been changed underneath us".
 - **`member_incompatibility`** — report a member the integration's own tooling
@@ -87,15 +87,15 @@ Each hook receives an `IntegrationContext` (`src/integration.rs`) with:
 
 | Field | Description |
 |---|---|
-| `output_dir` | Where generated files are written — the primary root, or the workweave directory |
+| `output_dir` | Where generated files are written — the project directory (`projects/<project>/`) |
 | `workspace_root` | Where repos live on disk. In a workweave this still points at the primary root, so detection works when clones are not duplicated |
 | `project` | The active project name |
 | `repos` | Repo entries from the project's `rwv.toml`, as an ordered `(path, entry)` list |
-| `config` | Per-integration config from the `integrations:` key in `rwv.toml` |
+| `config` | Per-integration config from the `[integrations.<name>]` table in `rwv.toml` |
 | `all_repos_on_disk` | All repos found on disk under registry directories. Computed once, shared across integrations |
 | `all_project_paths` | All project paths. Computed once, shared across integrations |
 | `detection_cache` | Manifest filename → repo paths containing it. Populated once per activation/check cycle, before any integration runs |
-| `workweave` | The project's `workweave:` config, if any. Present so an integration can detect a name claimed by two sections at once |
+| `workweave` | The project's `[workweave]` config, if any. Present so an integration can detect a name claimed by two sections at once |
 
 ## Helper methods
 
@@ -109,6 +109,50 @@ Both are on-disk gated. A repo declared in `rwv.toml` but not cloned is not
 "pending" — it is simply absent from every list, which is why an intent verb
 withholds authoring when the member set is incomplete rather than writing a
 smaller-but-wrong file.
+
+## Hybrid merge helper (`ManagedDoc`)
+
+The hybrid-merge invariants ([file-ownership](../explanation/joints/file-ownership.md))
+live once in `src/integrations/merge.rs` rather than being duplicated per integration:
+
+```rust
+type KeyPath = Vec<String>;
+
+trait ManagedDoc: Sized {
+    fn parse(text: &str) -> anyhow::Result<Self>;    // bail on malformed
+    fn empty() -> Self;
+    fn has_marker(&self, owned_keys: &[KeyPath]) -> bool;
+    fn set_marker(&mut self, owned_keys: &[KeyPath]);
+    fn remove_marker(&mut self, owned_keys: &[KeyPath]);
+    fn key_present(&self, key: &KeyPath) -> bool;
+    fn set_owned(&mut self, key: &KeyPath, value: &OwnedValue);
+    fn remove_owned(&mut self, key: &KeyPath);
+    fn is_empty(&self) -> bool;
+    fn serialize(&self) -> anyhow::Result<String>;
+}
+fn merge_activate<D: ManagedDoc>(
+    path: &Path,
+    owned: &[(KeyPath, Ownership, OwnedValue)],
+) -> anyhow::Result<MergeResult>;
+fn strip_deactivate<D: ManagedDoc>(
+    path: &Path,
+    owned_keys: &[KeyPath],
+) -> anyhow::Result<StripOutcome>;
+```
+
+Key design details of that signature:
+
+- **`KeyPath` is `Vec<String>`, not a dotted `&str`:** VS Code's `settings."files.exclude"` is `["settings", "files.exclude"]`, where the second segment contains a literal dot.
+- **Marker methods take `owned_keys`:** TOML places `# managed by rwv` as a per-key decoration rather than a document header, whereas JSON ignores the slice and uses its top-level marker key (`x-repoweave` or `rwv.generated`).
+- **`key_present` drives the generate-vs-verify switch:** when a managed key is present on disk with no marker, `merge_activate` defers rather than overwriting and records the key as `UserHeld` in `MergeResult`.
+- **`Ownership::Author` vs. `Ownership::DefaultOnly`:** `Author` keys are written and stripped by `rwv`; `DefaultOnly` keys are written only when absent and never overwritten or stripped.
+- **`strip_deactivate` returns `StripOutcome` (`Absent`, `UserHeld`, `Stripped`):** callers that need to gate removing a co-requisite generated file (such as an ecosystem lockfile) learn whether the strip happened without re-reading the file.
+- **Implementations:** `JsonDoc` (`serde_json` — npm and vscode), `TomlDoc` (`toml_edit` — cargo and uv), `YamlDoc` / line-editor (pnpm), and `GoWorkDoc` (`go.work` `use` block merger). Because `deactivate(root: &Path)` receives no `IntegrationContext`, owned keys are static per-integration constants.
+
+For a new integration:
+
+- **Fully rwv-owned:** implement `activate` as a whole-write, `deactivate` as a whole-delete, and list the file in `generated_files()`.
+- **Hybrid:** implement via `ManagedDoc`, never whole-write or whole-delete a user file, land both `merge_activate` and `strip_deactivate` in the same change, and cover the three regression test shapes (`activate-preserves`, `deactivate-strips-keeps`, `deactivate-deletes-if-empty`).
 
 ## Registration
 

@@ -54,8 +54,8 @@ shape is a weave root by definition. One consequence worth stating rather
 than leaving implicit — first-ancestor-wins means a member checkout that
 happens to contain its own top-level `projects/` directory (an unusual
 tree, but not one the shape test can rule out) resolves as the weave from
-inside it, and the real weave above it is never reached. That is the shape
-test doing exactly what it is defined to do, not a bug in the walk.
+inside it, and the real weave above it is never reached. That is a direct
+consequence of the first-ancestor-wins rule.
 
 ## Why the root is not a repository
 
@@ -67,7 +67,7 @@ test doing exactly what it is defined to do, not a bug in the walk.
 | `projects/<name>/` | the project repo — committed intent (`rwv.toml`, `rwv.lock`) plus every surfaced file |
 | root symlinks (`Cargo.toml`, `go.work`, …) | rwv — the delivery layer of surfacing |
 | derived views the links resolve to | regenerated from committed intent by intent verbs |
-| `.rwv-active`, `.workweaves/` | rwv — machine-local pointer state and the container of more views |
+| `.rwv-active` (or `.rwv-workweave`) | rwv — machine-local pointer state (while `.workweaves/` lives outside the root as a sibling directory by default) |
 
 A repo at the root would be a repo whose every tracked path is either another
 repository or derived state. The first half re-imports the nested-repo
@@ -83,7 +83,7 @@ same reason a lockfile is derived rather than hand-held
 ([lock-as-derived](./lock-as-derived.md)).
 
 The root's own resident state makes the same point from the other side:
-`.rwv-active` is deliberately *unversioned* pointer state. "Which project this
+`.rwv-active` is *unversioned* pointer state. "Which project this
 machine presented when" is not project state — no clone of the project should
 carry it, and no history of it means anything off this machine.
 
@@ -97,9 +97,9 @@ invisible to every verify pass. It evaporates with the weave.
 The surfacing link is the adapter that satisfies both constraints with one
 copy. The tool reads and writes at the root; the bytes land in
 `projects/<project>/`, under version control, where a commit can see them.
-The write-through direction is load-bearing, not incidental: a lock file an
+The write-through direction is essential, not incidental: a lock file an
 ecosystem tool writes at the root must arrive in the committed copy, which is
-why a dangling link is deliberately created for a file that does not exist yet
+why a dangling link is created for a file that does not exist yet
 ([symlinks-as-structure](./symlinks-as-structure.md)) and why a copy at that
 path is a correctness failure — a second copy of a tracked file that nothing
 reconciles.
@@ -122,7 +122,7 @@ nothing moves: the root keeps no record of which project wrote a file, so a
 conflicting one left behind would be taken in by the next project to surface
 that name.
 
-Links are also the cheapest honest mechanism for a view. Minting one moves no
+Links are also the simplest mechanism for a view. Minting one moves no
 data; removing one destroys no data; the set of links is recomputable at any
 time by diffing the presented project's declared names against the root. That
 is what lets presentation switch, repair converge, and a workweave be built or

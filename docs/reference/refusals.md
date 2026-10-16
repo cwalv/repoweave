@@ -210,7 +210,7 @@ while disagreeing about which is which, and every later address would resolve
 to whichever was recorded last.
 
 **Exits.** Choose a different directory, or retire the workweave that is there
-first. Reusing the directory is deliberately not offered here — see
+first. Reusing the directory is not offered here — see
 `target-dir-occupied` for the occupant rwv can adopt.
 
 ### `head-not-on-branch`
@@ -226,7 +226,7 @@ verb has nowhere to put the result.
 initial commit first. For push specifically, the canonical branch is the one
 publishing requires — see `project-repo-off-canonical-branch`.
 
-**Where this sits.** [Branch model](../explanation/joints/sync-semantics.md).
+**Where this sits.** [Branch model](../explanation/joints/branches.md).
 
 ### `health-floor-too-low`
 
@@ -248,7 +248,7 @@ the floor — then upgrade again.
 **Condition.** A flag was passed in a mode where it has no meaning.
 
 **Why.** Accepting it silently would let an operator believe a constraint was
-applied that nothing read. The refusal is deliberately generic: a per-flag
+applied that nothing read. The refusal is generic: a per-flag
 token would name the remedy's argument rather than a state.
 
 **Exits.** Drop the flag, or switch to the mode that reads it — the message
@@ -424,7 +424,7 @@ be in flight, it completed or was already aborted.
 **Condition.** The remote publishes no default branch.
 
 **Why.** rwv records what to track rather than guessing `main`. A remote with
-no published default gives nothing honest to record, and a fabricated guess
+no published default gives nothing verifiable to record, and a fabricated guess
 would be wrong silently.
 
 **Exits.** The message names the repair for the VCS in question — set the
@@ -444,7 +444,7 @@ has no origin to record, and an invented one would not fetch.
 **Condition.** The address names no recorded workweave.
 
 **Why.** Addressing is by record, not by directory scan: a directory that
-looks like a workweave but is not recorded is not addressable, deliberately.
+looks like a workweave but is not recorded in `.rwv-workweave-index` is not addressable.
 
 **Exits.** `rwv workweave <project> list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
@@ -524,7 +524,7 @@ present and the exits are resume-or-abort rather than retry.
 this workspace.
 
 **Why.** An operation in flight is rewriting the very repos another verb would
-read or move. Op-state is held deliberately across a crash — there is no
+read or move. Op-state persists across a crash — there is no
 auto-expiry, because a stale record and a live one are indistinguishable from
 outside.
 
@@ -566,7 +566,7 @@ that survives; if they are not, reset the ref to the recorded tip and re-run.
 ### `partial-run-aborted`
 
 **Condition.** Some repos failed, and an artifact that would otherwise be
-written was deliberately withheld.
+written was withheld.
 
 **Why.** This is not a bare failure tally. A lock or success record written
 over a partial run would describe a state that never existed, so the run
@@ -600,7 +600,7 @@ or choose a fresh directory.
 ### `project-push-withheld`
 
 **Condition.** Manifest repos failed to push, so the project repo was
-deliberately not pushed.
+not pushed.
 
 **Why.** The project repo carries the lock pinning manifest SHAs. Publishing
 it after a partial manifest push would advertise revisions collaborators
@@ -638,11 +638,11 @@ set the remote once the repository exists elsewhere.
 
 **Condition.** `rwv push` was invoked from a workweave.
 
-**Why.** Workweave branches are ephemeral and named for a seat, not for
-publication. Pushing them would leak per-seat branch names to a shared remote
-where nothing retracts them. Unlike `wrong-checkout-kind`, push *is* defined
-at a workweave — it is refused on branch-hygiene policy, which is why it has
-its own entry.
+**Why.** Workweave branches are ephemeral and named for a workweave, not for
+publication. Pushing them would leak per-workweave branch names to a shared
+remote where nothing retracts them. Unlike `wrong-checkout-kind`, push *is*
+defined at a workweave — it is refused on branch-hygiene policy, which is why it
+has its own entry.
 
 **Exits.** `rwv sync-to` from the workweave to land the work on the parent,
 then push from there.
@@ -741,7 +741,7 @@ it is reachable from the target; divergence means some of it is not, and the
 delete would take it.
 
 **Exits.** Land the divergent commits — re-run `sync-to` without `--retire`
-first — then retire. Or inspect and discard them deliberately.
+first — then retire. Or inspect and discard them with `rwv workweave <project> delete <name> --discard-unmerged-commits`.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
@@ -850,7 +850,7 @@ landing, and re-choosing a strategy now would replay against a base the earlier
 phases did not use.
 
 **Exits.** `rwv abort` and start again against the target's current state. This
-is deliberately not `not-fast-forwardable`'s remedy — past replay, a different
+is not `not-fast-forwardable`'s remedy — past replay, a different
 strategy is not the fix.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
@@ -864,7 +864,7 @@ HEAD means those commits would be missing from the replayed tip, and the final
 fast-forward could not land.
 
 **Exits.** Run `rwv lock --commit` in the target workspace, then re-run. There
-is deliberately no `--allow-stale-lock` here: skipping the check does not make
+is no `--allow-stale-lock` here: skipping the check does not make
 the missing commits appear, which is why this is not `stale-lock`.
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).

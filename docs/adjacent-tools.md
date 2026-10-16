@@ -51,7 +51,7 @@ Place `.envrc` in the project directory and use the `static-files` integration t
 
 ## Devcontainers / Codespaces
 
-`rwv fetch` replaces a wall of `git clone` commands in `postCreateCommand`. Mounting the repo at its default location leaves the container's working directory as the project repo itself — not a workspace, and not empty — so `rwv fetch <source>` refuses it. Mount under `projects/<name>/` instead (`workspaceMount` + `workspaceFolder`), then `cd` up to the parent before activating and fetching in place:
+`rwv fetch` replaces a wall of `git clone` commands in `postCreateCommand`. Mounting the repo at its default location leaves the container's working directory as the project repo itself — not a workspace, and not empty — so `rwv fetch <source>` refuses it. Mount under `projects/<name>/` instead (`workspaceMount` + `workspaceFolder`), then `cd` up to the weave root, write `.rwv-active`, and run `rwv fetch --frozen` (which clones all member repos at their locked commits, surfaces workspace symlinks, and runs install hooks):
 
 ```jsonc
 // .devcontainer/devcontainer.json
@@ -63,21 +63,20 @@ Place `.envrc` in the project directory and use the `static-files` integration t
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/ws/projects/web-app,type=bind,consistency=cached",
   "workspaceFolder": "/workspaces/ws/projects/web-app",
-  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv activate web-app --no-materialize && rwv fetch --frozen",
+  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && echo web-app > .rwv-active && rwv fetch --frozen",
   "forwardPorts": [5432]
 }
 ```
 
 ## CI multi-repo checkout
 
-`rwv.toml` can drive a reusable checkout action — same pattern as `rwv fetch` but in CI. A checkout with no `path:` has the same problem as the devcontainer's default mount: the runner directory ends up non-empty and not a workspace. Nest the checkout under `projects/<name>/`, activate to set the active project, then fetch in place at the revisions the lock pins:
+`rwv.toml` can drive a reusable checkout action — same pattern as `rwv fetch` but in CI. A checkout with no `path:` has the same problem as the devcontainer's default mount: the runner directory ends up non-empty and not a workspace. Nest the checkout under `projects/<name>/`, pass `--project web-app` to `rwv fetch --frozen` so it clones every member repo at its locked revision and activates `web-app` (surfacing workspace symlinks and running install hooks), then run your test suite:
 
 ```yaml
 # .github/workflows/ci.yml
 - uses: actions/checkout@v4
   with:
     path: projects/web-app
-- run: rwv activate web-app --no-materialize
-- run: rwv fetch --frozen            # clones the repos listed in rwv.toml, pinned to rwv.lock
-- run: npm install && npm test
+- run: rwv --project web-app fetch --frozen   # clones member repos pinned in rwv.lock, activates web-app
+- run: npm test --workspaces
 ```

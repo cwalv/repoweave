@@ -1,114 +1,87 @@
 # Regenerate ecosystem workspace files
 
-When the project's repo membership changes — repos added, removed, or synced in from another workweave — the ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, etc.) need to be brought into line with the new `rwv.toml`.
-
-The normal paths (`rwv add`, `rwv remove`) run activation hooks automatically, so regeneration is implicit — unless a generated file rwv attests holds content it never accepted, in which case they withhold the hooks and name the two ways out. This page covers the cases where you need to trigger it by hand, and [Content rwv never accepted](#content-rwv-never-accepted) covers that one.
-
-## When to run this
-
-- You ran `rwv sync` and a new repo appeared in the project's manifest from the source workspace.
-- You edited `rwv.toml` directly (e.g., to adjust an integration config) and want the generated files to reflect the change.
-- A workweave was created or switched and the ecosystem files at the weave root are symlinked to the wrong project.
-- `rwv lock` noted: "to refresh ecosystem files after membership changes, run `rwv activate`."
-- You are inside a workweave, where `rwv activate` is refused — see [Inside a workweave](#inside-a-workweave-rwv-materialize) below.
-
-## Regenerate with `rwv activate`
+Bring ecosystem workspace files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`, `gita/`), weave-root symlinks, and tool install state (`node_modules/`, `.venv/`, `target/`) in line with `rwv.toml`:
 
 ```bash
-rwv activate <project>
+rwv doctor --fix      # author or repair managed workspace files and symlinks
+rwv materialize       # strip disabled integrations and run install hooks
 ```
 
-`rwv activate` does three things:
+## Which command does what
 
-1. Updates `.rwv-active` to name `<project>`.
-2. Regenerates ecosystem workspace files in `projects/<project>/` from its current `rwv.toml`.
-3. Symlinks those files to the weave directory so build tools see them where they expect.
+Repoweave separates authoring workspace config files, selecting the active project, and materializing tool state into distinct verbs:
 
-The ecosystem install step runs automatically as part of activation (e.g., `npm install`, `uv sync`, `cargo fetch`). It brings the ecosystem state up to current membership; it never advances a version an existing lock file pins, and it is withheld while there is [content rwv never accepted](#content-rwv-never-accepted) on disk. Pass `--no-materialize` to generate the workspace config files without running installs:
+| Task | Command | Works in |
+|---|---|---|
+| Mutate membership and automatically re-author managed files | `rwv add`, `rwv remove`, `rwv update`, `rwv role` | Primary weave or workweave |
+| Re-author managed files after hand-editing `rwv.toml`, or repair missing weave-root symlinks | `rwv doctor --fix` | Primary weave or workweave |
+| Strip artifacts from newly disabled integrations and run install hooks (`npm install`, `uv sync`, `cargo fetch`) | `rwv materialize` | Primary weave or workweave |
+| Switch `.rwv-active`, re-point weave-root symlinks to `<project>`, and run install hooks (never authors files) | `rwv activate <project>` | Primary weave only |
+
+## After editing `rwv.toml` by hand
+
+Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) update managed workspace files automatically. When you edit `rwv.toml` directly — for example, changing an integration setting or enabling a new integration — run:
 
 ```bash
-rwv activate <project> --no-materialize
+rwv doctor --fix
 ```
 
-Re-activating a project that is already active is valid and idempotent — it re-runs the activation hooks and install without switching projects.
+`rwv doctor --fix` updates the `rwv`-managed sections of hybrid files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`) while preserving user-authored keys, regenerates owned files (`gita/`, `.code-workspace`), and repairs any missing surfacing symlinks in the current workspace.
 
-## Inside a workweave: `rwv materialize`
-
-`rwv activate` is refused inside a workweave: activation also *selects* a project, and a workweave's project is fixed at creation. Materialization carries no such restriction, and it is its own verb:
+If your `rwv.toml` edit disabled an integration (`enabled = false`), follow up with `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
 
 ```bash
 rwv materialize
 ```
 
-It takes no project argument — it materializes the project the checkout already presents. Reach for it wherever you would have re-activated purely to re-run installs, and after `rwv sync` delivers changes that touch a materialized input.
+## After `rwv sync` or inside a workweave
 
-Like activation, it never advances a version an existing lock file pins.
-
-## Content rwv never accepted
-
-Generated files rwv attests but whose current content it never accepted **stop the run** rather than being overwritten. `rwv materialize` is where you say which way; the refusal lists every path at stake, so running once with no flag is how you see it, and the two ways out destroy opposite things, so each is asked for explicitly:
+`rwv activate` is refused inside a workweave because a workweave's project is fixed at creation. To run integration install hooks inside a workweave (or at the primary weave without switching projects) after `rwv sync` brings in new membership or lock changes:
 
 ```bash
-rwv materialize --regenerate-drifted   # discard the current content, re-derive from inputs
-rwv materialize --adopt-drifted        # record the current content as the accepted generation
+rwv materialize
 ```
 
-What `--regenerate-drifted` discards is not recoverable through rwv — copy anything you mean to keep out of the tree first.
+Install hooks materialize current membership without advancing versions already pinned in ecosystem lockfiles.
 
-The install hooks are what settles this: they re-run each generator and record what it produces as accepted. So the verbs that run them without carrying a flag to answer with — `rwv activate`, `rwv add`, `rwv remove`, `rwv update`, `rwv doctor --fix` — withhold the hooks while it stands, name both flags on stderr, and go through once you have chosen. The rest of what each verb does still happens: `rwv add` still writes the manifest entry.
+## Resolve unaccepted drift on generated files
 
-## Weave-root links at undeclared names
+When an attested generated file holds edits that `rwv` never wrote or accepted, verbs that run install hooks withhold the hooks and list the drifted paths. Choose whether to overwrite the file from current inputs or accept the on-disk content:
 
-Dropping a name from `rwv.toml` — removing it from an integration's file list, or disabling the integration outright — does not remove the weave-root symlink that name's earlier declaration created. Regeneration only ever recreates what the project currently declares, so the orphaned link survives both `rwv activate` and `rwv materialize`, and `rwv doctor` reports it: a `surfacing` warning naming the link, what it resolves to, and the command that clears it. `doctor --fix` will not touch it — on disk it is indistinguishable from a link you made by hand at the same shape, so removal needs your consent:
+```bash
+rwv materialize --regenerate-drifted   # discard unaccepted edits and re-derive from inputs
+rwv materialize --adopt-drifted        # record current on-disk content as accepted
+```
+
+What `--regenerate-drifted` discards is not saved by `rwv`; copy anything you want to keep before running it.
+
+## Remove weave-root symlinks for undeclared filenames
+
+Dropping a filename from `integrations.static-files.files` in `rwv.toml` leaves the earlier weave-root symlink in place (`rwv doctor` reports it as a `surfacing` warning). Unlink those undeclared symlinks without touching the target files they point to:
 
 ```bash
 rwv materialize --remove-undeclared-links
 ```
 
-This removes exactly the links doctor named and nothing else: the still-declared links at the weave root are untouched, and so is the file each removed link pointed at — only the symlink goes. Re-run `rwv doctor` afterward to confirm the warning is gone.
+## Files that `rwv` never overwrites on its own
+
+- **User-owned keys in hybrid files:** `rwv doctor --fix` and intent verbs only touch keys marked by `rwv`'s sentinel comments or metadata keys, leaving your custom `[profile.*]`, `scripts`, `replace`, or `[tool.ruff]` settings intact.
+- **Ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.work.sum`):** Updated by the ecosystem's own tool during install hooks (or when `go` commands run against `go.work`).
+- **Compiled native extensions (`maturin` / `PyO3`):** `uv sync` reacts to dependency resolution changes, not edits to `.rs` source files inside an already-installed package. See [uv-workspace: a compiled extension can go stale](../reference/integrations/uv-workspace.md#polyglot-cargouv-a-compiled-extension-can-go-stale) for the `maturin-import-hook` setup.
 
 ## Verify the result
 
-After activation, the weave directory should have symlinks to the project's generated files:
+Check that weave-root symlinks resolve and `rwv doctor` reports no drift:
 
 ```bash
 ls -la | grep '\->'
-```
-
-To confirm the workspace files reflect the current membership, check the generated file directly:
-
-```bash
-# npm-workspaces:
-cat projects/<project>/package.json
-
-# go-work:
-cat projects/<project>/go.work
-
-# cargo-workspace:
-grep '\[workspace\]' -A20 projects/<project>/Cargo.toml
-```
-
-If `rwv doctor` reported drift before you ran `rwv activate`, re-run it to confirm it is cleared:
-
-```bash
 rwv doctor
 ```
 
-## Ecosystem files that are not regenerated by `rwv activate`
-
-`rwv activate` re-derives the managed region of each hybrid file (the `workspaces` array in `package.json`, the `use` entries in `go.work`, etc.) but preserves any user-authored content in those files. It does not touch:
-
-- Ecosystem lock files (`package-lock.json`, `uv.lock`, `go.work.sum`, `Cargo.lock`) — those are updated by the ecosystem tool. Where the integration has an install hook, activation runs that step automatically; go-work has none, so `go.work.sum` is written only when the Go tooling itself runs (`go mod download` and friends), through the weave-root link.
-- Files the integration was not configured to manage.
-- A compiled Python extension built by maturin/pyo3. The `uv sync` install hook running automatically does not mean that extension is current: it reacts to a resolution event (a dependency added, removed, or re-pinned), not to Rust source edited inside an already-resolved package, so a `.rs` change can land — via `rwv sync-to`, a `git pull`, or a direct edit — with the compiled `.so` left at the old build and no non-zero exit anywhere. See [uv-workspace: a compiled extension can go stale](../reference/integrations/uv-workspace.md#polyglot-cargouv-a-compiled-extension-can-go-stale) for why, and for the ecosystem-native fix (`maturin-import-hook`).
-
-If you need to regenerate a file that is fully rwv-owned (like a `gita/` CSV), `rwv activate` handles that too; these files are re-derived from scratch on each activation.
-
 ## Related
 
-- [Switch projects](./switch-projects.md) — the normal path for `rwv activate`; also covers `--project` for one-shot overrides
-- [Add an integration](./add-an-integration.md) — enable or disable integrations in `rwv.toml`
-- [workspace lens](../explanation/lenses/workspace.md) — what activation does and why it runs an install step
-- [reference/integrations](../reference/integrations/index.md) — per-integration generated-file format
-- [CLI reference: `rwv activate`](../reference/cli.md#rwv-activate-project)
-- [CLI reference](../reference/cli.md) — `rwv materialize` and its drift-consent flags
+- [Add an integration](./add-an-integration.md) — enabling, configuring, or disabling integrations in `rwv.toml`
+- [Switch projects](./switch-projects.md) — switching the active project with `rwv activate`
+- [File ownership](../explanation/joints/file-ownership.md) — how authoring, surfacing, and materialization divide across verbs
+- [Integrations reference](../reference/integrations/index.md) — per-integration managed files and install hooks
+- [CLI reference — `rwv materialize`](../reference/cli.md#rwv-materialize-) — drift-consent and symlink-cleanup flags

@@ -1,6 +1,6 @@
 # Alternatives
 
-repoweave is not the only way to coordinate work across multiple repositories. This page compares the main alternatives honestly — including the cases where they win.
+repoweave is not the only way to coordinate work across multiple repositories. This page compares the main alternatives — including the cases where they win and the costs of adopting `rwv`.
 
 For the full design rationale behind repoweave's choices, see the [monorepo lens](explanation/lenses/monorepo.md).
 
@@ -8,12 +8,22 @@ For the full design rationale behind repoweave's choices, see the [monorepo lens
 
 | Alternative | Wins when | repoweave wins when |
 |---|---|---|
+| **Local toolchain path overrides (`[patch]`, `go.work`, `pnpm link`, `uv` sources)** | Two repos on one developer's machine need a quick local link for an afternoon | Multiple contributors, CI, or parallel agent worktrees need reproducible layout, committed workspace files, and a shared cross-repo lock |
 | **git submodules** | You need VCS-native pinning in a single repo with no additional tooling | You want a writable workspace (not just pinning), workspace files, workweaves, or agent integration |
+| **git subtree** | You want to vendor a dependency's files into one repo's history with zero external tooling | Repos have independent ownership/ACL boundaries or you frequently push changes back to multiple upstreams |
 | **gita / meta / bulk-git tools** | All you need is bulk `git status` / `git pull` across loosely related repos | You need a reproducible lock, cross-repo workspace files, or isolated parallel work |
 | **Monorepo migration** | Your repos share a release cadence, are all controlled by one team, and the storage/history cost is acceptable | Repos are independently owned, separately versioned, or too large to vendor into one tree |
 | **Monorepo + exporter (Copybara / ShipIt / josh)** | You already have a monorepo and must publish vanilla-consumable slices of it | Your components already live in separate repos — the slice is a subset, not a translated copy |
 | **repo (Android) / west — manifest meta-repos** | Single-vendor OS/firmware trees where the manifest is a checkout instruction and builds run outside git | You want a writable coordinated workspace: ecosystem workspace files, workweaves, a derived lock, sync verbs |
 | **git worktree (per-repo)** | You're working in a single repo and want parallel branches | You need worktrees across N repos with shared ecosystem files and a transactional landing path |
+
+## Local toolchain path overrides (`[patch]`, `go.work`, `pnpm link`, `uv` sources)
+
+Before reaching for a multi-repo tool, most developers wire sibling checkouts together using their language toolchain's native local-override mechanism: Cargo `[patch.crates-io]` or `path = "../foo"`, uncommitted `go.work` files, `pnpm link` / `workspace:*`, or `[tool.uv.sources]`.
+
+**Native toolchain overrides win when:** you are linking two repos on your own machine for a short-lived change, or you already have a way to guarantee where every contributor clones sibling repos. Zero extra binaries required.
+
+**repoweave wins when:** the local link stops being a one-off hack. Hand-maintained relative paths (`path = "../protocol"`) assume every developer and CI runner clones the same repos at the same relative paths; committing `[patch]` or relative path overrides to a library repo breaks standalone consumers; leaving them uncommitted means `git clone` does not produce a working build; and spinning up an isolated parallel workspace requires manually cloning or adding worktrees for every repo and rewriting the relative paths. repoweave standardizes the canonical clone layout (`<registry>/<owner>/<repo>/`), authors the ecosystem workspace files (`Cargo.toml [workspace]`, `go.work`, `package.json`, `pyproject.toml`) inside `projects/<name>/` while leaving member repos untouched, pins all repo SHAs in `rwv.lock`, and provisions multi-repo worktrees (`rwv workweave`) with matching workspace wiring in one command.
 
 ## git submodules
 
@@ -21,7 +31,15 @@ Git submodules pin a commit SHA from one repo inside another. They solve the rep
 
 **git submodules win when:** your use case is purely pinning — a firmware repo that vendors a hardware-abstraction library at a known commit, a docs repo that embeds a spec. No writable workspace needed, no parallel work, no agent integration.
 
-**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules have no concept of workspace files (no generated `Cargo.toml [workspace]`, `go.work`, etc.), no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating a submodule to a new commit is manual and error-prone; `rwv update` advances every manifest repo in parallel, then re-snapshots the lock after every advance succeeds — the lock write is gated on the whole batch, so a partial failure aborts with the lock unwritten.
+**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update` advances every manifest repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
+
+## git subtree
+
+`git subtree` copies another repository's files into a subdirectory of your repository and optionally squashes or merges history back and forth using plain `git`.
+
+**git subtree wins when:** consumers should be able to clone a single repository with plain `git clone` and no extra tools, and upstream round-tripping happens rarely.
+
+**repoweave wins when:** each component is a peer repository with its own CI, issue tracker, access control, and release cycle. `git subtree push` scans commit history to split commits back out, which grows slower and more brittle as repo count and commit volume increase, and every subtree update mixes vendor commits into the host repo's log. repoweave keeps each repository's history and remote cleanly separated while still pinning their exact cross-repo state in `projects/<name>/rwv.lock`.
 
 ## gita / meta / bulk-git tools
 
@@ -47,9 +65,9 @@ The large-monorepo shops don't actually choose between monorepo and polyrepo —
 
 **repoweave wins when:** the components already live (or belong) in separate repos. Then the slice is a *subset*, not a translated copy: publishing = per-repo ACLs plus a visible project manifest. Nothing the exporter must reconstruct or erase — provenance, upstream identity, the contribution backchannel — was ever lost, because the unit of composition and the unit of sharing coincide. See [the exporter tax](explanation/lenses/monorepo.md#the-exporter-tax-sharing-a-slice) in the monorepo lens.
 
-## repo (Android) / west / gitslave — manifest meta-repos
+## repo (Android) / west — manifest meta-repos
 
-Android's [repo](https://gerrit.googlesource.com/git-repo), Zephyr's [west](https://docs.zephyrproject.org/latest/develop/west/index.html), and the older [gitslave](https://gitslave.sourceforge.net/) drive N repos from a manifest, like repoweave. The differences are in what happens after checkout: they stop at "the right repos at the right revisions," with no generated ecosystem workspace files, no isolation primitive, and (for repo/gitslave) a wrapped-git workflow that fights the substrate.
+Android's [repo](https://gerrit.googlesource.com/git-repo) and Zephyr's [west](https://docs.zephyrproject.org/latest/develop/west/index.html) drive N repos from a manifest, like repoweave. The differences are in what happens after checkout: they stop at "the right repos at the right revisions," with no generated ecosystem workspace files, no worktree-based isolation primitive, and (for `repo`) a wrapped-git workflow that fights the substrate.
 
 **repo/west win when:** a single vendor controls the tree, the build system consumes source paths directly (Soong, CMake/Zephyr), and the manifest is primarily a checkout instruction for CI and release engineering. These are mature, proven at enormous scale, and west's `manifest --freeze` covers the pinning story.
 
@@ -63,25 +81,26 @@ Android's [repo](https://gerrit.googlesource.com/git-repo), Zephyr's [west](http
 
 **repoweave wins when:** your workspace spans N repos. A `rwv workweave` is `git worktree` extended across every repo in the manifest — plus per-workweave `node_modules`/`.venv`/`target`, ecosystem workspace files, and a `sync-to --retire` landing path that coordinates the cross-repo fast-forward in one command. repoweave uses `git worktree` internally; the two are complementary at different scopes.
 
-## The meta-repo failure mode — an honest self-assessment
+## The meta-repo failure mode
 
-Tools in this family have a reputation: "worst of both worlds." It was earned by a series of ambitious starts that lost steam at the same wall — submodules' detached-HEAD confusion and forgotten-pointer-bump PRs, gitslave's discontinued maintenance, repo-tool's wrapped-git friction. Each attempt was directionally correct; the number of independent tries is itself evidence the problem is real. Before trusting repoweave, it's fair to ask why it wouldn't run into the same wall.
+Any multi-repo tool separates the **record** (`rwv.toml`, `rwv.lock`, generated workspace files) from the **reality** (N git repositories that can be mutated on their own). A monorepo cannot express divergence between its manifest and its tree because they are the same commit; a meta-repo tool can. When record and reality are separate, **reconciliation is the product**.
 
-The shared architecture — and repoweave has it too — is that the **record** (a manifest, a lock, pointers) is a separate thing from the **reality** (N repos that move). A monorepo cannot express divergence between its manifest and its tree: they are the same frozen bytes in one commit. Any meta-repo tool *can*: mutate outside the tool's verbs — a stray `git clone` into the weave, a hand-edited generated file, a repo pulled without re-locking — and record and reality disagree. That class of state is not rare in this architecture; it is *expressible*, and what's expressible eventually occurs.
+Earlier tools split into two dataflows:
 
-The prior starts' shared shortfall was taking on the record/reality split and then not servicing it: a pointer in the tree (submodules) or a thin command fan-out (gitslave, meta) with no reconciliation machinery. **When record and reality are separate things, the reconciliation machinery is the product.** Shipping the split without the machinery delivers polyrepo's coordination costs with monorepo's expectations — the worst-of-both reputation, accurately assigned.
+1. **No record (`gita`, `meta`):** fan out commands across directories, but pin nothing and generate no workspace wiring. Nothing can drift, and nothing is reproducible.
+2. **Authoritative record (`git submodules`, `repo`, `west`):** treat the composition record like a source file that checkouts must conform to. Detached HEADs and forgotten pointer-bump commits are direct consequences of that dataflow.
 
-Where repoweave shares the failure mode, honestly:
+repoweave uses a third dataflow: **the lock is derived on mutation and authoritative only at materialization (`rwv fetch` / `rwv sync`)**:
 
-- Divergence is expressible, so it will happen. `rwv doctor` exists *because* the architecture permits drift — detection is an admission, not a boast.
-- Coherence is conditional on mutations flowing through the verbs. Out-of-band mutation breaks the invariant silently until doctor runs.
-- Materialization depends on N remotes serving the pinned SHAs — a lock's referents can dangle (mitigated by mirrors/providers, but that's configuration, not construction).
+- **Reconciliation is built into the verbs:** intent verbs (`add`, `remove`, `update`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
+- **Drift is detectable and repairable:** out-of-band git operations are still possible, so `rwv doctor` (and per-integration `verify()`) detects divergence and `rwv abort` rolls back mid-operation sync state via `refs/rwv/pre-op/<id>/` savepoints.
+- **Ordinary git stays first-class:** there is no `rwv commit` or wrapped git porcelain ([verb-vs-composition](explanation/joints/verb-vs-composition.md)).
 
-Where repoweave differs from the prior attempts — the machinery, specifically:
+## Costs and when not to use rwv
 
-- **Reconciliation is folded into the verbs**, not left as chores: `add`/`remove`/`activate` regenerate the ecosystem views transactionally; `sync` recomputes the lock every time ([lock-as-derived](explanation/joints/lock-as-derived.md)), so the record follows reality by construction on every supported path and lock conflicts are structurally impossible.
-- **Generated views are coarse** — repo paths, membership — so their contact surface with member-repo internals is small; most upstream churn cannot stale them.
-- **Drift is detectable and repairable**, not latent: `doctor` checks, per-integration `verify()`, savepoint-based `abort`.
-- **Ordinary git stays first-class.** No `rwv commit`, no wrapped porcelain — the tool doesn't fight the substrate it records ([verb-vs-composition](explanation/joints/verb-vs-composition.md)). This was repo-tool's and gitslave's most user-hostile friction.
+Adopting `rwv` carries real trade-offs:
 
-The honest conclusion needs one distinction. At the top level the architecture is the same one submodules had — a record separate from a reality. But within it, the prior attempts split into two dataflows, and repoweave uses a third: gitslave/meta kept **no record** (nothing to reconcile, nothing reproducible); submodules/repo/west made the record **authoritative** (reality conforms to it — detached HEADs and forgotten pointer-bumps are that dataflow working as designed, which is why fifteen years of polish never removed them); repoweave's record is **derived** — regenerated from reality on every supported mutation, authoritative only at materialization, with disagreement reported rather than silently resolved. Submodules treat the composition record like a source file; repoweave treats it like a lockfile. That dataflow choice removes whole failure classes by construction. What it cannot remove is the exposure every record-keeping design shares — out-of-band mutation, drift, sync edge cases — and there the bet is on execution: whether the machinery above holds up under real use. That bet is serviced rather than assumed — the unhappy paths are periodically probed by adversarial audit (blind scenario lists exercised against a live weave) and the findings landed as ordinary work, which is the servicing loop the earlier attempts never reached.
+1. **An extra binary on developer and CI machines.** Contributors and CI jobs that build across the weave install `rwv` (though individual member repos remain buildable standalone with plain `git`).
+2. **An $(N+1)$th repository to maintain.** The project repo (`projects/<name>/`) holds `rwv.toml`, `rwv.lock`, and generated workspace files; cross-repo features include a lock update commit in the project repo (`rwv lock --commit` + `rwv push`).
+3. **Branch discipline in canonical clones.** Canonical clones in the primary weave track the branch declared in `rwv.toml` (`version = "main"`). Isolated feature work routes through workweaves (`rwv workweave <project> create <name>`) rather than ad-hoc `git checkout -b` inside canonical clones (see [Branch model](explanation/joints/branches.md)).
+4. **Overkill for a single repo or rarely coupled repos.** If all your code lives in one repository, use `git worktree` directly. If two repositories only interact through a stable published API once a quarter, publish to a package registry and skip workspace coordination altogether.

@@ -5,11 +5,11 @@
 | | |
 |---|---|
 | Default enabled | no (opt-in) |
-| Auto-detects | all repos |
-| Generates | `gita/` directory (CSV configs) |
-| Lock hook | — |
+| Auto-detects | all active repos (`owned`, `fork`, `upstream`) |
+| Generates | `gita/repos.csv`, `gita/groups.csv` |
+| Install hook | — |
 
-**Opt-in.** Repoweave's default recommendation for bulk multi-repo operations is [unix composition](../../how-to/run-a-command-across-repos.md) using `rwv status --json`, `jq`, and `xargs`. Gita is supported as an alternative for users who prefer a dedicated CLI with "summary sugar."
+**Opt-in.** Repoweave's default recommendation for bulk multi-repo operations is [unix composition](../../how-to/run-a-command-across-repos.md) using `rwv status --json`, `jq`, and `xargs`. Gita is supported as an alternative for users who prefer a dedicated CLI with summary views.
 
 To enable:
 
@@ -18,22 +18,22 @@ To enable:
 enabled = true
 ```
 
-The activation hook generates gita's config files into a `gita/` directory inside the weave (or workweave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:
+Authoring verbs (`rwv add`, `remove`, `update`, `role`, `doctor --fix`) write `gita/repos.csv` and `gita/groups.csv` into `projects/<project>/gita/`, and `rwv activate` (or `rwv materialize`) surfaces them into `gita/` at the weave or workweave root via symlinks. Point gita at this directory via `GITA_PROJECT_HOME`:
 
 ```bash
 # .envrc in weave or workweave dir
 export GITA_PROJECT_HOME="$PWD/gita"
 ```
 
-`GITA_PROJECT_HOME` replaces (not supplements) gita's default config directory. Each workweave gets its own gita config — gita commands are always scoped to the current context's repos.
+`GITA_PROJECT_HOME` replaces (not supplements) gita's default config directory. Each workweave gets its own `gita/` config — gita commands are always scoped to the current context's repos.
 
-For build/test/lint across packages, prefer the ecosystem's own workspace commands (`npm run --workspaces test`, `pnpm -r run test`, `cargo test --workspace`) — they understand package dependency ordering. gita's value is at the **git layer**: status, bulk fetch/pull, seeing which repos have uncommitted work.
+For build/test/lint across packages, prefer the ecosystem's own workspace commands (`npm run --workspaces test`, `pnpm -r run test`, `cargo test --workspace`) — they understand package dependency ordering. Gita's value is at the **git layer**: status, bulk fetch/pull, and seeing which repos have uncommitted work.
 
 ## Generated files
 
-Two CSV files in `gita/`:
+Two CSV files in `projects/<project>/gita/` (surfaced at `<weave>/gita/`):
 
-**`repos.csv`** — header row, then one line per repo:
+**`repos.csv`** — header row, then one line per active repo:
 
 ```csv
 path,name,flags
@@ -42,11 +42,11 @@ path,name,flags
 /home/dev/workspace/github/chatly/protocol,protocol,
 ```
 
-- **path**: absolute path to the repo (or worktree in a workweave)
+- **path**: absolute path to the repo in the current weave or workweave
 - **name**: display name used in gita commands (basename of the repo path)
-- **flags**: extra args inserted after `git` in delegated commands (currently unused)
+- **flags**: extra args inserted after `git` in delegated commands (empty)
 
-**`groups.csv`** — header row, groups derived from role annotations:
+**`groups.csv`** — header row, then one row per role (`owned`, `fork`, `upstream`) that has at least one repo:
 
 ```csv
 group,repos
@@ -63,15 +63,25 @@ gita super owned pull  # pull only owned repos
 
 ## Deactivation
 
-Removes the entire `gita/` directory.
+Removes `gita/repos.csv` and `gita/groups.csv`, and removes the `gita/` directory only if it is empty (preserving any other files placed in `gita/`). When `gita` is disabled in `rwv.toml`, `rwv materialize` only removes `gita/repos.csv` and `gita/groups.csv` if their bytes match what `rwv` would author; hand-edited CSVs are left intact and reported as `USER-HELD` by `rwv doctor`.
 
 ## Check
 
-Warns if `gita` is not on PATH.
+`rwv doctor` reports:
+
+- `malformed-settings` (error) if `[integrations.gita]` contains unknown keys.
+- `tool-missing` (warning) if `gita` is not on `PATH` when active repos are present.
+
+## Verify (drift)
+
+`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) verify `gita/repos.csv` and `gita/groups.csv`:
+
+- When enabled, missing (`managed-file-missing`) or drifted (`managed-file-drift`) CSVs are reported as warnings and are auto-fixable via `rwv doctor --fix`.
+- When disabled (`enabled = false`), leftover `gita/repos.csv` or `gita/groups.csv` files in `projects/<project>/gita/` are reported as `orphaned-owned-region` (`DRIFT` if their bytes match `rwv`'s output, or `USER-HELD` if modified by hand).
 
 ## Why not `gita freeze` / `gita clone`?
 
-gita has its own serialization format (`gita freeze` outputs CSV with URL, name, path, branch) and can bootstrap from it via `gita clone`. This overlaps with `rwv lock` / `rwv fetch`, but `gita freeze` records branch names rather than pinned SHAs, so it's less precise for reproducibility. repoweave's `rwv.lock` also carries role annotations and YAML structure. The two mechanisms would overlap awkwardly, so the gita integration only generates the config files that gita needs at runtime — it doesn't use gita's own freeze/clone flow.
+Gita has its own serialization format (`gita freeze` outputs CSV with URL, name, path, branch) and can bootstrap from it via `gita clone`. This overlaps with `rwv lock` / `rwv fetch`, but `gita freeze` records branch names rather than pinned commit SHAs, so it is less precise for reproducibility. Repoweave stores role annotations and project configuration in `rwv.toml` and pins exact 40-character commit SHAs in JSON in `rwv.lock`. Because the two mechanisms would overlap awkwardly, the `gita` integration only generates the runtime CSV config files that gita reads.
 
 ## Related
 

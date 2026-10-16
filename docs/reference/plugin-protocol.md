@@ -11,7 +11,7 @@ For the design rationale — what earns a place in core versus a plugin, and why
   - **Unix:** the file must carry the executable bit, and the whole name after `rwv-` is the verb. Nothing is stripped: an executable `rwv-lint.py` is the verb `lint.py`, run as `rwv lint.py`. Name the file `rwv-lint` to get `rwv lint`.
   - **Windows:** a file is executable when its extension is listed in `PATHEXT` (by default `.COM;.EXE;.BAT;.CMD;…`), and the verb drops that extension, in any letter case: `rwv-lint.exe`, `rwv-lint.CMD` and `rwv-lint.bat` are each the verb `lint`. Ship anything a Windows command prompt would run — a compiled `.exe`, or a `.cmd` shim around an interpreter. A `rwv-*` file whose extension is not in `PATHEXT` (`rwv-lint.py`, `rwv-notes.txt`) is not a plugin and is not listed.
 - **Core always wins.** Core verbs are matched before external fallthrough runs. Naming a plugin after an existing — or future — core verb makes it unreachable; `rwv <name>` always resolves to the built-in.
-- **First-found on `$PATH` wins.** When the same verb exists in more than one `$PATH` directory, the first one found in `$PATH` order is the one `rwv` execs. On Windows, two files for one verb in the same directory (`rwv-lint.exe` beside `rwv-lint.cmd`) are duplicates too, and the one whose extension comes first in `PATHEXT` wins; directory order is decided first. `rwv doctor --json` inventories every copy in its `plugins` array — `name` is the verb, `path` the file with its real name — and marks every non-winning copy `shadowed: true` with `shadowed_by` pointing at the winner. That inventory is the audit surface for duplicates, not a dispatch-time warning. See [`rwv doctor`](./explain/doctor.md).
+- **First-found on `$PATH` wins.** When the same verb exists in more than one `$PATH` directory, the first one found in `$PATH` order is the one `rwv` execs. On Windows, two files for one verb in the same directory (`rwv-lint.exe` beside `rwv-lint.cmd`) are duplicates too, and the one whose extension comes first in `PATHEXT` wins; directory order is decided first. `rwv doctor --json` inventories every copy in its `plugins` array — `name` is the verb, `path` the file with its real name — and marks every non-winning copy `shadowed: true` with `shadowed_by` pointing at the winner. That inventory is the audit surface for duplicates, not a dispatch-time warning. See [Doctor findings](./doctor-findings.md).
 - `rwv --help` lists discovered plugin names under an "External commands" section — winners only; shadowed copies are omitted there and surface only in the doctor inventory.
 - `rwv explain` does not reflect over plugins: `rwv explain <name>` on a plugin name errors with `external command; try \`rwv <name> --help\``. `explain` only reflects over `rwv`'s own CI-checked surfaces, never over `$PATH` content.
 - **Two failure modes, no others.** Everything that can go wrong on the `rwv` side of dispatch collapses to exactly one of:
@@ -32,17 +32,24 @@ For the design rationale — what earns a place in core versus a plugin, and why
 | `RWV_PROJECT` | resolved project name | no workspace resolved |
 
 - **Outputs only.** `rwv` sets these; it never reads them back. A plugin that needs to hand a value back to `rwv` passes it as an explicit argument — see addressing, below.
-- **Presence encodes kind, across two variables.** `RWV_WORKWEAVE` being set means the invocation addressed a workweave and the registry names it. The checkout is one of three states, though, and the third — a workweave whose directory no registry entry names — has no identity to put in `RWV_WORKWEAVE`, so it is unset there exactly as it is at the primary. `RWV_WORKWEAVE_UNREGISTERED=1` is what distinguishes the two, and it is set in that one case only. A plugin that wants "am I in a workweave" tests both; one that never looks at the second variable sees the environment it always saw. Run `rwv doctor --fix` to register such a directory, after which the ordinary two-state reading holds again.
+- **Presence encodes checkout kind across `RWV_WORKWEAVE` and `RWV_WORKWEAVE_UNREGISTERED`:**
+
+  | Checkout kind | `RWV_WORKWEAVE` | `RWV_WORKWEAVE_UNREGISTERED` |
+  |---|---|---|
+  | Primary weave | *(unset)* | *(unset)* |
+  | Registered workweave | `<project>--<name>` | *(unset)* |
+  | Unregistered workweave (register with `rwv doctor --fix`) | *(unset)* | `1` |
+
 - **`RWV_WORKSPACE` is always the primary root**, not "wherever this checkout is" — the value is identical whether the plugin is running at primary or inside a workweave. See addressing, below, for why this matters.
 - **One projection, two surfaces.** The envelope is a pure projection of the same resolved value that the `resolution` block in `--json` output serializes. A plugin that reads both never sees them disagree.
 - **Version floors are a last resort.** `RWV_VERSION` is always set, but prefer probing the shape of `--json` output over gating on it — see [additive-schema guarantee](#additive-schema-guarantee) below.
 
 ## Addressing back into `rwv`
 
-A plugin that needs to invoke `rwv` — to read status, consume `--json` output, or trigger a core verb — should address it explicitly with `-C` / `-w` / `--project` rather than rely on its own `cwd`, which may not match where `rwv` itself was invoked from:
+A plugin that needs to invoke `rwv` — to read status, consume `--json` output, or trigger a core verb — should address it explicitly with `-C`, `-w` (global flags before the subcommand), and `--project` (on the subcommand) rather than rely on its own `cwd`, which may not match where `rwv` itself was invoked from:
 
 ```sh
-rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json
+rwv -C "$RWV_WORKSPACE" status --project "$RWV_PROJECT" --json
 ```
 
 `$RWV_WORKSPACE` is always the **primary** workspace root. This form is correct for reaching primary — and a plugin never needs a separate lookup to find it; it is already sitting in the envelope. `rwv resolve` has no flag for this; the envelope is the only lookup you need.
@@ -98,5 +105,5 @@ Reach for `$RWV_VERSION` only to gate a behavioral change that has no structural
 - [plugin-boundary](../explanation/joints/plugin-boundary.md) — design rationale: what earns a core verb, the security posture, why doctor doesn't give plugins a check-registration hook.
 - [write-a-plugin](../how-to/write-a-plugin.md) — a worked walkthrough building a plugin end to end.
 - [reference/formats](./formats.md) — `rwv.toml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, `.rwv-op`: what each owned file records.
-- [reference/cli](./cli.md) — the `-C`, `-w`, and `--project` global flags in full; the `--json` envelope convention.
-- [`rwv doctor`](./explain/doctor.md) — the `plugins` inventory array (`shadowed` / `shadowed_by`).
+- [reference/cli](./cli.md) — the `-C` and `-w` global flags, per-verb `--project`, and the `--json` envelope convention.
+- [Doctor findings](./doctor-findings.md) — the `rwv doctor` findings reference.

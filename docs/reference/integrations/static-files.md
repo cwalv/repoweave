@@ -1,13 +1,13 @@
 # static-files
 
-Symlinks declared files from the project directory to the weave directory on activation. Escape hatch for top-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else tools expect at the weave directory.
+Symlinks declared files from the project directory (`projects/<project>/`) to the weave directory on activation. Escape hatch for top-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else tools expect at the weave directory.
 
 | | |
 |---|---|
 | Default enabled | no |
 | Auto-detects | n/a (configured explicitly) |
 | Generates | symlinks declared files to weave directory |
-| Lock hook | — |
+| Install hook | — |
 
 ## Configuration
 
@@ -33,7 +33,7 @@ A table takes `path` (required) and `from` (optional). `"primary"` is the only v
 
 ### Branch content and shared state
 
-A plain entry is branch content. Each workweave surfaces its own checkout of the project repo, so an edit made in a workweave is visible there and lands with that workweave's work. Use it for files that change with the code: `CLAUDE.md`, `turbo.json`, linter configs.
+A plain entry is branch content. Each workweave surfaces its own checkout of `projects/<project>/`, so an edit made in a workweave is visible there and lands with that workweave's branch. Use it for files that change with the code: `CLAUDE.md`, `turbo.json`, linter configs.
 
 `from = "primary"` is for shared state that every workweave must see one copy of: an issue tracker's directory, a local database, a cache that workweaves coordinate through. In a workweave, the link is an absolute path into the primary's project directory, taken from the primary the workweave records:
 
@@ -47,9 +47,9 @@ A name may not appear both in `files` (in either form) and in `[workweave] link`
 
 ## How it works
 
-Unlike ecosystem integrations that auto-detect repos and generate config, static-files does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the weave directory via symlinks.
+Unlike ecosystem integrations that auto-detect repos and generate config, `static-files` does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the weave directory via symlinks.
 
-If a declared file is missing from the project directory, the integration prints a warning but activation still succeeds — the missing file is skipped.
+If a declared file is missing from the project directory, the integration prints a warning (`config-rejected`) during `rwv doctor`, and activation skips the missing file without failing.
 
 ## Deactivation
 
@@ -57,13 +57,17 @@ Symlinks are removed by the activation framework. A link counts as surfacing onl
 
 ## Check
 
-Warns if any declared file is missing from the project directory. In a workweave, primary-sourced entries are not checked against the workweave's own project directory, since that is not the copy they surface.
+`rwv doctor` runs `static-files` checks:
+
+- `malformed-settings` (error) if `[integrations.static-files]` contains unknown keys or invalid entry forms.
+- `config-rejected` (error) if any path appears in both `integrations.static-files.files` and `[workweave] link`.
+- `config-rejected` (warning) if any declared file is missing from `projects/<project>/`. In a workweave, primary-sourced entries (`from = "primary"`) are not checked against the workweave's own project directory, since that is not the copy they surface.
 
 The framework-level Axis-1 surfacing check (run by `rwv doctor`) additionally
 warns when a surfacing symlink for a declared file is missing or mis-resolved
 at the weave directory — for example, after a manual `rm` of a symlink, after
 enabling the integration in an existing workweave, or after a file is added to
-the `files:` list after a workweave was created. These surfacing warnings are
+the `files` list after a workweave was created. These surfacing warnings are
 emitted framework-side (not by this integration's `check()`) and are safe to
 fix with `rwv doctor --fix`. A real file occupying the surfacing path is
 reported but never auto-clobbered.
@@ -72,7 +76,7 @@ For a primary-sourced entry in a workweave, the expected link is the absolute
 path into the primary's project directory. `rwv doctor` reports a missing link,
 or a link that reads the workweave's own copy, as safe to fix, and
 `rwv doctor --fix` replaces it in the existing workweave. A link that resolves
-somewhere rwv's surfacing never points (for example, into a different tree's
+somewhere `rwv`'s surfacing never points (for example, into a different tree's
 `projects/`) is reported as not auto-fixed and left in place; remove it, and
 `rwv doctor --fix` creates the expected one. After an entry is dropped from
 `files`, the link it left is reported like any other undeclared surfacing link
@@ -88,13 +92,22 @@ A project using Turborepo for build caching alongside npm workspaces:
 # projects/web-app/rwv.toml
 
 [repositories."github/chatly/protocol"]
+type = "git"
 url = "git@github.com:chatly/protocol.git"
+version = "main"
+role = "owned"
 
 [repositories."github/chatly/server"]
+type = "git"
 url = "git@github.com:chatly/server.git"
+version = "main"
+role = "owned"
 
 [repositories."github/chatly/web"]
+type = "git"
 url = "git@github.com:chatly/web.git"
+version = "main"
+role = "owned"
 
 [integrations.static-files]
 enabled = true
@@ -136,7 +149,7 @@ files = [".eslintrc.json", ".prettierrc"]
 }
 ```
 
-The `"root": true` is important — it tells ESLint to stop walking up the directory tree, so it doesn't pick up a config from a parent directory outside the weave.
+The `"root": true` setting tells ESLint to stop walking up the directory tree, so it doesn't pick up a config from a parent directory outside the weave.
 
 ### Nx build orchestrator
 
@@ -237,8 +250,7 @@ default:
     @just --list
 
 install:
-    rwv lock
-    npm install
+    rwv materialize
 
 test:
     npm run test --workspaces
@@ -248,4 +260,4 @@ lint:
     prettier --check .
 ```
 
-A justfile (or Makefile) is particularly useful for documenting commands that require multi-step sequences — like running `rwv lock` before `npm install`, or running lint after a format pass.
+A `justfile` (or `Makefile`) is useful for documenting multi-step project commands — such as running `rwv materialize` to refresh workspace dependencies, or running lint after a format pass.

@@ -25,10 +25,10 @@ This lens describes the recommended workflow pattern; the parts that are *curren
 ```bash
 rwv prime                          # emit the advert
 rwv prime --no-suppress            # always emit (default suppresses outside a weave)
-rwv setup claude                   # register prime as a Claude Code SessionStart hook
+rwv setup claude                   # register Claude Code context and workweave hooks
 ```
 
-`rwv setup claude` is a per-harness setup verb. It's not deeply scalable to a dozen harnesses, but the shape is right for the current population.
+`rwv setup claude` registers four hooks in `~/.claude/settings.json`: `SessionStart` and `PreCompact` run `rwv prime` so workspace context stays in the prompt across compaction, and `WorktreeCreate` and `WorktreeRemove` delegate `claude --worktree <name>` to `rwv workweave <project> create` and `delete` so every isolated Claude session gets a full multi-repo workweave instead of a single-repo worktree.
 
 ### JIT reflection — `rwv explain`
 
@@ -61,14 +61,14 @@ For an agent, the role on each repo is the difference between a successful refac
 
 - `owned` — the work surface; agent may edit.
 - `fork` — agent may edit, but knows changes ideally flow upstream.
-- `dependency` — agent should read but not edit.
-- `reference` — agent should treat as read-only.
+- `dependency` — agent should read but not edit (excluded from `rwv push` by default).
+- `reference` — physically read-only on disk (tracked files have write bits removed) and excluded from ecosystem build files.
 
 The role is machine-readable in `rwv.toml` and surfaces in `rwv status --json` so the harness can use it directly as an allow-list. See [workspace lens — Roles](./workspace.md#roles-change-resistance-made-explicit) and [reference/roles](../../reference/roles.md).
 
 ## The recommended pattern: agent workweave as gravity well
 
-The hero workflow for agent delegation is to give the agent its own workweave. *This is a recommended pattern, not a tool primitive* — but the primitives (workweaves, sync, `--retire`, parent tracking) compose into the pattern naturally.
+The standard workflow for agent delegation is to give the agent its own workweave. *This is a recommended pattern, not a separate tool mode* — the primitives (workweaves, sync, `--retire`, parent tracking) compose into the pattern directly.
 
 The shape:
 
@@ -82,20 +82,18 @@ rwv workweave web-app create agent-refactor
 # Agent works in that workweave:
 cd ../.workweaves/web-app--agent-refactor
 # ... edits, tests, commits across manifest repos ...
-rwv lock
-git -C projects/web-app commit -am "lock: refactor X"
 
-# Bring it home, with one verb:
+# Bring it home, with one verb (auto-relocks CWD at op-start, then lands and deletes):
 rwv sync-to --retire
 ```
 
-`rwv sync-to --retire` is the landing verb. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave`; `--retire` deletes the workweave after the landing succeeds. See [bring workweave work home](../../how-to/bring-workweave-work-home.md) for the full ceremony and conflict recovery.
+`rwv sync-to --retire` is the landing verb (`rwv sync-to` auto-relocks the initiating workweave at op-start, so an explicit `rwv lock --commit` beforehand is only needed if you want to inspect or checkpoint the lock commit before landing). Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave`; `--retire` deletes the workweave after the landing succeeds. See [bring workweave work home](../../how-to/bring-workweave-work-home.md) for the full ceremony and conflict recovery.
 
 Three properties make this pattern work:
 
 1. **Isolation from human state.** The agent's workweave has its own `node_modules/`, `.venv/`, `target/`. The human's in-progress edits in the primary weave can't disturb the agent's build, and vice versa. Repos with `role: reference` get a worktree like every other repo, with read-only tracked files. Where the filesystem allows, a workweave's files share storage with another workspace's copy — by copy-on-write clone, or for a `reference` repo's read-only files by hard link — so a large study-material tree (e.g. a 270 MB upstream codebase) is not duplicated into every workweave, and neither side's edits reach the other.
 2. **Project context preserved.** Unlike "clone a repo into a tempdir," the agent sees the *full* workspace — every repo at the project's lock, with `package.json` workspaces / `go.work` / `Cargo.toml [workspace]` wired up. Cross-repo imports work, integration tests work, the agent's refactors can span repos.
-3. **Verification, then landing.** The human inspects the workweave's state before running `rwv sync-to --retire` from inside the workweave. `sync-to` lands CWD's commits into the parent — the workweave pushes its work to primary, linearly. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the parent fast-forwards to the workweave's tip in step 3.
+3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor workweave web-app log --diff`) before running `rwv sync-to --retire` from inside the workweave. `sync-to` lands CWD's commits into the parent — the workweave pushes its work to primary, linearly. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the parent fast-forwards to the workweave's tip in step 3.
 
 ### Dedicated long-lived agent workweaves
 
@@ -103,9 +101,7 @@ The pattern generalizes to a *semi-persistent* agent workweave: a workspace that
 
 The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — by default a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv sync-to primary` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync primary --strategy rebase` from inside the agent workweave to absorb upstream changes the human has made.
 
-This recommended pattern composes from existing primitives — there is no special "agent weave" type. Parent tracking via `.rwv-workweave` makes bare `rwv sync-to` from feature workweaves target their parent (the agent workweave) by default, which is exactly the discipline you want.
-
-The cleanly-composed-from-primitives nature is the elegance. Each piece (workweaves, sync, `--retire`, parent tracking) is general-purpose; the gravity-well pattern is just one application.
+This recommended pattern composes from existing primitives — there is no special "agent weave" type. Parent tracking via `.rwv-workweave` makes bare `rwv sync-to` from feature workweaves target their parent (the agent workweave) by default, which is the flow direction you want.
 
 ## What this lens is *not* about
 
@@ -119,7 +115,7 @@ Where the tool already has agent-shaped surface (`rwv prime`, `rwv explain`, the
 
 ## The shape, in one paragraph
 
-Agents take a path, not a session. The landed tool surface — `rwv prime` for discovery, `rwv explain` for JIT reflection, the `--json` envelope (with NDJSON under parallel mode) for structured output, roles as a machine-readable safety boundary — gives a harness everything it needs to drive a multi-repo workspace without scraping help text. The recommended workflow pattern is to give the agent its own workweave: isolation from human state, full project context preserved, verification then landing via `rwv sync-to --retire`. The pattern composes from existing primitives — there's no special agent runtime, and the elegance is exactly that.
+Agents take a path, not a session. The landed tool surface — `rwv prime` for discovery, `rwv explain` for JIT reflection, `rwv setup claude` for context and worktree-lifecycle hooks, the `--json` envelope (with NDJSON under parallel mode) for structured output, and roles as a machine-readable safety boundary — gives a harness everything it needs to drive a multi-repo workspace without scraping help text. The recommended workflow pattern is to give the agent its own workweave: isolation from human state, full project context preserved, verification then landing via `rwv sync-to --retire`.
 
 ## Related
 

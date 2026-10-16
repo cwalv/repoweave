@@ -44,7 +44,9 @@ Repo paths contain `/`, so they are quoted table keys. A project with no repos y
 
 Earlier versions read a YAML manifest at `projects/<name>/rwv.yaml`. A project directory still holding one is reported by `rwv doctor` as `legacy-manifest-format` and does not load; rewrite the file as `rwv.toml` in the shape above, then delete the old one.
 
-There is deliberately no `--fix` arm. The manifest is yours — the comments and the key order in it are things you wrote, and neither has a mechanical translation between the two formats. A conversion that guessed at them would hand back a file you would have to audit line by line anyway.
+There is no `--fix` arm. The manifest is yours — the comments and the key order in it are things you wrote, and neither has a mechanical translation between the two formats. A conversion that guessed at them would hand back a file you would have to audit line by line anyway.
+
+`rwv.toml` accepts only three top-level tables: `repositories`, `integrations`, and `workweave` (unknown top-level keys are rejected). Project identity comes from the `projects/<name>/` directory path rather than a `[project]` table, and the legacy `[lock]` table is retired because `rwv.lock` always records 40-character commit SHAs.
 
 ### `repositories` entries
 
@@ -54,14 +56,19 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 |---|---|---|
 | `type` | yes | VCS type. Currently `git`. |
 | `url` | yes | Clone URL. Used by `rwv fetch` on other machines. |
-| `version` | yes | Branch (manifest); commit id (lock). |
+| `version` | yes | Tracked branch name (manifest); 40-character commit SHA (lock). |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 
-`version` is branch-only by design: the manifest declares what to *track*, the lock records where you *are*. A tag or SHA in `version` would conflate the two layers — `rwv update` means "advance to branch HEAD," which is meaningless for a fixed point. Pinning would need a differently-named field, not an overload of `version`.
+`version` in `rwv.toml` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
+
+- **`rwv add <url>`** populates `version` from the remote's default branch (`origin/HEAD`, or `main` when creating a repo with `--new`).
+- **`rwv update`** reads `version` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
+- **`rwv push`** and **`rwv doctor`** read `version` to verify that canonical checkouts are on their tracked branch rather than a stray feature branch or detached HEAD.
+- **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `version` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
 
 Manifests must use `role = "owned"`. The pre-rename `primary` spelling no longer parses. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
 
-The repo set is modelled on vcstool's `.repos` format, extended with `role` and an optional `integrations` table.
+The repo set is modelled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
 
 ### `integrations` block
 
@@ -80,6 +87,23 @@ files = ["turbo.json", ".eslintrc.json"]
 ```
 
 Per-integration config keys vary; see [reference/integrations](./integrations/index.md).
+
+### `workweave` block
+
+Optional. Declares gitignored paths (relative to the workspace root) that `rwv workweave <project> create` should carry from the source workspace into each new workweave:
+
+```toml
+[workweave]
+link = [".env.local", "config/dev.key"]
+copy = [".cache/build-seed"]
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `link` | no | Gitignored paths to symlink from the source workspace into the new workweave. |
+| `copy` | no | Gitignored paths to deep-copy from the source workspace into the new workweave. |
+
+Both lists default to empty and only apply to gitignored artifacts (secrets, local caches, local overrides). Tracked files inside member repositories do not need to be listed here: `rwv workweave <project> create` provisions every member as a git worktree and automatically shares file storage with the source checkout via copy-on-write reflinks (or hardlinks for read-only `reference` files on Linux) when the filesystem supports them.
 
 ## `rwv.lock` — pinned revisions
 
@@ -117,7 +141,7 @@ Each workspace (primary weave or workweave) owns its own `rwv.lock`. A `rwv lock
 
 ## `.rwv-active` — active project marker
 
-Lives at the weave directory root. Single line: the active project name.
+Lives at the weave root. Single line: the active project name.
 
 ```
 web-app
@@ -137,7 +161,7 @@ Written by `rwv workweave <project> create <name>`, which is also the verb that 
 {
   "primary": "/home/user/work",
   "project": "web-app",
-  "parent": "/home/user/work/.workweaves/web-app--feat"
+  "parent": "/home/user/.workweaves/web-app--feat"
 }
 ```
 
@@ -156,6 +180,22 @@ Consumed by:
 
 See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-hop semantics.
 
+## `.rwv-workweave-index` — workweave registry and ref receipts
+
+Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git via `.git/info/exclude`), written and updated by `rwv workweave <project> create`, `delete`, `set-container`, and `rwv doctor --fix`.
+
+Records:
+
+- **`container`**: optional absolute path override for where new workweaves for this project are created (`<parent-of-primary>/.workweaves` when omitted).
+- **`workweaves`**: map of workweave name to its absolute directory path on disk, used by `-w <project>--<name>` and `rwv workweave <project> list`.
+- **`receipts`**: ownership receipts (`store`, `name`, `created_at` SHA) for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` only delete branches `rwv` itself minted.
+
+## `.rwv-owned-digests` — attested generated-file ledger
+
+Lives at `<workspace>/projects/<project>/.rwv-owned-digests` (with a transient `.rwv-owned-digests.lock` sibling while a write is in flight). Machine-local JSON state (excluded via `.git/info/exclude`) that records SHA-256 digests of ecosystem files produced by integration install hooks (such as `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`) alongside the digests of the manifest inputs that produced them.
+
+Used by integration `verify()` checks (`rwv doctor`) and `rwv materialize` (`--regenerate-drifted` / `--adopt-drifted`) to distinguish files last written by `rwv` from files modified out-of-band.
+
 ## `.rwv-op` — owner op-state record
 
 Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv sync-to` operation starts, and cleared by the same verbs on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with `rwv sync --continue` / `rwv sync-to --continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason.
@@ -170,47 +210,48 @@ Both files are written and removed only by the verbs above. Nothing else should 
 
 ## Directory layout
 
-repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{repo}/`. Project directories live under `projects/{name}/`.
+repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{repo}/`. Project directories live under `projects/{name}/`, and `.workweaves/` lives as a sibling of the weave root by default (`<parent-of-primary>/.workweaves/`).
 
 ```
-~/work/                                       # weave directory
-├── github/
-│   ├── chatly/
-│   │   ├── server/                           # manifest repo (clone)
-│   │   ├── web/                              # manifest repo
-│   │   └── protocol/                         # manifest repo
-│   └── socketio/
-│       └── engine.io/                        # manifest repo (fork)
+~/
+├── work/                                     # weave root (primary weave)
+│   ├── github/
+│   │   ├── chatly/
+│   │   │   ├── server/                       # manifest repo (clone)
+│   │   │   ├── web/                          # manifest repo
+│   │   │   └── protocol/                     # manifest repo
+│   │   └── socketio/
+│   │       └── engine.io/                    # manifest repo (fork)
+│   │
+│   ├── projects/
+│   │   ├── web-app/                          # project repo
+│   │   │   ├── rwv.toml
+│   │   │   ├── rwv.lock
+│   │   │   ├── package.json                  # generated workspace file
+│   │   │   ├── package-lock.json             # ecosystem lock file
+│   │   │   └── docs/
+│   │   └── mobile-app/
+│   │       ├── rwv.toml
+│   │       ├── rwv.lock
+│   │       └── docs/
+│   │
+│   ├── package.json -> projects/web-app/package.json       # symlink to active project
+│   ├── package-lock.json -> projects/web-app/package-lock.json
+│   ├── go.work -> projects/web-app/go.work
+│   ├── go.work.sum -> projects/web-app/go.work.sum
+│   ├── node_modules/                         # tool state — gitignored
+│   ├── .venv/                                # tool state — gitignored
+│   ├── .rwv-active                           # "web-app"
+│   └── .gitignore
 │
-├── projects/
-│   ├── web-app/                              # project repo
-│   │   ├── rwv.toml
-│   │   ├── rwv.lock
-│   │   ├── package.json                      # generated workspace file
-│   │   ├── package-lock.json                 # ecosystem lock file
-│   │   └── docs/
-│   └── mobile-app/
-│       ├── rwv.toml
-│       ├── rwv.lock
-│       └── docs/
-│
-├── package.json -> projects/web-app/package.json       # symlink to active project
-├── package-lock.json -> projects/web-app/package-lock.json
-├── go.work -> projects/web-app/go.work
-├── go.work.sum -> projects/web-app/go.work.sum
-├── node_modules/                             # tool state — gitignored
-├── .venv/                                    # tool state — gitignored
-├── .rwv-active                               # "web-app"
-├── .gitignore
-│
-└── .workweaves/                              # workweaves live here
+└── .workweaves/                              # sibling container for workweaves
     └── web-app--payments/                    # one workweave
         ├── github/chatly/server/             # worktree (role: owned)
         ├── github/chatly/web/                # worktree (role: owned)
         ├── github/socketio/engine.io/        # worktree (role: fork)
         ├── github/other/reference-lib/       # worktree, read-only (role: reference)
         ├── projects/web-app/                 # worktree
-        └── .rwv-workweave                    # parent: ~/work
+        └── .rwv-workweave                    # primary: ~/work, parent: ~/work
 ```
 
 The `.workweaves/` subtree is created and destroyed by `rwv workweave <project> create` and `rwv workweave <project> delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create --from <source>` is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
@@ -219,8 +260,8 @@ The first path segment is a **registry** — a short name for where the repo liv
 
 `local` is reachable only as an `rwv add --new` creation address (`rwv add local --new --param root=<dir> --param owner=<owner> --param repo=<repo>`): it never matches an existing URL or shorthand, so it cannot be the registry an ordinary `rwv add <url>` resolves through. Creating through it is two-sided — rwv creates a bare repository under `<dir>` as well as the member checkout — because there is no forge behind `local` to have created one already. See [reference/cli](./cli.md) for the full `--new` invocation and [roles](./roles.md) for how a created member's role is recorded.
 
-- **Repos are regular clones** at the weave root. `cd github/chatly/server && git status` works; no bare repos. (A workweave's checkouts are a different kind of thing — see the `.workweaves/` note above.)
-- **Ecosystem files are symlinked** at the weave directory to the active project's directory. Real files live in `projects/<name>/`.
+- **Repos are regular clones** at the weave root. `cd github/chatly/server && git status` works; no bare repos. (A workweave's checkouts are git worktrees — see the `.workweaves/` tree above.)
+- **Ecosystem files are symlinked** at the weave root to the active project's directory. Real files live in `projects/<name>/`.
 - **Ecosystem lock files are committable** alongside `rwv.toml` in the project directory.
 - **Project repos** have `rwv.toml` and `rwv.lock`. They don't contain importable code — build tools never look at `projects/`.
 - **Tool state directories** (`node_modules/`, `.venv/`, `target/`) are at the weave root, gitignored, regenerated by the ecosystem install commands.
@@ -233,42 +274,13 @@ Project paths default to `projects/{name}/`. If names collide across organizatio
 
 ### Names, and the characters they exclude
 
-Project names exclude `--` (and a leading or trailing `-`) and `+`. Workweave
-names exclude `--` (and a leading or trailing `-`) and `/`, but not `+`: only
-a project name is rendered with `/` rewritten to `+`; a workweave name is
-used verbatim as the second half. The reason is the rendering above: a
-workweave directory, a `-w` address, and an ephemeral branch name each spell
-a (project, workweave) pair as one path segment — `web-app--payments` — with
-`--` joining the halves and `+` written in place of `/` for a scoped project
-(`chatly/web-app` becomes `chatly+web-app--payments`). Keeping the joining
-token out of both halves, and the `/`-stand-in out of the half that encodes
-it, means every rendered string reads unambiguously on sight: only one pair
-can produce it, so a directory listing or a branch list never needs rwv to
-interpret it.
+Because workweave directory names, `-w <project>--<name>` addresses, and ephemeral branch names all render a `(project, workweave)` pair as a single flat token (`chatly+web-app--payments`), `rwv` excludes separator characters from its own labels:
 
-The exclusions apply to rwv's own labels only. A repository whose name
-contains `--` or `+` works unchanged as a member — the manifest key carries
-the name as-is. They bite only when such a name is offered as a project or
-workweave name, and the refusal suggests choosing another label, which
-renames nothing outside the weave.
-
-The alternative was considered and measured, not overlooked (2026-08): rwv
-resolves names through the workweave marker and the registry, so the machine
-no longer needs the rendered string to be decodable — the tokens could be
-legalized, with collisions refused at mint time instead of excluded by
-grammar. It was declined while no real name needs it. In the corpora
-measured, nothing required either token, and legalizing them would trade the
-on-sight readability of every shared surface — branch namespaces span
-projects in shared clones — plus new weave-wide collision machinery, for a
-freedom with no measured demand. A real name that forces the question is the
-signal to revisit; until then, this section is the record that the door was
-examined and left closed on purpose.
-
-`rwv doctor` reports a project directory whose name these rules refuse as
-[`unnameable-project`](doctor-findings.md#unnameable-project); a workweave
-directory with an unusable basename reports under
-[`workweave-tree-integrity`](doctor-findings.md#workweave-tree-integrity) as
-a misnamed dir.
+| Entity | Excluded characters / patterns | Why & doctor finding |
+|---|---|---|
+| **Project name** (`projects/<name>/`) | `--`, leading/trailing `-`, `+` | `--` joins `<project>` and `<workweave>`; `/` in a scoped project path (`chatly/web-app`) is encoded as `+`. Reported by `rwv doctor` as [`unnameable-project`](doctor-findings.md#unnameable-project). |
+| **Workweave name** | `--`, leading/trailing `-`, `/` (`+` is allowed) | Kept single-segment so `<project>--<workweave>` is unambiguous on sight and valid as a flat git branch name. Reported under [`workweave-tree-integrity`](doctor-findings.md#workweave-tree-integrity). |
+| **Member repo name** (`<registry>/<owner>/<repo>`) | *None beyond standard path rules* | Member repos containing `--` or `+` work unchanged; the exclusions apply only to project and workweave labels. |
 
 ## Related
 

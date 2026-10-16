@@ -2,13 +2,11 @@
 
 **Want a new verb?** Write a plugin: an executable named `rwv-<verb>` on `$PATH`
 becomes `rwv <verb>`, with the resolved workspace context (paths, project) handed
-to it automatically. No PR, no maintainer required — see
-[Write a plugin](docs/how-to/write-a-plugin.md).
+to it automatically. No PR or maintainer review required — see
+[Write a plugin](docs/how-to/write-a-plugin.md) and the
+[plugin protocol reference](docs/reference/plugin-protocol.md).
 
-**Everything else** — bugs, design questions, functionality that needs to live in
-core — open an issue: https://github.com/cwalv/repoweave/issues. That's the fast
-path, not a step toward a PR: a quickly-addressed task is often as good as a
-merged one, sometimes better.
-
-Sending a PR anyway? Expect it to get redirected into an issue rather than
-reviewed in place.
+**Everything else** — bugs, design questions, or functionality that belongs in
+core — open an issue at https://github.com/cwalv/repoweave/issues. Open an issue
+before sending a pull request; unsolicited PRs are redirected to issues for
+discussion first.

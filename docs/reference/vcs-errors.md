@@ -51,7 +51,7 @@ to which page holds it, so the split costs a reader nothing.
 **Condition.** A VCS command failed for a reason rwv has no more specific name
 for. Carries the arguments rwv passed and the VCS's own stderr.
 
-**What it means.** This is the fallback, and it is deliberately a wide one:
+**What it means.** This is a wide fallback:
 implementations map to the most specific kind they can detect and land here for
 everything else. Its presence is not itself a diagnosis — the stderr it carries
 is.
@@ -88,15 +88,10 @@ commits are not wanted, move the branch yourself and re-run unchanged.
 which is the shape a `post-checkout` hook rejection takes.
 
 **What it means.** The registration is written before the hook runs, so the
-destination is a registered worktree even though the command failed. The
-`stderr` is the hook author's text, not git's — git's own output names no hook,
-which is why this cannot be recognised by reading it.
-
-**The evidence is weaker than the name.** What rwv observes is that the add got
-past writing the admin entry and then died. A refusing hook does that; so would
-a checkout that failed of its own accord at the same point. Nothing has
-reproduced the second case, but it is an unmeasured gap rather than an excluded
-one — read `stderr` before concluding a hook is involved.
+destination is a registered worktree even though the command failed. Because
+rwv detects this state by observing that `git worktree add` wrote the worktree
+admin entry before failing, check `stderr` (which holds the hook's or git's own
+output) to confirm the cause.
 
 **Exits.** Read `stderr` for the hook's own reason and satisfy it. The
 destination is registered, so clear it with `git -C <repo> worktree remove

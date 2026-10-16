@@ -100,7 +100,10 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("|---------|-------------|\n");
     out.push_str("| `rwv` | Show workspace context |\n");
     out.push_str("| `rwv resolve` | Print effective root path |\n");
-    out.push_str("| `rwv activate PROJECT` | Set active project, generate ecosystem configs |\n");
+    out.push_str(
+        "| `rwv activate PROJECT` | Set active project, surface symlinks, run install hooks |\n",
+    );
+    out.push_str("| `rwv materialize` | Settle drift, repair symlinks, run install hooks |\n");
     out.push_str(
         "| `rwv workweave PROJECT create NAME` | Create a workweave (worktree-based workspace) |\n",
     );

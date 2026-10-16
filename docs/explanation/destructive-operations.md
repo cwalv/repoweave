@@ -80,7 +80,7 @@ does not already hold the tip in question, the override does not apply
 and the refusal stands — an override buys a waiver of the precondition
 it names, never of rule 3.
 
-`push --force` is the deliberate exception to the naming rule: it is
+`push --force` is the one exception to the naming rule: it is
 not a precondition waiver but a **mode switch** — git's own vocabulary
 for which of two operations `rwv push` is performing. Renaming it would
 break the analogy to `git push --force` rather than sharpen it, so it

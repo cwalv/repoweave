@@ -65,7 +65,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     // ── Workspace context ─────────────────────────────────────────────────────
-    /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
+    /// Activate a project (switch `.rwv-active`, surface weave-root symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
     Activate {
         /// Project name
         project: String,
@@ -73,7 +73,7 @@ pub enum Commands {
         #[arg(long)]
         no_materialize: bool,
     },
-    /// Run the integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
+    /// Settle drift, clean up disabled integrations, repair missing weave-root symlinks, and run integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
     Materialize {
         /// Consent to discarding the current content of drifted rwv-attested generated files and regenerating them from the current inputs
         #[arg(long, conflicts_with = "adopt_drifted")]

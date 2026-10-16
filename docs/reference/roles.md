@@ -76,7 +76,9 @@ The same repo can have different roles in different projects. `engine.io` might 
 # projects/web-app/rwv.toml
 
 [repositories."github/socketio/engine.io"]
+type = "git"
 url = "https://github.com/chatly/engine.io.git"
+version = "main"
 role = "fork"
 ```
 
@@ -84,7 +86,9 @@ role = "fork"
 # projects/another-app/rwv.toml
 
 [repositories."github/socketio/engine.io"]
+type = "git"
 url = "https://github.com/chatly/engine.io.git"
+version = "main"
 role = "dependency"
 ```
 
@@ -100,10 +104,6 @@ rwv add https://github.com/me/my-fork.git --role fork
 rwv add https://github.com/other/code.git --role reference
 ```
 
-## Heuristic, not rule
-
-A common pattern: `github/{your-org}/*` is likely `owned`; `github/{other-org}/*` is likely `dependency` or `reference`. This is a default expectation, not enforced. The active project's `rwv.toml` always wins.
-
 ## Roles in `rwv push`
 
 `rwv push` walks the manifest and applies per-role policy:
@@ -111,7 +111,7 @@ A common pattern: `github/{your-org}/*` is likely `owned`; `github/{other-org}/*
 | Role | `rwv push` behavior |
 |---|---|
 | `owned` | Push (with lock-precondition check) |
-| `fork` | Push (same as Owned) |
+| `fork` | Push (same as `owned`) |
 | `dependency` | Skip — you don't push upstream code |
 | `reference` | Skip — read-only |
 

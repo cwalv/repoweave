@@ -6,7 +6,7 @@ of revisions* a project resolves to. The [shared-refs-drift](./shared-refs-drift
 and [sync-semantics](./sync-semantics.md) joints describe how those
 revisions move and reconcile between workspaces. All of that machinery
 assumes a property nothing in those joints states explicitly: every
-constituent repo on disk is the *right physical artifact* — one canonical
+member repo on disk is the *right physical artifact* — one canonical
 store per repo, with every workweave checkout linked into it. If that
 assumption fails, the higher tiers are operating on incoherent input.
 
@@ -22,7 +22,7 @@ Three tiers, bottom-up:
 |---|---|---|
 | **2 — Revisions** | Each manifest repo on disk is at the SHA recorded in `rwv.lock`. | [pyramid-of-stability](./pyramid-of-stability.md) |
 | **1 — Refs** | No silent drift between sibling worktrees on the same branch. | [shared-refs-drift](./shared-refs-drift.md) |
-| **0 — Artifacts** | Every constituent repo is one canonical store with worktree-linked checkouts. | this joint |
+| **0 — Artifacts** | Every member repo is one canonical store with worktree-linked checkouts. | this joint |
 
 Tier 2 cannot be true unless tier 0 is true: "the SHA in `rwv.lock`" is
 only meaningful as a name for an object in *the* object DAG of that repo.
@@ -65,7 +65,8 @@ their own clones.
 
 ### I2 — Workweave checkouts are linked into the canonical store
 
-For every manifest repo, whatever its role, each workweave's on-disk view
+For every manifest repo, whatever its role (including `role = "reference"`,
+whose tracked files are made read-only on disk), each workweave's on-disk view
 is a **linked workspace** — a workspace whose object DAG and refs come from
 the canonical store, not from a separate copy. Every commit reachable in
 the canonical store is reachable from the workweave checkout, and
@@ -106,7 +107,7 @@ well-defined.
 
 ## Why these are tier-0 invariants, not implementation details
 
-The three invariants are load-bearing for every check above them:
+Every check above tier 0 depends on these three invariants:
 
 - **Merged-check soundness (delete / retire).** `rwv sync-to --retire`
   refuses to delete a workweave whose unique commits aren't reachable

@@ -1,77 +1,68 @@
 # Add a repo to a project
 
-`rwv add` clones the repo (if it isn't on disk), registers it in the active project's `rwv.toml`, and re-runs integration hooks to wire it into ecosystem workspace files.
-
-## Add by URL
+Clone a repository into the weave, register it in the active workspace's `rwv.toml`, and update ecosystem workspace files:
 
 ```bash
 rwv add https://github.com/example/some-lib.git --role dependency
 ```
 
-Clones to the canonical path `github/example/some-lib/`, adds the entry to `rwv.toml`, regenerates ecosystem files. Run the ecosystem install command afterward to pick up the new package:
+`rwv add` clones the repository to its canonical path under the weave root (`github/example/some-lib/`), populates `version = "<branch>"` from the remote's default branch (`origin/HEAD`), writes the entry to the active workspace's `rwv.toml`, regenerates managed ecosystem files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`), and runs integration install hooks in the primary weave. When invoked from inside a workweave, it writes to that workweave's `rwv.toml` and creates the member worktree there.
 
-```bash
-npm install   # or: uv sync, cargo build, etc.
-```
+If you already added the entry to `rwv.toml` by hand, running `rwv add <url>` with the matching URL finishes the setup: it clones the repository if missing, creates the worktree when run inside a workweave, and regenerates integration files.
 
-`rwv add` writes to the *active workspace's* manifest, which is the one in CWD's workspace. From inside a workweave, the entry lands in the workweave's `rwv.toml`; from the primary weave, it lands in primary's. (This was previously a footgun where `rwv add` always wrote to primary — now resolved.)
+## Set the repository role
 
-## Role
-
-`--role <role>` sets the role for this repo within the project. Roles signal change resistance:
+`--role <role>` sets the member's role within the project (default `owned`):
 
 | Role | Meaning |
 |---|---|
 | `owned` | Your code. Change freely. |
-| `fork` | Forked upstream. URL = your writable fork. Ideally accept changes upstream; push policy same as `owned`. |
-| `dependency` | Code you build against. Changes need upstream acceptance. |
-| `reference` | Cloned for reading/study. No local changes; excluded from build graphs. |
+| `fork` | Forked upstream (`url` points to your writable fork). Pushed by default like `owned`. |
+| `dependency` | Upstream code you build against. Excluded from default `rwv push`. |
+| `reference` | Cloned for reading and study with read-only tracked files; excluded from ecosystem build graphs. |
 
-If `--role` is omitted, the default is `owned`. See [reference/roles](../reference/roles.md) for the full definitions.
-
-## Add as a reference repo
+To add a repository for reading without wiring it into build graphs:
 
 ```bash
 rwv add https://github.com/interesting/library.git --role reference
 ```
 
-Reference repos are visible in the workspace but excluded from ecosystem workspace configs (they don't appear in `go.work`, `package.json` workspaces, etc.). Use this instead of a manual `git clone` so the repo is tracked — `rwv doctor` reports untracked repos as orphans.
+Use `rwv add --role reference` instead of an untracked `git clone` under the weave root so `rwv doctor` does not report the directory as an orphaned clone. See [Roles reference](../reference/roles.md) for full role semantics.
 
-## Add a new repo
+## Create a new repository (`--new`)
 
-To create a brand-new repo at the canonical path:
+With `--new`, the positional argument is a creation address (`<registry>/<owner>/<repo>` or bare `<registry>` with `--param key=value`). Creation is dispatched by registry:
 
 ```bash
+# Hosted registry (github, gitlab, bitbucket): git init + remote set to minted URL
 rwv add github/chatly/auth --new
+
+# Local registry: initializes a bare repo at /srv/repos/chatly/auth and clones from it
+rwv add local/chatly/auth --new --param root=/srv/repos
 ```
 
-This `git init`s `github/chatly/auth/`, infers the URL from the path convention, adds it as `role: owned`, and updates ecosystem files. Push manually once you have a remote.
+- **Hosted registries (`github`, `gitlab`, `bitbucket`):** `rwv` initializes the repository at `github/chatly/auth/` and sets `origin` to the minted URL without contacting the network. Create the remote repository on the forge when you are ready to push.
+- **`local` registry:** Requires `--param root=<abs-path>` naming an existing directory outside the weave. `rwv` initializes a bare repository at `<root>/<owner>/<repo>` and clones the member from it so `git push -u origin` works immediately. Parameters can also be passed as JSON via `--params-json '{"root":"/srv/repos","owner":"chatly","repo":"auth"}'`.
 
-## Brownfield: adopt an existing clone
+In both cases, `rwv add --new` populates `version = "<branch>"` from the new repository's initial `HEAD` branch (for example, `"main"`), defaults `role` to `"owned"`, and updates ecosystem workspace files.
 
-You already have a clone somewhere on disk and want to bring it into the project at the canonical path.
+## Adopt an existing clone or project
+
+If a clone already sits at its canonical path under the weave root, pass either its URL or its relative path:
 
 ```bash
-# move the clone to the canonical path
 mv ~/some-other-place/some-lib github/example/some-lib
-
-# register it
-rwv add https://github.com/example/some-lib.git --role dependency
+rwv add github/example/some-lib --role dependency
 ```
 
-`rwv add` notices the directory already exists, skips the clone step, and just updates the manifest. The clone needs to be at the canonical `github/example/some-lib/` path — the manifest is keyed by path, and `rwv fetch` on another machine clones to that exact location.
+`rwv add` skips the network clone, reads `origin` and its default branch to populate `url` and `version`, and updates `rwv.toml` and integration files.
 
-For a brownfield migration where the *project repo itself* already exists remotely (an existing repo on GitHub / your provider that carries the `rwv.toml`), use `rwv init --adopt` to clone that project repo instead of `git init`-ing a fresh one:
+If the *project repository* itself already exists on a remote and carries an `rwv.toml`, adopt it into `projects/<name>/` with `rwv init --adopt` and then materialize its member repositories:
 
 ```bash
 rwv init https://github.com/example/my-project.git --adopt
-# or shorthand:
-rwv init example/my-project --adopt
+rwv fetch
 ```
-
-`--adopt` accepts a URL or `owner/repo` shorthand as the argument and clones the named project repo into `projects/<name>/`. Once the project's `rwv.toml` is materialized, use `rwv fetch` (with the project name / URL) to clone every listed manifest repo, or `rwv add` per repo for finer-grained control.
-
-Note that `--adopt` is a *single-project* clone flag; it does not walk the working tree looking for pre-existing clones to auto-register. To bring pre-existing clones into a project, use `rwv add <url>` per repo (add resolves each URL against the canonical path convention and skips the clone step if the directory is already present).
 
 ## Remove a repo
 
@@ -79,18 +70,16 @@ Note that `--adopt` is a *single-project* clone flag; it does not walk the worki
 rwv remove github/example/some-lib
 ```
 
-Removes the entry from `rwv.toml` and re-runs integrations. The checkout stays on disk — other projects might depend on the clone. To also delete it:
+This removes the entry from `rwv.toml` and updates integration files while leaving the checkout on disk. To also delete the checkout in the current workspace (the canonical clone in the primary weave, or the member worktree in a workweave):
 
 ```bash
 rwv remove github/example/some-lib --delete
 ```
 
-`--delete` removes the checkout in the workspace you run it in: the canonical clone in the primary weave, or that workweave's worktree in a workweave. It refuses over uncommitted changes or commits no other clone reaches, and in the primary it checks that no other project's manifest references the path. Use `--delete-shared-clone` to remove the clone even when another project still references it.
-
-If you already deleted the entry from `rwv.toml` by hand, the same `rwv remove <path> [--delete]` finishes the job.
+`--delete` refuses if the checkout has uncommitted changes, commits unreachable from any other clone, or (in the primary weave) live workweave worktrees or references from another project's `rwv.toml` (pass `--delete-shared-clone` to override the shared-project check). If you already removed the entry from `rwv.toml` by hand, running `rwv remove <path> [--delete]` finishes regenerating integration files and deleting the leftover checkout.
 
 ## Related
 
-- [reference/roles](../reference/roles.md) — full role definitions and change-resistance semantics
-- [reference/formats](../reference/formats.md) — `rwv.toml` shape
-- [workspace lens](../explanation/lenses/workspace.md) — how roles factor into the workspace model
+- [Roles reference](../reference/roles.md) — role definitions and materialization behavior
+- [File formats reference](../reference/formats.md) — `rwv.toml` schema
+- [Workspace lens](../explanation/lenses/workspace.md) — how roles fit into the workspace model

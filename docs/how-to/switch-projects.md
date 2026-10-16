@@ -1,62 +1,47 @@
 # Switch projects
 
-A weave holds multiple projects under `projects/`; one is *active* at a time. The active project's ecosystem files are symlinked at the weave directory so build tools see a coherent workspace.
-
-## Switch with `rwv activate`
+A weave holds multiple projects under `projects/`, with one active at the weave root at a time. Switch the active project with `rwv activate`:
 
 ```bash
 rwv activate mobile-app
 ```
 
-This:
+`rwv activate` does four things:
 
-1. Updates `.rwv-active` to `mobile-app`.
-2. Removes ecosystem-file symlinks at the weave directory.
-3. Regenerates ecosystem files in `projects/mobile-app/` from its `rwv.toml`.
-4. Symlinks them to the weave directory.
+1. Verifies managed integration files in `projects/mobile-app/` and warns if any have drifted from `rwv.toml` (`activate` never authors integration files; run `rwv doctor --fix` to regenerate them).
+2. Removes the previous project's weave-root symlinks and symlinks `projects/mobile-app/`'s ecosystem workspace files to the weave root.
+3. Runs integration install hooks (`npm install`, `uv sync`, `cargo fetch`, etc.) so shared tool state (`node_modules/`, `.venv/`, `target/`) matches the newly active project.
+4. Updates `.rwv-active` to `mobile-app`.
 
-`.rwv-active` is the single source of truth for which project is active within a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read `.rwv-active` and operate on the active project regardless of CWD.
-
-When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, action verbs that ambiguously apply emit a helpful error suggesting both fixes (`rwv activate <name>` or `--project <name>` for a one-shot).
-
-## Reconcile tool state after switching
-
-Ecosystem tool state (`node_modules/`, `.venv/`, `target/`) is shared across projects in the same workspace. After `rwv activate`, run the ecosystem's install command to reconcile dependencies for the new project's package set:
+To switch the active project and weave-root symlinks without running install hooks:
 
 ```bash
-rwv activate mobile-app
-npm install            # or: uv sync, cargo build, etc.
+rwv activate mobile-app --no-materialize
 ```
 
-This is incremental — only the dep diff is installed/removed.
+Run `rwv materialize` later when you want the install hooks to run.
+
+`.rwv-active` is the single source of truth for which project is active at the weave root. Changing directories into `projects/<name>/` does not switch the active project; action verbs (`rwv lock`, `rwv add`, `rwv sync`) read `.rwv-active`. When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, verbs that would be ambiguous refuse and suggest either `rwv activate <name>` or `--project <name>`.
+
+## One-shot project override
+
+To run a single command against another project without changing `.rwv-active`:
+
+```bash
+rwv lock --project mobile-app
+```
 
 ## When switching is too slow
 
-If the dep diff between projects is large, or you need both projects active simultaneously, use a workweave instead. A workweave has its own `node_modules/`, `.venv/`, `target/`, ecosystem files, and active-project marker — no reconciliation needed:
+If the dependency diff between projects is large, or you need both projects open simultaneously, create a workweave instead. Each workweave has its own `node_modules/`, `.venv/`, `target/`, and surfaced ecosystem files:
 
 ```bash
 rwv workweave mobile-app create dev
 cd ../.workweaves/mobile-app--dev
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root.
-
-See [create a feature workweave](./create-feature-workweave.md) for the workweave primitive.
-
-Workweaves are also the answer when you want parallel work on the *same* project without disturbing the primary weave — see the [monorepo lens](../explanation/lenses/monorepo.md) for the recommended patterns.
-
-## One-shot project override
-
-For a single command without changing the active project:
-
-```bash
-rwv lock --project mobile-app
-```
-
-This applies the verb to `mobile-app` without modifying `.rwv-active`. Useful in scripts and CI.
-
 ## Related
 
-- [create a feature workweave](./create-feature-workweave.md) — for parallel work without switching
-- [monorepo lens](../explanation/lenses/monorepo.md) — when to switch vs. when to workweave
-- [reference/formats](../reference/formats.md) — `.rwv-active` shape
+- [Create a feature workweave](./create-feature-workweave.md) — isolated workspaces for parallel work without switching
+- [Monorepo lens](../explanation/lenses/monorepo.md) — when to switch vs. when to use a workweave
+- [File formats reference](../reference/formats.md) — `.rwv-active` format

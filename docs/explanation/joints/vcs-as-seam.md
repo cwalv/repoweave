@@ -52,7 +52,7 @@ of.
 This joint states the contract, in the vocabulary a reader who never
 opens `src/` can check it in. The module and ownership model underneath
 — which type lives where, how wide the trait is, and the call sites that
-knowingly bypass it — is `ARCHITECTURE.md` §6.1, at the repo root.
+knowingly bypass it — is in `ARCHITECTURE.md`, at the repo root.
 
 ## Why this matters
 
@@ -81,9 +81,6 @@ back: the abstraction belongs in the Vcs trait.
 
 **Concept:** "look up branch X on the remote this repo publishes to."
 The trait owns the qualifier; rwv core never spells a remote name.
-
-**Anchors:** commits `1b76456` (the move across the seam) and `046aafd`
-(what emptied the parameter it introduced).
 
 `Vcs::clone_repo` and `Vcs::resolve_branch_on_remote` are the two
 methods that own the convention: the git impl clones with the remote
@@ -121,11 +118,10 @@ remote target" failure mode.
 
 **What this example teaches second, and the reason it is first.** When
 those methods were introduced they took the manifest's `Role`, and the
-git impl mapped the fork role to a remote named `upstream`. The
-parameter was load-bearing then — passing the role across the seam was
-the mechanism that got git's remote names *out* of the domain type.
-`046aafd` later dropped fork-specific routing as a product decision, and
-from that commit on every implementor discarded the argument: six trait
+git impl mapped the fork role to a remote named `upstream`. Passing the
+role across the seam was the mechanism that got git's remote names *out*
+of the domain type. When fork-specific routing was later dropped as a
+product decision, every implementor discarded the argument: six trait
 methods, six ignoring bindings in the git impl and six more in the test
 double, and three call sites in rwv core with no role to hand over,
 naming the owned role to satisfy a signature.
@@ -161,8 +157,6 @@ VCS-native continue for merge/cherry-pick ops). For rebase ops,
 rwv has a native `rwv sync --continue` / `rwv sync-to --continue` that
 drives the remaining picks; the VCS impl stops at staging and rwv core
 appends the `rwv <verb> --continue` line.
-
-**Anchor:** commit `26ba786`.
 
 `Vcs::conflict_resolution_hint` takes a `ConflictOp` — the in-flight op
 sync's project-repo path can leave behind, one of `Rebase`, `Merge` or
@@ -242,9 +236,6 @@ That is noisy, not dangerous, and which side you pick does not matter:
 the content is derived, so regenerate afterwards and the repo's own
 drift gate judges the result on either route.
 
-**Anchor:** commit `d29bb2f` (initial refactor); the driver rename +
-durable config plant landed later.
-
 For git, `set_replay_exclusion` writes layer 1 and only layer 1: it
 appends `<path> merge=rwv-ours` to the repo's `.gitattributes`,
 idempotently, migrating a legacy `merge=ours` spelling in place when it
@@ -293,10 +284,6 @@ in a project the report had called clean.
 **Concept:** push a named ref to the repo's conventional remote. For
 git, `git push origin <ref>`.
 
-**Anchor:** commit `6066ce1`, for a predecessor that took a role but not
-the ref. The ref became a parameter when the branch model landed; the
-role left by the route example (a) describes.
-
 The impl owns the mechanism:
 
 - The remote name.
@@ -329,7 +316,7 @@ or some entirely different command on another VCS).
 Which repos get pushed at all is verb policy, and the trait cannot see
 it: the plan-time default scope (owned + fork; dependency and reference
 excluded before the loop) lives in the push verb, and `push_ref` is
-never told which role it is publishing. The asymmetry is deliberate. It
+never told which role it is publishing. That separation
 keeps the trait composable — a verb that wants to push only owned repos
 filters first and then calls `push_ref` — and keeps verb-level policy
 debuggable, because the default-scope choice sits in one visible
@@ -409,8 +396,8 @@ carries git's vocabulary across the seam:
 
   It is also the reason enforcement here is a scan at all, where it once
   could not be. The argument against one used to be precision — a
-  matcher over `origin` reported the sites someone had deliberately
-  left, and a matcher that reports correct code gets turned off. With
+  matcher over `origin` reported the sites someone had left in place,
+  and a matcher that reports correct code gets turned off. With
   the message sites moved, the population is one, and one exemption
   naming one file is a scan someone will keep.
   `tests/core_remote_name_literal_test.rs` is that scan; it reads
@@ -475,7 +462,7 @@ rather than merely git-flavoured — and that change can carry the break
 with a reason a consumer can read. Paying it now buys a better name for
 a backend nobody has.
 
-**What keeps this honest.** The exception is not prose alone.
+**How this is enforced.** The exception is not prose alone.
 `tests/core_remote_name_literal_test.rs` reports the site and exempts it
 by file, with this reasoning at the entry, and the exemption is checked
 in both directions: if the site stops existing, the standing entry fails
@@ -490,8 +477,7 @@ authors violated repeatedly is a preference until something refuses it.
 
 ## Anchoring
 
-The examples above each cite a closed work item and a landed commit. The
-remote-naming convention (example (a)) is covered by:
+The remote-naming convention (example (a)) is covered by:
 
 - `tests/clone_default_remote_name_test.rs` — drives a clone under an
   operator `clone.defaultRemoteName` that is not the convention, and
@@ -514,6 +500,17 @@ The push codepath (example (d)) is covered by:
   dependency/reference excluded from default scope, and
   project-repo-last ordering.
 
+## Adjacent seam: registries
+
+A registry (`src/registry.rs`) is a seam of its own, adjacent to `Vcs`
+rather than inside it: a registry decides a repo's identity, its
+canonical path, and — for `rwv add --new` — what parameters creating one
+needs; `Vcs` decides how the backend that registry named actually creates,
+clones, or brands it. `CreationPlan.vcs` is the one field a registry
+writes and a verb reads across that line — the registry constrains which
+backend a creation could use, the verb still chooses (currently `git`),
+and the plan records the choice made rather than leaving it implicit.
+
 ## Related joints
 
 - [verb-vs-composition](./verb-vs-composition.md) — outer-boundary
@@ -529,12 +526,3 @@ The push codepath (example (d)) is covered by:
   VCS-neutral by design (canonical store, linked workspace, branch
   ownership); the git mapping there is the worked example, in the same
   shape as the examples in this joint.
-- A registry (`src/registry.rs`) is a seam of its own, adjacent to this one
-  rather than inside it: a registry decides a repo's identity, its
-  canonical path, and — for `rwv add --new` — what parameters creating one
-  needs; `Vcs` decides how the backend that registry named actually creates,
-  clones, or brands it. `CreationPlan.vcs` is the one field a registry
-  writes and a verb reads across that line — the registry constrains which
-  backend a creation could use, the verb still chooses (currently there is
-  only one choice, `git`), and the plan is what records the choice made
-  rather than leaving it implicit.

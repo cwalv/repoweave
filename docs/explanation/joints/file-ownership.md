@@ -48,7 +48,7 @@ Consequences:
   present surfaces that project's per-project names and leaves every shared name where it is.
   Not writing the pointer is not sufficient: moving the files the pointer governs performs the
   switch and hides it, which is how a `--fix` scoped to a non-active project once re-pointed seven
-  shared root names out from under a concurrent seat. The check is symmetric — it expects only
+  shared root names out from under a concurrent workweave. The check is symmetric — it expects only
   per-project names for a project the root does not present, and for the project it does present
   it flags any shared name resolving into another project, including names no enabled integration
   of the presented project declares. Without that last part a stomp survives its own repair: the
@@ -163,8 +163,8 @@ is *when* it authors them. In brief:
 
 | Verb class | Verbs | Action on managed region |
 |---|---|---|
-| **Intent** | `add`, `remove`, `update` | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
-| **Context** | `activate`, `fetch`, workweave-create, `lock`, `init`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never author |
+| **Intent** | `add`, `remove`, `update`, `role` | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
+| **Context** | `activate`, `materialize`, `fetch`, workweave-create, `lock`, `init`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never author (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
 | **Recovery** | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
 
 rwv writes the regenerated files into the project directory; it never commits them. An intent verb
@@ -181,11 +181,11 @@ construction, because regeneration is tied to the intent verb that changed them.
 
 "Never author" is a claim about the **authoring path** — the managed regions and rwv-computed
 artifacts that intent verbs regenerate. It is not a claim that a context verb leaves every byte on
-disk untouched. The context verbs that run activation (`activate`, `init`, `init --adopt`, and
-`fetch`'s first-fetch auto-activate — not workweave-create, which suppresses hooks, and not `lock`,
-which runs no activation) still fire the integration **install hooks**, and the ecosystem tools
-those hooks invoke rewrite the lockfiles they own: `Cargo.lock`, `package-lock.json`,
-`pnpm-lock.yaml`, `uv.lock`.
+disk untouched. The context verbs that run activation (`activate`, `materialize`, `init`,
+`init --adopt`, and `fetch`'s first-fetch auto-activate — not workweave-create, which suppresses
+hooks, and not `lock`, which runs no activation) still fire the integration **install hooks**, and
+the ecosystem tools those hooks invoke rewrite the lockfiles they own: `Cargo.lock`,
+`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`.
 
 This holds at `init --adopt` even when the adopted repo **commits** its lock. A generated lock is
 fully rwv-owned derived state with no user author (§"Lockfiles are fully owned",
@@ -213,92 +213,25 @@ is lost by deferring, because membership change is the lockfile-refresh trigger 
 The deferral is scoped to inputs that are **absent**: a member that is on disk but whose manifest
 is broken is a genuine hook failure and still bails.
 
-## The shared helper API
+## Per-key ownership modes: `Author` vs. `DefaultOnly` vs. `UserHeld`
 
-The hybrid-merge invariants live once, in `src/integrations/merge.rs`, rather than duplicated
-per integration. The trait:
+Within a hybrid document, each managed key path (addressed as a sequence of path segments so
+keys containing literal dots, like VS Code's `["settings", "files.exclude"]`, remain unambiguous)
+operates in one of three states:
 
-```rust
-type KeyPath = Vec<String>;
+- **`Author`:** `rwv` writes the key on every intent verb and strips it on deactivation.
+- **`DefaultOnly`:** `rwv` seeds the key only when it is absent (for example, Cargo's
+  `workspace.resolver = "2"`) and never overwrites or strips it afterwards. Once seeded, the value
+  is the operator's to adjust; a modified `DefaultOnly` value is clean, not drift.
+- **`UserHeld` (deferred):** When an `Author` key already exists on disk without `rwv`'s ownership
+  marker, `rwv` defers rather than overwriting it and emits a `USER-HELD` warning so the operator
+  knows `rwv` is verifying rather than authoring that key.
 
-trait ManagedDoc: Sized {
-    fn parse(text: &str) -> anyhow::Result<Self>;    // bail on malformed
-    fn empty() -> Self;
-    fn has_marker(&self, owned_keys: &[KeyPath]) -> bool;
-    fn set_marker(&mut self, owned_keys: &[KeyPath]);
-    fn remove_marker(&mut self, owned_keys: &[KeyPath]);
-    fn key_present(&self, key: &KeyPath) -> bool;
-    fn set_owned(&mut self, key: &KeyPath, value: &OwnedValue);
-    fn remove_owned(&mut self, key: &KeyPath);
-    fn is_empty(&self) -> bool;
-    fn serialize(&self) -> anyhow::Result<String>;
-}
-fn merge_activate<D: ManagedDoc>(
-    path: &Path,
-    owned: &[(KeyPath, Ownership, OwnedValue)],
-) -> anyhow::Result<MergeResult>;
-fn strip_deactivate<D: ManagedDoc>(
-    path: &Path,
-    owned_keys: &[KeyPath],
-) -> anyhow::Result<StripOutcome>;
-```
-
-Three shapes in that signature list carry contract, not convenience:
-
-- **A key is a path of segments, not a dotted string.** `KeyPath` is
-  `Vec<String>`, so vscode's `settings."files.exclude"` is unambiguously
-  `["settings", "files.exclude"]` — two segments, the second containing a
-  literal dot. A dotted `&str` cannot express that.
-- **The marker methods take the owned keys.** TOML places the marker as a
-  per-key decoration rather than a document header, so the trait does not
-  commit to a single sentinel location; JSON ignores the slice and uses its
-  top-level marker key. This is what lets one trait cover both.
-- **`key_present` is the generate-vs-verify switch.** A managed key on disk
-  with no marker means the user took the pen, and `merge_activate` defers
-  rather than authoring. Without this method the switch would have to be
-  re-derived per format.
-
-`merge_activate` also takes each key's `Ownership`. `Author` keys rwv writes
-and strips; `DefaultOnly` keys rwv writes only when absent and never
-overwrites or strips, because the value is the operator's to adjust once
-seeded — a divergent `DefaultOnly` value is CLEAN, not drift. The returned
-`MergeResult` names which `Author` keys were authored and which were deferred,
-so the caller can raise the USER-HELD warning for the deferred ones;
-`DefaultOnly` keys appear in neither list.
-
-`strip_deactivate` returns a `StripOutcome` — `Absent`, `UserHeld`, or
-`Stripped` — so a caller that must know whether the strip happened (to gate
-removing a co-requisite generated file, say) learns it without re-reading and
-re-parsing the file to redo the marker check.
-
-Implementations: `JsonDoc` (serde_json — npm and vscode), `TomlDoc` (toml_edit — cargo and uv,
-with sub-table scoping), `YamlDoc` / line-editor (pnpm), `GoWorkDoc` (use-block merger). The
-delete-if-empty and strip-only-owned invariants live here once.
-
-This is the hybrid axis only. Attesting a fully-owned generated file (rule 6)
-is a separate mechanism with no overlap — see
+On deactivation, stripping returns whether the file was `Absent`, `UserHeld`, or `Stripped`,
+allowing the integration to gate cleanup of co-requisite generated artifacts (such as ecosystem
+lockfiles) on whether `rwv` actually owned the workspace config. Attesting a fully-owned generated
+file (rule 6, tracked in `.rwv-owned-digests`) is a separate mechanism; see
 [lock-as-derived](./lock-as-derived.md).
-
-`deactivate(root: &Path)` receives no `IntegrationContext`, so owned keys are static
-per-integration constants — the helper does not infer them from the manifest at deactivate time.
-
-## Author guidance for new integrations
-
-A new integration declares its content ownership regime. For **fully-rwv-owned**, implement
-`activate` as a whole-write, `deactivate` as a whole-delete, and list the file in
-`generated_files()`. For **hybrid**, implement via `ManagedDoc`, declare `managed_keys`, and:
-
-- Never whole-write or whole-delete a user file.
-- Implement `activate` as read-merge-write (idempotent).
-- Implement `deactivate` as strip-and-delete-if-empty; never delete if user content remains.
-- Add the three-regression-test shape: activate-preserves, deactivate-strips-keeps,
-  deactivate-deletes-if-empty.
-
-Both halves (merge-activate and strip-not-delete-deactivate) must land **in the same change**;
-shipping merge-activate while leaving the old whole-delete deactivate would let the standalone
-deactivate path destroy content the merge protects.
-
-See [lock-as-derived](./lock-as-derived.md) for how lockfiles fit into the fully-owned category.
 
 ## Related joints
 

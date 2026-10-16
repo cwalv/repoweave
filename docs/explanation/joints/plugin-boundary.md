@@ -23,7 +23,7 @@ content-ownership *mechanics* behind those files, not a flat inventory. An opera
 that does not read or write those files is not composition-aware in any way that
 requires core ownership; it is a candidate for a plugin.
 
-The negative form is equally load-bearing: "needs to run across all repos" is not a
+The negative form is equally important: "needs to run across all repos" is not a
 criterion for core. Parallel fan-out, output collection, and per-repo command
 dispatch are unix composition; the plugin space is where they live. `rwv` provides
 the addressing surface and hands it off.
@@ -36,7 +36,7 @@ reference. The rule exists because a plugin that writes these files corrupts
 `rwv`'s composition state, and `rwv` has no dispatch-time way to stop it —
 `rwv doctor` is the audit surface: it can notice that an rwv-owned file changed
 outside a core-verb write, after the fact. That after-the-fact posture is a
-deliberate consequence of the security posture below, not an oversight.
+direct consequence of the security posture below, not an oversight.
 
 A plugin may maintain its **own** state anywhere else — its own dotfiles, a
 side-database, per-repo metadata files it owns. That is the plugin's own concern

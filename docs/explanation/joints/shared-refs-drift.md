@@ -20,32 +20,35 @@ Git's worktree model:
   on disk, and any worktree-private bookkeeping.
 
 The asymmetry is the whole reason worktrees are cheap. It is also the
-source of drift, because branch refs move silently from one worktree's
-point of view when a sibling commits on the same branch.
+source of drift whenever a branch ref checked out in one workspace is
+moved without updating that workspace's index and working tree — for
+example when a ref is updated via git plumbing or local-to-local ref
+pushes across linked worktrees sharing the canonical object store, or
+when two worktrees have been force-attached (`git worktree add -f` /
+`git checkout --ignore-other-worktrees`) to the same branch.
 
-Picture two worktrees on the same branch:
+Picture a workspace whose checked-out branch `main` is moved underneath
+it (for example, by a ref update from a linked worktree or a second
+worktree force-attached to `main`):
 
 ```
-worktree A: HEAD → main → commit X    (index + WT on disk = X)
-worktree B: HEAD → main → commit X    (index + WT on disk = X)
-```
-
-A commits a change:
-
-```
-worktree A: HEAD → main → commit Y    (index + WT on disk = Y)
-worktree B: HEAD → main → commit Y    (index + WT on disk still = X)
+workspace B before: HEAD → main → commit X    (index + WT on disk = X)
+ref main advances to commit Y outside B's working tree:
+workspace B after:  HEAD → main → commit Y    (index + WT on disk still = X)
 ```
 
 B's `HEAD` symbolic ref resolves to Y now (it followed `main`), but B's
 *index file* and B's *working tree files* still reflect X. Nothing
-about this is wrong — git is doing what it always does. But B is now
-drifted from its own HEAD.
+about git's ref store is corrupt, yet B's index and working tree are now
+drifted from its own `HEAD`.
 
-In a flat git workflow, this almost never happens: most users have one
-worktree per branch. In repoweave's workweave model, sibling worktrees
-on the same branch are the normal case (every workweave's repos share
-the primary's branch refs), and the drift is constant background noise.
+By default, `rwv` prevents workweaves from competing for the same branch
+name by giving each workweave its own flat ephemeral branch
+(`<project>--<workweave>`, Invariant I3 in
+[clone-topology](./clone-topology.md)). Even with distinct branches per
+workweave, shared-refs drift can still occur whenever an out-of-band git
+command, ref update, or force-attached worktree moves a workspace's
+checked-out branch ref without refreshing its index and working tree.
 
 ## Two drift classes
 
@@ -77,8 +80,9 @@ commit they think they're on. Build outputs are computed from the wrong
 inputs; tests run against the wrong sources; agents reason from stale
 documentation.
 
-In both cases the *cause* is the same — a sibling worktree advanced
-the shared branch. The symptom is what differs.
+In both cases the *cause* is the same — the checked-out branch ref moved
+without updating the workspace's index and working tree. The symptom is
+what differs.
 
 ## Safe-to-fix classification
 
@@ -135,25 +139,27 @@ as live and is left alone.
 
 Most users will rarely think about drift explicitly:
 
-- After a sibling worktree commits, opening a directory in another
-  worktree might show phantom staged changes. Run `rwv doctor --fix`
-  (or do nothing — the next `rwv sync` does the same fix).
+- If a checked-out branch ref moves underneath a workspace and `git status`
+  shows phantom staged changes, run `rwv doctor --fix` (or let the next
+  `rwv sync` refresh it).
 - Build tools that read files seeing stale content is a *real* symptom
   of working-tree drift, not a build-tool bug. The fix is the same.
 - Tools that aggressively track file timestamps (some IDEs, some
-  watchers) may notice the silent ref movement and lag a moment
-  catching up. That is unavoidable in the worktree model.
+  watchers) may notice ref movement and lag a moment catching up. That is
+  unavoidable in the worktree model.
 
-Drift is not a sign that anyone did anything wrong. It is the cost of
-the worktree sharing that makes workweaves cheap.
+Drift is not a sign that your repository objects are corrupt. It is a
+consequence of git worktrees sharing a single ref store.
 
 ## What rwv does *not* do
 
-- rwv does not lock branches across worktrees. Multiple worktrees can
-  commit on the same branch; that is intentional.
-- rwv does not rewrite the worktree model. The drift is fundamental to
-  worktrees; the joint is about classification and remediation, not
-  prevention.
+- rwv assigns each workweave its own `<project>--<workweave>` ephemeral
+  branch (Invariant I3 in [clone-topology](./clone-topology.md)), but it
+  cannot prevent external git commands or plumbing from moving a branch
+  ref checked out in a workspace.
+- rwv does not rewrite git's worktree model. When a ref moves underneath
+  a checkout, this joint governs how `rwv` classifies and remediates the
+  resulting drift.
 - rwv does not silently discard live content. Ever. Live work
   classifies as live; the operator decides.
 

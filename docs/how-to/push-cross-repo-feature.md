@@ -1,39 +1,43 @@
 # Push a cross-repo feature
 
-`rwv push` coordinates pushes across the manifest repos that compose a project. It encodes per-role policy and lock-precondition checks that a hand-rolled `xargs git push` can't.
-
-## Happy path
-
-From the workspace whose work you want to push:
+Publish locked cross-repo changes from the primary weave to remotes in dependency-safe order (member repositories first, project repository last):
 
 ```bash
 rwv push
 ```
 
-`rwv push` walks the manifest, applying per-role push policy:
+## Preconditions and default scope
 
-- `role: owned` / `role: fork` — pushed by default; require the working tip to match `rwv.lock`. (`fork` URL must be your writable fork; see [roles](../reference/roles.md#fork).)
-- `role: dependency` / `role: reference` — skipped by default (you don't own those repos); use `--role` or `--repo` to include them when you need to.
+Before pushing any remote, `rwv push` enforces three preconditions:
 
-The project repo is pushed last, so its lock-bearing commit lands after the manifest repos that lock pins are now reachable.
+- **Primary weave only:** `rwv push` refuses when invoked inside a workweave so ephemeral workweave branches are never pushed to shared remotes. Land workweave changes into the primary weave with `rwv sync-to` first.
+- **Canonical branch in the project repo:** `projects/<project>/` must be on its tracked branch, not a detached `HEAD`.
+- **Lock agreement:** Every member repository's `HEAD` must match the revision pinned in `rwv.lock`.
 
-Anchored by `tests/doc_claims_push_test.rs`.
+By default, `rwv push` pushes member repositories with `role = "owned"` and `role = "fork"` (`fork` URLs must point to your writable fork; see [Roles reference](../reference/roles.md#fork)) and skips `dependency` and `reference` repositories. The project repository (`projects/<project>/`) is pushed last, only after every in-scope member push succeeds, so collaborators never fetch a `rwv.lock` that references unpushed member commits.
 
-## Selector filters
+Preview the plan without contacting remotes:
 
-`rwv push` accepts the shared selector grammar — same as `fetch` and `update`:
+```bash
+rwv push --dry-run
+```
+
+## Selector filters and parallel push
+
+Override the default `[owned, fork]` scope with `--role` or `--repo` selectors (repeated flags combine as a union; regexes match against the full `github/org/repo` manifest path):
 
 ```bash
 rwv push --role owned                       # only owned repos
-rwv push --repo glob:'github/chatly/*'      # owned + path glob
-rwv push --repo re:'^github/chatly/(server|web)$'
+rwv push --repo glob:'github/chatly/*'      # path glob
+rwv push --repo re:'proto'                  # regex matched against full manifest path
+rwv push -j 4                               # push up to 4 member repos in parallel
 ```
 
-Patterns accept `Exact` (no prefix), `re:` (regex), and `glob:` (glob). Repeated flags are union. `--role` is case-insensitive. See [reference/cli — Selector grammar](../reference/cli.md#selector-grammar).
+Even with `-j <N>`, the project repository is pushed serially at the end after all member pushes succeed.
 
-## Lock-precondition recovery
+## Recover from a lock-state mismatch
 
-If `rwv push` refuses because the lock SHA doesn't match HEAD in some repo:
+If a member repository's `HEAD` differs from `rwv.lock`, `rwv push` refuses before touching the network:
 
 ```text
 rwv push: 1 repo(s) disagree with /home/user/work/projects/web-app/rwv.lock:
@@ -42,41 +46,17 @@ Hint: run `rwv lock` to capture local state, or `git checkout` in each repo to a
 Error: lock-state mismatch — refusing to push before clone state and lock agree
 ```
 
-The recovery decision tree:
-
-1. **You meant to lock new state.** Make sure manifest-repo work is committed, then:
-   ```bash
-   rwv lock
-   git -C projects/web-app commit -am "lock: feature X"
-   rwv push
-   ```
-2. **You meant to push the existing lock.** The lock is what's authoritative; reset each diverged manifest repo to the SHA recorded in `rwv.lock` (use `rwv status` to find which repos are ahead or diverged), then re-run `rwv push`.
-
-The lock-precondition prevents the common footgun: pushing manifest-repo work before the project repo's lock-bearing commit, leaving downstream consumers seeing the new manifest tips with the old lock pointing at the old SHAs.
-
-## Parallel push
-
-```bash
-rwv push -j 4
-```
-
-Parallel mode runs up to N pushes concurrently. The project repo is still pushed last after all manifest repos converge.
-
-## When to use `rwv push` vs `git push`
-
-`rwv push` earns its keep over a hand-rolled `xargs git push` for:
-
-- **Role-aware policy.** Default plan = `owned` + `fork` (the roles you control); `dependency` and `reference` are skipped. Override with `--role` / `--repo` selectors when you need to include non-writable repos.
-- **Lock-precondition check.** Prevents the manifest-pushed-but-lock-stale footgun.
-- **Manifest-aware ordering.** Project repo pushed last after manifest repos.
-
-For one-repo pushes, plain `git push` is fine. For ad-hoc cross-repo composition, use the `rwv status --json | jq | xargs` recipes in [run a command across repos](./run-a-command-across-repos.md) — `rwv push` is the principled answer when the coordination is itself the value, not the bulk.
-
-See [verb-vs-composition](../explanation/joints/verb-vs-composition.md) for the design rationale on when an `rwv` verb earns its keep.
+- **To publish the new local commits:** Snapshot and commit the updated lock, then push:
+  ```bash
+  rwv lock --commit
+  rwv push
+  ```
+- **To publish the existing lock:** Align the diverged checkout to the locked revision (`rwv fetch` or `git checkout`), then re-run `rwv push`.
 
 ## Related
 
-- [reference/cli — push](../reference/cli.md#rwv-push-) — full flag surface
-- [vcs-as-seam](../explanation/joints/vcs-as-seam.md) — `Vcs::push_ref`, and where remote-naming policy lives
-- [run a command across repos](./run-a-command-across-repos.md) — when unix composition is the right shape
-- [bring workweave work home](./bring-workweave-work-home.md) — push usually follows sync
+- [CLI reference — `rwv push`](../reference/cli.md#rwv-push-) — flags and `--json` / NDJSON output shapes
+- [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave commits into the primary weave before pushing
+- [Run a command across repos](./run-a-command-across-repos.md) — ad-hoc cross-repo commands via `rwv status --json`
+- [Verb vs. composition](../explanation/joints/verb-vs-composition.md) — why coordinated publishing is a core verb
+- [VCS as seam](../explanation/joints/vcs-as-seam.md) — remote-push contract

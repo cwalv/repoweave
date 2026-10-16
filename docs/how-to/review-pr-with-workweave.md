@@ -1,66 +1,52 @@
 # Review a PR with a workweave
 
-Run a PR locally without disturbing your in-progress work. The workweave gets its own worktrees and tool state; your primary weave stays on whatever branches you were on.
-
-## Create a review workweave
+Test a pull request in an isolated workweave without disturbing your primary weave's branches or build state:
 
 ```bash
-rwv workweave web-app create review-pr-42
-cd ../.workweaves/web-app--review-pr-42/github/chatly/server
+rwv workweave web-app create pr-42
+cd ../.workweaves/web-app--pr-42/github/chatly/server
+git fetch origin pull/42/head
+git checkout --detach FETCH_HEAD
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
+Checking out `FETCH_HEAD` detached keeps the worktree's ephemeral branch ref intact (avoiding `rwv doctor` branch-drift warnings while you inspect the PR). For a multi-repo PR, fetch and detach `FETCH_HEAD` in each affected member worktree; untouched repositories remain at the parent workspace's locked revisions.
 
-## Check out the PR
+## Preview what the PR introduces
+
+From anywhere inside the workweave, inspect the commits and diff relative to the recorded parent's common ancestor:
 
 ```bash
-git fetch origin pull/42/head:pr-42
-git checkout pr-42
+rwv workweave web-app log            # commit listing per repo vs. recorded parent
+rwv workweave web-app log --diff     # unique diff vs. recorded parent
 ```
 
-For PRs that touch multiple repos, do the same in each affected repo's worktree. The other repos stay on the parent's tips, so the cross-repo build sees the PR's changes against everything else as it is on the parent.
+Add `--json` for machine-readable output.
 
-## Preview what the PR adds
+## Build and test
 
-To see the commits and diffs the PR introduces relative to the recorded parent, from the workweave root:
-
-```bash
-rwv workweave <project> log            # commit listing per repo, versus recorded parent
-rwv workweave <project> log --diff     # unique diff versus the recorded parent
-```
-
-Anchored at the common ancestor, so commits the parent gained since the workweave was created are not shown as reversals — the output is exactly what the PR contributes on top of the parent. Add `--json` for machine-readable output.
-
-## Test
-
-The workweave has its own ecosystem files and tool state. Run the build/test commands from the workweave root:
+Run your ecosystem's build and test commands from the workweave root:
 
 ```bash
-cd ../../..   # back to the workweave root
+cd ../../..   # back to ../.workweaves/web-app--pr-42
 cargo test --workspace
 # or: npm test --workspaces, go test ./...
 ```
 
-`node_modules/`, `.venv/`, and `target/` are per-workweave, so a PR's dependency changes can't corrupt your primary weave's state.
+Because `target/`, `node_modules/`, and `.venv/` are isolated per workweave, dependency changes in the PR do not touch your primary weave.
 
 ## Clean up
 
-```bash
-cd ~/work
-rwv workweave web-app delete review-pr-42
-```
-
-If you committed locally and want to bail out without losing the commits, land them first: `rwv sync-to` brings the workweave's commits into its recorded parent, and `rwv sync-to --retire` lands them and deletes the workweave in one step. Pushing the branches works too. Copying the workweave's directories aside is not a third option — `cp` aliases the original's git state rather than preserving it.
-
-To bypass the dirty-tree safety:
+Return to the weave root and delete the review workweave, passing `--discard-unmerged-commits` because the fetched PR commits are not merged into the parent workspace (add `--discard-uncommitted` if the build or review also left uncommitted edits):
 
 ```bash
-rwv workweave web-app delete review-pr-42 --discard-uncommitted
+cd ../..
+rwv workweave web-app delete pr-42 --discard-unmerged-commits
 ```
 
-`--discard-uncommitted` waives the dirty-tree refusal; default deletion refuses if any worktree is dirty.
+If you made review fixes on the worktree's ephemeral branch that you want to keep, land them into the parent with `rwv sync-to --retire` or push the branch to the PR remote before deleting.
 
 ## Related
 
-- [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — how workweaves relate to the primary weave
-- [create a feature workweave](./create-feature-workweave.md) — same primitive for shipping work, not reviewing
+- [Create a feature workweave](./create-feature-workweave.md) — using a workweave to develop and land a feature
+- [Cache builds across workweaves](./cache-builds-across-workweaves.md) — sharing compiled artifacts across review workweaves
+- [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — how workweaves relate to the primary weave

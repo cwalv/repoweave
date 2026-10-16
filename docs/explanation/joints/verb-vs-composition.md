@@ -25,7 +25,7 @@ what to *name* a verb once the gate is cleared.
 Three categories qualify:
 
 1. **Per-repo policy from role.** The manifest assigns each repo a
-   role (`primary`/`owned`, `fork`, `dependency`, `reference`). A
+   role (`owned`, `fork`, `dependency`, `reference`). A
    verb's behavior depends on role-specific policy that the VCS
    doesn't know about — e.g. "exclude dependency and reference repos
    from the default push scope because they are not operator-writable."
@@ -39,7 +39,7 @@ Three categories qualify:
    `.rwv-workweave`, ecosystem workspace files, etc. The VCS doesn't
    know about these files, so composition can't get them right.
 
-The negative side of the principle is just as load-bearing: *if all a
+The negative side of the principle is just as important: *if all a
 proposed verb does is wrap a shell pipeline that already exists, it
 fails the gate*. `gita`-style "run this command across all my repos" is
 unix composition; it doesn't need to be a verb in rwv.
@@ -68,7 +68,7 @@ shrinks (e.g., when a composition recipe gets cleaner upstream).
 
 ### `rwv fetch`
 
-Reads `rwv.lock`, materializes constituent clones to the recorded
+Reads `rwv.lock`, materializes member clones to the recorded
 SHAs. Bootstrap when no lock exists.
 
 - *Per-repo policy from role?* Yes — role determines which repos are
@@ -79,7 +79,7 @@ SHAs. Bootstrap when no lock exists.
 - *rwv-owned state?* The lock is read.
 
 Pass. The "fetch all my repos" composition exists (`rwv status --json
-| jq -r '.repos[].path' | xargs ...`) but has to spell the remote name
+| jq -r '.repos[].absolute_path' | xargs ...`) but has to spell the remote name
 itself, and cannot read the lock-target SHA for each repo.
 
 ### `rwv update`
@@ -146,13 +146,18 @@ See [sync-semantics](./sync-semantics.md).
 Strong pass. See [verb-vs-vocabulary](./verb-vs-vocabulary.md) for why
 these are `sync`/`sync-to` and not `pull`/`push`.
 
-### `rwv activate`
+### `rwv activate` and `rwv materialize`
 
-Switches the active project in a workspace; regenerates ecosystem
-workspace files; runs integration install hooks.
+`rwv activate <project>` switches the active project in the primary weave
+(writing `.rwv-active`), verifies integration files in `projects/<project>/`,
+surfaces symlinks at the weave root, and runs integration install hooks
+(`--no-materialize` skips hooks). `rwv materialize` runs integration install
+hooks, cleans up disabled-integration artifacts, and settles drifted attested
+generated files (`.rwv-owned-digests`) inside any workspace without switching
+projects.
 
-- *rwv-owned state?* `.rwv-active`, ecosystem workspace files,
-  symlinks.
+- *rwv-owned state?* `.rwv-active`, weave-root symlinks, `.rwv-owned-digests`,
+  and attested generated files.
 
 Pass.
 
@@ -218,7 +223,7 @@ update` already owns that decision. See
 ### "Run this command across repos"
 
 Recurring proposal in some form (`rwv each`, `rwv run`, `rwv exec`).
-Intent: take a shell command, run it in every constituent repo,
+Intent: take a shell command, run it in every member repo,
 collect output.
 
 - *Per-repo policy from role?* No — the command is opaque.
@@ -228,7 +233,8 @@ collect output.
 Three nos. This is exactly the failure mode the principle is built
 to prevent. The composition shape (`rwv status --json | jq -r
 '.repos[].absolute_path' | xargs -I{} bash -c '...'`) is well-developed
-elsewhere; `gita super primary <cmd>` is the showcase integration for
+elsewhere; `gita super owned <cmd>` (backed by the generated `gita/repos.csv`
+and `gita/groups.csv` files) is the showcase integration for
 users who want the summary sugar. None of it needs to live in rwv
 core.
 

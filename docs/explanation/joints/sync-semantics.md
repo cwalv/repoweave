@@ -11,10 +11,11 @@ Two verbs, two directions:
   change; the named target ends up with CWD's commits linearly above
   its prior state.
 
-Together they form a direction-explicit pair. The mental model is the
-same as `cp` vs. the destination-first convention in `rsync --dest`: the
-argument position identifies what moves where. See "Symmetries and
-asymmetries" below for the full contract.
+Together they form a direction-explicit pair: in `rwv sync <source>`, the
+argument names the workspace CWD absorbs (like `git merge <source>`); in
+`rwv sync-to <target>`, the argument names the workspace that receives
+CWD's state (like `git push <target>`). See "Symmetries and asymmetries"
+below for the full contract.
 
 Both verbs share a single data-driven phase machine. Plain `sync` is
 the degenerate case: it runs the machine with the advance-target and
@@ -22,7 +23,7 @@ retire phases absent. `rwv sync-to` runs the full machine, with
 advance-target always present and retire added only when `--retire` is
 set.
 
-This joint covers the phase machine, the record schema, the strategy
+This joint covers the phase machine, the op-state record model, the strategy
 choices, abort's verified-restore contract, snapshot-read semantics,
 retire-as-phase, and the named-override naming rule.
 
@@ -197,7 +198,7 @@ restore both sides independently.
 
 ### replay
 
-Runs Phase 1' (project repo), then Phase 2 (manifest repos):
+Runs **Phase 1'** (project repo) followed by **Phase 2** (manifest repos) — the project-repo step is called *Phase 1'* because it runs ahead of Phase 2 so the replayed `rwv.toml` determines which member checkouts exist before Phase 2 advances them and Phase 3 (`relock`) snapshots their tips:
 
 - **Phase 1' — project repo, lock-excluded**: replay CWD's unique
   project commits onto the named workspace's project tip using
@@ -269,7 +270,7 @@ operator made — `--discard-local-commits` minted silently. The
 `rwv.lock`-excluded property the remedy relies on belongs to replay,
 and `ff` has no replay.
 
-The relaxation is deliberately not scoped to workweave destinations the
+The relaxation is not scoped to workweave destinations the
 way tips-as-truth is scoped to workweave sources. That scoping answers
 "may this op consume another workspace's unblessed commits?"; the
 destination question is whether the operator's own workspace may start
@@ -348,7 +349,7 @@ directory is a no-op).
 Retire compares **manifest repo tips** rather than project repo tips.
 The project repo's post-sync state can diverge from the target by
 exactly the auto-relock commit Phase 3 writes. That commit is purely
-derived, so manifest tip equality is the honest "work has converged"
+derived, so manifest tip equality is the accurate "work has converged"
 signal.
 
 Retire is only meaningful inside a workweave. Run from a primary weave,
@@ -363,74 +364,15 @@ re-runs that phase before reaching cleanup again.
 
 Exception: when `--discard-local-commits` discarded project commits
 (recorded as the `discard-local-commits` override), the project
-savepoint is preserved as a tombstone — the only remaining reference to
-the discarded commits. Manifest-repo savepoints are dropped regardless.
+savepoint is preserved as a tombstone even after the sync completes —
+the only remaining reference to the discarded commits (`rwv abort` will
+refuse once op-state is cleared, but `git reset --hard refs/rwv/pre-op/<op-id>`
+in the project repo still recovers them). Manifest-repo savepoints are
+dropped regardless.
 
-## Record schema v2
+## Op-state records (`.rwv-op` and `.rwv-op-lease`)
 
-### Owner record (`.rwv-op`)
-
-Written at the initiating workspace (the owner). Holds all op
-parameters plus the current phase. It is the sole copy of mutable op
-state.
-
-JSON, every field mandatory — a record missing a key fails to parse rather
-than defaulting.
-
-```json
-{
-  "id": "1779769917405921588",
-  "verb": "sync",
-  "strategy": "rebase",
-  "source": "/abs/path/src",
-  "target": "/abs/path/tgt",
-  "retire": false,
-  "phase": "replay",
-  "advanced_tips": {},
-  "converged_tips": {},
-  "overrides": [],
-  "started_at": "2026-06-10T21:14:03Z"
-}
-```
-
-`source` is the workspace content flows FROM; `target` is where it
-flows TO. For plain `sync`, `target` is CWD (the op writes into the
-owner workspace). For `sync-to`, `target` is the named target workspace.
-All path fields are absolute. `started_at` is RFC3339 UTC.
-`advanced_tips` holds the op's self-attributable tip per repo during the
-replay phase — written at replay entry (ff-movers) or right after the
-advance succeeds (rebased repos), and cleared atomically with
-`converged_tips` at relock completion. `converged_tips` is populated at
-relock completion; empty before.
-
-### Thin lease (`.rwv-op-lease`)
-
-Written at every other workspace the op mutates (never at the owner).
-Immutable once written; a mutex plus a redirect, nothing else.
-
-```json
-{
-  "id": "1779769917405921588",
-  "owner": "/abs/path/to/owner/workspace",
-  "created_at": "2026-06-10T21:14:03Z"
-}
-```
-
-`--continue` and `abort` invoked from a leased workspace follow the
-`owner` pointer and operate identically to owner-side invocation.
-
-### Read-only workspaces
-
-Not marked. Safe because source reads are snapshots (see below).
-
-### Cleanup-ownership table
-
-| Exit path | Record + leases |
-|---|---|
-| Success (all phases incl. retire) | Cleared everywhere |
-| Precondition refusal (before any mutation) | Cleared everywhere (no trace) |
-| Phase failure or crash | Kept everywhere (`--continue` and `abort` remain) |
-| `abort` | Cleared after restore |
+Instead of duplicating mutable state across both workspaces of a `sync-to`, `rwv` writes a single **owner record** (`.rwv-op`) at the initiating workspace and a thin, immutable **lease pointer** (`.rwv-op-lease`) at every other workspace the operation mutates (read-only source workspaces in `rwv sync` are unmarked because their reads are T₀ snapshots). The owner record holds the op ID, verb, strategy, source and target paths, current phase, `advanced_tips`, `converged_tips`, and active overrides; the lease holds only the op ID and the path back to the owner workspace so `--continue` and `rwv abort` work identically from either end while preventing concurrent operations on the leased workspace. See [formats](../../reference/formats.md#rwv-op--owner-op-state-record) for the operator contract.
 
 ## Abort: verified-restore contract
 
@@ -489,8 +431,8 @@ those repos — they auto-restore as `RestoredFromIntent` (reported as
 **Residual foreign-tip case.** After `advanced_tips` lands, `ForeignTip`
 fires only for genuinely-foreign tips (e.g. an operator commit made after the
 crash), plus the irreducible one-write window between a rebase completing and
-its tip being persisted into `advanced_tips`. That window is a documented
-floor (spec §6), not a bug: the tip cannot be recorded before it exists.
+its tip being persisted into `advanced_tips`. That window is an irreducible
+floor: the tip cannot be recorded before it exists.
 During that instant, abort degrades to today's behavior — foreign-tip refusal
 on that one repo, tip preserved at the pre-abort ref.
 
@@ -602,7 +544,7 @@ pointer without performing a merge.
 ### Why no `merge` strategy
 
 `--strategy` accepts only `ff` and `rebase`. A `merge` strategy is
-deliberately **not** offered. The single question that justifies a merge
+**not** offered. The single question that justifies a merge
 strategy is: *"would rebase rewrite commits that are already published?"*
 If yes, you cannot rebase and must merge; if no, rebase is strictly
 preferable (linear history, no merge bubbles). In repoweave that question
@@ -727,27 +669,6 @@ at least one per-repo outcome is `failed`. A refused prune is not a
 failed outcome: the op completes, and the refusal is a `prune-refused`
 member record, under the envelope's `members` or as its own line.
 
-## `--retire` — close out a workweave in one step
-
-`rwv sync-to --retire` is the one-shot landing verb. It runs the full
-sync-to machine (replay → relock → advance-target → retire), where
-retire runs the merged-check and dirty-check before deleting the
-workweave. Op-state spans all four phases, so a merged-check failure is
-resumable (`rwv sync-to --continue`) and the whole op is abortable
-(`rwv abort`).
-
-Why `--retire` lives on `sync-to` and not on `sync`: the dominant "land
-my work" workflow goes workweave → parent, which is the `sync-to`
-direction.
-
-Why `--retire` and not `--land`: "land" overloads PR-merge vocabulary
-and misleads when parent isn't primary. "Retire" is honest about what
-the flag does — close out this workweave — regardless of where in the
-workweave tree it sits.
-
-`--retire` is only meaningful inside a workweave. Run from a primary
-weave, it emits a warning and is otherwise a no-op.
-
 ## Symmetries and asymmetries
 
 ### Explicit direction pair: `sync` vs. `sync-to`
@@ -757,11 +678,7 @@ weave, it emits a warning and is otherwise a no-op.
 | `rwv sync <source>` | State base (read-only) | Named source's tip | CWD |
 | `rwv sync-to <target>` | State base + final recipient | Named target's tip (replay) | CWD, then target FF-advances |
 
-The mental model is the `cp`/`rsync` convention: the argument is the
-source in `cp src dest` (source first), and the argument is the
-destination in `rsync --dest <target>` (dest-explicit). Here, `sync
-<source>` names what CWD will absorb; `sync-to <target>` names where
-CWD's state will land.
+In `rwv sync <source>`, the argument names what CWD absorbs (like `git merge <source>`); in `rwv sync-to <target>`, the argument names where CWD's state lands (like `git push <target>`).
 
 ### Shared machine; sync-to adds orchestration
 
@@ -788,12 +705,11 @@ recorded parent from `.rwv-workweave`. In a primary weave, bare
 `rwv sync` always requires an explicit `<source>`. There is no
 "absorb from parent" default.
 
-The asymmetry is deliberate rather than an omission. A landing has one
-meaning — advance the parent to CWD's tip — so `sync-to` can default its
-target without choosing anything. A downward pull would have to pick a
-shape (which of the parent's repos, at whose lock, under which strategy)
-that nothing has settled, and inventing one to fill a gap in the surface
-is the wrong order of operations.
+A landing has one meaning — advance the parent to CWD's tip — so `sync-to`
+can default its target without choosing anything. A downward pull would
+have to pick a shape (which of the parent's repos, at whose lock, under
+which strategy) that nothing has settled, and inventing one to fill a gap
+in the surface is the wrong order of operations.
 
 That prohibition lives entirely in argument parsing: `<SOURCE>` is a
 required CLI argument, and the engine has no branch that reads the
@@ -801,23 +717,6 @@ marker's parent for a pull. `e2e_two_workweaves_test.rs`'s
 `bare_sync_inside_a_workweave_is_refused_at_argument_parsing` pins both
 the refusal and the non-movement, so re-adding the default is a red test
 rather than a quiet resurrection.
-
-## Abort and recovery
-
-Before any mutating phase, the engine writes savepoints under
-`refs/rwv/pre-op/<op-id>` (and `refs/rwv/pre-op/<op-id>-target` for
-target-side repos in `sync-to`). `rwv abort` applies the
-verified-restore contract to every involved repo. See "Abort:
-verified-restore contract" above.
-
-After `--discard-local-commits`, the project savepoint is preserved as
-a tombstone even after the successful sync completes. `rwv abort` will
-refuse (no op-state), but the tombstone ref at
-`refs/rwv/pre-op/<op-id>` remains:
-
-```
-git reset --hard refs/rwv/pre-op/<op-id>
-```
 
 ## Related joints
 

@@ -44,6 +44,67 @@ where it only narrows what was found, one entry covers them all.
 The full wire shape is in [Formats](./formats.md), and the committed JSON
 Schema is `docs/reference/schemas/doctor.json`.
 
+## Summary index
+
+| `kind` (and `sub_kind` where applicable) | Severity | `--fix` disposition |
+|---|---|---|
+| [`confusable-siblings`](#confusable-siblings) | Warning | Report-only |
+| [`orphaned-clone`](#orphaned-clone) | Error | Report-only |
+| [`unknown-segment-clone`](#unknown-segment-clone) | Error | Report-only |
+| [`dangling-reference`](#dangling-reference) | Error | Report-only |
+| [`missing-role`](#missing-role) *(wire-only legacy)* | Warning | Report-only |
+| [`unparseable-project`](#unparseable-project) | Error | Report-only |
+| [`legacy-manifest-format`](#legacy-manifest-format) | Error | Report-only |
+| [`stale-lock`](#stale-lock) | Error | Report-only |
+| [`incomplete-lock`](#incomplete-lock) | Error | Report-only |
+| [`unresolvable-lock-entry`](#unresolvable-lock-entry) | Error | Report-only |
+| [`lock-pinned-by-name`](#lock-pinned-by-name) | Warning | Report-only |
+| [`head-unreadable`](#head-unreadable) | Error | Report-only |
+| [`projects-dir-unreadable`](#projects-dir-unreadable) | Error | Report-only |
+| [`projectless-dir`](#projectless-dir) | Warning | Report-only |
+| [`unnameable-project`](#unnameable-project) | Warning | Report-only |
+| [`missing-replay-exclusion`](#missing-replay-exclusion) (`absent`, `legacy-spelling`, `legacy-alongside-current`) | Warning | Auto-fixable |
+| [`replay-exclusion-unreadable`](#replay-exclusion-unreadable) | Warning | Report-only |
+| [`missing-merge-driver-config`](#missing-merge-driver-config) | Warning | Auto-fixable |
+| [`merge-driver-config-unreadable`](#merge-driver-config-unreadable) | Warning | Report-only |
+| [`phantom-merge-driver`](#phantom-merge-driver) | Warning | Report-only |
+| [`dangling-active-project`](#dangling-active-project) | Error | Auto-fixable |
+| [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `registered-workweave` | Error | Auto-fixable |
+| [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `marker-unverifiable`, `unwitnessed` | Error | Report-only |
+| [`legacy-workweave-marker`](#legacy-workweave-marker) | Warning | Auto-fixable |
+| [`legacy-workweave-index`](#legacy-workweave-index) | Warning | Auto-fixable |
+| [`unreadable-owned-state`](#unreadable-owned-state) | Warning | Report-only |
+| [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Report-only |
+| [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
+| [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `tracked-index`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
+| [`workweave-drift`](#workweave-drift) / `missing`, `symlink` | Error | Auto-fixable |
+| [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
+| [`workweave-drift`](#workweave-drift) / `extra` | Warning | Report-only |
+| [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
+| [`role-disagreement`](#role-disagreement) | Warning | Report-only |
+| [`stale-worktree-registration`](#stale-worktree-registration) | Warning | Auto-fixable |
+| [`clone-topology`](#clone-topology) (`standalone-in-workweave`, `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree`) | Error | Report-only |
+| [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
+| [`uninitialized-submodule`](#uninitialized-submodule) | Warning | Report-only |
+| [`provenance`](#provenance) / `origin-url-mismatch`, `placement-disagreement` | Warning | Report-only |
+| [`provenance`](#provenance) / `lock-sha-unreachable` | Error | Report-only |
+| [`branch-discipline`](#branch-discipline) / `unmigrated-ephemeral-branch`, `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
+| [`branch-discipline`](#branch-discipline) / `detached` | Warning | Report-only by default (`--adopt-detached-checkouts`) |
+| [`branch-discipline`](#branch-discipline) / `canonical-detached` | Warning | Report-only by default (`--reattach-checkouts`) |
+| [`branch-discipline`](#branch-discipline) / `shared-branch`, `foreign-ephemeral`, `blocked-ephemeral-namespace`, `blocked-detached-namespace`, `unborn-checkout`, `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`, `stale-ephemeral-branch-live`, `stale-ephemeral-branch-unowned` | Warning | Report-only |
+| [`dangling-ref-receipt`](#dangling-ref-receipt) | Warning | Auto-fixable |
+| [`pre-flat-ref-receipt`](#pre-flat-ref-receipt) | Warning | Auto-fixable |
+| [`index-drift`](#index-drift) / `safe-to-fix` | Warning | Auto-fixable |
+| [`index-drift`](#index-drift) / `live-staged` | Warning | Report-only |
+| [`working-tree-drift`](#working-tree-drift) / `safe-to-fix` | Warning | Auto-fixable |
+| [`working-tree-drift`](#working-tree-drift) / `live-edits` | Warning | Report-only |
+| [`orphaned-savepoint`](#orphaned-savepoint) / `redundant` | Warning | Auto-fixable |
+| [`orphaned-savepoint`](#orphaned-savepoint) / `live` | Warning | Report-only |
+| [`stale-op-state`](#stale-op-state) | Warning | Report-only |
+| [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
+| [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
+| [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
+
 ## Vocabulary used throughout
 
 **Auto-fixable** — `rwv doctor --fix` repairs it without further input.
@@ -142,11 +203,14 @@ from the manifest if the repo is genuinely gone.
 
 ### `missing-role`
 
-**Warning. Report-only.** An `rwv.toml` entry with no `role` field. Role is
-how rwv knows a repo's change resistance and whether it belongs in generated
-ecosystem workspace files.
+**Warning. Report-only.** An `rwv.toml` entry with no `role` field. Note that
+`rwv.toml` deserialization now requires `role` on every repository entry at
+parse time, so a manifest missing `role` is reported under
+[`unparseable-project`](#unparseable-project) (naming `missing field \`role\``);
+this variant is retained in the wire schema for backward compatibility.
 
-**What to do:** add one. See [Roles](./roles.md).
+**What to do:** add `role = "owned"` (or `fork`, `dependency`, `reference`) to
+the entry in `rwv.toml`. See [Roles](./roles.md).
 
 ### `unparseable-project`
 
@@ -161,7 +225,7 @@ names; the lock is generated, so `rwv lock` rewrites it. Note that the
 `manifest_path` field always names the manifest, because it locates the
 project rather than the failure.
 
-`--fix` deliberately has no arm for either. Rewriting a manifest rwv could not
+`--fix` has no arm for either. Rewriting a manifest rwv could not
 parse would be guesswork, and regenerating a lock re-pins the workspace to
 whatever the working tips happen to be — a decision about state, not a repair.
 
@@ -174,7 +238,7 @@ directory would read as having no manifest at all and be passed over in
 silence.
 
 **What to do:** rewrite it as `rwv.toml` by hand and delete the `rwv.yaml`.
-`--fix` deliberately has no arm here, for the same reason as
+`--fix` has no arm here, for the same reason as
 `unparseable-project` above and one more: the manifest is hand-authored, and
 the comments and key order you wrote have no mechanical translation between
 the two formats. A conversion that guessed at them would be worse than the
@@ -184,8 +248,9 @@ refusal. See [Formats](./formats.md) for the shape to write.
 
 **Error. Report-only.** A repo's HEAD does not match the SHA `rwv.lock` pins.
 
-**What to do:** `rwv lock` to re-pin from the working tips, or `rwv sync` to
-bring the tree to the locked revisions. Which you want depends on whether the
+**What to do:** `rwv lock` to re-pin `rwv.lock` from the current working tips,
+or `rwv fetch` (with no `<source>`) to realign the local checkouts to the
+revisions recorded in `rwv.lock`. Which you want depends on whether the working
 tree or the lock is the state you meant. The lock is a derived artifact, not a
 source of truth — see [Lock-as-derived](../explanation/joints/lock-as-derived.md).
 
@@ -473,15 +538,9 @@ quiet rather than noisy.
 files and record them afresh. `rwv materialize` takes no project argument — it
 acts on whichever project the checkout presents — so this only reaches the
 finding for the active project. For any other project, run `rwv activate
-<project>` first; the repair runs there once it is the active one.
-
-Where the project generates none — no cargo workspace, and no other
-integration that owns a whole file — there is nothing to re-derive, and the
-run leaves an empty record instead, saying on its way past which file it did
-that to. That is a repair and not a shrug: every check reading an unreadable
-record already answers "nothing is attested", so an empty one states what they
-were all computing, and states it somewhere this finding can see the fault has
-gone.
+<project>` first; the repair runs there once it is the active one. Where the
+project generates no attested files, `rwv materialize` writes an empty
+`.rwv-owned-digests` record so subsequent scans see a valid file.
 
 `--fix` does not do it for you: rebuilding the record attests whatever is on
 disk at that moment as accepted, and what was accepted before is exactly what
@@ -495,13 +554,9 @@ parse. Everything derived from it is unevaluated: the recorded placements, the
 ownership receipts, and whether the file needs the `legacy-workweave-index`
 migration.
 
-Reported at error severity rather than warning because the alternative is
-worse than silence. Without this finding every marker-bearing workweave in the
-project surfaces as `unregistered-workweave` — "run `rwv doctor --fix` to
-adopt it" — and that repair reads the same file and dies on the same parse
-error. While the index does not parse, `unregistered-workweave` and
-`stale-registry-entry` are not reported for the project at all; this finding
-replaces them, because neither is a fact about a registry rwv cannot read.
+While `.rwv-workweave-index` cannot be parsed, `unregistered-workweave` and
+`stale-registry-entry` are suppressed for the project because attempting to
+adopt or prune against an unreadable index would fail on the same parse error.
 
 **What to do:** repair the file by hand, or delete it and re-run `rwv doctor
 --fix`, which re-adopts the workweaves on disk into a fresh index. `--fix`
@@ -512,8 +567,8 @@ which refs are rwv's to delete.
 ### `workweave-tree-integrity`
 
 Anomalies in the `.rwv-workweave` marker tree and the registry that records
-it. The registry is advisory rather than authoritative, and this finding is
-what keeps it honest.
+it. The registry is advisory rather than authoritative, and this finding
+surfaces divergence between the registry and on-disk state.
 
 #### `dangling-parent`
 
@@ -550,7 +605,7 @@ is not recorded in that project's registry. The workweave exists on disk but
 primary does not know about it.
 
 **What to do:** `rwv doctor --fix` adopts the entry. Read paths (`list`,
-`delete`) deliberately do not adopt on the fly — adoption is an operator
+`delete`) do not adopt on the fly — adoption is an operator
 decision, so it happens where you asked for it.
 
 **Scope.** The scan enumerates the containers each project records, so this
@@ -814,12 +869,20 @@ migrated into one workweave and other workweaves link into *it*.
 A member slot holding a symlink is not scanned: read through the link it is
 the canonical store itself. It is reported as `workweave-drift`.
 
+**What to do:** move the full `.git` clone to the canonical slot at
+`<weave>/<repo_path>` and replace the workweave checkout at
+`<workweave>/<repo_path>` with a linked git worktree (`git worktree add`).
+
 #### `disconnected-weave-clone`
 
 The workspace at `<weave>/<repo_path>` is a full clone, but one or more of
 this weave's workweave checkouts of the same repo resolve to a *different*
 canonical store. The weave-path clone publishes a separate object graph
 nobody syncs to; push and pull become asymmetric and silent.
+
+**What to do:** fetch any unique commits from the disconnected store into the
+canonical clone at `<weave>/<repo_path>`, then recreate or re-link the affected
+workweave worktrees so they resolve to `<weave>/<repo_path>`.
 
 #### `wrong-parent-worktree`
 
@@ -828,10 +891,19 @@ store is not the weave canonical. Commits made there land in a different
 object store than the canonical, and merged-checks across the two answer "no"
 silently.
 
+**What to do:** fetch any unique commits from that worktree into
+`<weave>/<repo_path>`, remove the mislinked worktree directory, and run
+`rwv doctor --fix` (or `rwv workweave <project> create <name>`) to re-link it
+against the weave canonical store.
+
 #### `weave-clone-is-worktree`
 
 The weave path itself is a linked worktree of some other clone — full
 inversion. There is no canonical store at the manifest slot at all.
+
+**What to do:** replace `<weave>/<repo_path>` with a full standalone clone (or
+move the parent clone's `.git` directory into `<weave>/<repo_path>`) and re-link
+any dependent workweave worktrees against it.
 
 ### `missing-canonical-clone`
 
@@ -870,8 +942,9 @@ when the role is `reference`.
 **Error. Report-only.** The SHA `rwv.lock` pins is absent from the clone's
 object store.
 
-**What to do:** `rwv fetch`. A sync will not recover it — the object has to
-come from the remote.
+**What to do:** run `git -C <repo> fetch` to pull the missing object from the
+remote (or `rwv lock` to re-pin from local tips if the lock is the stale side).
+In-place `rwv fetch` does not contact the network for an already-present clone.
 
 #### `placement-disagreement`
 
@@ -885,19 +958,14 @@ that one compares the manifest URL against the clone's `origin` URL; this one
 compares the manifest *path* against `placement` of the manifest URL — so an
 entry can trip either, both, or neither independently.
 
-`reference`-role entries are exempt: the arrangement `origin-url-mismatch`
-already documents — a mirror URL under a path named for what it mirrors —
-would otherwise report both findings for the same intentional divergence.
-`fork`-role entries are exempt too, per [Roles](./roles.md) §`fork`: the
-manifest key may name either the fork or the upstream it forked, so a
-disagreement between the two is not a defect.
+`reference`-role and `fork`-role entries are exempt: a `reference` mirror URL
+under the path of the upstream it mirrors, or a `fork` keyed on either its
+fork coordinates or its upstream coordinates (per [Roles](./roles.md) §`fork`),
+is an expected layout and raises no finding.
 
 **What to do:** the message names both paths — move the checkout (and the
 manifest key) to the derived path to converge, or re-key the manifest entry
-at the derived path if that is where it belongs. If the divergence is
-deliberate — a fork keyed on its upstream's coordinates, a mirror under the
-path it mirrors — the entry's existing `role` is what the scan already reads
-to exempt it; nothing further to do.
+at the derived path if that is where it belongs.
 
 ---
 
@@ -939,13 +1007,9 @@ the canonical store, on the canonical store's branch. It is reported as
 between `git switch <name>` and `git switch -c <name>` based on whether the
 ref already exists.
 
-Report-only is deliberate, not a missing arm. The state is operator-made — a
-`git switch` run by hand — unlike the fetch-written detachments whose repairs
-are native consented arms, and the printed command is exact and
-registry-aware (it names an existing recorded branch whenever a receipt
-exists), which is what keeps hand-running it safe. If measured recurrence in
-owned weaves reopens the question, the native form is a targeted sub-verb,
-not a bulk consent flag.
+This finding is report-only: the state is operator-made (`git switch` run by
+hand), and the printed command is exact and registry-aware (naming an existing
+recorded branch whenever a receipt exists).
 
 #### `foreign-ephemeral`
 
@@ -954,9 +1018,9 @@ a *different* workweave. Keyed on the receipt, not on the name: a hand-made
 look-alike lands in `shared-branch` instead. Both are report-only, so the
 distinction costs nothing but accuracy.
 
-**What to do:** switch to this workweave's own ref. Report-only is deliberate
-for the same reason as `shared-branch`'s: the state is operator-made and the
-printed switch is exact.
+**What to do:** switch to this workweave's own ref. Report-only for the same
+reason as `shared-branch`: the state is operator-made and the printed switch is
+exact.
 
 #### `detached`
 
@@ -990,9 +1054,9 @@ arm can run.
 
 Reported *in place of* `unmigrated-ephemeral-branch`, not beside it: the
 migration pass skips the pair before any arm runs, so the rename that finding
-promises cannot happen. The skip is deliberate — every arm records its
-ownership receipt before it writes the ref, and a receipt for a pre-flat name
-resolves to no workweave on disk, which reads as stale and deletable.
+promises cannot happen. Every migration arm records its ownership receipt
+before writing the ref, and a receipt for a pre-flat name resolves to no
+workweave on disk, which would read as stale and deletable.
 
 **What to do:** decide which ref is this workweave's branch and move or delete
 the others, leaving at most one ref under the namespace; then re-run `rwv
@@ -1007,11 +1071,9 @@ two or more refs share its namespace in one store. The same guard that skips
 `--adopt-detached-checkouts` arm from running — the guard fires before any arm
 is reached.
 
-Reported *in place of* `detached`, not beside it: the `detached` finding
-promises `--adopt-detached-checkouts`, and that flag's arm cannot run while the
-namespace is blocked. The principle is consent-tier-independent: a consented
-remedy that cannot run misleads the operator exactly as an auto remedy does —
-consent changes who acts, not whether the named action works.
+Reported *in place of* `detached`, not beside it, because the
+`--adopt-detached-checkouts` remedy on `detached` cannot run while the
+namespace is blocked.
 
 **What to do:** decide which ref is this workweave's branch and move or delete
 the others, leaving at most one ref under the namespace; then re-run `rwv
@@ -1067,7 +1129,7 @@ to it — is in detached-HEAD state.
 
 **What to do:** `rwv doctor --fix --reattach-checkouts` reattaches, but only
 when the tracking declaration's local counterpart exists *and* its tip equals
-HEAD. That condition is deliberately false for the ordinary post-fetch state
+HEAD. That condition is false for the ordinary post-fetch state
 (a stale counterpart with HEAD at the lock SHA), so the flag repairs the
 minority it can prove safe rather than reattaching a whole weave. Without it,
 the finding names the `git switch` that would repair it and nothing moves.
@@ -1445,11 +1507,10 @@ lock file still follows from this checkout is answerable at any later moment
 from present state alone: nothing is regenerated to compare against, no other
 workspace is consulted, and no history is kept. A workweave answers for itself.
 
-An entry written before inputs were attested reads as stale. That is the honest
-answer rather than a lenient one — rwv accepted those bytes without recording
-what produced them, so it cannot claim they still follow from anything — and it
-heals itself, because the next generation rewrites the entry in the attested
-shape. Expect to see it once per project after upgrading.
+An entry written before inputs were attested reads as stale: rwv accepted those
+bytes without recording what produced them, so it cannot verify they still
+follow from current inputs, and the next generation rewrites the entry in the
+attested shape. Expect to see it once per project after upgrading.
 
 On `--json` this finding also appears in the `advisories` array, in the same
 `{kind, remedy, inputs}` shape `rwv sync --json` emits, so an agent branches on

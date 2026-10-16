@@ -75,7 +75,7 @@ from. The shape:
 
 ```json
 {
-  "primary": "/home/user/work",
+  "primary": "/home/user/work/primary",
   "project": "web-app",
   "parent": "/home/user/work/.workweaves/web-app--feat"
 }
@@ -97,10 +97,6 @@ an explicit target:
 2. **`rwv sync-to --retire` knows what to retire to.** The retire flag
    pushes to the recorded parent, verifies convergence, and deletes the
    workweave on success.
-
-Anchored by the `.rwv-workweave` parent field plumbed through
-`src/workspace.rs::WorkweaveMarker` and consumed by
-`src/sync.rs::retire_workweave_after_sync`.
 
 ## One hop, not transitive
 
@@ -150,8 +146,8 @@ cherry-picks are pure git operations on branches the operator can name.
 
 ## Naming and paths
 
-Workweaves live under `.workweaves/` in the *parent* of the workspace
-root — i.e. a sibling of the weave directory, not a child. That is the
+Workweaves live under `.workweaves/` in the *parent* of the primary weave
+root — i.e. a sibling of the weave root, not a child. That is the
 default. The container is recorded per-project in
 `projects/<project>/.rwv-workweave-index` (machine-local JSON); relocate
 it explicitly with `rwv workweave <project> set-container <path>` or
@@ -159,38 +155,38 @@ override it per-workweave with `rwv workweave create --dir <path>`.
 Every `find`-direction verb consults the recorded `name → absolute path`
 entries rather than reconstructing from convention, so a per-workweave
 override is as first-class as a default-container placement.
-Each workweave directory is named `<project>--<workweave-name>`:
+All workweaves for a project — whether forked from primary or from
+another workweave — live as flat siblings inside the project's container,
+named `<project>--<workweave-name>`:
 
 ```
 work/
 ├── primary/                      # the primary weave root
-└── .workweaves/                  # sibling of the weave root
-    ├── web-app--feat/            # a workweave off primary
-    │   └── ../.workweaves/       # (i.e. sibling of web-app--feat)
-    │       └── web-app--feat-child/
+└── .workweaves/                  # sibling of the primary weave root
+    ├── web-app--feat/            # a workweave forked from primary
+    ├── web-app--feat-child/      # a child workweave forked from web-app--feat
     └── web-app--review-pr-42/
 ```
 
-Concretely, from a workspace root the workweave directory is at
-`../.workweaves/<project>--<name>/`. Placing `.workweaves/` outside
-the workspace root keeps VCS-visible state (`.git/`, sources) inside
-the root and rwv-managed sibling checkouts adjacent to it, so a workspace
-tree ignores its own workweaves and vice versa.
+Concretely, from the primary weave root the workweave directory is at
+`../.workweaves/<project>--<name>/`, and sibling or child workweaves are
+at `../<project>--<other>/` from inside a workweave. Placing
+`.workweaves/` outside the weave root keeps VCS-visible state (`.git/`,
+sources) inside the root and rwv-managed sibling checkouts adjacent to
+it, so a workspace tree ignores its own workweaves and vice versa.
 
 The `<project>` prefix is part of the directory name (not just metadata)
 so multiple projects can host workweaves named identically without
-collision.
-
-A workweave's own `.workweaves/` directory (again, a sibling of that
-workweave root) hosts its children; the tree is reflected in the
-filesystem path. `find` and editor file pickers see it without any
-special tooling.
+collision. The parent-child hierarchy is recorded in each workweave's
+`.rwv-workweave` `parent` field rather than by nesting directories on
+disk.
 
 ## Ephemeral branch names and the git worktree constraint
 
-Each workweave runs on a per-workweave ephemeral branch name — e.g.
-`myproj--hotfix/main` rather than `main`. This is what lets
-`rwv sync-to` work cleanly as a local-to-local primitive.
+Each workweave runs on a flat per-workweave ephemeral branch name — e.g.
+`web-app--hotfix` (or `chatly+web-app--hotfix` for a scoped project)
+rather than `main`. This is what lets `rwv sync-to` work cleanly as a
+local-to-local primitive.
 
 Git imposes a constraint: only one worktree can have a given branch
 checked out at a time. If two workweaves both tracked `main`, checking
@@ -201,7 +197,7 @@ worktree owns. The analogous single-repo operation — `git push
 checked out at the destination.
 
 rwv sidesteps this entirely. Because primary's `main` and a workweave's
-`myproj--hotfix/main` are different branch names, no two
+`web-app--hotfix` are different branch names, no two
 workweaves compete for the same named branch. `rwv sync-to` can push
 directly into primary's `main` without any detach-or-stash dance. The
 ephemeral naming scheme is not just bookkeeping — it is what makes

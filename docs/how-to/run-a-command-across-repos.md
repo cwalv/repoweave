@@ -1,13 +1,6 @@
-# How-to: Run a command across multiple repositories
+# Run a command across repos
 
-There are three tiers of approach, ordered by installation cost and ergonomics. Pick
-the tier that matches your situation.
-
-## Tier 1 — Shell composition (zero install)
-
-The foundation is `rwv status --json`, which emits the absolute path, role, and URL
-of every repository in the project. Pipe that into `jq`, `xargs`, or `parallel` to
-build any bulk operation you need.
+Pipe `rwv status --json` into `jq` and `xargs` to filter member repositories by role or path and run any command across them:
 
 ```bash
 # Run git fetch in every repo
@@ -28,38 +21,20 @@ rwv status --json | jq -r '.repos[] | .absolute_path' | while read path; do
 done
 ```
 
-For large projects, run in parallel:
+For large projects, add `-P <N>` to run in parallel:
 
 ```bash
 # Fetch all repositories, 4 at a time
 rwv status --json | jq -r '.repos[] | .absolute_path' | xargs -P 4 -I {} git -C {} fetch --all
 ```
 
-`absolute_path` is emitted forward-separated on every platform, so these pipelines
-carry no byte bare `xargs` reads as an escape. One thing still varies by platform:
-if `git` answers `cannot change to '<path>?'`, the pipeline is carrying CR line
-endings — a `jq` build that writes CRLF is the usual source — and `xargs` is handing
-the CR to the command as part of the path. Insert `tr -d '\r'` between `jq` and
-`xargs` to strip it.
+`absolute_path` is emitted forward-separated on every platform, so these pipelines carry no byte that bare `xargs` interprets as an escape. If `git` reports `cannot change to '<path>?'` on Windows, a `jq` build is emitting CRLF line endings; insert `tr -d '\r'` between `jq` and `xargs`.
 
-The `$schema` field in the output (`rwv explain status` embeds the full JSON Schema)
-tells you exactly what fields are available for filtering. Tier-1 composition can
-express anything a finite verb set could cover, plus everything it couldn't.
+Run `rwv explain status` to inspect the full JSON Schema of fields available for filtering.
 
-**Why this is the right default:** the shell already has parallelism (`xargs -P`,
-GNU `parallel`), filtering (`jq`), and error handling. `rwv` provides the metadata
-source; the shell provides the runner. There is no reason to encode "run this command
-across all repos" as a core verb — see the [verb-vs-composition](../explanation/joints/verb-vs-composition.md)
-joint for the principle.
+## Package a recurring pipeline as a PATH plugin
 
-## Tier 2 — PATH plugin (packaged ergonomics)
-
-If you find yourself writing the same `jq` pipeline repeatedly, package it as a
-`rwv-<verb>` executable on `$PATH`. `rwv` will dispatch to it when you invoke
-`rwv <verb>`, hand it the resolved workspace context through the environment envelope,
-and propagate its exit code verbatim.
-
-A minimal plugin that runs a command across repos, using the envelope:
+If you run the same pipeline repeatedly, save it as an `rwv-<verb>` executable on `$PATH`. `rwv <verb>` dispatches to it, passes the resolved workspace context in environment variables, and propagates its exit code:
 
 ```sh
 #!/usr/bin/env bash
@@ -72,49 +47,29 @@ if [ -z "${RWV_WORKSPACE:-}" ]; then
   exit 1
 fi
 
-cmd=("$@")
 if [ -n "${RWV_WORKWEAVE:-}" ]; then
   paths=$(rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json | jq -r '.repos[].absolute_path')
 else
-  paths=$(rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json | jq -r '.repos[].absolute_path')
+  paths=$(rwv -C "$RWV_WORKSPACE" status --project "$RWV_PROJECT" --json | jq -r '.repos[].absolute_path')
 fi
-echo "$paths" | xargs -I {} bash -c '"${cmd[@]}"' _ {}
+echo "$paths" | xargs -I {} env -C "{}" "$@"
 ```
 
-Install it anywhere on `$PATH` (e.g. `~/.local/bin/rwv-each`, then `chmod +x`).
-After that, `rwv each git status` does what you expect, and `rwv --help` lists it
-under "External commands."
+Install the script on `$PATH` (for example `~/.local/bin/rwv-each` with `chmod +x`). Invoking `rwv each git status` or `rwv -w myproj--hotfix each git status` then runs the command across every member repo of the addressed workspace, and `rwv --help` lists `each` under "External commands."
 
-The plugin inherits `rwv`'s addressing flags: `rwv -w myproj--hotfix each git status`
-addresses the workweave once, in `rwv`, and the plugin receives the resolved
-coordinates through the envelope — `$RWV_WORKSPACE` (always the primary root),
-`$RWV_WORKWEAVE` (`myproj--hotfix` here), and `$RWV_PROJECT`. Re-addressing that
-*same* workweave from inside the plugin needs `-w "$RWV_WORKWEAVE"`, not just
-`-C "$RWV_WORKSPACE"` — the branch above is what makes `rwv-each` operate on the
-workweave's repos rather than silently falling back to primary's.
+## Optional: `gita` integration
 
-See [plugin-protocol](../reference/plugin-protocol.md) for the full wire contract
-(the envelope table, addressing, schema probing, exit codes) and
-[write-a-plugin](./write-a-plugin.md) for a step-by-step walkthrough building a
-plugin from scratch.
+The opt-in [gita integration](../reference/integrations/gita.md) maintains `gita/repos.csv` and `gita/groups.csv` (grouped by role, such as `owned` and `fork`) from `rwv.toml`. Enable it when you want `gita ll owned` or `gita super owned <cmd>` with gita's tabular output:
 
-## Tier 3 — gita integration (lifecycle-managed CSV)
+```toml
+[integrations.gita]
+enabled = true
+```
 
-The [gita integration](../reference/integrations/gita.md) is an `rwv`-managed
-integration that maintains a gita group CSV file (`.gita/groups`) in the project
-repo, keeping it in sync with the `rwv.toml` manifest. This lets you use `gita
-super primary <cmd>` for cross-repo command dispatch with gita's summary output.
+## Related
 
-The gita integration is **opt-in**; see the integration docs for how to enable it.
-It is the right choice when:
-
-- You want gita's summary output (per-repo status glyphs, colorized column display).
-- You are already using gita for other purposes and want the groups file managed
-  automatically rather than hand-maintained.
-- Lifecycle management matters: the CSV stays consistent when repos are added or
-  removed via `rwv add` / `rwv remove`.
-
-The gita integration does not replace tier-1 or tier-2 approaches. A `rwv-each`-style
-plugin and the gita integration can coexist; they address different needs. The
-integration does not prohibit a plugin from providing similar UX — that coexistence
-is a positive test that the plugin boundary is correctly drawn.
+- [Verb vs. composition](../explanation/joints/verb-vs-composition.md) — why ad-hoc cross-repo execution composes with `jq` and `xargs`
+- [Write a plugin](./write-a-plugin.md) — step-by-step walkthrough for building an `rwv-<verb>` plugin
+- [Plugin protocol reference](../reference/plugin-protocol.md) — environment envelope, addressing, and exit code contract
+- [Plugin boundary](../explanation/joints/plugin-boundary.md) — where core verbs end and PATH plugins begin
+- [Gita integration reference](../reference/integrations/gita.md) — `gita/repos.csv` and `gita/groups.csv` layout

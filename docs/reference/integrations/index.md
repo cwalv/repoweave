@@ -6,45 +6,52 @@ For the conceptual frame, see the [workspace lens](../../explanation/lenses/work
 
 ## Built-in integrations
 
-| Integration | Default enabled | Auto-detects | Generates | Install hook (during `rwv activate`) |
+| Integration | Default enabled | Auto-detects | Manages / Generates | Install hook (`rwv activate`, `rwv materialize`) |
 |---|---|---|---|---|
-| [`npm-workspaces`](./npm-workspaces.md) | yes | repos with `package.json` | `package.json` | `npm install` |
-| [`pnpm-workspaces`](./pnpm-workspaces.md) | no | repos with `package.json` | `pnpm-workspace.yaml` | `pnpm install` |
-| [`go-work`](./go-work.md) | yes | repos with `go.mod` | `go.work` | — |
-| [`uv-workspace`](./uv-workspace.md) | yes | repos with `pyproject.toml` | `pyproject.toml` | `uv sync` |
-| [`cargo-workspace`](./cargo-workspace.md) | yes | repos with `Cargo.toml` | `Cargo.toml` | `cargo fetch` (`cargo generate-lockfile` when there is no lock yet) |
-| [`gita`](./gita.md) | no (opt-in) | all repos | `gita/` directory | — |
-| [`vscode-workspace`](./vscode-workspace.md) | yes | all repos | `{project}.code-workspace` | — |
-| [`static-files`](./static-files.md) | no | n/a (configured explicitly) | symlinks declared files to weave directory | — |
+| [`npm-workspaces`](./npm-workspaces.md) | yes | member repos with `package.json` | `package.json` (hybrid), `package-lock.json` | `npm install` |
+| [`pnpm-workspaces`](./pnpm-workspaces.md) | no | member repos with `package.json` | `pnpm-workspace.yaml` (hybrid), `pnpm-lock.yaml` | `pnpm install` |
+| [`go-work`](./go-work.md) | yes | member repos with `go.mod` | `go.work` (hybrid), `go.work.sum` | — |
+| [`uv-workspace`](./uv-workspace.md) | yes | member repos with `pyproject.toml` | `pyproject.toml` (hybrid), `uv.lock` | `uv sync` |
+| [`cargo-workspace`](./cargo-workspace.md) | yes | member repos with `Cargo.toml` | `Cargo.toml` (hybrid), `Cargo.lock` | `cargo fetch` (`cargo generate-lockfile` when no lock exists yet) |
+| [`gita`](./gita.md) | no (opt-in) | all active member repos | `gita/repos.csv`, `gita/groups.csv` | — |
+| [`vscode-workspace`](./vscode-workspace.md) | yes | all member repos | `{project}.code-workspace` (hybrid) | — |
+| [`static-files`](./static-files.md) | no | n/a (configured explicitly) | symlinks declared files to weave root | — |
 
 ## Hook points
 
-Each integration participates in three hook points:
+Integration work is split across authoring, surfacing, materialization, and inspection:
 
-- **Activation hooks** (run during `rwv add`, `rwv remove`, `rwv update`, and `rwv doctor --fix`) — generate config files. This is the *write path*. Symlink surfacing is separate and runs on every activation, including `rwv activate`, `rwv fetch` and workweave creation.
-- **Install hooks** (run during `rwv activate`, after config generation) — run install commands (`npm install`, `uv sync`, `cargo fetch`, etc.) to make the ecosystem state that current membership and the already-recorded pins imply real on disk. A lock file gains what new membership requires; a version it already pins does not move. Advancing a dependency is something you ask for with the ecosystem's own update command, never something activation does for you. Suppressed with `rwv activate --no-materialize`.
-- **Check hooks** (run during `rwv doctor`) — read-only inspection. Verify the environment is healthy, report missing tools or stale config. Per-integration `check()` covers environment/config preconditions (Axis-2 content drift, missing tools, etc.). Surfacing-symlink integrity — whether a declared file's symlink exists and resolves correctly at the weave root — is verified **framework-wide** by a separate Axis-1 surfacing check that runs alongside per-integration checks in `rwv doctor`; it is not a per-integration `check()` responsibility.
+- **Authoring hooks** (run during `rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix`) — merge managed keys into hybrid config files or write fully-owned config files in `projects/<project>/`. This is the *write path*.
+- **Surfacing & materialization** (`rwv activate` and `rwv materialize`) — `rwv activate <project>` (primary only) switches `.rwv-active`, verifies Axis-2 content drift without re-authoring managed files, creates Axis-1 weave-root symlinks (`<file> -> projects/<project>/<file>`), and runs install hooks. `rwv materialize` (primary or workweave) strips disabled-integration artifacts, settles attested-file drift (`--regenerate-drifted` / `--adopt-drifted`), repairs missing symlinks, and runs install hooks.
+- **Install hooks** (run during `rwv activate`, `rwv materialize`, `rwv fetch`, `rwv workweave create`, and authoring verbs unless `--no-materialize` is passed) — run ecosystem install commands (`npm install`, `pnpm install`, `uv sync`, `cargo fetch`) to materialize the state implied by current membership and already-recorded pins. A lock file gains what new membership requires; an existing pinned version does not move. Advancing a dependency is done with the ecosystem's own update command, never by activation.
+- **Check & verify hooks** (run during `rwv doctor` and context verbs) — read-only inspection. Per-integration `check()` and `verify()` cover tool availability, member compatibility, and Axis-2 content drift. Axis-1 surfacing-symlink integrity at the weave root is verified framework-wide by `rwv doctor`.
 
-When `rwv activate` runs, integrations perform Axis-1 surfacing: they create the symlinks that make committed project-repo files visible at the weave root. `activate` never re-authors a hybrid file's managed region; it only verifies for drift and warns. Authoring happens on the verbs that change what the files are generated from — `add`, `remove`, `update` — and on `rwv doctor --fix`. Each integration also implements a deactivation hook, invoked internally when a checkout is destroyed — deleting a workweave runs it against that workweave's own copy of the project directory. It strips managed keys and removes the file only when nothing user-authored remains; this is not a CLI verb. Switching the active project does **not** run it. A project that is no longer selected is not a project that is going away, and its ecosystem files are content committed in its own project repo, where they stay. What a switch removes is the outgoing project's *surfacing* — the weave-root symlinks onto those files — and that is the activation framework's job, not an integration's. Each integration auto-detects relevant repos. If none are found it has nothing to contribute, and the managed region follows: on an authoring verb it is stripped (same marker gate and same delete-if-nothing-user-authored rule as the deactivation hook), and `rwv doctor` reports it as drift until one runs. So removing a project's last Rust member leaves no `members` entry behind, and an integration that never had a repo to detect stays a no-op. An emptied membership reaches the hybrid region only — an ecosystem lockfile is a build product rather than a claim about who owns the workspace list, so it survives. Nothing removes it at a weave root: the deactivation hook is the only code path that does, and it runs only against the checkout of a workweave being deleted. A lockfile you no longer want is one to delete yourself.
+| Lifecycle event | Trigger | Axis-1 (weave-root symlinks) | Axis-2 (project-dir config) | Ecosystem lockfiles |
+|---|---|---|---|---|
+| **Authoring** | `rwv add`, `remove`, `update`, `role`, `doctor --fix` | Refreshed for active project | Merges managed keys into hybrid files; writes fully-owned configs | Created/updated by install hook (unless `--no-materialize`) |
+| **Emptied membership** | Last matching member repo removed (or made `reference`) | Removed when managed file is deleted | Strips marker-gated managed keys; deletes file only if no user content remains (`doctor` reports orphaned region as drift until stripped) | Preserved (lockfiles are build products; delete manually if unwanted) |
+| **Project switch** | `rwv activate <project>` | Replaces outgoing project's weave-root symlinks with incoming project's | Read-only `verify()` on incoming project; outgoing project's committed files in `projects/<old>/` are untouched | Updated by install hook for incoming project (unless `--no-materialize`) |
+| **Materialization** | `rwv materialize` | Repairs missing symlinks; `--remove-undeclared-links` prunes stale links | Strips disabled-integration regions; settles attested-file drift (`--regenerate-drifted` / `--adopt-drifted`) | Updated by install hook; owned lockfiles of disabled integrations removed |
+| **Workweave teardown** | `rwv workweave <project> delete <name>` | Removed with workweave directory | Runs internal `deactivate()` hook on the workweave's project checkout (strips marked regions, preserves user keys) | Owned lockfiles removed in the workweave checkout |
 
-For the normative ownership contract (Axis 1 surfacing, Axis 2 content ownership, the hybrid-merge invariants, and the marker-as-generate-vs-verify-switch), see [file-ownership](../../explanation/joints/file-ownership.md).
+For the normative ownership contract (Axis 1 surfacing, Axis 2 content ownership, hybrid-merge invariants, and marker-gated generate-vs-verify dispatch), see [file-ownership](../../explanation/joints/file-ownership.md).
 
 ## Committed files and committability
 
-Ecosystem files live in the project directory (symlinked to the weave or workweave directory). Committability works differently depending on content ownership:
+Ecosystem files live in the project directory (symlinked to the weave or workweave root). Committability depends on content ownership:
 
 - **Fully rwv-owned** files (gita CSVs, ecosystem lockfiles) are regenerated in full on each
   authoring pass. They are safe to gitignore or whole-delete.
 - **Hybrid** files (`Cargo.toml`, `pyproject.toml`, `pnpm-workspace.yaml`, `go.work`,
   `package.json`, `*.code-workspace`) are user-authored source that rwv manages a declared region
   within. They **must be committed** — user content (profiles, lints, overrides, replace
-  directives) survives only because the file lives in the project repo. Gitignoring a hybrid file
+  directives) survives only because the file lives in the weave repo. Gitignoring a hybrid file
   would destroy user content on re-activate. rwv merges its managed keys into the existing file;
   it never whole-writes or whole-deletes it.
 
-Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.work.sum`, `Cargo.lock`) are produced by the ecosystem tools and pin exact external-dependency versions — at activation's install step where the integration has an install hook, or whenever the tool itself runs where it has none (go-work has no hook; `go.work.sum` appears when Go tooling runs). Like other fully rwv-owned files, rwv does not mandate either policy: commit them for a checkout that's reproducible straight from the project repo, or gitignore them to regenerate on the next `rwv activate`.
+Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.work.sum`, `Cargo.lock`) are produced by the ecosystem tools and pin exact external-dependency versions — at activation's install step where the integration has an install hook, or whenever the tool itself runs where it has none (go-work has no hook; `go.work.sum` appears when Go tooling runs). Like other fully rwv-owned files, rwv does not mandate either policy: commit them for a checkout that's reproducible straight from the weave repo, or gitignore them to regenerate on the next `rwv activate` or `rwv materialize`.
 
-Each lock file is surfaced as a link that exists before the file does, so the tool's write lands in the project directory. A tool that renames its first lock over that link (pnpm), or any tool run where the link is missing (after an `rm package-lock.json`, say), leaves a real file at the weave root instead. `add`, `remove`, `update`, `materialize` and `rwv doctor --fix` take that file into the project directory and restore the link, when the project's own copy is absent, identical, committed with no edit since (so version control can give it back), or, for a lock rwv records (`Cargo.lock`), still the generation it recorded; otherwise both are named and neither is touched. A gitignored lock is never committed, so one that differs from the root's is named unless rwv recorded it. `rwv activate` only names it.
+Each lock file is surfaced as a link that exists before the file does, so the tool's write lands in the project directory. A tool that renames its first lock over that link (pnpm), or any tool run where the link is missing (after an `rm package-lock.json`, say), leaves a real file at the weave root instead. `add`, `remove`, `update`, `role`, `materialize` and `rwv doctor --fix` take that file into the project directory and restore the link, when the project's own copy is absent, identical, committed with no edit since (so version control can give it back), or, for a lock rwv records (`Cargo.lock`), still the generation it recorded; otherwise both are named and neither is touched. A gitignored lock is never committed, so one that differs from the root's is named unless rwv recorded it. `rwv activate` only names it.
 
 Tool state directories (`node_modules/`, `.venv/`, `target/`) are gitignored and managed by the ecosystem tool, not by `rwv`.
 
@@ -66,24 +73,6 @@ enabled = false
 enabled = true
 files = ["turbo.json", ".eslintrc.json"]
 ```
-
-## `IntegrationContext` — what hooks receive
-
-Each integration receives an `IntegrationContext` with:
-
-| Field | Description |
-|---|---|
-| `output_dir` | Where generated files are written (project directory for activate; workweave project directory for workweaves) |
-| `workspace_root` | Where repos live on disk (used for manifest detection like finding `package.json`) |
-| `project` | Active project name (may be multi-segment, e.g., `chatly/web-app`) |
-| `repos` | Repo entries from the project's `rwv.toml` |
-| `config` | Per-integration config from the `integrations` key in `rwv.toml` |
-| `all_repos_on_disk` | All git repos found under registry directories. Computed once, shared across integrations |
-| `all_project_paths` | All project paths (e.g., `['web-app', 'mobile-app']`). Computed once, shared |
-
-The `active_repos()` method filters out `reference` repos (excluded from build graphs). `detect_repos_with_manifest()` finds active repos containing a given file (e.g., `package.json`), using `workspace_root`.
-
-To request a new integration or contribute one, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).
 
 ## Build orchestration
 
