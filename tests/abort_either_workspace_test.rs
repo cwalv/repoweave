@@ -132,7 +132,11 @@ fn park(seat_project_commit: bool) -> Parked {
     common::git_in(&primary.project, &["commit", "-m", "initial"]);
 
     succeed(&primary.root, &["workweave", PROJECT, "create", "s1"]);
-    let seat = side(tmp.path().join(".workweaves").join(format!("{PROJECT}--s1")));
+    let seat = side(
+        tmp.path()
+            .join(".workweaves")
+            .join(format!("{PROJECT}--s1")),
+    );
 
     commit_file(&seat.lib, "c.txt", "seat\n", "seat: lib");
     if seat_project_commit {
