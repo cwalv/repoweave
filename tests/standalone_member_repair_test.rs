@@ -526,7 +526,7 @@ fn a_birth_that_refuses_moves_the_clone_back() {
     assert!(out.contains("has moved since rwv created it"), "{out}");
     assert!(
         weave.clone.join(".git").is_dir(),
-        "the clone is back at the slot"
+        "the clone must be back at the slot, not stranded or gone:\n{out}"
     );
     assert!(
         tree_bytes(&weave.clone) == bytes_before,
