@@ -744,8 +744,8 @@ fn add_local_path_percent_encodes_space_and_percent_in_the_origin_url() {
 /// `url.<base>.insteadOf` rule (set here in a fixture `HOME`'s global
 /// `.gitconfig`, the common rewrite that forces SSH for `https://github.com/`
 /// URLs) resolves it to another for every git operation that touches the
-/// network. The local-path arm must record the configured URL, not the one
-/// the rewrite resolves it to.
+/// network. `--adopt` must record the configured URL, not the one the
+/// rewrite resolves it to.
 #[test]
 fn add_local_path_records_the_configured_url_not_the_instead_of_rewrite() {
     let tmp = common::tempdir().unwrap();
@@ -788,7 +788,7 @@ fn add_local_path_records_the_configured_url_not_the_instead_of_rewrite() {
 
     rwv()
         .env("HOME", &home)
-        .args(["add", repo_path])
+        .args(["add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
