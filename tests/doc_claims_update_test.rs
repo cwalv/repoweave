@@ -764,6 +764,10 @@ fn update_commit_carries_a_modified_manifest() {
         "the lock and the manifest edit land in one commit; got {committed:?}"
     );
     assert_eq!(common::git_in(&project_dir, &["status", "--porcelain"]), "");
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%s"]),
+        "lock: refresh 1 repo, record rwv.toml"
+    );
 }
 
 #[test]

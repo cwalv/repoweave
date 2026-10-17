@@ -47,8 +47,8 @@ rwv update [--dirty] [--commit [-m <MSG>]] [--detach-checkouts] [--project <name
 - `--commit` — commit the new `rwv.lock` in the project repo, together with the
   integration files regenerated against the new tips and with `rwv.toml` when it
   has uncommitted changes, under an auto-generated message listing which repos
-  advanced. Refuses if the project repo has uncommitted changes outside that
-  set.
+  advanced (and naming `rwv.toml` when it is in the commit). Refuses if the
+  project repo has uncommitted changes outside that set.
 - `-m, --message <MSG>` — the commit message for `--commit`, in place of the
   generated one. Without `--commit` it is a usage error (exit 2).
 

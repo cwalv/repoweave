@@ -1679,6 +1679,40 @@ fn lock_commit_carries_an_untracked_manifest() {
         vec!["rwv.lock".to_string(), "rwv.toml".to_string()]
     );
     assert_eq!(common::git_in(&project_dir, &["status", "--porcelain"]), "");
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%s"]),
+        "lock: refresh 1 repo, record rwv.toml"
+    );
+}
+
+/// A manifest edit that moves no pin still changes what the commit holds,
+/// so the generated message names it rather than reporting no changes.
+#[test]
+fn lock_commit_message_names_a_manifest_only_change() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let manifest_path = project_dir.join("rwv.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(
+        &manifest_path,
+        manifest.replace("role = \"owned\"", "role = \"fork\""),
+    )
+    .unwrap();
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        files_in_head_commit(&project_dir),
+        vec!["rwv.toml".to_string()]
+    );
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%B"]),
+        "lock: record rwv.toml"
+    );
 }
 
 /// A membership edit to a committed manifest and the relock it calls for are

@@ -8,7 +8,8 @@ use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Build a commit message summarizing which repos' lock entries changed.
+/// Build a commit message summarizing which repos' lock entries changed,
+/// and naming `rwv.toml` when `records_manifest` says it is in the commit.
 ///
 /// When `old_lock` is `None` (fresh lock), all repos appear in the list.
 /// Otherwise, only repos whose version advanced are listed. Both sides
@@ -17,6 +18,7 @@ use std::path::{Path, PathBuf};
 fn build_commit_message(
     new_lock: &ResolvedLockFile,
     old_lock: Option<&ResolvedLockFile>,
+    records_manifest: bool,
 ) -> String {
     let changed: Vec<_> = new_lock
         .iter_entries()
@@ -29,11 +31,22 @@ fn build_commit_message(
         .collect();
 
     let n = changed.len();
-    if n == 0 {
+    let mut summary = Vec::new();
+    if n > 0 {
+        summary.push(format!(
+            "refresh {} repo{}",
+            n,
+            if n == 1 { "" } else { "s" }
+        ));
+    }
+    if records_manifest {
+        summary.push(format!("record {}", Manifest::FILE_NAME));
+    }
+    if summary.is_empty() {
         return "lock: no changes".to_string();
     }
 
-    let mut msg = format!("lock: refresh {} repo{}", n, if n == 1 { "" } else { "s" });
+    let mut msg = format!("lock: {}", summary.join(", "));
     msg.push_str("\n\n");
     for (path, entry) in &changed {
         let ver = entry.version.display_str();
@@ -286,7 +299,9 @@ fn commit_lock_file(
     );
 
     let message = match message {
-        CommitMessage::Generated => build_commit_message(new_lock, old_lock),
+        CommitMessage::Generated => {
+            build_commit_message(new_lock, old_lock, paths.contains(&Manifest::FILE_NAME))
+        }
         CommitMessage::Given(message) => message.clone(),
     };
     if stage_and_commit(vcs, project_dir, &paths, &message)? {

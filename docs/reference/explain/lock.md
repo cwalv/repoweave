@@ -76,7 +76,9 @@ rwv lock [--dirty] [--commit [-m <MSG>]] [--project <name>]
   directory, with an auto-generated message listing which repos advanced. A
   `rwv.toml` with uncommitted changes, or one never committed, goes into the
   same commit: the lock is derived from the manifest, so a membership edit and
-  the relock it calls for are one change. Refuses if the project repo has
+  the relock it calls for are one change. The message then also names
+  `rwv.toml` (`lock: refresh 2 repos, record rwv.toml`, or `lock: record
+  rwv.toml` when no pin moved). Refuses if the project repo has
   uncommitted changes outside `rwv.lock` and `rwv.toml` — the auto-commit must
   not bundle unrelated work-in-progress.
 - `-m, --message <MSG>` — the commit message for `--commit`, in place of the
