@@ -1,14 +1,12 @@
 # VCS as seam
 
-repoweave operates on repositories. Today every repository it touches is
-a git repository, but that is a current-state observation, not a
-foundational assumption. The internal design treats the version control
-system as a seam: a single layer where VCS-specific knowledge lives, and
-everywhere else in rwv core uses the abstraction. This joint states the
-principle and walks through four worked examples — each one a closed
-refactor that pulled VCS-specific behavior across the seam, behind the
-Vcs trait. The first carries a correction as well as a lesson: it is
-where the seam once kept a parameter no backend ever read.
+repoweave operates on repositories through a seam: a single layer where
+VCS-specific knowledge lives, with git as its first implementation rather
+than its definition. Everywhere else, rwv core uses the abstraction. This
+joint states the principle and walks through four worked examples, each a
+refactor that pulled VCS-specific behavior across the seam, behind the Vcs
+trait. The first carries a second lesson, about a parameter no backend
+reads.
 
 This joint is the inner-boundary counterpart to
 [verb-vs-composition](./verb-vs-composition.md), which is the
@@ -77,7 +75,7 @@ back: the abstraction belongs in the Vcs trait.
 
 ## Worked examples
 
-### (a) `Vcs::resolve_branch_on_remote`, and the parameter it no longer takes
+### (a) `Vcs::resolve_branch_on_remote`, and the parameter it does not take
 
 **Concept:** "look up branch X on the remote this repo publishes to."
 The trait owns the qualifier; rwv core never spells a remote name.
@@ -96,8 +94,8 @@ read back: the remote exists under their name, and every later
 choice between "named by the backend" and "named by whoever ran the
 command" is not optionality either — no caller here wants the second,
 and the seam's own rule says the backend decides. So the two methods
-are one: `clone_repo` names the remote, and there is no longer a
-spelling of "clone" that opts out of the convention.
+are one: `clone_repo` names the remote, and no spelling of "clone" opts
+out of the convention.
 
 **Why this is the seam shape.** Before the refactor the
 `origin/<branch>` qualifier was spelled out at several call sites in rwv
@@ -116,37 +114,27 @@ conventional remote doesn't have the branch, the trait returns
 the silent "we advanced to the local working state instead of the
 remote target" failure mode.
 
-**What this example teaches second, and the reason it is first.** When
-those methods were introduced they took the manifest's `Role`, and the
-git impl mapped the fork role to a remote named `upstream`. Passing the
-role across the seam was the mechanism that got git's remote names *out*
-of the domain type. When fork-specific routing was later dropped as a
-product decision, every implementor discarded the argument: six trait
-methods, six ignoring bindings in the git impl and six more in the test
-double, and three call sites in rwv core with no role to hand over,
-naming the owned role to satisfy a signature.
-
-It was kept anyway — as optionality for a backend that might one day
-route differently — and guarded by tests asserting per role that every
-role still resolved to the same remote. Both moves are ones a seam
-invites, and both are wrong:
+**What this example teaches second, and the reason it is first.** A seam
+invites carrying a domain value across it "in case" a backend wants it. The
+natural candidate here is the manifest's `Role`, which would let a backend
+route a fork to a remote named `upstream`. No backend routes by role, so the
+methods take no role, and the two tempting alternatives are both wrong:
 
 - **A parameter no implementor reads is not optionality, it is a
   fossil.** Nothing exercises it, so nothing reports when its meaning
   drifts; and it obliges callers that hold no such value to invent one,
   which is a defect no test on the implementor side can see.
 - **A tripwire is the wrong instrument for a property available by
-  construction.** With the parameter gone, "backends do not route by
-  role" is a fact about the trait rather than a fact the suite rechecks,
-  and reintroducing role routing becomes a visible trait change touching
-  every implementor. Asserting per role that the roles agree only
-  watches for a fossil starting to move.
+  construction.** Without the parameter, "backends do not route by role"
+  is a fact about the trait rather than a fact the suite rechecks, and
+  reintroducing role routing is a visible trait change touching every
+  implementor. Asserting per role that the roles agree only watches for a
+  fossil starting to move.
 
-So the parameter is gone from all six methods, and the seam states its
-rule more simply than it could before: the remote name is entirely the
-backend's business, selected by nothing on the domain side. A backend
-that genuinely needs to route by role gets the parameter back in the
-same change that gives it a reader.
+So the seam's rule is simple: the remote name is entirely the backend's
+business, selected by nothing on the domain side. A backend that genuinely
+needs to route by role gets the parameter in the same change that gives it
+a reader.
 
 ### (b) `Vcs::conflict_resolution_hint`
 
@@ -220,7 +208,7 @@ global `merge.ours.driver` config or a third-party `merge=ours` line in
 the same repo.
 
 Rebase replays each commit as a 3-way merge, which is why the driver
-is still needed even though the `merge` sync strategy was removed.
+is needed although sync offers no `merge` strategy.
 
 **Layer 3 is project-repo-only, which sharpens the caveat considerably
 outside a project repo.** rwv plants the durable config in the repos it
@@ -267,13 +255,12 @@ collapsed dozens of lines of git-aware loop into one trait call plus one
 rebase call.
 
 The win is not just shorter code — it is that the exclusion mechanism
-is now properly per-VCS. A hg impl can implement `set_replay_exclusion`
+is per-VCS. A hg impl can implement `set_replay_exclusion`
 via `[merge-patterns]` in `.hgrc`; a jj impl might do something
 entirely different. Sync neither knows nor cares.
 
 The companion `replay_exclusion_state` query exists so `rwv doctor` can
-detect projects initialized before this path landed and offer to add
-the missing entry. The detection logic in core stays VCS-agnostic. It
+detect a project repo missing the entry and offer to add it. The detection logic in core stays VCS-agnostic. It
 answers with a state rather than a bool because doctor asks twice — once
 to report, once to repair — and a pair of bools let those two answers be
 derived independently, which is how a repair came to rewrite and commit
@@ -362,31 +349,25 @@ carries git's vocabulary across the seam:
 
 - **A remote name, in operator text.** Item 5 closes every path that
   *acts* on a remote; it does not close the sentences that *mention*
-  one. That residue is now one site, and getting there corrected the
-  count as much as it reduced it.
+  one. That residue is one site.
 
-  The census used to read four: three telling the operator that
-  `origin/HEAD` is unset and how to record it (`rwv add` twice,
-  `rwv push` once), and one doctor finding for a URL mismatch. Measured
-  against the tree it was six — `rwv fetch`'s non-fast-forward refusal
-  ("a branch carrying commits origin has not seen") and `rwv update`'s
-  ("diverged from the tip origin is on") were mentions nobody had
-  counted, in messages whose subject is something else. A hand-written
-  census undercounts in exactly that shape: it records the sites someone
-  went looking for.
+  A hand-written census of these mentions undercounts in one shape: it
+  records the sites someone went looking for, and misses the ones in
+  messages whose subject is something else — `rwv fetch`'s
+  non-fast-forward refusal ("a branch carrying commits origin has not
+  seen") and `rwv update`'s ("diverged from the tip origin is on") among
+  them. Those name the remote through `Vcs::conventional_remote_name`.
 
-  The three set-head sites were really the third item in this list
-  rather than this one — they spell a git command, `git remote set-head
-  origin -a`, and respelling the remote name alone would leave the
-  command standing. All three now come from
+  The hints telling the operator that `origin/HEAD` is unset belong to
+  the third item in this list rather than this one: they spell a git
+  command, `git remote set-head origin -a`, and respelling the remote
+  name alone would leave the command standing. They come from
   `Vcs::remote_default_branch_repair_hint`, which carries the name and
-  the command together because owning one without the other is what
-  leaves a message half across the seam. The two `fetch`/`update`
-  mentions were only ever naming the remote, so they render it through
-  `Vcs::conventional_remote_name`.
+  the command together because owning one without the other leaves a
+  message half across the seam.
 
-  What remains is the doctor finding, whose wire `kind` carries the word
-  too — the case below.
+  The one remaining site is the doctor finding, whose wire `kind` carries
+  the word too — the case below.
 - **A published identifier carrying the name.** The doctor finding kind
   `origin-url-mismatch`, and the render text that echoes it. This one is
   not a message someone can rephrase — it is a token `--json` consumers
@@ -394,12 +375,9 @@ carries git's vocabulary across the seam:
   exception**, decided under "A published identifier is not a message"
   below.
 
-  It is also the reason enforcement here is a scan at all, where it once
-  could not be. The argument against one used to be precision — a
-  matcher over `origin` reported the sites someone had left in place,
-  and a matcher that reports correct code gets turned off. With
-  the message sites moved, the population is one, and one exemption
-  naming one file is a scan someone will keep.
+  It is also why enforcement here can be a scan. A matcher over `origin`
+  that reported correct sites would get turned off; with a population of
+  one, one exemption naming one file is a scan someone will keep.
   `tests/core_remote_name_literal_test.rs` is that scan; it reads
   non-comment lines of `src/` outside the backend module, matching the
   standalone word only, so rwv's own `origin_dir` concept is invisible
@@ -475,31 +453,6 @@ move the behavior across the seam. Every one of them predates the gate,
 which is the argument for the gate: a convention that well-informed
 authors violated repeatedly is a preference until something refuses it.
 
-## Anchoring
-
-The remote-naming convention (example (a)) is covered by:
-
-- `tests/clone_default_remote_name_test.rs` — drives a clone under an
-  operator `clone.defaultRemoteName` that is not the convention, and
-  asserts the clone is one rwv can still read a remote back from.
-
-The sync codepath that depends on examples (b) and (c) is covered by:
-
-- `tests/e2e_two_workweaves_test.rs` — exercises the `merge=rwv-ours`
-  replay-exclusion path end-to-end.
-- `tests/e2e_sync_lock_replay_test.rs` — pins the three-layer driver
-  mechanism (namespaced name, inline flags, durable config plant) and
-  the `rwv sync --continue` / `rwv sync-to --continue` resume path.
-- `tests/e2e_sync_abort_test.rs` — covers the conflict-hint text
-  surfacing through the bail messages.
-
-The push codepath (example (d)) is covered by:
-
-- `tests/push_test.rs` — direct exercises of the push loop.
-- `tests/doc_claims_push_test.rs` — anchors fork-pushes-like-owned,
-  dependency/reference excluded from default scope, and
-  project-repo-last ordering.
-
 ## Adjacent seam: registries
 
 A registry (`src/registry.rs`) is a seam of its own, adjacent to `Vcs`
@@ -508,8 +461,8 @@ canonical path, and — for `rwv add --new` — what parameters creating one
 needs; `Vcs` decides how the backend that registry named actually creates,
 clones, or brands it. `CreationPlan.vcs` is the one field a registry
 writes and a verb reads across that line — the registry constrains which
-backend a creation could use, the verb still chooses (currently `git`),
-and the plan records the choice made rather than leaving it implicit.
+backend a creation could use, the verb still chooses, and the plan
+records the choice made rather than leaving it implicit.
 
 ## Related joints
 

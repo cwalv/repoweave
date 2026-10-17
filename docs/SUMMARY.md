@@ -35,16 +35,19 @@
 
 # Concepts
 
-- [Clone topology](./explanation/joints/clone-topology.md)
-- [Weave root as presentation](./explanation/joints/weave-root.md)
-- [Symlinks as structure](./explanation/joints/symlinks-as-structure.md)
-- [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
-- [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)
-- [Lock-as-derived](./explanation/joints/lock-as-derived.md)
-- [Sync semantics](./explanation/joints/sync-semantics.md)
-- [Shared-refs drift](./explanation/joints/shared-refs-drift.md)
-- [File ownership](./explanation/joints/file-ownership.md)
-- [Destructive operations](./explanation/destructive-operations.md)
+- [Layout & files]()
+  - [Clone topology](./explanation/joints/clone-topology.md)
+  - [Weave root as presentation](./explanation/joints/weave-root.md)
+  - [Symlinks as structure](./explanation/joints/symlinks-as-structure.md)
+  - [File ownership](./explanation/joints/file-ownership.md)
+  - [Destructive operations](./explanation/destructive-operations.md)
+- [Workweaves & branches]()
+  - [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
+  - [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)
+  - [Shared-refs drift](./explanation/joints/shared-refs-drift.md)
+- [Lock & sync]()
+  - [Lock-as-derived](./explanation/joints/lock-as-derived.md)
+  - [Sync semantics](./explanation/joints/sync-semantics.md)
 
 # Design notes
 

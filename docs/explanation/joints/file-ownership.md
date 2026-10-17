@@ -29,7 +29,7 @@ Consequences:
   or names a path that exists in neither view for a file that is simply absent.
 - A root symlink is removed only when its name is in the owning integration's declared file set
   **and** its `read_link` target resolves to `projects/<project>/<file>`. A name claimed by two
-  integrations is a hard `Severity::Error` before any symlink mutation.
+  integrations is an error, raised before any symlink mutation.
 - Surfacing is checked **framework-side**, not per-integration. The same
   `generated_files() ∪ managed_files()` union that drives symlink creation has a second consumer:
   `rwv doctor` asserts every file in the union exists at the weave root as a symlink resolving to
@@ -131,8 +131,7 @@ Gate on the marker. Strip exactly the managed keys. Prune now-empty parent table
 file only when nothing user-authored remains.** Otherwise rewrite the stripped document without
 the marker — leaving it as a hand-owned file the user can edit freely.
 
-This means a standalone `rwv deactivate` path cannot destroy user content, even on integrations
-that previously used whole-file deletion.
+So deactivation cannot destroy user content, whichever integration owns the file.
 
 ### 6. Lockfiles are fully owned
 
@@ -200,8 +199,8 @@ exactly the authoring-path guarantee: managed regions, rwv-computed generated ar
 
 The license is keyed on **ownership**, not on `generated_files()` membership: static-files entries
 ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, and no verb —
-context or intent — may write them. Conversely `go.work.sum` is hook-owned in principle, but rwv
-runs no go install hook today, so nothing rewrites it at a context verb.
+context or intent — may write them. Conversely `go.work.sum` is hook-owned in principle, but
+go-work has no install hook, so nothing rewrites it at a context verb.
 
 A license to rewrite is not an obligation to. A hook whose inputs are not on disk yet **defers**
 rather than failing: `init --adopt` clones only the project repo, so an adopted manifest that

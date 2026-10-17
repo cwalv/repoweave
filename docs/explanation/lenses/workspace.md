@@ -92,7 +92,7 @@ The lock file pins each member repo to an exact 40-character commit SHA — neve
 
 Releases and milestones are represented at the project layer by branches and tags in the project repo (`projects/<name>/`), each carrying its own committed `rwv.lock`.
 
-`sha256sum rwv.lock` is the project fingerprint. Two machines with the same checksum have identical source for every repo in the project. This is the multi-repo analog of `git rev-parse HEAD` on a monorepo.
+`sha256sum rwv.lock` is the project fingerprint. Two machines with the same checksum pin identical source for every repo in the project, though either may have committed past its pins (`rwv status` shows such a repo as `ahead`). This is the multi-repo analog of `git rev-parse HEAD` on a monorepo.
 
 The lock file is *derived state*: produced by `rwv lock`, `rwv update`, or `rwv sync`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which revision), and regenerated whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why the lock is always derived.
 

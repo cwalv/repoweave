@@ -109,10 +109,9 @@ the snapshot logic and lock format.
 Pushes each member repo in the default scope (owned + fork), then
 the project repo last; refuses on lock mismatch.
 
-- *Per-repo policy from role?* Yes — `Role::Dependency` and
-  `Role::Reference` are excluded from the default push scope (anchored
-  by `tests/doc_claims_push_test.rs`). Dependency and reference repos
-  return 403 against upstreams the operator doesn't own. Fork repos
+- *Per-repo policy from role?* Yes — `dependency` and `reference` repos
+  are excluded from the default push scope: they return 403 against
+  upstreams the operator doesn't own. Fork repos
   push just like owned repos; both use `origin`.
 - *Cross-repo ordering?* Yes — project repo last. The committed lock
   must never reference unpushed manifest SHAs (otherwise
@@ -242,14 +241,13 @@ core.
 "run-a-command-across-repos" how-to and call out `gita` as the
 opt-in summary sugar.
 
-**The third answer.** The gate has always offered two outcomes: core verb, or
-shell composition. The plugin space is now a third answer for this class of
-operation. A `rwv-each` executable on `$PATH` is invoked as `rwv each <cmd>` and
-receives the resolved workspace context through the environment envelope — so the
-invocation is exactly as ergonomic as a core verb, without the maintenance cost of
-living in core. This is where packaged compositions have a home. The verb-vs-
-composition gate is unchanged; "run a command across repos" still firmly fails it;
-what is new is that the refusal can point somewhere: the plugin space, and the
+**The third answer.** Besides core verb and shell composition, the gate has a
+third outcome for this class of operation: a plugin. A `rwv-each` executable on
+`$PATH` is invoked as `rwv each <cmd>` and receives the resolved workspace
+context through the environment envelope — so the invocation is exactly as
+ergonomic as a core verb, without the maintenance cost of living in core. This
+is where packaged compositions have a home. "Run a command across repos" still
+firmly fails the gate; the refusal points somewhere: the plugin space, and the
 how-to at [run-a-command-across-repos](../../how-to/run-a-command-across-repos.md).
 
 ## Composition is not a downgrade
@@ -272,18 +270,8 @@ is intentionally designed for composition — every record carries
 enough metadata to identify the repo, and the schema is committed at
 `docs/reference/schemas/status.json` and embedded inside the
 `rwv explain status` bundle. This is rwv as a *data source*,
-not as a runner.
-
-## Anchoring
-
-- `rwv push` default scope (owned + fork; dependency/reference
-  excluded) is anchored by `tests/doc_claims_push_test.rs`.
-- `rwv push` project-repo-last ordering is exercised by
-  `tests/push_test.rs`.
-- `rwv update` lock-snapshot behavior is anchored by
-  `tests/doc_claims_update_test.rs`.
-- The composition recipes that replace candidate verbs live in
-  [how-to/run-a-command-across-repos.md](../../how-to/run-a-command-across-repos.md).
+not as a runner. The composition recipes that replace candidate verbs are
+in [run a command across repos](../../how-to/run-a-command-across-repos.md).
 
 ## Reference for proposers
 

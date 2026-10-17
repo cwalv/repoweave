@@ -62,7 +62,7 @@ Ecosystem tools (Cargo, Go, npm) catch incompatible bumps during development —
 
 In a monorepo, "the tip" is a single SHA. In a polyrepo, "the tip" is a moving target across N repos. What does "stable" mean when your system spans ten repositories that each move independently?
 
-repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every member repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum have identical commits checked out across every member repo.
+repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every member repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv fetch` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
 
 Branches and tags in the project repo each carry their own committed `rwv.lock`. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; a release tag's lock names the set that shipped. Stable cross-repo tips are defined at the project layer, not invented per-repo (see [lock-as-derived](../joints/lock-as-derived.md)). A fix-forward CI model becomes natural — CI advances the lock on a vetted branch as integration tests pass, downstream consumers fast-forward to the new lock.
 
@@ -142,7 +142,7 @@ A useful heuristic for staying inside the monorepo-ergonomics envelope:
 Examples of things this rules out by analogy:
 
 - **You can't cherry-pick between sibling branches of a monorepo subtree to share work** without going through trunk. Likewise, don't cross-pick between sibling workweaves. Coordinate via the shared parent (sync up, then sync down).
-- **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch with a matched branch across every member repo. Today this is per-repo manual work; conceptually it's the same operation.
+- **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch with a matched branch across every member repo, made repo by repo with git; conceptually it's the same operation.
 
 The heuristic is a guideline, not a hard rule. Two patterns worth being explicit about:
 

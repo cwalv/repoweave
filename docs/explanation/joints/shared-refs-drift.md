@@ -3,9 +3,9 @@
 repoweave's workweave model is built on top of git worktrees. Worktrees
 sharing a single repo's object store and refs DAG is what makes them
 cheap: no re-clone, no re-fetch, branch creation is just a ref write.
-That sharing also produces a class of ambient drift between worktrees
-that the operator never asked for, and that no command they ran went
-wrong to cause. This joint defines the two flavors of drift, the
+It also means a branch ref checked out in one workspace can be moved from
+outside it, leaving that workspace's index and working tree describing the
+old commit. This joint defines the two flavors of that drift, the
 safe-to-fix classification rwv applies to them, and the invariant that
 makes auto-fix safe.
 
@@ -21,15 +21,19 @@ Git's worktree model:
 
 The asymmetry is the whole reason worktrees are cheap. It is also the
 source of drift whenever a branch ref checked out in one workspace is
-moved without updating that workspace's index and working tree — for
-example when a ref is updated via git plumbing or local-to-local ref
-pushes across linked worktrees sharing the canonical object store, or
-when two worktrees have been force-attached (`git worktree add -f` /
-`git checkout --ignore-other-worktrees`) to the same branch.
+moved without updating that workspace's index and working tree.
+
+Git's porcelain refuses to do that: `git push`, `git fetch` and
+`git branch -f` each refuse to move a branch that another worktree has
+checked out. Plumbing does not refuse — `git update-ref` moves it — and
+neither does a branch two worktrees share after a forced attach
+(`git worktree add -f`, `git checkout --ignore-other-worktrees`), where a
+commit in one moves the ref under the other. rwv takes none of these paths.
+What else produces this drift has not been traced, so this joint names no
+cause; it defines what rwv detects and repairs, whatever moved the ref.
 
 Picture a workspace whose checked-out branch `main` is moved underneath
-it (for example, by a ref update from a linked worktree or a second
-worktree force-attached to `main`):
+it, by a `git update-ref` run from another worktree of the same repo:
 
 ```
 workspace B before: HEAD → main → commit X    (index + WT on disk = X)
@@ -42,13 +46,11 @@ B's `HEAD` symbolic ref resolves to Y now (it followed `main`), but B's
 about git's ref store is corrupt, yet B's index and working tree are now
 drifted from its own `HEAD`.
 
-By default, `rwv` prevents workweaves from competing for the same branch
-name by giving each workweave its own flat ephemeral branch
-(`<project>--<workweave>`, Invariant I3 in
-[clone-topology](./clone-topology.md)). Even with distinct branches per
-workweave, shared-refs drift can still occur whenever an out-of-band git
-command, ref update, or force-attached worktree moves a workspace's
-checked-out branch ref without refreshing its index and working tree.
+`rwv` keeps workweaves from competing for a branch name by giving each
+workweave its own flat ephemeral branch (`<project>--<workweave>`,
+Invariant I3 in [clone-topology](./clone-topology.md)), so no rwv operation
+moves a branch another workspace has checked out. The drift classes below
+are about what happens when something outside rwv does.
 
 ## Two drift classes
 
@@ -148,8 +150,8 @@ Most users will rarely think about drift explicitly:
   watchers) may notice ref movement and lag a moment catching up. That is
   unavoidable in the worktree model.
 
-Drift is not a sign that your repository objects are corrupt. It is a
-consequence of git worktrees sharing a single ref store.
+Drift is not a sign that your repository objects are corrupt: every
+commit is intact, and only a workspace's index and files lag its ref.
 
 ## What rwv does *not* do
 
@@ -163,22 +165,13 @@ consequence of git worktrees sharing a single ref store.
 - rwv does not silently discard live content. Ever. Live work
   classifies as live; the operator decides.
 
-## Anchoring
-
-The drift cases and the safe/live classifier are covered by
-`tests/index_drift_test.rs` and `tests/working_tree_drift_test.rs`.
-Both run the full doctor + sync pipelines against synthetic drift
-scenarios; the safe-class auto-fix and the live-class refusal are
-exercised side by side.
-
 ## Related joints
 
 - [sync-semantics](./sync-semantics.md) — sync's Phase 3 disk
   reconciliation runs the same auto-fix as `rwv doctor --fix` post
   Phase-2.
-- [workweave-hierarchy](./workweave-hierarchy.md) — siblings in the
-  tree are exactly the configuration that produces drift in the
-  ordinary course of work.
+- [workweave-hierarchy](./workweave-hierarchy.md) — the tree of
+  workspaces that share each repo's refs, one branch per workspace.
 - [clone-topology](./clone-topology.md) — the safe/live classifier
   asks "is this blob in the object DAG?" The tier-0 invariants are what
   make "the" object DAG unambiguous.

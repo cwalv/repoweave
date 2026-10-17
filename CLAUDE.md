@@ -488,10 +488,9 @@ The published docs layer **persuasive entry and perspective pages** onto
   without pausing for architectural detours.
 - **Core concepts and design notes (`docs/explanation/joints/*.md`,
   `docs/explanation/destructive-operations.md`)** — separated in navigation
-  between **core user concepts** (workspace layout, lock & channels, branches
-  across the three layers, workweaves & landing, file ownership & safety) and
-  **design notes** (`verb-vs-composition`, `verb-vs-vocabulary`, `vcs-as-seam`,
-  `plugin-boundary`). Engaging because the trade-offs are sharp and candid, not
+  between **core user concepts**, grouped as layout & files, workweaves &
+  branches, and lock & sync, and **design notes** (`verb-vs-composition`,
+  `verb-vs-vocabulary`, `vcs-as-seam`, `plugin-boundary`). Engaging because the trade-offs are sharp and candid, not
   because they pitch the tool. Do not dump exhaustive CLI flag tables or JSON
   schemas that belong in `docs/reference/cli.md` or `docs/reference/formats.md`.
 - **Task recipes (`docs/how-to/*.md`)** — brisk, task-shaped guides for a reader

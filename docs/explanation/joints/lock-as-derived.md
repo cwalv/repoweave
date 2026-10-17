@@ -67,9 +67,8 @@ dropped automatically. The phase model and the `merge=rwv-ours`
 replay-exclusion mechanism are described in
 [sync-semantics](./sync-semantics.md).
 
-The exclusion is enforced by the VCS layer
-(`Vcs::set_replay_exclusion`); the principle that owns this is
-documented in [vcs-as-seam](./vcs-as-seam.md).
+Setting up the exclusion is the VCS layer's job; the principle that owns
+this is documented in [vcs-as-seam](./vcs-as-seam.md).
 
 ## Implications for everyday workflow
 
@@ -104,21 +103,6 @@ here is that *every* field in the file is a function of state recorded
 elsewhere.
 
 Hand-edits don't compound; they vanish on the next snapshot.
-
-## Anchoring claims
-
-The behaviors above are tool behaviors, anchored in source and tests:
-
-- `rwv lock` does not run integrations:
-  `src/lock.rs` — no integration-runner call in the lock codepath.
-  Anchored by `tests/doc_claims_lock_test.rs` (all three claims:
-  no integration hooks, overwrites prior lock, no network fetch).
-- `rwv.lock` exclusion during sync's project-repo replay:
-  `tests/e2e_two_workweaves_test.rs` covers the n-way landing contract
-  (lock-only changes, doc changes, genuine conflict).
-- Replay-exclusion mechanism: see
-  [vcs-as-seam](./vcs-as-seam.md) for the `Vcs::set_replay_exclusion`
-  worked example.
 
 ## Related joints
 

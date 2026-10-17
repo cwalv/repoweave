@@ -83,17 +83,25 @@ Android's [repo](https://gerrit.googlesource.com/git-repo) and Zephyr's [west](h
 
 ## The meta-repo failure mode
 
-Any multi-repo tool separates the **record** (`rwv.toml`, `rwv.lock`, generated workspace files) from the **reality** (N git repositories that can be mutated on their own). A monorepo cannot express divergence between its manifest and its tree because they are the same commit; a meta-repo tool can. When record and reality are separate, **reconciliation is the product**.
+Tools in this family have a reputation: "worst of both worlds." It was earned by a series of ambitious starts that lost steam at the same wall — submodules' detached-HEAD confusion and forgotten pointer-bump PRs, gitslave's discontinued maintenance, repo-tool's wrapped-git friction. Each attempt was directionally correct; the number of independent tries is itself evidence the problem is real.
+
+Any multi-repo tool separates the **record** (`rwv.toml`, `rwv.lock`, generated workspace files) from the **reality** (N git repositories that can be mutated on their own). A monorepo cannot express divergence between its manifest and its tree because they are the same commit; a meta-repo tool can. When record and reality are separate, **reconciliation is the product** — the part the earlier attempts left unserviced.
+
+repoweave has the same split, and shares the failure mode where it shows:
+
+- **Divergence is expressible.** A stray clone, a hand-edited generated file, or a repo pulled without re-locking puts record and reality out of step, and what is expressible eventually occurs.
+- **Coherence holds only while changes flow through the verbs.** An out-of-band change breaks the invariant silently, until `rwv doctor` runs.
+- **Materialization depends on N remotes serving the pinned SHAs.** A lock's referents can dangle; mirrors mitigate that, by configuration rather than construction.
 
 Earlier tools split into two dataflows:
 
 1. **No record (`gita`, `meta`):** fan out commands across directories, but pin nothing and generate no workspace wiring. Nothing can drift, and nothing is reproducible.
-2. **Authoritative record (`git submodules`, `repo`, `west`):** treat the composition record like a source file that checkouts must conform to. Detached HEADs and forgotten pointer-bump commits are direct consequences of that dataflow.
+2. **Authoritative record (`git submodules`, `repo`, `west`):** treat the composition record like a source file that checkouts must conform to. Detached HEADs and forgotten pointer-bump commits are that dataflow working as designed.
 
 repoweave uses a third dataflow: **the lock is derived on mutation and authoritative only at materialization (`rwv fetch` / `rwv sync`)**:
 
 - **Reconciliation is built into the verbs:** intent verbs (`add`, `remove`, `update`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
-- **Drift is detectable and repairable:** out-of-band git operations are still possible, so `rwv doctor` (and per-integration `verify()`) detects divergence and `rwv abort` rolls back mid-operation sync state via `refs/rwv/pre-op/<id>/` savepoints.
+- **Drift is detectable and repairable:** `rwv doctor`, including each integration's own checks, reports divergence, and `rwv abort` rolls back mid-operation sync state via `refs/rwv/pre-op/<id>` savepoints.
 - **Ordinary git stays first-class:** there is no `rwv commit` or wrapped git porcelain ([verb-vs-composition](explanation/joints/verb-vs-composition.md)).
 
 ## Costs and when not to use rwv

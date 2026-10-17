@@ -7,6 +7,7 @@ to it automatically. No PR or maintainer review required — see
 [plugin protocol reference](docs/reference/plugin-protocol.md).
 
 **Everything else** — bugs, design questions, or functionality that belongs in
-core — open an issue at https://github.com/cwalv/repoweave/issues. Open an issue
-before sending a pull request; unsolicited PRs are redirected to issues for
-discussion first.
+core — open an issue at https://github.com/cwalv/repoweave/issues. An issue is
+the fast path, not a step toward a PR: a quickly addressed issue is often as
+good as a merged PR, sometimes better. Open an issue before sending a pull
+request; unsolicited PRs are redirected to issues for discussion first.

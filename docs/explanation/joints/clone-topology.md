@@ -22,7 +22,7 @@ Three tiers, bottom-up:
 | Tier | What's "stable" at this tier | Joint |
 |---|---|---|
 | **2 — Revisions** | Each member repo on disk is at the SHA recorded in `rwv.lock`. | [lock-as-derived](./lock-as-derived.md) |
-| **1 — Refs** | No silent drift between sibling worktrees on the same branch. | [shared-refs-drift](./shared-refs-drift.md) |
+| **1 — Refs** | No silent drift between a workspace's checked-out branch and its index and working tree. | [shared-refs-drift](./shared-refs-drift.md) |
 | **0 — Artifacts** | Every member repo is one canonical store with worktree-linked checkouts. | this joint |
 
 Tier 2 cannot be true unless tier 0 is true: "the SHA in `rwv.lock`" is
@@ -35,10 +35,10 @@ Likewise tier 1: drift classification compares blob content against the
 object store, so the answer depends on *which* object store the comparison
 runs against.
 
-Every higher-tier check `rwv doctor` runs today operates in the
-revision/content layer. None of them notice when the underlying artifact
-is wrong. This joint defines what "right" means so a topology check has
-a spec to enforce.
+The higher-tier checks operate in the revision/content layer, so none of
+them can notice when the underlying artifact is wrong. This joint defines
+what "right" means, and that is the spec `rwv doctor`'s topology check
+enforces.
 
 ## The invariants
 
@@ -146,7 +146,7 @@ A real workspace exposed exactly this failure mode. A repo's canonical store
 lived inside a workweave; the slot at `<weave>/<repo_path>` held a
 disconnected clone — same URL, separate object DAG; and 20+ worktrees
 across the weave tree had been linked into the workweave-held store.
-`rwv doctor` reported clean, because every existing check operates above
+`rwv doctor` reported clean, because every check it had operated above
 tier 0. The merged-check vouched for retirements that crossed DAGs; the
 sync convergence path silently transferred objects on every push,
 masking divergence; drift classification ran against whichever store
@@ -154,10 +154,9 @@ the verb reached first.
 
 The corruption was invisible *and* progressive: each subsequent verb
 deepened the inconsistency, because no check had a vocabulary for
-"the artifact is wrong." This joint provides that vocabulary. The
-sibling topology check in `rwv doctor` (landed alongside this spec)
-enforces the invariants above directly — its violation kinds key off
-the three I1–I3 categories.
+"the artifact is wrong." This joint provides that vocabulary, and the
+topology check in `rwv doctor` enforces the invariants above directly —
+its violation kinds key off the three I1–I3 categories.
 
 ## Git mapping
 

@@ -14,9 +14,9 @@ Agents don't want sessions. They want a *path* — a workspace directory where t
 
 This is why most of the agent surface in `rwv` is *reflection over the project* rather than *commands that mutate session state*.
 
-## The landed agent surface
+## The agent surface
 
-This lens describes the recommended workflow pattern; the parts that are *current tool behavior today* (vs. recommended pattern) are these:
+This lens describes the recommended workflow pattern; the parts that are tool behavior rather than pattern are these:
 
 ### Discovery — `rwv prime`, `rwv setup`
 

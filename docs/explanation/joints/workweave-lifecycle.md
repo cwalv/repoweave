@@ -175,7 +175,8 @@ changes. Any dirty path blocks retire.
 
 ### What retire deletes
 
-On success, retire calls `delete_workweave` with `force: false`:
+On success, retire deletes the workweave as `rwv workweave <project> delete`
+does without its `--discard-*` overrides:
 
 - Every member-repo worktree is removed (`git worktree remove`), whatever
   its role.
@@ -278,7 +279,7 @@ workweave is a git worktree, and commits are ordinary git commits.
 
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree model, parent
   tracking, one-hop semantics, and ephemeral branch naming.
-- [sync-semantics](./sync-semantics.md) — the full phase machine,
-  retire-as-phase detail, abort contract, and strategy choices.
+- [sync-semantics](./sync-semantics.md) — the phases `sync-to` runs, the
+  abort contract, and the strategy choice.
 - [lock-as-derived](./lock-as-derived.md) — why `rwv.lock` is per-workspace
   and why it is regenerated (not merged) at each sync boundary.
