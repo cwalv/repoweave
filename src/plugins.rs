@@ -39,11 +39,17 @@
 //! surface. The `regex` feature is enabled on the crate so
 //! `which_re_in` is available.
 //!
-//! Duplicate handling: when the same `rwv-<verb>` name appears in
-//! multiple `PATH` directories, first-found wins at exec time (standard
-//! `PATH` semantics). `discover_plugins` returns every copy and marks all
-//! but the first as `shadowed = true` so callers (help section, doctor)
-//! can surface this for audit.
+//! Discovery lists exactly what dispatch would run. The verb is the name
+//! typed: on Windows the `PATHEXT` extension that made the file executable
+//! is dropped (`rwv-foo.EXE` lists as `foo`) and a file whose extension is
+//! not in `PATHEXT` is not a plugin; on Unix nothing is dropped, because the
+//! lookup appends nothing (`rwv-foo.py` lists as `foo.py`).
+//!
+//! Duplicate handling: when one verb resolves to several files, the copy
+//! dispatch picks wins — the earliest `PATH` directory, and within one
+//! directory the earliest `PATHEXT` entry. `discover_plugins` returns every
+//! copy and marks all but the winner `shadowed = true` so callers (help
+//! section, doctor) can surface this for audit.
 //!
 //! # Env envelope
 //!
@@ -112,18 +118,20 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
 
 /// A discovered external command (`rwv-<verb>`) on `PATH`.
 ///
-/// Records are sorted by `(name, path)` for deterministic output. When the
-/// same name appears in more than one `PATH` directory, the first occurrence
-/// wins at exec time; later occurrences are marked `shadowed = true` and carry
-/// `shadowed_by` pointing at the winning binary.
+/// Records are sorted by `(name, path)` for deterministic output. When several
+/// files dispatch as the same name, the one dispatch runs wins; the others are
+/// marked `shadowed = true` and carry `shadowed_by` pointing at the winning
+/// binary.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct PluginRecord {
-    /// Short verb name — the `<verb>` in `rwv-<verb>` and `rwv <verb>`.
+    /// The verb as typed in `rwv <verb>`: the file name after `rwv-`, less
+    /// the `PATHEXT` extension on Windows.
     pub name: String,
-    /// Absolute path of this binary on disk.
+    /// Absolute path of this binary on disk, carrying its real file name.
     pub path: String,
-    /// `true` when another binary with the same name appears earlier in
-    /// `PATH` and will be executed instead. This binary is unreachable
+    /// `true` when another binary with the same name will be executed
+    /// instead: one earlier in `PATH`, or on Windows one in the same directory
+    /// whose extension comes earlier in `PATHEXT`. This binary is unreachable
     /// via `rwv <name>` until the shadowing copy is removed.
     pub shadowed: bool,
     /// Absolute path of the binary that shadows this one. Present iff
@@ -132,38 +140,83 @@ pub struct PluginRecord {
     pub shadowed_by: Option<String>,
 }
 
-/// Discover every `rwv-*` executable on the given path string (a
-/// `:`-separated list of directories, the same format as `$PATH`).
+/// How the host's executable lookup turns a typed name into a file name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LookupNaming {
+    /// The typed name is the file name: an executable bit selects candidates.
+    Verbatim,
+    /// The lookup tries the bare name, then each `PATHEXT` extension in order,
+    /// matched case-insensitively.
+    PathExt(Vec<String>),
+}
+
+impl LookupNaming {
+    fn host() -> Self {
+        if cfg!(windows) {
+            // `which` reads PATHEXT the same way and treats it unset as empty.
+            Self::from_pathext(&std::env::var("PATHEXT").unwrap_or_default())
+        } else {
+            Self::Verbatim
+        }
+    }
+
+    /// Parse a `PATHEXT` value as `which` does: `;`-separated, segments not
+    /// starting with `.` dropped.
+    fn from_pathext(raw: &str) -> Self {
+        Self::PathExt(
+            raw.split(';')
+                .filter(|s| s.starts_with('.'))
+                .map(str::to_owned)
+                .collect(),
+        )
+    }
+
+    /// The verb `file_name` dispatches as, and its rank among same-directory
+    /// files for that verb (lower wins). `None` when the lookup never resolves
+    /// a typed verb to this file.
+    fn verb_of<'a>(&self, file_name: &'a str) -> Option<(&'a str, usize)> {
+        let rest = file_name.strip_prefix("rwv-")?;
+        let (verb, rank) = match self {
+            Self::Verbatim => (rest, 0),
+            Self::PathExt(exts) => match std::path::Path::new(file_name).extension() {
+                None => (rest, 0),
+                Some(ext) => {
+                    let ext = ext.to_str()?;
+                    let pos = exts.iter().position(|e| e[1..].eq_ignore_ascii_case(ext))?;
+                    (&rest[..rest.len() - ext.len() - 1], pos + 1)
+                }
+            },
+        };
+        (!verb.is_empty()).then_some((verb, rank))
+    }
+}
+
+/// Discover every `rwv-*` executable on the given path string (the same
+/// format as `$PATH`).
 ///
 /// Results are sorted by `(name, path)` for deterministic output. Within the
-/// same name, the first-found copy is the winner; subsequent copies are marked
-/// `shadowed = true`.
+/// same name, the copy dispatch would run is the winner; every other copy is
+/// marked `shadowed = true`.
 ///
 /// Non-existent, non-directory, and permission-denied path entries are silently
 /// skipped — this mirrors the OS PATH-walk behaviour and avoids spurious errors
 /// when a `PATH` entry refers to an absent mount or `sudo`-only directory.
 ///
-/// Non-executable files named `rwv-*` in a `PATH` directory are never returned
-/// — the `which` crate enforces the executable bit just as `execve(2)` would.
+/// A file named `rwv-*` that the platform would not execute is never returned:
+/// on Unix the `which` crate enforces the executable bit just as `execve(2)`
+/// would; on Windows a file must carry a `PATHEXT` extension.
 ///
 /// `paths_override` is `None` to use the process's inherited `PATH` (via the
 /// `which` crate's own PATH read — no explicit `std::env::var_os("PATH")`
 /// appears in this module) or `Some(custom_path)` to search only the given
-/// colon-separated directory list. Pass `Some(...)` in tests to pin the search
-/// to fixture directories so tests are host-PATH-independent.
+/// directory list. Pass `Some(...)` in tests to pin the search to fixture
+/// directories so tests are host-PATH-independent.
 pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
     let re = regex::Regex::new(r"^rwv-.+").expect("constant pattern compiles");
 
-    // Collect all matching executables. The `which` crate iterates PATH
-    // directories in order and filters by executable bit — exactly the
-    // exec-time semantics. Errors (no PATH, empty PATH, I/O) fold to an
-    // empty iterator.
-    //
-    // Two dispatch paths:
-    // - `which_re_in(re, Some(path))` when an override is provided (test mode).
-    // - `which_re_in(re, env::var_os("PATH"))` via `which_re` for the production
-    //   path. `which_re` is the crate's own public function that reads PATH
-    //   internally; no explicit `std::env::var_os("PATH")` call appears here.
+    // `which_re_in` yields matches directory by directory in PATH order,
+    // readdir order within a directory. Errors (no PATH, empty PATH, I/O)
+    // fold to an empty iterator.
     let found: Vec<PathBuf> = match paths_override {
         Some(p) => match which::which_re_in(re, Some(p)) {
             Ok(it) => it.collect(),
@@ -174,40 +227,58 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
             Err(_) => Vec::new(),
         },
     };
+    plugin_records(found, &LookupNaming::host())
+}
 
-    // Build name → path pairs in PATH order (the order `which_re_in` / `which_re`
-    // returns them: directory order from $PATH, entries within a dir in readdir
-    // order). The first occurrence of each name in this PATH-order list is the
-    // exec-time winner — that determines the `shadowed` flag.
-    //
+/// Name and rank `found` — matches in PATH-directory order — under `naming`.
+fn plugin_records(found: Vec<PathBuf>, naming: &LookupNaming) -> Vec<PluginRecord> {
     // `shadowed` is an equality between two of these strings, so the wire
     // spelling is minted once per discovered path here rather than at each
     // consumer: a path minted at one site and stringified at another compares
     // unequal to itself wherever the two spellings differ, which marks the
     // winner as shadowed by itself.
-    let path_ordered: Vec<(String, String)> = found
-        .into_iter()
-        .filter_map(|p| {
-            let name = p.file_name()?.to_str()?.strip_prefix("rwv-")?.to_owned();
-            Some((name, crate::path_spelling::wire_path(&p)))
-        })
-        .collect();
+    let mut dir_index = 0usize;
+    let mut prev_dir: Option<PathBuf> = None;
+    struct Candidate {
+        dir_index: usize,
+        rank: usize,
+        name: String,
+        path: String,
+    }
+    let mut ranked: Vec<Candidate> = Vec::new();
+    for p in found {
+        let dir = p.parent().map(PathBuf::from);
+        if prev_dir.is_some() && prev_dir != dir {
+            dir_index += 1;
+        }
+        prev_dir = dir;
+        let Some(file_name) = p.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        let Some((verb, rank)) = naming.verb_of(file_name) else {
+            continue;
+        };
+        ranked.push(Candidate {
+            dir_index,
+            rank,
+            name: verb.to_owned(),
+            path: crate::path_spelling::wire_path(&p),
+        });
+    }
+    // Dispatch order: directory first, then PATHEXT position within it.
+    ranked.sort_by_key(|c| (c.dir_index, c.rank));
 
-    // Determine the winner (first occurrence in PATH order) for each name.
     let mut winner_paths: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
-    for (name, path) in &path_ordered {
+    for c in &ranked {
         winner_paths
-            .entry(name.clone())
-            .or_insert_with(|| path.clone());
+            .entry(c.name.clone())
+            .or_insert_with(|| c.path.clone());
     }
 
-    // Build the output records, then sort by (name, path) for deterministic
-    // agent-facing output. Shadowing is determined by the winner_paths map
-    // (PATH order), NOT by the sort order.
-    let mut records: Vec<PluginRecord> = path_ordered
+    let mut records: Vec<PluginRecord> = ranked
         .into_iter()
-        .map(|(name, path)| {
+        .map(|Candidate { name, path, .. }| {
             let winner = winner_paths.get(&name).cloned().unwrap_or_default();
             let shadowed = path != winner;
             PluginRecord {
@@ -219,8 +290,7 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
         })
         .collect();
 
-    // Stable sort by (name, path) — deterministic across hosts regardless of
-    // readdir order, without disturbing the shadowing decisions made above.
+    // Shadowing was decided in dispatch order above; this sort is for output.
     records.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
 
     records
@@ -378,7 +448,6 @@ pub fn dispatch_external(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
     use std::fs;
 
     #[test]
@@ -495,34 +564,41 @@ mod tests {
     // Test helpers for discovery tests
     // -------------------------------------------------------------------------
 
-    // The fixtures below are `#!/bin/sh` scripts made executable with a mode
-    // bit, and the subject under test is which of them `which` will dispatch.
-    // Windows has no executable bit: `which` selects on PATHEXT there, so a
-    // discoverable plugin is `rwv-foo.exe`, and `strip_prefix("rwv-")` would
-    // name the verb `foo.exe`. What these assert is therefore not merely
-    // spelled Unix-ly, it is undefined on Windows until that naming is
-    // decided.
-    /// Create an executable file at `dir/name`. Returns the file path.
-    #[cfg(unix)]
+    /// Create a file at `dir/<name>` the host would execute, and return its
+    /// path: a `#!/bin/sh` script with the exec bit on Unix, `<name>.cmd` on
+    /// Windows, where `PATHEXT` plays the exec bit's part.
     fn make_executable(dir: &std::path::Path, name: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let p = dir.join(name);
-        fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
-        p
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.join(name);
+            fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        }
+        #[cfg(windows)]
+        {
+            let p = dir.join(format!("{name}.cmd"));
+            fs::write(&p, "@echo hi\r\n").unwrap();
+            p
+        }
     }
 
-    /// Create a non-executable file at `dir/name` (mode 0o644).
-    #[cfg(unix)]
+    /// Create a file at `dir/<name>` the host would not execute: mode 0o644
+    /// on Unix, `<name>.txt` on Windows.
     fn make_non_executable(dir: &std::path::Path, name: &str) {
-        use std::os::unix::fs::PermissionsExt;
-        let p = dir.join(name);
-        fs::write(&p, "data\n").unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.join(name);
+            fs::write(&p, "data\n").unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        #[cfg(windows)]
+        fs::write(dir.join(format!("{name}.txt")), "data\r\n").unwrap();
     }
 
     /// Build an OsString PATH from a list of directories.
-    #[cfg(unix)]
     fn join_paths(dirs: &[&std::path::Path]) -> OsString {
         std::env::join_paths(dirs).expect("join paths")
     }
@@ -540,7 +616,6 @@ mod tests {
 
     /// A single fixture dir with two executable `rwv-*` files.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_finds_executables_in_single_dir() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -559,7 +634,6 @@ mod tests {
 
     /// Non-executable `rwv-*` files must NOT appear in results.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_skips_non_executable_files() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -573,7 +647,6 @@ mod tests {
 
     /// Non-existent PATH dir is silently skipped.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_nonexistent_path_dir_silently_skipped() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -587,7 +660,6 @@ mod tests {
 
     /// Files not named `rwv-*` are not returned.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_ignores_non_rwv_executables() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -606,7 +678,6 @@ mod tests {
     /// position of the winner in the vec depends on path lexicography. We
     /// key on the `shadowed` flag, not position.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_duplicate_shadowed_by_path_order() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("dir1");
@@ -638,7 +709,6 @@ mod tests {
     /// Same name in THREE PATH dirs: only the first (PATH-order winner) is
     /// unshadowed; the other two carry shadowed_by pointing at the winner.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_triple_duplicate_all_after_first_shadowed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("a");
@@ -672,7 +742,6 @@ mod tests {
 
     /// Symlinked executable `rwv-*` is included.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_symlinked_plugin_is_found() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let bin_dir = tmp.path().join("real");
@@ -680,7 +749,8 @@ mod tests {
         fs::create_dir_all(&bin_dir).unwrap();
         fs::create_dir_all(&link_dir).unwrap();
         let real_bin = make_executable(&bin_dir, "rwv-sym");
-        std::os::unix::fs::symlink(&real_bin, link_dir.join("rwv-sym")).unwrap();
+        let link = link_dir.join(real_bin.file_name().unwrap());
+        crate::symlink::create(&real_bin, &link, crate::symlink::LinkTarget::File).unwrap();
         let path = join_paths(&[link_dir.as_path()]);
         let result = discover_plugins(Some(path.as_os_str()));
         let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
@@ -694,7 +764,6 @@ mod tests {
 
     /// Output is sorted by name across multiple dirs.
     #[test]
-    #[cfg(unix)]
     fn discover_plugins_result_sorted_by_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -720,7 +789,6 @@ mod tests {
 
     /// With a fixture plugin, the help section lists the name.
     #[test]
-    #[cfg(unix)]
     fn help_section_lists_plugin_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path();
@@ -741,7 +809,6 @@ mod tests {
 
     /// Shadowed duplicates are NOT listed in the help section (only unique names).
     #[test]
-    #[cfg(unix)]
     fn help_section_omits_shadowed_duplicates() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("d1");
@@ -759,5 +826,185 @@ mod tests {
             count, 1,
             "expected 'tool' exactly once in help, got:\n{section}"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Naming and tie-break under each lookup convention
+    // -------------------------------------------------------------------------
+
+    fn windows_default_pathext() -> LookupNaming {
+        LookupNaming::from_pathext(".COM;.EXE;.BAT;.CMD")
+    }
+
+    fn names_and_paths(records: &[PluginRecord]) -> Vec<(&str, &str)> {
+        records
+            .iter()
+            .map(|r| (r.name.as_str(), r.path.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn pathext_parse_keeps_dotted_segments_in_order() {
+        assert_eq!(
+            LookupNaming::from_pathext(".COM;.exe;;BAT;.Cmd"),
+            LookupNaming::PathExt(vec![".COM".into(), ".exe".into(), ".Cmd".into()])
+        );
+    }
+
+    /// The listed verb is the one typed, whatever case the extension is in;
+    /// the record's path keeps the real file name.
+    #[test]
+    fn pathext_naming_strips_the_extension_case_insensitively() {
+        let found = vec![
+            PathBuf::from("/d/rwv-foo.EXE"),
+            PathBuf::from("/d/rwv-bar.cmd"),
+            PathBuf::from("/d/rwv-baz.Bat"),
+        ];
+        let records = plugin_records(found, &windows_default_pathext());
+        assert_eq!(
+            names_and_paths(&records),
+            vec![
+                (
+                    "bar",
+                    crate::path_spelling::wire_path(std::path::Path::new("/d/rwv-bar.cmd"))
+                        .as_str()
+                ),
+                (
+                    "baz",
+                    crate::path_spelling::wire_path(std::path::Path::new("/d/rwv-baz.Bat"))
+                        .as_str()
+                ),
+                (
+                    "foo",
+                    crate::path_spelling::wire_path(std::path::Path::new("/d/rwv-foo.EXE"))
+                        .as_str()
+                ),
+            ]
+        );
+    }
+
+    /// A file whose extension is not in `PATHEXT` is the Windows counterpart
+    /// of a file without the exec bit; an extensionless file `which` accepted
+    /// is an executable image and keeps its whole name.
+    #[test]
+    fn pathext_naming_lists_only_what_pathext_makes_executable() {
+        let found = vec![
+            PathBuf::from("/d/rwv-notes.txt"),
+            PathBuf::from("/d/rwv-native"),
+            PathBuf::from("/d/rwv-.exe"),
+        ];
+        let records = plugin_records(found, &windows_default_pathext());
+        let names: Vec<&str> = records.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["native"]);
+    }
+
+    /// Unix lookup appends no extension, so `rwv foo` never reaches
+    /// `rwv-foo.py`; the verb that does is `foo.py`, and listing must say so.
+    #[test]
+    fn verbatim_naming_strips_no_extension() {
+        let found = vec![
+            PathBuf::from("/d/rwv-foo.py"),
+            PathBuf::from("/d/rwv-bar.exe"),
+            PathBuf::from("/d/rwv-baz.txt"),
+        ];
+        let records = plugin_records(found, &LookupNaming::Verbatim);
+        let names: Vec<&str> = records.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["bar.exe", "baz.txt", "foo.py"]);
+    }
+
+    /// Two files for one verb in one directory: dispatch tries `PATHEXT` in
+    /// order, so `.EXE` beats `.CMD` even when readdir yields `.cmd` first.
+    #[test]
+    fn pathext_tie_in_one_directory_goes_to_the_earlier_pathext_entry() {
+        let cmd = PathBuf::from("/d/rwv-foo.cmd");
+        let exe = PathBuf::from("/d/rwv-foo.exe");
+        let records = plugin_records(vec![cmd.clone(), exe.clone()], &windows_default_pathext());
+        let exe_wire = crate::path_spelling::wire_path(&exe);
+        let cmd_wire = crate::path_spelling::wire_path(&cmd);
+        let winner = records.iter().find(|r| !r.shadowed).expect("a winner");
+        assert_eq!(winner.path, exe_wire, "{records:?}");
+        let loser = records
+            .iter()
+            .find(|r| r.shadowed)
+            .expect("a shadowed copy");
+        assert_eq!(loser.path, cmd_wire, "{records:?}");
+        assert_eq!(loser.shadowed_by.as_deref(), Some(exe_wire.as_str()));
+        assert!(records.iter().all(|r| r.name == "foo"), "{records:?}");
+    }
+
+    /// The bare name is the lookup's first candidate in a directory, ahead of
+    /// every `PATHEXT` extension.
+    #[test]
+    fn pathext_tie_in_one_directory_goes_to_the_bare_name_first() {
+        let exe = PathBuf::from("/d/rwv-foo.exe");
+        let bare = PathBuf::from("/d/rwv-foo");
+        let records = plugin_records(vec![exe, bare.clone()], &windows_default_pathext());
+        let winner = records.iter().find(|r| !r.shadowed).expect("a winner");
+        assert_eq!(
+            winner.path,
+            crate::path_spelling::wire_path(&bare),
+            "{records:?}"
+        );
+    }
+
+    /// Dispatch walks directories before extensions: an earlier directory's
+    /// `.cmd` beats a later directory's `.exe`.
+    #[test]
+    fn pathext_directory_order_outranks_extension_order() {
+        let first_dir_cmd = PathBuf::from("/d1/rwv-foo.cmd");
+        let later_dir_exe = PathBuf::from("/d2/rwv-foo.exe");
+        let records = plugin_records(
+            vec![first_dir_cmd.clone(), later_dir_exe],
+            &windows_default_pathext(),
+        );
+        let winner = records.iter().find(|r| !r.shadowed).expect("a winner");
+        assert_eq!(
+            winner.path,
+            crate::path_spelling::wire_path(&first_dir_cmd),
+            "{records:?}"
+        );
+    }
+
+    /// Every listed verb resolves, through the lookup dispatch uses, to the
+    /// record listed as its winner — on the host's own naming convention.
+    /// Off Windows this reaches directory order and the unstripped extension;
+    /// the in-directory `PATHEXT` tie exists only on a Windows run.
+    #[test]
+    fn discovery_winner_is_what_dispatch_resolves() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir1 = tmp.path().join("d1");
+        let dir2 = tmp.path().join("d2");
+        fs::create_dir_all(&dir1).unwrap();
+        fs::create_dir_all(&dir2).unwrap();
+        make_executable(&dir1, "rwv-tool");
+        make_executable(&dir2, "rwv-tool");
+        make_executable(&dir1, "rwv-script.py");
+        let mut expected = vec!["script.py", "tool"];
+        if cfg!(windows) {
+            fs::write(dir2.join("rwv-tie.cmd"), "@echo cmd\r\n").unwrap();
+            fs::write(dir2.join("rwv-tie.bat"), "@echo bat\r\n").unwrap();
+            expected.insert(1, "tie");
+        }
+        let path = join_paths(&[dir1.as_path(), dir2.as_path()]);
+        let records = discover_plugins(Some(path.as_os_str()));
+
+        let listed: Vec<&str> = records
+            .iter()
+            .filter(|r| !r.shadowed)
+            .map(|r| r.name.as_str())
+            .collect();
+        assert_eq!(listed, expected, "{records:?}");
+
+        for r in &records {
+            let dispatched = which::which_in(format!("rwv-{}", r.name), Some(&path), tmp.path())
+                .unwrap_or_else(|e| panic!("`rwv {}` does not dispatch: {e}; {records:?}", r.name));
+            let dispatched = crate::path_spelling::wire_path(&dispatched);
+            let winner = r.shadowed_by.as_deref().unwrap_or(r.path.as_str());
+            assert_eq!(
+                winner, dispatched,
+                "listing and dispatch disagree on `{}`",
+                r.name
+            );
+        }
     }
 }

@@ -1178,7 +1178,7 @@ Schema:
       ]
     },
     "PluginRecord": {
-      "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When the same name appears in more than one `PATH` directory, the first occurrence wins at exec time; later occurrences are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary.",
+      "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When several files dispatch as the same name, the one dispatch runs wins; the others are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary.",
       "type": "object",
       "required": [
         "name",
@@ -1187,15 +1187,15 @@ Schema:
       ],
       "properties": {
         "name": {
-          "description": "Short verb name — the `<verb>` in `rwv-<verb>` and `rwv <verb>`.",
+          "description": "The verb as typed in `rwv <verb>`: the file name after `rwv-`, less the `PATHEXT` extension on Windows.",
           "type": "string"
         },
         "path": {
-          "description": "Absolute path of this binary on disk.",
+          "description": "Absolute path of this binary on disk, carrying its real file name.",
           "type": "string"
         },
         "shadowed": {
-          "description": "`true` when another binary with the same name appears earlier in `PATH` and will be executed instead. This binary is unreachable via `rwv <name>` until the shadowing copy is removed.",
+          "description": "`true` when another binary with the same name will be executed instead: one earlier in `PATH`, or on Windows one in the same directory whose extension comes earlier in `PATHEXT`. This binary is unreachable via `rwv <name>` until the shadowing copy is removed.",
           "type": "boolean"
         },
         "shadowed_by": {

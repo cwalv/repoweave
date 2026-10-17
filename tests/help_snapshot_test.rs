@@ -73,27 +73,11 @@ Global options:
 }
 
 /// When `rwv-*` executables are present on PATH the "External commands"
-/// section appears after the core usage block.
-///
-/// Unix-only, and alone in this file: the fixture is a `#!/bin/sh` script made
-/// discoverable by its mode bit. Windows has no executable bit — `which`
-/// selects on PATHEXT — so the fixture would have to be `rwv-myplugin.exe` and
-/// the listed verb would read `myplugin.exe`. Every other test here snapshots
-/// help text and is platform-neutral.
+/// section appears after the core usage block, listing the verb as typed.
 #[test]
-#[cfg(unix)]
 fn rwv_help_external_commands_section_with_fixture_plugin() {
-    use std::fs;
-    use std::io::Write;
-    use std::os::unix::fs::PermissionsExt;
-
     let plugin_dir = common::tempdir().expect("tempdir");
-    let script_path = plugin_dir.path().join("rwv-myplugin");
-    {
-        let mut f = fs::File::create(&script_path).unwrap();
-        write!(f, "#!/bin/sh\necho hi\n").unwrap();
-    }
-    fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_plugin(plugin_dir.path(), "rwv-myplugin", "echo hi\n", "echo hi\n");
 
     let out = common::rwv()
         .arg("--help")
@@ -109,8 +93,8 @@ fn rwv_help_external_commands_section_with_fixture_plugin() {
         "expected 'External commands' section in --help with fixture plugin: {text}"
     );
     assert!(
-        text.contains("myplugin"),
-        "expected fixture plugin name 'myplugin' in --help section: {text}"
+        text.lines().any(|l| l.trim() == "myplugin"),
+        "expected the verb `myplugin` on a line of its own in --help: {text}"
     );
 }
 

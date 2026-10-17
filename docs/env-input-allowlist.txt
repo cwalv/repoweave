@@ -2,14 +2,13 @@
 #
 # Policy: argv addresses; environment variables are handoff surfaces set
 # for child processes by their parent, never inputs consulted by rwv itself.
-# The inventory is $HOME only.
+# The inventory is $HOME and, on Windows, PATHEXT.
 #
 # Scope: this allowlist covers std::env::var and std::env::var_os reads
 # in non-test production code under src/. The dirs crate reads $HOME via
 # OS identity APIs (dirs::home_dir), not via std::env::var; it is excluded
-# from this textual check and documented here as the sole remaining env
-# read. std::env::args and std::env::current_dir are argv and cwd
-# respectively — out of scope.
+# from this textual check and documented here. std::env::args and
+# std::env::current_dir are argv and cwd respectively — out of scope.
 #
 # Format (one entry per line, blank lines and lines starting with '#' ignored):
 #
@@ -19,3 +18,5 @@
 # is removed from src/ or promoted to a documented handoff surface.
 # No age-based expiry — use structural triggers (name the removal change
 # or the condition, not a date).
+
+env-input:PATHEXT  # Windows' definition of executable, read as the `which` crate reads it for dispatch, so plugin discovery lists the verbs dispatch resolves; never a handoff surface

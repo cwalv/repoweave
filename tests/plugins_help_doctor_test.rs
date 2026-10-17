@@ -10,20 +10,13 @@
 //! All tests pin PATH to fixture directories plus a directory holding
 //! nothing but `git` — never the host's real PATH.
 //!
-//! SKIPPED ON WINDOWS. Every fixture here is a `#!/bin/sh` script made
-//! executable with a mode bit, and the subject is which of them `which` will
-//! dispatch off PATH. Windows has no executable bit — `which` selects on
-//! PATHEXT — so a discoverable plugin there is `rwv-foo.exe` and
-//! `strip_prefix("rwv-")` names the verb `foo.exe`. These assertions are not
-//! merely spelled Unix-ly; what they assert is undefined on Windows until
-//! that naming is decided. Deciding it is a product question, not a test fix.
-
-#![cfg(unix)]
+//! Fixtures come from [`common::write_plugin`]: an exec-bit script on Unix, a
+//! `.cmd` file on Windows. Every name asserted here is the verb as typed, so
+//! the same assertion holds on both.
 
 use predicates::prelude::*;
+use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -31,23 +24,15 @@ mod common;
 /// Build a PATH string with `extra_dir` ahead of the git-only directory —
 /// doctor shells out to git, so its tests need git reachable, but nothing
 /// else the host's real PATH might carry.
-fn path_with_prefix(extra_dir: &Path) -> String {
-    format!(
-        "{}:{}",
-        extra_dir.display(),
-        common::tool_only_bin("git").display()
-    )
+fn path_with_prefix(extra_dir: &Path) -> OsString {
+    multi_path_with_prefix(&[extra_dir])
 }
 
 /// Build a PATH string from multiple dirs, each ahead of the git-only
 /// directory.
-fn multi_path_with_prefix(dirs: &[&Path]) -> String {
-    let prefix: Vec<String> = dirs.iter().map(|d| d.display().to_string()).collect();
-    format!(
-        "{}:{}",
-        prefix.join(":"),
-        common::tool_only_bin("git").display()
-    )
+fn multi_path_with_prefix(dirs: &[&Path]) -> OsString {
+    let git = common::tool_only_bin("git");
+    std::env::join_paths(dirs.iter().copied().chain([git.as_path()])).expect("PATH entries join")
 }
 
 fn rwv() -> assert_cmd::Command {
@@ -58,21 +43,14 @@ fn rwv() -> assert_cmd::Command {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Write an executable shell script at `dir/name`.
+/// Write a plugin at `dir/name` that prints `hi`.
 fn write_script(dir: &Path, name: &str) -> PathBuf {
-    let path = dir.join(name);
-    let mut f = fs::File::create(&path).unwrap();
-    write!(f, "#!/bin/sh\necho hi\n").unwrap();
-    drop(f);
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path
+    common::write_plugin(dir, name, "echo hi\n", "echo hi\n")
 }
 
-/// Write a NON-executable file at `dir/name`.
+/// Write a file at `dir/name` the host would not execute.
 fn write_non_exec(dir: &Path, name: &str) {
-    let path = dir.join(name);
-    fs::write(&path, "data\n").unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    common::write_non_plugin(dir, name);
 }
 
 /// Build a minimal workspace at `tmp/ws` with an active project.
@@ -187,7 +165,7 @@ fn help_shadowed_duplicate_not_listed_twice() {
     let dir2 = common::tempdir().expect("tempdir");
     write_script(dir1.path(), "rwv-tool");
     write_script(dir2.path(), "rwv-tool");
-    let path = format!("{}:{}", dir1.path().display(), dir2.path().display());
+    let path = std::env::join_paths([dir1.path(), dir2.path()]).expect("PATH entries join");
 
     let out = rwv()
         .arg("--help")
@@ -435,6 +413,59 @@ fn doctor_json_plugins_sorted_by_name() {
     );
 }
 
+/// Two files for one verb in one directory, differing only by extension, are
+/// both inventoried under the typed verb, and the one dispatch resolves is the
+/// winner. Windows only: Unix lookup appends no extension, so there the two
+/// files are two verbs.
+#[test]
+#[cfg(windows)]
+fn doctor_json_same_directory_pathext_duplicates_shadow_in_dispatch_order() {
+    let tmp = common::tempdir().expect("tempdir");
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let dir = common::tempdir().expect("tempdir");
+    fs::write(dir.path().join("rwv-dup.cmd"), "@echo cmd\r\n").unwrap();
+    fs::write(dir.path().join("rwv-dup.bat"), "@echo bat\r\n").unwrap();
+    let path = path_with_prefix(dir.path());
+    let dispatched =
+        which::which_in("rwv-dup", Some(&path), dir.path()).expect("`rwv dup` should dispatch");
+    let dispatched = repoweave::path_spelling::wire_path(&dispatched);
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .env("PATH", &path)
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value =
+        serde_json::from_slice(&out).expect("doctor --json output should be valid JSON");
+    let plugins = json["plugins"].as_array().expect("plugins array");
+    assert_eq!(plugins.len(), 2, "{plugins:?}");
+    assert!(
+        plugins.iter().all(|r| r["name"].as_str() == Some("dup")),
+        "both files are the verb `dup`: {plugins:?}"
+    );
+    let winner = plugins
+        .iter()
+        .find(|r| r["shadowed"].as_bool() == Some(false))
+        .expect("one winner");
+    assert_eq!(
+        winner["path"].as_str(),
+        Some(dispatched.as_str()),
+        "{plugins:?}"
+    );
+    let shadowed = plugins
+        .iter()
+        .find(|r| r["shadowed"].as_bool() == Some(true))
+        .expect("one shadowed copy");
+    assert_eq!(
+        shadowed["shadowed_by"].as_str(),
+        Some(dispatched.as_str()),
+        "{plugins:?}"
+    );
+}
+
 // ===========================================================================
 // 3. Host-PATH isolation control
 // ===========================================================================
@@ -454,8 +485,11 @@ fn suite_stays_green_with_decoy_on_inherited_path() {
     let decoy_dir = common::tempdir().expect("tempdir");
     write_script(decoy_dir.path(), "rwv-hostdecoy");
 
-    let inherited = std::env::var("PATH").unwrap_or_default();
-    let poisoned = format!("{}:{inherited}", decoy_dir.path().display());
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let poisoned = std::env::join_paths(
+        std::iter::once(decoy_dir.path().to_path_buf()).chain(std::env::split_paths(&inherited)),
+    )
+    .expect("PATH entries rejoin");
 
     let out = std::process::Command::new(std::env::current_exe().expect("test binary path"))
         .args([

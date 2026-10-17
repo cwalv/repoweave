@@ -31,11 +31,10 @@ fn every_wire_path_field_is_minted_by_the_seam() {
     // apart.
     //
     // Nothing in this file reaches that one. Its mint is pinned behaviourally,
-    // by plugins_help_doctor_test.rs and the `discover_plugins` unit tests, and
-    // all of those are `cfg(unix)` — the field whose spelling exists for
-    // Windows has no coverage a Windows run executes. A mint that diverged
-    // there, marking each winner shadowed by itself and publishing the host's
-    // own spelling, would pass this suite and CI alike.
+    // by plugins_help_doctor_test.rs and the `discover_plugins` unit tests,
+    // which run on Windows too; CI does not gate on that run, so a mint that
+    // diverged there, marking each winner shadowed by itself and publishing
+    // the host's own spelling, would still pass CI.
     const WIRE_PATH_FIELDS: &[&str] = &[
         "absolute_path",
         "actual_store_path",

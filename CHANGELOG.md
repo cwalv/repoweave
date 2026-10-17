@@ -12,6 +12,14 @@ claim that nothing changed in them.
 commit ids. An `rwv.toml` still carrying the table fails to load with an error
 saying the table was retired. Delete it.
 
+### Windows plugins are listed by the verb you type
+
+On Windows, `rwv --help` and the `plugins` array of `rwv doctor --json` name a
+plugin by the verb that runs it: `rwv-lint.exe` is listed as `lint`, not
+`lint.exe`. A `rwv-*` file is a plugin when its extension is in `PATHEXT`, and
+two such files for one verb in one directory are reported as duplicates, the
+one dispatch runs winning in `PATHEXT` order. Unix listing is unchanged.
+
 ## 0.23.0
 
 ### Refusals carry stable names

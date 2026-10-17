@@ -890,6 +890,48 @@ exit 0
     bin.as_os_str().to_owned()
 }
 
+/// Write a plugin fixture at `dir/<name>` that `rwv` discovers and dispatches
+/// as the verb after `rwv-`, and return its path.
+///
+/// On Unix, `sh` follows a `#!/bin/sh` line and the file gets the exec bit. On
+/// Windows there is no exec bit — `PATHEXT` decides what runs — so the file is
+/// `<name>.cmd` holding `cmd`, a batch body run with echo off; `Command` runs
+/// it through `cmd.exe`. Both bodies are written with `\n` line ends and the
+/// batch one is converted to `\r\n`.
+pub fn write_plugin(dir: &std::path::Path, name: &str, sh: &str, cmd: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = cmd;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{sh}")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+    #[cfg(windows)]
+    {
+        let _ = sh;
+        let path = dir.join(format!("{name}.cmd"));
+        let body = format!("@echo off\n{cmd}").replace('\n', "\r\n");
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+}
+
+/// Write a file at `dir/<name>` that is named like a plugin but that the host
+/// would not execute: mode 0o644 on Unix, `<name>.txt` on Windows.
+pub fn write_non_plugin(dir: &std::path::Path, name: &str) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, "data\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    #[cfg(windows)]
+    std::fs::write(dir.join(format!("{name}.txt")), "data\r\n").unwrap();
+}
+
 /// The spelling `CreateProcess` can execute — the same fact
 /// `integrations::node_tool` states for production: npm-family tools install
 /// `.cmd` shims on Windows, and `Command` runs a script through the

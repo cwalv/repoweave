@@ -13,20 +13,11 @@
 //!   - Adversarial: verb name containing `--`, args containing `--`, empty
 //!     `rwv-` name.
 //!
-//! SKIPPED ON WINDOWS. Every fixture here is a `#!/bin/sh` script made
-//! executable with a mode bit, and the subject is which of them `which` will
-//! dispatch off PATH. Windows has no executable bit — `which` selects on
-//! PATHEXT — so a discoverable plugin there is `rwv-foo.exe` and
-//! `strip_prefix("rwv-")` names the verb `foo.exe`. These assertions are not
-//! merely spelled Unix-ly; what they assert is undefined on Windows until
-//! that naming is decided. Deciding it is a product question, not a test fix.
-
-#![cfg(unix)]
+//! Every plugin fixture carries a POSIX shell body and a batch body for the
+//! same behaviour; [`common::write_plugin`] writes whichever the host runs.
 
 use predicates::prelude::*;
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -35,24 +26,22 @@ fn rwv() -> assert_cmd::Command {
     common::rwv()
 }
 
-/// Write an executable shell script at `dir/name` with the given body.
-///
-/// Sets mode 0o755 so it is executable by the current process.
-fn write_script(dir: &Path, name: &str, body: &str) -> PathBuf {
-    let path = dir.join(name);
-    let mut f = fs::File::create(&path).unwrap();
-    // Force a POSIX shell shebang so the child's interpreter is
-    // deterministic regardless of the test host's login shell.
-    write!(f, "#!/bin/sh\n{body}").unwrap();
-    drop(f);
-    let mut perms = fs::metadata(&path).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).unwrap();
-    path
+/// Write a plugin at `dir/name` running `sh` on Unix and `cmd` on Windows.
+fn write_script(dir: &Path, name: &str, sh: &str, cmd: &str) -> PathBuf {
+    common::write_plugin(dir, name, sh, cmd)
 }
 
-/// A path outside any workspace ($TMPDIR is safe because `resolve` walks up
-/// but never traverses above `$HOME`, and `$TMPDIR` is not under `$HOME`).
+/// Write a plugin that prints `marker` and exits 0.
+fn write_echo(dir: &Path, name: &str, marker: &str) -> PathBuf {
+    let line = format!("echo {marker}\n");
+    write_script(dir, name, &line, &line)
+}
+
+const ARGS_ECHO_SH: &str = "for a in \"$@\"; do echo \"[$a]\"; done\n";
+const ARGS_ECHO_CMD: &str = ":next\nif \"%~1\"==\"\" exit /b 0\necho [%~1]\nshift\ngoto next\n";
+
+/// A path outside any workspace, provided no ancestor of the temp dir is one
+/// — on Windows the temp dir sits inside the user profile.
 fn tmp_cwd() -> std::path::PathBuf {
     std::env::temp_dir()
 }
@@ -74,6 +63,7 @@ fn builtin_status_shadows_path_plugin() {
         plugin_dir.path(),
         "rwv-status",
         "echo IMPOSTOR_STATUS; exit 42\n",
+        "echo IMPOSTOR_STATUS\nexit 42\n",
     );
 
     // Invoke from /tmp (no workspace, no addressing flags) so the builtin
@@ -136,6 +126,7 @@ fn builtin_all_core_verbs_shadow_path_plugins() {
             plugin_dir.path(),
             &format!("rwv-{verb}"),
             "echo IMPOSTOR; exit 42\n",
+            "echo IMPOSTOR\nexit 42\n",
         );
     }
 
@@ -173,11 +164,7 @@ fn builtin_all_core_verbs_shadow_path_plugins() {
 fn external_verb_dispatched_with_args_verbatim() {
     let plugin_dir = common::tempdir().unwrap();
     // Echo each argument on its own line so the test can assert on order.
-    write_script(
-        plugin_dir.path(),
-        "rwv-foo",
-        "for a in \"$@\"; do echo \"[$a]\"; done\n",
-    );
+    write_script(plugin_dir.path(), "rwv-foo", ARGS_ECHO_SH, ARGS_ECHO_CMD);
 
     rwv()
         .args([
@@ -209,11 +196,7 @@ fn external_verb_does_not_see_global_addressing_flags() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let plugin_dir = common::tempdir().unwrap();
-    write_script(
-        plugin_dir.path(),
-        "rwv-foo",
-        "for a in \"$@\"; do echo \"[$a]\"; done\n",
-    );
+    write_script(plugin_dir.path(), "rwv-foo", ARGS_ECHO_SH, ARGS_ECHO_CMD);
 
     let assert = rwv()
         .args(["-C", &ws.to_string_lossy(), "foo", "arg1"])
@@ -243,6 +226,7 @@ fn external_verb_exit_code_propagated_verbatim() {
             plugin_dir.path(),
             &format!("rwv-exit-{code}"),
             &format!("exit {code}\n"),
+            &format!("exit {code}\n"),
         );
         let assert = rwv()
             .arg(format!("exit-{code}"))
@@ -267,11 +251,12 @@ fn external_verb_exit_code_propagated_verbatim() {
 
 /// Signal death propagates as 128 + N with a stderr line naming the plugin
 /// and the signal number. Uses `kill -9 $$` (SIGKILL, N=9), a signal every
-/// POSIX shell can raise on itself.
+/// POSIX shell can raise on itself. Unix only: Windows has no signals.
 #[test]
+#[cfg(unix)]
 fn external_verb_signal_reported_as_128_plus_n() {
     let plugin_dir = common::tempdir().unwrap();
-    write_script(plugin_dir.path(), "rwv-die", "kill -9 $$\n");
+    write_script(plugin_dir.path(), "rwv-die", "kill -9 $$\n", "");
     let assert = rwv()
         .arg("die")
         .current_dir(tmp_cwd())
@@ -345,9 +330,11 @@ fn exec_failure_names_binary_and_errno() {
     // descent), but `Command::spawn` fails with EACCES / EISDIR.
     let broken = plugin_dir.path().join("rwv-broken");
     fs::create_dir(&broken).unwrap();
-    let mut perms = fs::metadata(&broken).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&broken, perms).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     let assert = rwv()
         .arg("broken")
@@ -380,7 +367,7 @@ fn exec_failure_names_binary_and_errno() {
 #[test]
 fn soft_fallthrough_execs_plugin_outside_workspace() {
     let plugin_dir = common::tempdir().unwrap();
-    write_script(plugin_dir.path(), "rwv-outside", "echo PLUGIN_RAN\n");
+    write_echo(plugin_dir.path(), "rwv-outside", "PLUGIN_RAN");
     // Run from a genuine "not a workspace" cwd — the plugin dir itself
     // (an empty tempdir) has no `.rwv-workweave` marker and no workspace
     // above it.
@@ -404,7 +391,7 @@ fn soft_fallthrough_execs_plugin_outside_workspace() {
 fn explicit_c_flag_failure_errors_before_exec() {
     let plugin_dir = common::tempdir().unwrap();
     // A plugin that would print a marker if wrongly spawned.
-    write_script(plugin_dir.path(), "rwv-would-run", "echo SHOULD_NOT_RUN\n");
+    write_echo(plugin_dir.path(), "rwv-would-run", "SHOULD_NOT_RUN");
     // `-C` points at a path that doesn't exist. `resolve_cwd_override`
     // errors before we even get to the dispatch match.
     rwv()
@@ -423,7 +410,7 @@ fn explicit_w_flag_failure_errors_before_exec() {
     let tmp = common::tempdir().unwrap();
     let _ws = make_minimal_workspace(tmp.path(), "myproj");
     let plugin_dir = common::tempdir().unwrap();
-    write_script(plugin_dir.path(), "rwv-would-run", "echo SHOULD_NOT_RUN\n");
+    write_echo(plugin_dir.path(), "rwv-would-run", "SHOULD_NOT_RUN");
     rwv()
         .args(["-w", "myproj--nonexistent-workweave", "would-run"])
         .current_dir(tmp.path().join("ws"))
@@ -443,7 +430,7 @@ fn explicit_w_flag_failure_errors_before_exec() {
 fn explain_non_core_verb_reports_external_pointer() {
     let plugin_dir = common::tempdir().unwrap();
     // A rwv-foo that would print a marker if explain wrongly exec'd it.
-    write_script(plugin_dir.path(), "rwv-foo", "echo EXPLAIN_EXEC_BUG\n");
+    write_echo(plugin_dir.path(), "rwv-foo", "EXPLAIN_EXEC_BUG");
     rwv()
         .args(["explain", "foo"])
         .current_dir(tmp_cwd())
@@ -479,7 +466,7 @@ fn explain_typo_still_gets_did_you_mean() {
 #[test]
 fn external_verb_with_multiple_dashes_is_dispatched() {
     let plugin_dir = common::tempdir().unwrap();
-    write_script(plugin_dir.path(), "rwv-my-multi-word-verb", "echo RAN\n");
+    write_echo(plugin_dir.path(), "rwv-my-multi-word-verb", "RAN");
     rwv()
         .arg("my-multi-word-verb")
         .current_dir(tmp_cwd())
@@ -498,7 +485,7 @@ fn external_verb_with_multiple_dashes_is_dispatched() {
 fn write_env_dump_plugin(dir: &Path, name: &str, vars: &[&str]) -> PathBuf {
     // Each var: if set, print KEY=VALUE; if unset, print KEY=UNSET so tests
     // can distinguish "set to empty" from "not set at all".
-    let body: String = vars
+    let sh: String = vars
         .iter()
         .map(|v| {
             format!(
@@ -506,7 +493,13 @@ fn write_env_dump_plugin(dir: &Path, name: &str, vars: &[&str]) -> PathBuf {
             )
         })
         .collect();
-    write_script(dir, name, &body)
+    let cmd: String = std::iter::once("setlocal EnableDelayedExpansion\n".to_owned())
+        .chain(
+            vars.iter()
+                .map(|v| format!("if defined {v} (echo {v}=!{v}!) else (echo {v}=UNSET)\n")),
+        )
+        .collect();
+    write_script(dir, name, &sh, &cmd)
 }
 
 const ENVELOPE_VARS: &[&str] = &[
@@ -640,15 +633,7 @@ fn envelope_via_w_flag_sets_workweave_var() {
     // Replicate workspace structure in the workweave dir.
     std::fs::create_dir_all(ww_dir.join("github")).unwrap();
     std::fs::create_dir_all(ww_dir.join("projects").join("myproj")).unwrap();
-    // Register the workweave in the workspace index.
-    let index_dir = ws.join("projects").join("myproj");
-    let ww_canon = ww_dir.canonicalize().unwrap();
-    let index_content = format!(
-        "{{\"container\":\"{}\",\"workweaves\":{{\"feat\":\"{}\"}}}}",
-        ww_canon.parent().unwrap().display(),
-        ww_canon.display(),
-    );
-    std::fs::write(index_dir.join(".rwv-workweave-index"), &index_content).unwrap();
+    common::register_workweave(&ws, "myproj", "feat", &ww_dir);
 
     let assert = rwv()
         .args(["-w", "myproj--feat", "envcheck"])
@@ -864,9 +849,12 @@ fn cli_md_documents_external_commands_note() {
 
 /// Prepend `dir` to the inherited PATH so the plugin binaries win over any
 /// same-named binary already on PATH.
-fn prepend_path(dir: &Path) -> String {
-    let inherited = std::env::var("PATH").unwrap_or_default();
-    format!("{}:{inherited}", dir.display())
+fn prepend_path(dir: &Path) -> std::ffi::OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(
+        std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&inherited)),
+    )
+    .expect("PATH entries rejoin")
 }
 
 /// Build a minimal workspace at `tmp/ws` with a `projects/<project>/rwv.toml`
