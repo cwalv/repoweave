@@ -20,7 +20,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 
 ## Review and agents
 
-- [Review a PR with a workweave](./review-pr-with-workweave.md) — isolated PR checkout, build, and cleanup
+- [Review a PR with a workweave](./review-pr-with-workweave.md) — detached PR checkout, build, review fixes, and cleanup
 - [Hand a task to an agent](./hand-task-to-agent.md) — `rwv setup claude`, `rwv prime`, and parallel workweave isolation
 - [Cache builds across workweaves](./cache-builds-across-workweaves.md) — reflink/hardlink sharing, `sccache`, `pnpm` store, and `uv` cache
 
@@ -28,7 +28,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 
 - [Reconcile repos with the lock](./reconcile-repos.md) — `rwv status`, `rwv doctor --locked`, and `rwv fetch` in-place repair
 - [Regenerate ecosystem workspace files](./regenerate-ecosystem-files.md) — `rwv doctor --fix` to re-author, `rwv materialize` to settle drift and run hooks
-- [Upgrade to a new rwv on an existing weave](./upgrade-rwv.md) — clearing marker, manifest, and lock refusals in order when upgrading `rwv`
+- [Upgrade to a new rwv on an existing weave](./upgrade-rwv.md) — clearing marker, manifest, and lock refusals in order when upgrading `rwv`, and the health-floor refusal
 
 ## Release and integration
 

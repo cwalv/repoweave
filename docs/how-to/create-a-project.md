@@ -11,11 +11,11 @@ rwv add https://github.com/chatly/shared-types.git --role dependency
 rwv lock --commit
 ```
 
-`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml` and `.gitattributes` (with `rwv.lock merge=rwv-ours`), configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`.
+`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml` and `.gitattributes` (with `rwv.lock merge=rwv-ours`), configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv add` clones the repo, records it in `rwv.toml`, and regenerates the integration files; `rwv lock --commit` then writes `rwv.lock` and commits it together with `rwv.toml`.
 
 ## Enable ecosystem integrations
 
-By default, `cargo-workspace`, `npm-workspaces`, `go-work`, `uv-workspace`, and `vscode-workspace` are enabled and auto-detect when matching member markers (`Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`, or 2+ member repos) are present. Integrations like `pnpm-workspaces`, `gita`, and `static-files` are opt-in in `projects/web-app/rwv.toml` (and you can explicitly set `enabled = true` or `enabled = false` on any integration):
+By default, `cargo-workspace`, `npm-workspaces`, `go-work`, `uv-workspace`, and `vscode-workspace` are enabled. The first four act only when a member repo carries their marker (`Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`); `vscode-workspace` covers every member repo. `pnpm-workspaces`, `gita`, and `static-files` are opt-in in `projects/web-app/rwv.toml`, and you can set `enabled = true` or `enabled = false` on any integration:
 
 ```toml
 [integrations.npm-workspaces]
@@ -29,18 +29,18 @@ enabled = true
 files = ["justfile"]
 ```
 
-After editing `rwv.toml`, author the newly enabled integration files, surface their weave-root symlinks, and run their install hooks:
+After editing `rwv.toml`, author the newly enabled integrations' files, then remove what the disabled ones left behind, surface the weave-root symlinks, and run the install hooks:
 
 ```bash
 rwv doctor --fix
-rwv activate web-app
+rwv materialize
 ```
 
-(`rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix` author integration files inside `projects/web-app/`; `rwv activate` surfaces weave-root symlinks and runs install hooks.)
+`rwv doctor --fix` authors files for an integration you just enabled; it does not remove a disabled integration's files, and says so. `rwv materialize` strips them, repairs the weave-root symlinks, and runs install hooks for the active project. An install hook whose tool is missing (`pnpm` here) prints a warning naming the tool and does not fail the command. `rwv add`, `rwv remove`, `rwv update`, and `rwv role` regenerate integration files as they change membership, and in the primary weave they also run install hooks.
 
 ## Commit and publish the project repository
 
-`projects/web-app/` is an ordinary git repository. While `rwv lock --commit` stages and commits `rwv.lock`, run `git commit` in `projects/web-app/` to commit `rwv.toml`, `.gitattributes`, and generated workspace files, then push to a remote repository and set `origin/HEAD` so teammates and CI can materialize the weave with `rwv fetch`:
+`projects/web-app/` is an ordinary git repository. `rwv lock --commit` commits `rwv.lock`, plus `rwv.toml` when it has uncommitted changes, and nothing else, so commit the rest with git: `.gitattributes` and the generated workspace files. Teammates get `rwv.lock merge=rwv-ours` only from a committed `.gitattributes`, and `rwv push` does not refuse while `.gitattributes` is untracked. Then push to a remote and set `origin/HEAD`, which `rwv push` requires before it publishes the project repo:
 
 ```bash
 git -C projects/web-app add -A
@@ -50,7 +50,7 @@ git -C projects/web-app push -u origin main
 git -C projects/web-app remote set-head origin main
 ```
 
-Teammates can now clone and materialize the entire workspace with one command:
+Teammates and CI can now clone and materialize the entire workspace with one command:
 
 ```bash
 mkdir -p ~/weave && cd ~/weave
@@ -70,7 +70,7 @@ git -C projects/billing-service commit -m "Initialize billing-service project"
 rwv lock --commit
 ```
 
-Because `github/chatly/shared-types/` is already cloned in the weave, `rwv add` reuses the existing canonical clone without re-downloading it. Switch between projects at the weave root with [`rwv activate`](./switch-projects.md) or open both simultaneously in separate [workweaves](./create-feature-workweave.md).
+`rwv init billing-service` makes `billing-service` the active project, so the `rwv add` commands that follow write to its `rwv.toml`. Because `github/chatly/shared-types/` is already cloned in the weave, `rwv add` reuses the existing canonical clone without re-downloading it, and warns that the clone is now shared between two projects. Switch between projects at the weave root with [`rwv activate`](./switch-projects.md) or open both simultaneously in separate [workweaves](./create-feature-workweave.md).
 
 ## Related
 

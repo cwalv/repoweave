@@ -52,10 +52,12 @@ if [ -n "${RWV_WORKWEAVE:-}" ]; then
 else
   paths=$(rwv -C "$RWV_WORKSPACE" status --project "$RWV_PROJECT" --json | jq -r '.repos[].absolute_path')
 fi
-echo "$paths" | xargs -I {} env -C "{}" "$@"
+while IFS= read -r path; do
+  (cd "$path" && "$@") < /dev/null
+done <<< "$paths"
 ```
 
-Install the script on `$PATH` (for example `~/.local/bin/rwv-each` with `chmod +x`). Invoking `rwv each git status` or `rwv -w myproj--hotfix each git status` then runs the command across every member repo of the addressed workspace, and `rwv --help` lists `each` under "External commands."
+Install the script on `$PATH` (for example `~/.local/bin/rwv-each` with `chmod +x`). Invoking `rwv each git status` or `rwv -w myproj--hotfix each git status` then runs the command across every member repo of the addressed workspace, stopping at the first repo where it fails and exiting with its status, and `rwv --help` lists `each` under "External commands."
 
 ## Optional: `gita` integration
 
@@ -64,6 +66,15 @@ The opt-in [gita integration](../reference/integrations/gita.md) maintains `gita
 ```toml
 [integrations.gita]
 enabled = true
+```
+
+`rwv doctor --fix` writes both files and surfaces `gita/` at the weave root. gita reads its configuration from `$GITA_PROJECT_HOME/gita/`, so point `GITA_PROJECT_HOME` at the weave root and run gita from there:
+
+```bash
+rwv doctor --fix
+export GITA_PROJECT_HOME="$PWD"
+gita ll owned
+gita super owned status --short
 ```
 
 ## Related
