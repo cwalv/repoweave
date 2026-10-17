@@ -103,15 +103,20 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 
 ### `cwd-in-inactive-project`
 
-**Condition.** A verb that writes into its project was run from inside
-`projects/<name>/`, and `.rwv-active` selects a different project.
+**Condition.** A verb that writes into its project (`add`, `remove`, `role`,
+`lock`, `update`, `push`, `sync`, `sync-to`, in-place `fetch`, or `doctor
+--fix`) was run from inside `projects/<name>/` at a primary weave root, with no
+`--project`, while `.rwv-active` selects a different project.
 
 **Why.** Changing into a project's directory does not select it, so the verb
 would write into the active project while the directory says the other one was
-meant.
+meant. Writing into a project the operator did not mean is the outcome the
+refusal prevents; `rwv status` and `rwv doctor` without `--fix` only read, and
+warn instead.
 
-**Exits.** Pass `--project <name>` to act on either project from where you
-are, or `rwv activate <name>` to make the directory's project the active one.
+**Exits.** Pass `--project <name>` naming either project to act on it from
+where you are, or `rwv activate <name>` to make the directory's project the
+active one. Nothing was written.
 
 **Where this sits.** [Weave root](../explanation/joints/weave-root.md).
 
@@ -146,16 +151,37 @@ so the previous state is intact.
 
 ### `dirty-checkout`
 
-**Condition.** A checkout the verb must move, record or delete carries
-uncommitted tracked changes.
+**Condition.** A checkout the verb must move, record, publish or delete
+carries uncommitted changes. The sites:
 
-**Why.** Sync rebases or fast-forwards these repos; a lock records their tips.
-Running over tracked dirt would either leave a half-rebased tree needing `rwv
-abort`, or record a tip that does not describe what is on disk.
+- `rwv sync` and `rwv sync-to` find tracked changes in a repo they would
+  rebase or fast-forward: in CWD, and for `sync-to` in the target too.
+- `rwv lock` (without `--dirty`) finds uncommitted changes in a member repo,
+  untracked files included.
+- `rwv lock --commit` and `rwv update --commit` find changes in the project
+  repo outside `rwv.lock` and `rwv.toml`, which they commit.
+- `rwv push` finds a staged or unstaged change to a tracked file in the
+  project repo, or an `rwv.toml` or `rwv.lock` that is not tracked.
+- `rwv role <repo> reference` finds tracked changes that would become
+  read-only.
+- `rwv remove --delete` would delete a checkout holding changes, untracked
+  files included, and replay would prune one; a refused prune does not stop
+  the sync, which reports the checkout and exits 1 when it completes.
+- `rwv sync-to --retire` finds changes in any checkout under the workweave,
+  listing one the manifest does not name with the suffix
+  `(not a manifest member)`.
+
+**Why.** Sync rebases or fast-forwards these repos; a lock records their tips;
+push publishes the project repo's last commit; a delete removes the checkout.
+Running over the changes would leave a half-rebased tree needing `rwv abort`,
+record a tip that does not describe what is on disk, publish a commit without
+the edits the operator sees, or destroy work that exists nowhere else.
 
 **Exits.** Commit or stash the named changes, then re-run — the refusal lists
-the exact files. Untracked files are not this condition and never refuse: they
-survive rebase and fast-forward untouched.
+the exact files. For push, commit with `rwv lock --commit` or `rwv update
+--commit` when the change is a relock. Where a site reads tracked changes
+only, an untracked file does not refuse it: it survives rebase and
+fast-forward untouched.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
 the lock's derived status is [Lock as derived](../explanation/joints/lock-as-derived.md).
@@ -170,8 +196,10 @@ branch, so a plain fork silently leaves it behind in the source while the
 operator believes it came along.
 
 **Exits.** Commit the changes and create; or pass `--capture-dirty`, which
-carries them into the new workweave — the flag is named for the consequence it
-accepts.
+moves uncommitted edits to `rwv.toml` and `rwv.lock` into the new workweave
+and returns the source's copies to their committed version — the flag is named
+for the consequence it accepts. Other uncommitted files stay in the source,
+and `create` lists them.
 
 ### `dropped-repo-has-unique-commits`
 
@@ -183,8 +211,11 @@ some commits, removal destroys them, and no `rwv abort` recovers work that was
 never anywhere else.
 
 **Exits.** Push the commits to their remote, or merge them somewhere that
-survives, then re-run. If the commits are genuinely unwanted, remove the
-checkout by hand first so the loss is a deliberate act.
+survives, then re-run `rwv remove --delete`. If the commits are genuinely
+unwanted, remove the checkout by hand so the loss is a deliberate act. A sync
+whose replay refuses this prune still completes, reports the checkout and
+exits 1; re-running it will not prune the checkout, so remove it by hand once
+nothing in it is needed.
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 
@@ -202,20 +233,25 @@ explicitly.
 
 ### `foreign-clone-at-placement`
 
-**Condition.** `rwv add <url>` places at a path that already holds a clone
-whose origin names a different repository.
+**Condition.** `rwv add <url>` (or shorthand) for a repo the manifest does not
+list yet places at a path that already holds a clone whose configured
+`origin` URL is not equivalent to the one given, or that has no `origin` at
+all.
 
 **Why.** A clone already at the placement stands in for the one `add` would
 make only when it is a clone of that URL. Registering any other clone under
-the URL given would record a remote the checkout does not track.
+the URL given would record a remote the checkout does not track. The
+comparison reads the configured URL, not one a `url.<base>.insteadOf` rule
+rewrites, and treats a `file://` URL as equal to the path it encodes.
 
-**Exits.** Register the existing clone under its own origin with `rwv add
---adopt <path>`, or move it aside and re-run the add.
+**Exits.** Register the existing clone under the URL it records with `rwv add
+--adopt <path>`, or move it aside and re-run the add. Nothing was written.
 
 ### `foreign-tip`
 
 **Condition.** `rwv abort` found a ref at a tip the recorded operation does not
-account for.
+account for. The verdict is the same whichever workspace of the op abort runs
+from.
 
 **Why.** Abort restores each repo to the savepoint the op took. A tip the op
 never wrote means something else moved that ref, and restoring would discard a
@@ -223,7 +259,8 @@ change the operation is not responsible for.
 
 **Exits.** Inspect the named repos and decide: if the foreign commits are
 wanted, move them somewhere safe first; if not, reset the ref yourself and
-re-run `rwv abort`.
+re-run `rwv abort`, or pass `--abandon-foreign-tip <repo>` to restore that repo
+anyway, keeping the abandoned commits at `refs/rwv/pre-abort/<op-id>`.
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 
@@ -278,7 +315,8 @@ applied that nothing read. The refusal is generic: a per-flag
 token would name the remedy's argument rather than a state.
 
 **Exits.** Drop the flag, or switch to the mode that reads it — the message
-names which.
+names which. For example, `rwv fetch --project` with a source refuses, because
+the source names the project it clones.
 
 ### `invalid-ref-name`
 
@@ -302,9 +340,10 @@ naming rules exclude on top of git's.
 it while the clones say something else would hand collaborators a lock
 describing a tree that does not exist anywhere.
 
-**Exits.** `rwv lock` to re-pin from the working tips, or check out the locked
-revisions in each repo the message names. Which one is right depends on
-whether the tree or the lock is the state you meant.
+**Exits.** `rwv lock --commit` to re-pin from the working tips and commit the
+lock push publishes, or check out the locked revisions in each repo the
+message names. Which one is right depends on whether the tree or the lock is
+the state you meant.
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 
@@ -411,14 +450,16 @@ a single invocation.
 
 ### `no-clone-to-adopt`
 
-**Condition.** `rwv add --adopt` names a path that holds no clone.
+**Condition.** `rwv add --adopt <path>` names a path that holds no clone. A
+bare repository is not a clone here: it has no checkout to register.
 
 **Why.** `--adopt` registers a clone already on disk and reads its URL from
 that clone. With nothing there, there is no URL to record and nothing to
 register.
 
 **Exits.** Name the clone by its path under the weave root, or drop `--adopt`
-and give the URL to clone from (`file://` for a local remote).
+and give the URL to clone from (`file://` for a local remote, which is the
+spelling for a bare repository on disk).
 
 ### `no-explain-entry`
 
@@ -435,14 +476,15 @@ plugin, its own `--help` is the documentation.
 
 ### `no-matching-registry`
 
-**Condition.** No registry recognizes the argument, in either direction — a
-URL that maps to no local path, or a path that infers no URL.
+**Condition.** `rwv add` was given a URL from which no placement can be
+derived, such as one with no owner and repo path (`https://example.com`).
 
-**Why.** The registry set is what makes paths and URLs interconvertible. An
-argument outside it cannot be placed on disk or fetched.
+**Why.** Every member lands at `<registry>/<owner>/<repo>/`, derived from its
+URL: a built-in registry's name, the URL's own host, or `local` for `file://`.
+A URL that yields no owner and repo cannot be placed on disk.
 
-**Exits.** Use a URL from a supported registry, or add the repo under an
-explicit three-segment path so no inference is needed.
+**Exits.** Give the repository's own clone URL. An argument that is not a URL
+at all is a different refusal, `unresolvable-repo-source`.
 
 ### `no-op-recorded`
 
@@ -458,23 +500,28 @@ be in flight, it completed or was already aborted.
 
 ### `no-remote-default-branch`
 
-**Condition.** The remote publishes no default branch.
+**Condition.** A repo records no default branch for its remote (`origin/HEAD`
+is unset, for git). `rwv add` reads it to fill `version`, and `rwv push` reads
+it for the project repo, whose canonical branch it is.
 
-**Why.** rwv records what to track rather than guessing `main`. A remote with
-no published default gives nothing verifiable to record, and a fabricated guess
-would be wrong silently.
+**Why.** rwv records what to track and what to publish rather than guessing
+`main`. A repo with no recorded default gives nothing verifiable to use, and a
+fabricated guess would be wrong silently.
 
-**Exits.** The message names the repair for the VCS in question — set the
-remote's default branch, then re-run.
+**Exits.** The message names the repair for the VCS in question — for git,
+`git fetch origin && git remote set-head origin -a` in the named repo — then
+re-run.
 
 ### `no-remote-url`
 
-**Condition.** A local clone has no conventional remote to read a URL from.
+**Condition.** `rwv add --adopt` names a clone with no conventional remote
+(`origin`, for git) to read a URL from.
 
 **Why.** The manifest records where a repo comes from. A clone with no remote
 has no origin to record, and an invented one would not fetch.
 
-**Exits.** Add the remote, or supply the URL explicitly.
+**Exits.** Add the remote to the clone and re-run, or move the clone aside and
+add the repo by its URL.
 
 ### `no-such-workweave`
 
@@ -500,21 +547,6 @@ there is no frame to interpret the command in.
 **Exits.** `cd` into a weave, or `rwv init` to create one here.
 
 **Where this sits.** [Weave root](../explanation/joints/weave-root.md).
-
-### `occupied-placement`
-
-**Condition.** An `rwv add <url>`, or an `rwv add --new` creation address,
-places at a path the manifest already maps to a different URL.
-
-**Why.** Placement is a function of the identity a registry mints, not of a
-creation parameter like `--param root=<dir>`. Two different roots naming the
-same owner and repo would both place at the same path if this proceeded
-silently, and the second creation would overwrite the first's meaning in the
-manifest without saying so.
-
-**Exits.** To finish an entry already in the manifest, re-run with the URL it
-records. Otherwise use a different owner or repo so the two do not collide, or
-remove the existing entry first if replacing it is what's intended.
 
 ### `not-fast-forwardable`
 
@@ -542,6 +574,21 @@ whose.
 
 **Exits.** Choose an empty directory, or pass `--allow-non-empty-dir` to
 accept bootstrapping over what is there.
+
+### `occupied-placement`
+
+**Condition.** An `rwv add <url>`, or an `rwv add --new` creation address,
+places at a path the manifest already maps to a different URL.
+
+**Why.** Placement is a function of the identity a registry mints, not of a
+creation parameter like `--param root=<dir>`. Two different roots naming the
+same owner and repo would both place at the same path if this proceeded
+silently, and the second creation would overwrite the first's meaning in the
+manifest without saying so.
+
+**Exits.** To finish an entry already in the manifest, re-run with the URL it
+records. Otherwise use a different owner or repo so the two do not collide, or
+remove the existing entry first if replacing it is what's intended.
 
 ### `op-acquisition-raced`
 
@@ -649,8 +696,9 @@ collaborator has seen an inconsistent pair.
 
 ### `project-repo-off-canonical-branch`
 
-**Condition.** The project repo is attached to a non-canonical branch at push
-time.
+**Condition.** The project repo is attached to a branch other than its
+canonical one at push time. The canonical branch is the one the project
+repo's remote declares as default (`origin/HEAD`), whatever it is called.
 
 **Why.** Publishing is defined from the canonical branch. Pushing from a topic
 branch would publish a lock nobody's canonical history reaches.
@@ -720,15 +768,20 @@ both.
 
 ### `replace-target-holds-work`
 
-**Condition.** The reuse or replace target holds work that no flag available
-here consents to losing.
+**Condition.** The workweave `rwv workweave create` would reuse or replace
+holds work that no flag available here consents to losing: uncommitted
+changes or unlanded commits in any checkout under it, a member or not. A
+checkout the manifest does not name is listed with the suffix
+`(not a manifest member)`.
 
 **Why.** Consent flags are named for the specific consequence they accept. This
 state mixes predicates — uncommitted changes and unlanded commits together —
-and no single flag names that combined loss, so none is offered.
+and no single flag on `create` names that combined loss, so none is offered.
 
 **Exits.** Deal with the work directly: commit or discard the changes, land or
-abandon the commits, then re-run. The refusal lists what it found.
+abandon the commits, then re-run. Or delete the workweave explicitly with `rwv
+workweave <project> delete <name>`, whose two discard flags each name one of
+the losses, and create it again. The refusal lists what it found.
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 
@@ -771,30 +824,37 @@ wrong.
 
 ### `retire-not-converged`
 
-**Condition.** `--retire`'s merged-check found divergence from the target.
+**Condition.** After the landing, `--retire` found a member repo whose tip in
+the workweave differs from the target's, or that is missing on one side. The
+op parks at the retire phase, with op-state held in both workspaces.
 
 **Why.** Retiring deletes the workweave. That is only safe once everything in
 it is reachable from the target; divergence means some of it is not, and the
 delete would take it.
 
-**Exits.** Land the divergent commits — re-run `sync-to` without `--retire`
-first — then retire. Or inspect and discard them with `rwv workweave <project> delete <name> --discard-unmerged-commits`.
+**Exits.** Reconcile the divergent repos the message lists, then run `rwv
+sync-to --continue`, which re-runs the retire check. Or `rwv abort` to roll
+the whole op back.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
 ### `retire-unpruned-checkout`
 
-**Condition.** `--retire` found a member checkout in the workweave that replay
-could not prune: the manifest no longer names it, and it is still on disk.
+**Condition.** `rwv sync-to --retire` found a checkout in the workweave that
+replay could not prune: the manifest no longer names it, and it is still on
+disk. The landing into the target has completed; the op parks at the retire
+phase, with op-state held in both workspaces.
 
 **Why.** Replay refuses to prune a checkout whose removal would lose
 something: uncommitted changes, commits nothing else reaches, or an object
 store the weave has nowhere else. Retiring deletes the whole workweave, and
 that checkout with it.
 
-**Exits.** Save what you need from the checkout, or discard it, then remove it
-by hand and run `rwv sync-to --continue`, which re-runs the retire check. Or
-run `rwv abort` to roll the whole op back.
+**Exits.** Save what you need from the checkout (commit and push it, or copy it
+out) or discard it, then remove it by hand and run `rwv sync-to --continue`,
+which re-runs the retire check and retires once the checkout is gone.
+Committing or discarding alone does not unblock it: the checkout has to go.
+Or run `rwv abort` to roll the whole op back.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
@@ -939,8 +999,12 @@ names.
 
 ### `uncommitted-work`
 
-**Condition.** A workweave being deleted carries uncommitted changes, and
-`--discard-uncommitted` was not given.
+**Condition.** A workweave being deleted carries uncommitted changes, untracked
+files included, and `--discard-uncommitted` was not given. Every checkout
+under the workweave counts, not only the members the manifest names: a member
+replay could not prune, one the workweave added that has not landed, or a
+clone put there by hand, each listed with the suffix `(not a manifest
+member)`.
 
 **Why.** Deleting takes the working tree with it. Uncommitted work exists
 nowhere else, so the flag is named for exactly the loss it accepts.
@@ -970,7 +1034,8 @@ indistinguishable from a clean weave — the most dangerous silent success in th
 tool.
 
 **Exits.** The refusal lists the valid kinds, derived from the vocabulary
-itself. [Doctor findings](./doctor-findings.md) has an entry for each.
+itself: the kinds `violations` carries and the integration kinds `issues`
+carries. [Doctor findings](./doctor-findings.md) has an entry for each.
 
 ### `unknown-registry`
 
@@ -1012,12 +1077,17 @@ refuses names that *do* dispatch.
 
 ### `unmerged-commits`
 
-**Condition.** A workweave being deleted has commits not reachable from the
-target, and `--discard-unmerged-commits` was not given.
+**Condition.** A workweave being deleted holds commits contained in neither its
+recorded parent nor the primary weave, and `--discard-unmerged-commits` was
+not given. As for `uncommitted-work`, every checkout under the workweave
+counts; one the manifest does not name is listed with the suffix `(not a
+manifest member)`, and is reported even when no baseline holds that repo at
+all.
 
-**Why.** The commits exist only on the ephemeral branch the delete retracts.
-The flag names that specific loss — separately from uncommitted changes, which
-is a different loss and has its own flag.
+**Why.** The commits exist only on the ephemeral branch the delete retracts,
+or in a checkout the delete removes. The flag names that specific loss —
+separately from uncommitted changes, which is a different loss and has its own
+flag.
 
 **Exits.** `rwv sync-to` to land the commits, then delete; or pass
 `--discard-unmerged-commits` to accept losing them.
@@ -1074,13 +1144,18 @@ characters and the rule each one protects.
 
 ### `unresolvable-repo-source`
 
-**Condition.** The source parses as neither a URL nor a known shorthand.
+**Condition.** The source parses as neither a URL nor a known shorthand. For
+`rwv add` and `rwv fetch` this includes a plain path, relative or absolute.
 
-**Why.** rwv accepts both spellings and converts between them. An argument that
-is neither cannot be placed on disk or fetched, and guessing which was meant
-would clone from somewhere unintended.
+**Why.** A plain path could name a remote to clone from or, for `rwv add`, a
+clone already on disk to register. Guessing between them clones from somewhere
+unintended or records the wrong URL, so each meaning has its own spelling.
 
-**Exits.** Give a full URL, or `owner/repo` shorthand for a supported registry.
+**Exits.** The message names them. To clone from a local remote, spell it as a
+URL: `file:///abs/path`. To register the clone already at that path under the
+weave root: `rwv add --adopt <path>`. To fetch the members of a project already
+in this weave, drop the source: `rwv fetch --project <name>`. Otherwise give a
+full URL, or `owner/repo` shorthand for a supported registry.
 
 ### `untracked-collision`
 
@@ -1097,12 +1172,12 @@ they are not in any commit to recover from.
 
 **Condition.** An `rwv add --new` creation parameter's value cannot be used
 as given: a name the registry does not declare, a `--params-json` entry that
-is not a JSON string, a `root` that is not an absolute path, a `root` directory that does not exist, a `root` inside
-the weave it would create a member of, or a name supplied through more than
-one spelling (the address's own three-segment shorthand, `--param`, and
-`--params-json` all write into the same map, and a name given twice is a
-disagreement about intent rather than a precedence question a default could
-answer silently).
+is not a JSON string, a `root` that is not an absolute path, a `root`
+directory that does not exist, a `root` inside the weave it would create a
+member of, or a name supplied through more than one spelling (the address's
+own three-segment shorthand, `--param`, and `--params-json` all write into the
+same map, and a name given twice is a disagreement about intent rather than a
+precedence question a default could answer silently).
 
 **Why.** Each of these would silently create something other than what the
 operator asked for — a directory materialized from a typo, a parameter no
