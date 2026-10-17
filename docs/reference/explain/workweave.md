@@ -182,12 +182,10 @@ Show this workweave's **unique commits vs its recorded parent**, per member
 repo and the project repo (`projects/<project>`). Must be run from inside a
 workweave.
 
-Parent identity comes from the `.rwv-workweave` marker's `parent:` field — NOT
-the branch name. Workweave branches are stacked (`{project}--wwb/{project}--wwa/main`),
-so a constructed `basename(parent)/main` name silently breaks when the parent
-is itself a workweave, and is wrong after adoption re-points a child to primary.
-The verb reads the marker, so it is correct for stacked and adopted parents
-alike.
+Parent identity comes from the `.rwv-workweave` marker's `parent:` field, never
+from the branch name: a workweave's branch is the flat `{project}--{name}`,
+which names no parent, and adoption can re-point a child to primary. The verb
+reads the marker, so it is correct for nested and adopted parents alike.
 
 For each repo, "unique" commits are those in the workweave's history but not
 the parent's — reachable from the workweave's tip but not from the parent's tip
