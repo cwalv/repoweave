@@ -109,19 +109,19 @@ fn materialize_refuses_over_a_malformed_member_spec_and_changes_nothing() {
     );
 
     let (ok, out) = rwv(&["materialize"], &ws);
-    assert!(!ok, "materialize must refuse:\n{out}");
-    assert!(
-        out.contains("nothing here was changed") && out.contains("incldue"),
-        "the refusal names the field and that nothing moved:\n{out}"
+    assert_eq!(
+        String::from_utf8_lossy(&digests(&ws)),
+        String::from_utf8_lossy(&before),
+        "a refusing materialize must leave the attestations byte-identical:\n{out}"
     );
+    assert!(!ok, "materialize must refuse:\n{out}");
     assert!(
         !out.contains("[forgot]"),
         "nothing may be forgotten:\n{out}"
     );
-    assert_eq!(
-        digests(&ws),
-        before,
-        "a refusing materialize must leave the attestations byte-identical"
+    assert!(
+        out.contains("nothing here was changed") && out.contains("incldue"),
+        "the refusal names the field and that nothing moved:\n{out}"
     );
 
     let (ok, out) = rwv(&["materialize", "--remove-undeclared-links"], &ws);
