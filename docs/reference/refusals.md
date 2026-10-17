@@ -226,7 +226,7 @@ verb has nowhere to put the result.
 initial commit first. For push specifically, the canonical branch is the one
 publishing requires — see `project-repo-off-canonical-branch`.
 
-**Where this sits.** [Branch model](../explanation/joints/branches.md).
+**Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
 ### `health-floor-too-low`
 
@@ -241,7 +241,7 @@ instead of acting on assumptions that no longer hold.
 `rwv doctor --fix --all` until `rwv doctor --all` reports clean — which records
 the floor — then upgrade again.
 
-**Where this sits.** [Pyramid of stability](../explanation/joints/pyramid-of-stability.md).
+**Where this sits.** [Upgrade rwv](../how-to/upgrade-rwv.md).
 
 ### `inapplicable-flag`
 

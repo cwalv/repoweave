@@ -6915,10 +6915,10 @@ mod tests {
     #[test]
     fn joints_agreement_passes_when_sets_match() {
         let summary = "\
-- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n\
+- [Lock-as-derived](./explanation/joints/lock-as-derived.md)\n\
 - [Clone topology](./explanation/joints/clone-topology.md)\n";
         let index = "\
-- [Pyramid of stability](./joints/pyramid-of-stability.md)\n\
+- [Lock-as-derived](./joints/lock-as-derived.md)\n\
 - [Clone topology](./joints/clone-topology.md)\n";
         let summary_stems = collect_joints_stems_from_summary(summary);
         let index_stems = collect_joints_stems_from_index(index);
@@ -6932,10 +6932,10 @@ mod tests {
     #[test]
     fn joints_agreement_detects_summary_only_page() {
         let summary = "\
-- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n\
+- [Lock-as-derived](./explanation/joints/lock-as-derived.md)\n\
 - [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)\n";
         let index = "\
-- [Pyramid of stability](./joints/pyramid-of-stability.md)\n";
+- [Lock-as-derived](./joints/lock-as-derived.md)\n";
         let summary_stems = collect_joints_stems_from_summary(summary);
         let index_stems = collect_joints_stems_from_index(index);
         assert!(
@@ -6952,9 +6952,9 @@ mod tests {
     #[test]
     fn joints_agreement_detects_index_only_page() {
         let summary = "\
-- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n";
+- [Lock-as-derived](./explanation/joints/lock-as-derived.md)\n";
         let index = "\
-- [Pyramid of stability](./joints/pyramid-of-stability.md)\n\
+- [Lock-as-derived](./joints/lock-as-derived.md)\n\
 - [Clone topology](./joints/clone-topology.md)\n";
         let summary_stems = collect_joints_stems_from_summary(summary);
         let index_stems = collect_joints_stems_from_index(index);
@@ -6974,14 +6974,14 @@ mod tests {
         let summary = "\
 - [Introduction](./explanation/index.md)\n\
 - [Workspace lens](./explanation/lenses/workspace.md)\n\
-- [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)\n";
+- [Lock-as-derived](./explanation/joints/lock-as-derived.md)\n";
         let stems = collect_joints_stems_from_summary(summary);
         assert_eq!(
             stems.len(),
             1,
             "only the joints line should be extracted, got: {stems:?}"
         );
-        assert!(stems.contains("pyramid-of-stability"));
+        assert!(stems.contains("lock-as-derived"));
     }
 
     /// Non-joints lines in index.md (lenses section) are not extracted.
@@ -6989,14 +6989,14 @@ mod tests {
     fn index_stem_extractor_ignores_non_joints_lines() {
         let index = "\
 - [Workspace lens](./lenses/workspace.md)\n\
-- [Pyramid of stability](./joints/pyramid-of-stability.md)\n";
+- [Lock-as-derived](./joints/lock-as-derived.md)\n";
         let stems = collect_joints_stems_from_index(index);
         assert_eq!(
             stems.len(),
             1,
             "only the joints line should be extracted, got: {stems:?}"
         );
-        assert!(stems.contains("pyramid-of-stability"));
+        assert!(stems.contains("lock-as-derived"));
     }
 
     /// Empty content produces an empty stem set (no panic, no spurious entries).

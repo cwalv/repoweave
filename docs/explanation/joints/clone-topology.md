@@ -1,8 +1,9 @@
 # Clone topology
 
 repoweave's correctness story has tiers. The
-[pyramid-of-stability](./pyramid-of-stability.md) joint defines *which set
-of revisions* a project resolves to. The [shared-refs-drift](./shared-refs-drift.md)
+[lock-as-derived](./lock-as-derived.md) joint defines *which set of
+revisions* a project resolves to: the SHAs its committed `rwv.lock` pins. The
+[shared-refs-drift](./shared-refs-drift.md)
 and [sync-semantics](./sync-semantics.md) joints describe how those
 revisions move and reconcile between workspaces. All of that machinery
 assumes a property nothing in those joints states explicitly: every
@@ -11,7 +12,7 @@ store per repo, with every workweave checkout linked into it. If that
 assumption fails, the higher tiers are operating on incoherent input.
 
 This joint defines that bottom tier — the **clone topology** — and
-states the invariants that make the rest of the pyramid sound. It is the
+states the invariants that make the rest of the stack sound. It is the
 normative spec the `rwv doctor` topology checks enforce.
 
 ## Where this sits in the stability stack
@@ -20,7 +21,7 @@ Three tiers, bottom-up:
 
 | Tier | What's "stable" at this tier | Joint |
 |---|---|---|
-| **2 — Revisions** | Each member repo on disk is at the SHA recorded in `rwv.lock`. | [pyramid-of-stability](./pyramid-of-stability.md) |
+| **2 — Revisions** | Each member repo on disk is at the SHA recorded in `rwv.lock`. | [lock-as-derived](./lock-as-derived.md) |
 | **1 — Refs** | No silent drift between sibling worktrees on the same branch. | [shared-refs-drift](./shared-refs-drift.md) |
 | **0 — Artifacts** | Every member repo is one canonical store with worktree-linked checkouts. | this joint |
 
@@ -222,8 +223,8 @@ above is the regression scenario the check is gated on.
 
 ## Related joints
 
-- [pyramid-of-stability](./pyramid-of-stability.md) — the tier above
-  this one; canonical-tip identity assumes tier-0 invariants hold.
+- [lock-as-derived](./lock-as-derived.md) — the revisions tier; a SHA the
+  lock pins names one commit only while the tier-0 invariants hold.
 - [workweave-hierarchy](./workweave-hierarchy.md) — where the
   ephemeral-branch naming scheme that I3 mandates lives operationally.
 - [shared-refs-drift](./shared-refs-drift.md) — the drift classifier

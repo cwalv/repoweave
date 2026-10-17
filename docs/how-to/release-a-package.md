@@ -78,6 +78,5 @@ Embedding the git revision as semver build metadata (`2.1.0+7a3b2c1`) makes it i
 ## Related
 
 - [Lock as derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` records exact commit SHAs derived from member checkouts
-- [Pyramid of stability](../explanation/joints/pyramid-of-stability.md) — project branches and tags as release channels
 - [File formats reference](../reference/formats.md) — `rwv.lock` schema
 - [Monorepo lens](../explanation/lenses/monorepo.md) — developing across repositories without intermediate registry publishes

@@ -90,7 +90,7 @@ The lock file pins each member repo to an exact 40-character commit SHA — neve
 }
 ```
 
-Release channels and milestones are represented at the project layer by branches and tags on the project repo (`projects/<name>/`), each carrying its own committed `rwv.lock` (see [pyramid of stability](../joints/pyramid-of-stability.md)).
+Releases and milestones are represented at the project layer by branches and tags in the project repo (`projects/<name>/`), each carrying its own committed `rwv.lock`.
 
 `sha256sum rwv.lock` is the project fingerprint. Two machines with the same checksum have identical source for every repo in the project. This is the multi-repo analog of `git rev-parse HEAD` on a monorepo.
 
@@ -122,7 +122,6 @@ A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, 
 
 ## Related
 
-- [Pyramid of stability](../joints/pyramid-of-stability.md) — what "canonical tip" means across a project
 - [Lock-as-derived](../joints/lock-as-derived.md) — why the lock is output-only
 - [Workweave hierarchy](../joints/workweave-hierarchy.md) — when one workspace isn't enough
 - [Monorepo lens](./monorepo.md) — what the workspace model gives you ergonomically

@@ -11,6 +11,11 @@ It does not re-document the tree model or one-hop semantics — those live
 in [workweave-hierarchy](./workweave-hierarchy.md). The focus here is
 the observable lifecycle: what exists, when, and how to move it forward.
 
+Feature work happens in workweaves. Canonical clones in the primary weave
+stay on the branch `rwv.toml` declares for each member (`version`, which
+`rwv add` records from the remote's default branch); a workweave puts every
+member on a branch of its own and lands back with `rwv sync-to --retire`.
+
 ## Creation
 
 ```bash
@@ -277,5 +282,3 @@ workweave is a git worktree, and commits are ordinary git commits.
   retire-as-phase detail, abort contract, and strategy choices.
 - [lock-as-derived](./lock-as-derived.md) — why `rwv.lock` is per-workspace
   and why it is regenerated (not merged) at each sync boundary.
-- [pyramid-of-stability](./pyramid-of-stability.md) — the project-repo tier
-  the workweave's commits eventually land in.

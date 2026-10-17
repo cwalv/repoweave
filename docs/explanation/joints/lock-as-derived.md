@@ -124,8 +124,6 @@ The behaviors above are tool behaviors, anchored in source and tests:
 
 - [sync-semantics](./sync-semantics.md) — the phase model that depends
   on "lock is never a merge input."
-- [pyramid-of-stability](./pyramid-of-stability.md) — why the project
-  needs a canonical-tip artifact in the first place.
 - [shared-refs-drift](./shared-refs-drift.md) — the lock is one
   ingredient; on-disk drift between worktrees is another, and they
   interact.

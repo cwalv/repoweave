@@ -210,8 +210,6 @@ ephemeral naming scheme is not just bookkeeping — it is what makes
   retire contract, and deletion semantics.
 - [sync-semantics](./sync-semantics.md) — what happens when a sync runs
   between two workspaces on the tree; the full direction-pair contract.
-- [pyramid-of-stability](./pyramid-of-stability.md) — the project-repo
-  side of the canonical-tip story; orthogonal to workweave hierarchy.
 - [clone-topology](./clone-topology.md) — the ephemeral-branch
   convention is invariant I3 in the tier-0 topology spec; the
   hierarchy's worktree-sharing model is the physical artifact those

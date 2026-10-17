@@ -146,11 +146,11 @@ the SHA. A branch is load-bearing for exactly three things, one per layer.
 ### 1.2 L1 — the project repo (`projects/<project>/`): a branch is a channel
 
 The project repo's branch is the only branch in the system that *carries*
-something. `docs/explanation/joints/pyramid-of-stability.md:95-96` states it
-directly: "a channel is a branch is a `rwv.lock` is a set of SHAs", and
-`:110`: "Each project-repo branch carries its own lock" `[V]`. Switching
-the project repo's branch switches which set of member SHAs the weave
-resolves to. That is a semantic operation with no SHA-level equivalent.
+something: `rwv.lock` is a tracked file of the project repo, so each of its
+branches and tags holds its own committed lock. A channel is a branch is a
+lock is a set of SHAs. Switching the project repo's branch switches which set
+of member SHAs the weave resolves to. That is a semantic operation with no
+SHA-level equivalent.
 
 Consequently `rwv push` treats the project repo's branch as a hard gate, and
 that gate is now written in this model's types: it reads
@@ -236,15 +236,12 @@ not because it means anything. Two facts:
    previous citation base; it was routed through the chokepoint since, so the
    four-state `(receipt, ref)` classification runs for it too.
 
-`docs/explanation/joints/workweave-hierarchy.md:187-206` gives exactly this —
-and *only* this — as the justification for the ephemeral naming scheme `[V]`:
-"Because primary's `main` and a workweave's `myproj--hotfix/main` are
-different branch names, no two workweaves compete for the same named branch."
-(The joint's example uses `myproj--hotfix/main` `[V]`; earlier drafts of this
-document quoted a different `<project>--<workweave>/main` spelling by
-mistake.) **That joint has not been updated for §3.5**: it still presents the
-three-part `<project>--<workweave>/<segment>` shape as what rwv mints, at
-`:190` and `:202`, which the shipped code no longer does — see §6 item 7.
+`docs/explanation/joints/workweave-hierarchy.md`, under "Ephemeral branch
+names and the git worktree constraint", gives exactly this — and *only*
+this — as the justification for the ephemeral naming scheme: "Because
+primary's `main` and a workweave's `web-app--hotfix` are different branch
+names, no two workweaves compete for the same named branch." Its example is
+§3.5's flat name `[V]`, re-read 2026-10-17.
 
 The normative invariant that enforces it is I3, in
 `docs/explanation/joints/clone-topology.md:82-114` ("tier-0" is stated at
@@ -278,7 +275,7 @@ name" — both directing consumers to read parentage from the marker `[V]`.
 
 | Layer | The branch is | Who depends on it |
 |---|---|---|
-| L1 project repo | a **channel** — it carries a lock | `pyramid-of-stability.md`; `rwv push`'s gate |
+| L1 project repo | a **channel** — it carries a lock | `rwv fetch`, which aligns members to the checked-out branch's lock; `rwv push`'s gate |
 | L2 canonical member | a **tracking declaration** — what to advance toward | `rwv update`; `version:` |
 | L3 workweave checkout | a **commit target**, disjoint per workspace | git's one-worktree-per-branch rule; I3's merged-check soundness |
 
@@ -1997,13 +1994,14 @@ landed — plus a seventh the implementation exposed.
    beyond the home — invalidation, retraction on store destroy, reclamation —
    is Q14, §9, still open.)
 
-6. **`docs/explanation/joints/shared-refs-drift.md` needs rewriting** if its
-   premise is indeed impossible. It states "sibling worktrees on the same
-   branch are the normal case (every workweave's repos share the primary's
-   branch refs)" (`:46-48`) and "Multiple worktrees can commit on the same
-   branch; that is intentional" (`:152-153`) `[V]`. **The implementation
-   did not touch this joint**; both quotes are still there, verbatim, at
-   those lines. Under
+6. **`docs/explanation/joints/shared-refs-drift.md` was rewritten without
+   the tracing this item asks for.** The two sentences this item quoted —
+   "sibling worktrees on the same branch are the normal case (every
+   workweave's repos share the primary's branch refs)" and "Multiple
+   worktrees can commit on the same branch; that is intentional" — are gone;
+   the joint now gives each workweave its own branch under I3 and attributes
+   drift to a checked-out ref moved from outside the workspace `[V]`, re-read
+   2026-10-17. Under
    I3 no two workweave checkouts share a branch, and git refuses the topology
    **by default** (`git worktree add ../wt2 main` → `fatal: 'main' is already
    used by worktree at …`, git 2.43.0) `[V]` — but only by default: `--force`
@@ -2020,27 +2018,27 @@ landed — plus a seventh the implementation exposed.
    **through default porcelain or through any path rwv takes**. Operator
    `--force` / `symbolic-ref` is therefore the first concrete candidate for
    the untraced path.
-   `[?]` **Nobody has traced the actual drift-producing path.** That tracing is
-   a prerequisite to rewriting the joint, and it is the one item on this list
-   that is not just work but unknown work.
+   `[?]` **Nobody has traced the actual drift-producing path.** Until someone
+   does, the joint can only say the path is untraced; naming it is the one
+   item on this list that is not just work but unknown work.
 
-7. **Some joints still describe the pre-flat naming scheme — narrowed since
-   the previous citation base.** §3.5's flat name shipped in code and in
-   `docs/reference/`, and **`clone-topology.md` has since been brought over**:
-   I3's own normative sentence (`:88`), the invariant table (`:180`), and the
-   tier-0 rationale (`:212`) all now say `<project>--<workweave>` `[V]`. The
-   tier-0 spec is no longer on the wrong side. What is left:
-   `workweave-hierarchy.md:190` and `:202`, which still give
-   `myproj--hotfix/main` as the example of what rwv mints `[V]`; and three
-   generated reference locations describing the *stacked* form that flattening
-   made impossible — `explain/workweave.md:162` and its template
+7. **Some generated reference still describes the pre-flat naming scheme —
+   narrowed since the previous citation base.** §3.5's flat name shipped in
+   code and in `docs/reference/`, and **the joints have since been brought
+   over**: `clone-topology.md`'s I3 normative sentence (`:88`), invariant
+   table (`:180`), and tier-0 rationale (`:212`) all now say
+   `<project>--<workweave>` `[V]`, and `workweave-hierarchy.md`'s
+   ephemeral-naming example is the flat `web-app--hotfix` `[V]`, re-read
+   2026-10-17. What is left: three generated reference locations describing
+   the *stacked* form that flattening made impossible —
+   `explain/workweave.md:162` and its template
    (`explain/templates/workweave.md.tmpl:162`), and the `ParentInfo`
    description carried in both `explain/status.md:109` and
    `schemas/status.json:64` `[V]`. §7.1's
    "must land in the same release" rule was written about the
    scanner/glob/parser cutover and was satisfied there; it was not applied to
-   the joints. This is doc work, not code work, and it is not tracked by
-   anything in this document other than this item.
+   the joints or to these. This is doc work, not code work, and it is not
+   tracked by anything in this document other than this item.
 
 ### 6.1 Bugs that stopped being reachable
 
@@ -2467,12 +2465,13 @@ joint `[V]`.
 
 ### 8.7 Growing branch verbs
 
-**Rejected**, already, twice. `pyramid-of-stability.md:123-141` records that
-channels and tiers are *concept*, not verbs (the table at `:128-135`), and
-that adding verbs for them was refused (`:137-141`) `[R]`.
-`workweave-hierarchy.md:139-140` records that cross-branch cherry-picks and
-project-repo branch promotion are refused, with "Use `git cherry-pick`
-directly" and "Ordinary git workflow" as the recorded discipline `[V]`.
+**Rejected**, already. Channels and tiers are *concept*, not verbs:
+promoting a project-repo branch or cutting a release tag is an ordinary git
+operation on the project repo, and adding rwv verbs for them was refused
+`[R]`. `workweave-hierarchy.md:139-140` records that cross-branch
+cherry-picks and project-repo branch promotion are refused, with "Use `git
+cherry-pick` directly" and "Ordinary git workflow" as the recorded discipline
+`[V]`.
 This model adds no verbs. It changed the types the existing verbs use and
 added three named overrides — `--detach-checkouts`, `--reattach-checkouts`,
 and `--adopt-detached-checkouts`; the count grew by one from the design,
@@ -2517,7 +2516,7 @@ The sub-question this entry attached to the project repo has since **split in
 two, and one half is answered.** The half that is answered: the canonical
 branch used to be *invented* from `origin/HEAD` with a hardcoded `"main"`
 fallback, wrong for `rwv init`-created repos, for `master` / `trunk`
-defaults, and for every pyramid channel other than the default. Nothing
+defaults, and for every channel other than the default. Nothing
 invents it any more. `default_branch`, the method that fabricated, has been
 deleted from `GitVcs` and from the trait, so no reader and no *writer* can
 reach the fallback: the publish gate refuses when `origin/HEAD` is unset
@@ -2529,7 +2528,7 @@ gets `master` recorded. **What remains open is the other half, unchanged:
 where a *non-default channel's* identity should be recorded.**
 `remote_default_branch` answers "what does the remote call its primary
 branch", which is the right question only for the default channel; a
-pyramid channel that is deliberately not `origin/HEAD` has no recorded
+channel that is deliberately not `origin/HEAD` has no recorded
 identity anywhere, and the gate above will refuse it rather than publish it.
 Deciding where that belongs is a design call this document still does not
 make.
@@ -2694,9 +2693,9 @@ sync-semantics question; this model does not answer it, and the
 implementation did not change it.
 
 **The `shared-refs-drift` contradiction.** See §6 item 6. The drift class is
-real and repaired every sync; its documented mechanism is impossible for
-worktree-materialized repos; and `[?]` the actual drift-producing path has not
-been traced by anyone.
+real and repaired every sync; the mechanism the joint used to document is
+impossible for worktree-materialized repos; and `[?]` the actual
+drift-producing path has not been traced by anyone.
 
 ---
 
@@ -2765,10 +2764,9 @@ surface — `current_ref`, `checkout`, `delete_branch`, `restore_savepoint`,
 `parse_ephemeral_branch_name` — is deleted rather than deprecated, and
 `default_branch` has since joined it. Two things this document specified are
 **not** done, and are stated where they belong rather than only here:
-`manifest.rs`'s `version:` field is still `RefName` (§4.2), and two joint
-locations plus three generated-reference locations still describe the
-pre-flat branch name (§6 item 7) — down from five and four, since
-`clone-topology.md` was brought over.
+`manifest.rs`'s `version:` field is still `RefName` (§4.2), and three
+generated-reference locations still describe the pre-flat branch name (§6
+item 7); every joint location has since been brought over.
 
 **The mechanism:** one rule with four kinds (MOVE / ATTACH / DESTROY /
 DESTROY-STORE), a decision procedure that answers for verbs not yet
@@ -2791,19 +2789,18 @@ the ref types, 2 more on the name types `mint` consumes, and 23 probes in
   `:180`, and `:212` all give the flat `<project>--<workweave>` `[V]`.
 - `docs/explanation/joints/workweave-hierarchy.md` — where the ephemeral naming
   scheme lives operationally, and the sole recorded justification for it
-  (git's one-worktree-per-branch constraint). **Also still pre-flat**
-  (`:190`, `:202`) — §6 item 7.
+  (git's one-worktree-per-branch constraint). Its example is the flat name
+  (§1.4).
 - `docs/explanation/joints/workweave-lifecycle.md` — creation flags, the retire
   contract, deletion semantics; the `--force` split into named overrides.
 - `docs/explanation/joints/sync-semantics.md` — the direction-pair contract
   and the "why no merge strategy" argument flagged in §9.
-- `docs/explanation/joints/pyramid-of-stability.md` — a channel is a branch is
-  a lock; channels are concept, not verbs.
 - `docs/explanation/destructive-operations.md` — rules 1-3 (`:14-36`,
   `:38-73`, `:75-93`), which R2 and R3 mechanize. Note the path: this file is
   **not** under `joints/`, as an earlier revision of this document had it.
-- `docs/explanation/joints/shared-refs-drift.md` — needs rewriting; see §6
-  item 6. Untouched by the implementation.
+- `docs/explanation/joints/shared-refs-drift.md` — rewritten for I3 without
+  the tracing §6 item 6 asks for; the drift-producing path is still
+  untraced.
 - `docs/explanation/joints/vcs-as-seam.md` — not cited above, but the joint
   this model's trait changes land in: `:269-330` records the
   `push_with_role` → `push_ref(…, &PublishRef, …)` change and defers to §4.3

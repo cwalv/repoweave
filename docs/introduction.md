@@ -61,7 +61,7 @@ Then walk through the [tutorial](./tutorial.md): fetch a project, get the latest
 
 ### "I want monorepo speed without a monorepo"
 
-Start with the [monorepo lens](./explanation/lenses/monorepo.md). It pitches the zero-version-change workflow, workweaves as isolation-without-silos, `rwv sync` as bring-it-home, and the pyramid of stability for canonical cross-repo tips.
+Start with the [monorepo lens](./explanation/lenses/monorepo.md). It pitches the zero-version-change workflow, workweaves as isolation-without-silos, `rwv sync` as bring-it-home, and the project's committed lock as what "stable" means across repos.
 
 Then read [create a feature workweave](./how-to/create-feature-workweave.md) and [bring workweave work home](./how-to/bring-workweave-work-home.md) for the operational patterns.
 

@@ -58,15 +58,13 @@ For member repos with no external consumers — common in proprietary projects w
 
 Ecosystem tools (Cargo, Go, npm) catch incompatible bumps during development — you discover constraint mismatches in the workspace before publishing, not after. See [release a package](../../how-to/release-a-package.md) for the external-release recipe.
 
-## The pyramid of stability
+## What "stable" means across repos
 
 In a monorepo, "the tip" is a single SHA. In a polyrepo, "the tip" is a moving target across N repos. What does "stable" mean when your system spans ten repositories that each move independently?
 
 repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every member repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum have identical commits checked out across every member repo.
 
-Branches of the project repo carry their own lock files. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; an `rc` branch's lock points at a release candidate. Cross-repo "channels" are just branches of the project repo, each carrying a coherent lock.
-
-This is the [pyramid of stability](../joints/pyramid-of-stability.md): canonical cross-repo tips defined at the project layer, not invented per-repo. A fix-forward CI model becomes natural — CI advances the lock on a vetted branch as integration tests pass, downstream consumers fast-forward to the new lock.
+Branches and tags in the project repo each carry their own committed `rwv.lock`. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; a release tag's lock names the set that shipped. Stable cross-repo tips are defined at the project layer, not invented per-repo (see [lock-as-derived](../joints/lock-as-derived.md)). A fix-forward CI model becomes natural — CI advances the lock on a vetted branch as integration tests pass, downstream consumers fast-forward to the new lock.
 
 ## Workweaves: isolation without silos
 
@@ -81,7 +79,7 @@ Where this pays off day-to-day:
 - **Agent sandbox.** Give an agent a workweave so its experimental refactors are quarantined from the human's in-progress edits. See the [agent lens](./agent.md).
 - **Parallel projects.** Work on two projects without `rwv activate` churn. A workweave on `mobile-app` lives alongside the primary weave on `web-app`.
 
-Workweaves can be nested — `rwv workweave <project> create` run from inside a workweave forks from it, and `create --from <source>` names any other workspace to fork from, which is also how an existing workweave is duplicated. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., a "stable channel" workweave or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
+Workweaves can be nested — `rwv workweave <project> create` run from inside a workweave forks from it, and `create --from <source>` names any other workspace to fork from, which is also how an existing workweave is duplicated. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., one that tracks the latest released lock, or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
 
 ## `rwv sync` and `rwv sync-to`: bringing the work home
 
@@ -148,7 +146,7 @@ Examples of things this rules out by analogy:
 
 The heuristic is a guideline, not a hard rule. Two patterns worth being explicit about:
 
-**Long-lived workweaves are fine** when the flow direction is clear. A persistent "stable channel" workweave that always tracks the latest released lock is a reasonable architecture, not an anti-pattern. The tool tracks parent edges; the discipline is just "don't skip levels and don't cross-pick."
+**Long-lived workweaves are fine** when the flow direction is clear. A persistent workweave that always tracks the latest released lock is a reasonable architecture, not an anti-pattern. The tool tracks parent edges; the discipline is just "don't skip levels and don't cross-pick."
 
 **Cross-repo branch-name consistency is a UX direction, not a hard rule.** Having `main` everywhere (or all `develop`) reduces cognitive load — but if some member repo's branch is `master` and another's is `trunk`, the workspace still works. The real UX gap is the absence of a one-verb cross-repo branch operation, not the names themselves.
 
@@ -158,7 +156,7 @@ A few discipline-level patterns that keep a weave inside monorepo-ergonomics ter
 
 - **Don't skip levels in the workweave hierarchy.** Workweaves can form a tree (primary → long-lived workweave → feature workweave); changes propagate one hop at a time. Rebasing a feature workweave directly onto primary (skipping its parent) creates state that's hard to reason about. The tool tracks the parent edge; the operator respects flow direction.
 - **Don't cross-pick between sibling workweaves.** Coordinate through the shared parent. Cross-picks are the polyrepo equivalent of branching off a sibling rather than trunk — git lets you do it, but the result is messy history.
-- **Long-lived workweaves are good when upstream/downstream is clear.** A persistent workweave with an explicit "this syncs from primary" or "this is the channel everyone else syncs from" role is fine; an ambiguous long-lived workweave that's neither tracking nor tracked is a recipe for drift.
+- **Long-lived workweaves are good when upstream/downstream is clear.** A persistent workweave with an explicit "this syncs from primary" or "this is the workweave everyone else syncs from" role is fine; an ambiguous long-lived workweave that's neither tracking nor tracked is a recipe for drift.
 
 These are *guidelines*, not enforced constraints. The tool warns where it can (skip-rebase, sibling sync); the rest is operator awareness. See [workweave hierarchy](../joints/workweave-hierarchy.md) for what the tool tracks vs. what is discipline.
 
@@ -170,7 +168,7 @@ Workspace wiring eliminates the development-time version dance: edit a library, 
 
 - [Workspace lens](./workspace.md) — the project-as-coordination-entity model this builds on
 - [Agent lens](./agent.md) — the workweave-as-sandbox pattern for automation
-- [Pyramid of stability](../joints/pyramid-of-stability.md) — canonical cross-repo tips
+- [Lock-as-derived](../joints/lock-as-derived.md) — why the lock pins exact SHAs and is never merged
 - [Sync semantics](../joints/sync-semantics.md) — the phase machine, abort, and snapshot-read contracts
 - [Workweave hierarchy](../joints/workweave-hierarchy.md) — the tree model, flow direction
 - [Verb-vs-composition](../joints/verb-vs-composition.md) — what earns an `rwv` verb

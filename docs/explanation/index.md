@@ -10,9 +10,7 @@
 
 ## Concepts
 
-- [Pyramid of stability](./joints/pyramid-of-stability.md) — how workweaves, branch tracking (`rwv.toml`), and pinned channels (`rwv.lock`) layer stability
 - [Clone topology](./joints/clone-topology.md) — Tier-0 invariants: one canonical store per member repo, linked worktrees, and disjoint branches
-- [Branch model](./joints/branches.md) — what a branch is for in the project repo, the canonical member store, and a workweave checkout
 - [Weave root as presentation](./joints/weave-root.md) — why the weave root is a derived view of the active project rather than a git repository
 - [Symlinks as structure](./joints/symlinks-as-structure.md) — how weave-root symlinks surface ecosystem workspace files and shared directories
 - [Workweave hierarchy](./joints/workweave-hierarchy.md) — parent-child relationships between workweaves and flat `<project>--<workweave>` branch naming

@@ -176,9 +176,6 @@ exercised side by side.
 - [sync-semantics](./sync-semantics.md) — sync's Phase 3 disk
   reconciliation runs the same auto-fix as `rwv doctor --fix` post
   Phase-2.
-- [pyramid-of-stability](./pyramid-of-stability.md) — drift in a
-  workweave doesn't affect canonical-tip identity; it affects what the
-  operator sees on disk between commits.
 - [workweave-hierarchy](./workweave-hierarchy.md) — siblings in the
   tree are exactly the configuration that produces drift in the
   ordinary course of work.
