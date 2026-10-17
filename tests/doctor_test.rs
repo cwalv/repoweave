@@ -1029,8 +1029,8 @@ fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
 // These tests exercise the JSON wire shape end-to-end. They:
 //   - construct a workspace fixture per CheckViolation variant where possible
 //     (orphaned-clone, dangling-reference, stale-lock, missing-replay-exclusion);
-//   - drive the remaining variants (missing-role, workweave-drift,
-//     index-drift, working-tree-drift) directly through
+//   - drive the remaining variants (workweave-drift, index-drift,
+//     working-tree-drift) directly through
 //     `ViolationOutput::from_violation` so the wire shape is fully covered
 //     without requiring elaborate workweave fixtures.
 //
@@ -1333,33 +1333,6 @@ mod doctor_json {
     }
 
     #[test]
-    fn wire_missing_role_kind_tag_and_fields() {
-        let v = CheckViolation::MissingRole {
-            project: ProjectName::new("alpha").unwrap(),
-            repo: RepoPath::new("github/a/b").expect("known-safe literal"),
-        };
-        let json = serde_json::to_value(ViolationOutput::from_violation(
-            v,
-            &workspace_dir(),
-            &empty_workweave_dirs(),
-        ))
-        .unwrap();
-        assert_eq!(
-            json.get("kind").and_then(|k| k.as_str()),
-            Some("missing-role")
-        );
-        assert_eq!(
-            json.get("path").and_then(|s| s.as_str()),
-            Some("github/a/b")
-        );
-        assert_eq!(json.get("project").and_then(|s| s.as_str()), Some("alpha"));
-        assert_eq!(
-            json.get("absolute_path").and_then(|s| s.as_str()),
-            Some(repoweave::path_spelling::wire_path(&workspace_dir().join("github/a/b")).as_str()),
-        );
-    }
-
-    #[test]
     fn wire_workweave_drift_missing_sub_kind() {
         let v = CheckViolation::WorkweaveDrift {
             workweave: Some(WorkweaveName::new("ww1").unwrap()),
@@ -1598,11 +1571,6 @@ mod doctor_json {
             workweave: Option<String>,
             sub_kind: String,
             files: usize,
-        },
-        MissingRole {
-            path: String,
-            absolute_path: String,
-            project: String,
         },
         RoleDisagreement {
             path: String,

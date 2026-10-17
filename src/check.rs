@@ -61,12 +61,6 @@ pub enum CheckViolation {
         roles: Vec<(ProjectName, Role)>,
     },
 
-    /// An `rwv.toml` entry missing the `role` field.
-    MissingRole {
-        project: ProjectName,
-        repo: RepoPath,
-    },
-
     /// A project's `rwv.lock` doesn't match current HEAD SHAs.
     ///
     /// Reachable only for an entry the *resolved* lock carries, so this is not
@@ -714,7 +708,6 @@ impl CheckViolation {
             CheckViolation::OrphanedClone { .. }
             | CheckViolation::UnknownSegmentClone { .. }
             | CheckViolation::DanglingReference { .. }
-            | CheckViolation::MissingRole { .. }
             | CheckViolation::RoleDisagreement { .. }
             | CheckViolation::StaleLock { .. }
             | CheckViolation::IncompleteLock { .. }
@@ -834,7 +827,6 @@ impl CheckViolation {
             CheckViolation::UnknownSegmentClone { .. } => "unknown-segment-clone",
             CheckViolation::DanglingReference { .. } => "dangling-reference",
             CheckViolation::MemberPermissions { .. } => "member-permissions",
-            CheckViolation::MissingRole { .. } => "missing-role",
             CheckViolation::RoleDisagreement { .. } => "role-disagreement",
             CheckViolation::StaleLock { .. } => "stale-lock",
             CheckViolation::IncompleteLock { .. } => "incomplete-lock",
@@ -1721,7 +1713,6 @@ pub struct LegacyRefAtTip {
 //     OrphanedClone       -> "orphaned-clone"
 //     UnknownSegmentClone -> "unknown-segment-clone"
 //     DanglingReference   -> "dangling-reference"
-//     MissingRole         -> "missing-role"
 //     StaleLock           -> "stale-lock"
 //     IncompleteLock      -> "incomplete-lock"
 //     WorkweaveDrift      -> "workweave-drift"  (sub-kind via `DriftKind`)
@@ -1756,11 +1747,6 @@ pub enum ViolationOutput {
         sub_kind: PermissionsKind,
         /// How many tracked regular files disagree with the member's role.
         files: usize,
-    },
-    MissingRole {
-        path: String,
-        absolute_path: String,
-        project: String,
     },
     RoleDisagreement {
         path: String,
@@ -2138,11 +2124,6 @@ impl ViolationOutput {
                 workweave: workweave.map(|w| w.to_string()),
                 sub_kind: kind,
                 files,
-            },
-            CheckViolation::MissingRole { project, repo } => Self::MissingRole {
-                absolute_path: abs(workspace_dir, &repo),
-                path: repo.to_string(),
-                project: project.to_string(),
             },
             CheckViolation::RoleDisagreement { repo, roles } => Self::RoleDisagreement {
                 absolute_path: abs(workspace_dir, &repo),
@@ -7415,14 +7396,6 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             .map(|(project, role)| format!("{project}: {role}"))
                             .collect::<Vec<_>>()
                             .join(", ")
-                    ),
-                ),
-                CheckViolation::MissingRole { project, repo } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "missing role in {project}: {repo} — \
-                         add a `role: owned|dependency|reference` field to the \
-                         rwv.toml entry for this repo"
                     ),
                 ),
                 CheckViolation::StaleLock {

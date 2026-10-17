@@ -52,7 +52,6 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`orphaned-clone`](#orphaned-clone) | Error | Report-only |
 | [`unknown-segment-clone`](#unknown-segment-clone) | Error | Report-only |
 | [`dangling-reference`](#dangling-reference) | Error | Report-only |
-| [`missing-role`](#missing-role) *(wire-only legacy)* | Warning | Report-only |
 | [`unparseable-project`](#unparseable-project) | Error | Report-only |
 | [`legacy-manifest-format`](#legacy-manifest-format) | Error | Report-only |
 | [`stale-lock`](#stale-lock) | Error | Report-only |
@@ -200,17 +199,6 @@ yourself.
 
 **What to do:** `rwv fetch` re-materializes it in place, or drop the entry
 from the manifest if the repo is genuinely gone.
-
-### `missing-role`
-
-**Warning. Report-only.** An `rwv.toml` entry with no `role` field. Note that
-`rwv.toml` deserialization now requires `role` on every repository entry at
-parse time, so a manifest missing `role` is reported under
-[`unparseable-project`](#unparseable-project) (naming `missing field \`role\``);
-this variant is retained in the wire schema for backward compatibility.
-
-**What to do:** add `role = "owned"` (or `fork`, `dependency`, `reference`) to
-the entry in `rwv.toml`. See [Roles](./roles.md).
 
 ### `unparseable-project`
 

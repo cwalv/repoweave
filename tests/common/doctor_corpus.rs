@@ -76,7 +76,6 @@ pub fn case_token(v: &CheckViolation) -> String {
             PermissionsKind::WritableReference => "member-permissions/writable-reference".into(),
             PermissionsKind::ReadOnlyMember => "member-permissions/read-only-member".into(),
         },
-        CheckViolation::MissingRole { .. } => "missing-role".into(),
         CheckViolation::RoleDisagreement { .. } => "role-disagreement".into(),
         CheckViolation::StaleLock { .. } => "stale-lock".into(),
         CheckViolation::IncompleteLock { .. } => "incomplete-lock".into(),
@@ -238,10 +237,6 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::OrphanedClone { path: repo() },
         CheckViolation::UnknownSegmentClone { path: repo() },
         CheckViolation::DanglingReference {
-            project: project(),
-            repo: repo(),
-        },
-        CheckViolation::MissingRole {
             project: project(),
             repo: repo(),
         },
