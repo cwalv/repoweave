@@ -159,8 +159,8 @@ use crate::integration::{
 };
 use crate::integrations::merge::{
     drift_issues, fully_owned_drift_issue, holds_owned_region, keypath, merge_activate,
-    missing_issue, orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath,
-    ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
+    missing_issue, orphaned_region_issues, strip_deactivate, toml_array_strings, write_parseable,
+    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use crate::owned_state::{
@@ -656,8 +656,7 @@ impl CargoWorkspace {
         }
         decor.set_prefix(new_prefix);
 
-        std::fs::write(path, doc.to_string())
-            .with_context(|| format!("writing {} after excluded-comment", path.display()))?;
+        write_parseable::<TomlDoc>(path, &doc.to_string())?;
         Ok(())
     }
 }
@@ -1632,9 +1631,7 @@ impl CargoWorkspace {
 
         doc.remove_marker(&default_only_keys);
 
-        let serialized = doc.serialize()?;
-        std::fs::write(path, serialized)
-            .with_context(|| format!("writing {} after undecorate", path.display()))?;
+        write_parseable::<TomlDoc>(path, &doc.serialize()?)?;
 
         Ok(())
     }
@@ -2184,8 +2181,7 @@ impl CargoWorkspace {
                 format!("creating parent dir {} for patch write", parent.display())
             })?;
         }
-        std::fs::write(path, doc.to_string())
-            .with_context(|| format!("writing {}", path.display()))?;
+        write_parseable::<TomlDoc>(path, &doc.to_string())?;
         Ok(())
     }
 
@@ -2290,8 +2286,7 @@ impl CargoWorkspace {
         }
 
         if changed {
-            std::fs::write(path, doc.to_string())
-                .with_context(|| format!("writing {}", path.display()))?;
+            write_parseable::<TomlDoc>(path, &doc.to_string())?;
         }
         Ok(())
     }
@@ -2370,7 +2365,7 @@ impl CargoWorkspace {
                 format!("creating parent dir {} for wrapper write", parent.display())
             })?;
         }
-        std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
+        write_parseable::<TomlDoc>(path, &doc.to_string())
     }
 
     /// Remove a marker-decorated `[build] rustc-wrapper` from `path`, then
@@ -2402,7 +2397,7 @@ impl CargoWorkspace {
         if prune_build {
             doc.as_table_mut().remove("build");
         }
-        std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
+        write_parseable::<TomlDoc>(path, &doc.to_string())
     }
 
     /// Whether `path` carries an entry [`Self::strip_marked_patch_entries`] or

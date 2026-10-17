@@ -273,8 +273,9 @@ pub trait ManagedDoc: Sized {
 ///     and that change is intentional. DefaultOnly keys are never deferred
 ///     and never reported in `MergeResult::authored`.
 /// - If any `Author` key was authored, apply the marker on those keys.
-/// - Write back. (Direct write — atomic-write-then-rename is a framework
-///   concern; this helper does not assume one is wired.)
+/// - Write back through [`write_parseable`], which refuses output that does not
+///   parse. (Direct write — atomic-write-then-rename is a framework concern;
+///   this helper does not assume one is wired.)
 ///
 /// Returns a [`MergeResult`] describing which `Author` keys were authored vs
 /// deferred, so the caller can emit `Severity::Warning` issues for deferred
@@ -326,9 +327,26 @@ pub fn merge_activate<D: ManagedDoc>(
         doc.set_marker(&result.authored);
     }
 
-    let text = doc.serialize()?;
-    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
+    write_parseable::<D>(path, &doc.serialize()?)?;
     Ok(result)
+}
+
+/// Write `text` to `path` only when it parses back as `D`; otherwise refuse and
+/// leave the file as it was.
+///
+/// A document's serializer can emit what its own parser rejects, and a managed
+/// file rwv cannot parse stops every verb that reads it — verify, the install
+/// hooks, the next regeneration. Refusing here keeps the last good file in
+/// place for all of them.
+pub fn write_parseable<D: ManagedDoc>(path: &Path, text: &str) -> Result<()> {
+    if let Err(e) = D::parse(text) {
+        anyhow::bail!(
+            "refusing to write {}: the content generated for it does not parse ({e:#}); \
+             the file is left as it was",
+            crate::path_spelling::operator_path(path)
+        );
+    }
+    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 
 /// Whether `path` carries rwv's ownership marker over `owned_keys` — the
@@ -353,8 +371,9 @@ pub fn holds_owned_region<D: ManagedDoc>(path: &Path, owned_keys: &[KeyPath]) ->
 ///   holds the pen — leave the file alone; [`StripOutcome::UserHeld`].
 /// - Otherwise: remove each owned key, remove the marker, prune empty
 ///   parents. If the document is then empty: delete the file. Else: write
-///   the stripped document back (without the marker — the file becomes
-///   hand-owned). [`StripOutcome::Stripped`] either way.
+///   the stripped document back through [`write_parseable`] (without the
+///   marker — the file becomes hand-owned). [`StripOutcome::Stripped`] either
+///   way.
 pub fn strip_deactivate<D: ManagedDoc>(
     path: &Path,
     owned_keys: &[KeyPath],
@@ -379,8 +398,7 @@ pub fn strip_deactivate<D: ManagedDoc>(
     if doc.is_empty() {
         std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
     } else {
-        let text = doc.serialize()?;
-        std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
+        write_parseable::<D>(path, &doc.serialize()?)?;
     }
     Ok(StripOutcome::Stripped)
 }
@@ -2458,6 +2476,88 @@ mod tests {
                 !stripped.contains("managed by rwv") && !stripped.contains("workspace"),
                 "the strip takes the table and its marker:\n{stripped}"
             );
+        }
+
+        /// The guard refuses bytes that do not parse and leaves the file as it
+        /// was. The construct is the one a key's leaf decor on a header table
+        /// produces.
+        #[test]
+        fn write_parseable_refuses_unparseable_toml_and_keeps_the_old_file() {
+            let dir = TempDir::new().unwrap();
+            let before = "[workspace]\nmembers = []\n\n[workspace.package]\n";
+            let path = write_file(&dir, "Cargo.toml", before);
+
+            let mut doc: toml_edit::DocumentMut = before.parse().unwrap();
+            let workspace = doc["workspace"].as_table_mut().unwrap();
+            workspace
+                .key_mut("package")
+                .unwrap()
+                .leaf_decor_mut()
+                .set_prefix(TOML_MARKER_PREFIX);
+            let broken = doc.to_string();
+            assert!(
+                broken.contains("[# managed by rwv"),
+                "fixture: leaf decor on a header table lands inside the brackets:\n{broken}"
+            );
+
+            let err = write_parseable::<TomlDoc>(&path, &broken).unwrap_err();
+            assert!(
+                format!("{err:#}").contains("does not parse"),
+                "the refusal says why: {err:#}"
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        }
+
+        /// A document whose serializer emits what its parser rejects.
+        struct UnparseableOutput;
+
+        impl ManagedDoc for UnparseableOutput {
+            fn parse(text: &str) -> Result<Self> {
+                anyhow::ensure!(!text.contains("unparseable"), "rejected");
+                Ok(Self)
+            }
+            fn empty() -> Self {
+                Self
+            }
+            fn has_marker(&self, _: &[KeyPath]) -> bool {
+                true
+            }
+            fn set_marker(&mut self, _: &[KeyPath]) {}
+            fn remove_marker(&mut self, _: &[KeyPath]) {}
+            fn key_present(&self, _: &KeyPath) -> bool {
+                false
+            }
+            fn set_owned(&mut self, _: &KeyPath, _: &OwnedValue) {}
+            fn remove_owned(&mut self, _: &KeyPath) {}
+            fn is_empty(&self) -> bool {
+                false
+            }
+            fn serialize(&self) -> Result<String> {
+                Ok("unparseable".to_string())
+            }
+        }
+
+        /// The authoring path writes through the guard: a pass whose output
+        /// does not parse is refused and the previous file survives
+        /// byte-identical, for activation and strip alike.
+        #[test]
+        fn authoring_and_strip_refuse_output_that_does_not_parse() {
+            let dir = TempDir::new().unwrap();
+            let before = "previous bytes\n";
+            let path = write_file(&dir, "managed.file", before);
+            let owned = vec![(
+                kp(&["k"]),
+                Ownership::Author,
+                OwnedValue::String("v".to_string()),
+            )];
+
+            let err = merge_activate::<UnparseableOutput>(&path, &owned).unwrap_err();
+            assert!(format!("{err:#}").contains("refusing to write"), "{err:#}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+            let err = strip_deactivate::<UnparseableOutput>(&path, &[kp(&["k"])]).unwrap_err();
+            assert!(format!("{err:#}").contains("refusing to write"), "{err:#}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
         }
 
         const UV_SEED: &str = r#"[project]
