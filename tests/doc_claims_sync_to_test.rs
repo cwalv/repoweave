@@ -258,8 +258,19 @@ fn explain_sync_to_returns_the_sync_to_bundle() {
     let assert = rwv().args(["explain", "sync-to"]).assert().success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
+    let mut lines = stdout.lines();
     assert_eq!(
-        stdout.lines().next(),
+        lines.next(),
+        Some(format!("rwv {}", repoweave::rwv_version())).as_deref(),
+        "every explain invocation opens with the runtime version line; got:\n{stdout}"
+    );
+    assert_eq!(
+        lines.next(),
+        Some(""),
+        "a blank line separates the version banner from the bundle; got:\n{stdout}"
+    );
+    assert_eq!(
+        lines.next(),
         Some("# rwv sync-to"),
         "the bundle opens with its own heading; got:\n{stdout}"
     );

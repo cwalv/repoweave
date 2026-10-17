@@ -1,5 +1,6 @@
 //! Doc-claim test: `rwv explain <verb>` matches `docs/reference/explain/<verb>.md`
-//! byte-for-byte.
+//! byte-for-byte, once the runtime version banner the committed doc does not
+//! carry is accounted for.
 //!
 //! Belt-and-suspenders with `scripts/ci-local.sh` and the existing
 //! `explain_test.rs::generator_produces_no_drift_against_committed_artifacts`
@@ -47,6 +48,12 @@ fn rwv_explain(verb: &str) -> String {
     String::from_utf8(output.stdout).expect("explain output is valid UTF-8")
 }
 
+/// The banner every `explain` invocation opens with: the same string `rwv
+/// --version` reports, which the committed doc does not carry.
+fn version_banner() -> String {
+    format!("rwv {}\n\n", repoweave::rwv_version())
+}
+
 /// Verb-by-verb byte comparison. A custom assertion message surfaces a
 /// concise diff hint so a regression maintainer can locate the drift
 /// without re-running the generator by hand.
@@ -55,35 +62,36 @@ fn assert_byte_identical(verb: &str) {
     let doc_path = explain_doc_path(verb);
     let doc = std::fs::read_to_string(&doc_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", doc_path.display()));
-    if runtime != doc {
+    let expected = format!("{}{doc}", version_banner());
+    if runtime != expected {
         // Localise the first diverging byte to make the failure actionable.
         let mut first_diff: Option<(usize, u8, u8)> = None;
-        for (i, (a, b)) in runtime.bytes().zip(doc.bytes()).enumerate() {
+        for (i, (a, b)) in runtime.bytes().zip(expected.bytes()).enumerate() {
             if a != b {
                 first_diff = Some((i, a, b));
                 break;
             }
         }
-        let trail = if first_diff.is_none() && runtime.len() != doc.len() {
+        let trail = if first_diff.is_none() && runtime.len() != expected.len() {
             format!(
-                " (lengths differ: runtime={} doc={})",
+                " (lengths differ: runtime={} expected={})",
                 runtime.len(),
-                doc.len()
+                expected.len()
             )
         } else if let Some((i, a, b)) = first_diff {
             // Show ~40 bytes of context centred on the divergence.
             let start = i.saturating_sub(20);
-            let end = (i + 20).min(runtime.len().min(doc.len()));
+            let end = (i + 20).min(runtime.len().min(expected.len()));
             let runtime_ctx = &runtime[start..end];
-            let doc_ctx = &doc[start..end];
+            let expected_ctx = &expected[start..end];
             format!(
-                " first diff at byte {i}: runtime={a:#x} doc={b:#x}\n  runtime ctx: {runtime_ctx:?}\n  doc ctx:     {doc_ctx:?}"
+                " first diff at byte {i}: runtime={a:#x} expected={b:#x}\n  runtime ctx: {runtime_ctx:?}\n  expected ctx: {expected_ctx:?}"
             )
         } else {
             String::new()
         };
         panic!(
-            "drift: `rwv explain {verb}` does not match {}{trail}.\n\
+            "drift: `rwv explain {verb}` does not match the version banner + {}{trail}.\n\
              Hint: re-run `cargo run --bin generate-explain` and recommit.",
             doc_path.display()
         );

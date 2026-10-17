@@ -228,6 +228,13 @@ fn suggest(input: &str) -> Option<&'static str> {
         .map(|(v, _)| v)
 }
 
+/// The line every served `explain` page opens with: the same string `rwv
+/// --version` reports, so a committed page can go stale with the release that
+/// cut it without lying about which binary printed it.
+fn version_banner() -> String {
+    format!("rwv {}\n\n", crate::rwv_version())
+}
+
 /// Print the explain bundle for the requested verb, or the index when none given.
 ///
 /// Returns an error only when an unknown verb is requested (matches the
@@ -235,15 +242,20 @@ fn suggest(input: &str) -> Option<&'static str> {
 pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
     match cmd {
         None => {
+            print!("{}", version_banner());
             print!("{INDEX_EXPLAIN}");
         }
         // A verb first, then a token. Verbs win a collision because that is
         // the name the reader typed a command with a moment ago.
         Some(verb) if entry_for_token(verb).is_some() && !is_known_verb(verb) => {
+            print!("{}", version_banner());
             println!("{}", entry_for_token(verb).expect("just matched"));
         }
         Some(verb) => match VERB_BUNDLES.iter().find(|&&(name, _)| name == verb) {
-            Some(&(_, bundle)) => print!("{bundle}"),
+            Some(&(_, bundle)) => {
+                print!("{}", version_banner());
+                print!("{bundle}")
+            }
             // Non-core verb: explain is reflection over core's committed,
             // CI-checked surfaces. Extending it to exec third-party binaries
             // would make rwv's reflection surface only as trustworthy as the

@@ -840,6 +840,17 @@ pub fn rwv() -> assert_cmd::Command {
     cmd
 }
 
+/// Strip the `rwv <version>` banner every `rwv explain` invocation opens
+/// with, returning the bundle or entry text a committed doc can be compared
+/// against. Panics if `stdout` does not open with exactly that banner, so a
+/// caller that reaches for this has that much already pinned for free.
+pub fn strip_version_banner(stdout: &str) -> &str {
+    let banner = format!("rwv {}\n\n", repoweave::rwv_version());
+    stdout
+        .strip_prefix(&banner)
+        .unwrap_or_else(|| panic!("expected stdout to open with {banner:?}; got:\n{stdout}"))
+}
+
 /// The whole `PATH` for a child that must find `git` and a stand-in `cargo`
 /// and nothing else — so whether the child's cargo step completes is an input
 /// the caller sets rather than a property of the machine.

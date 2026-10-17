@@ -214,7 +214,8 @@ fn explain_serves_the_page_section_verbatim() {
             .output()
             .expect("rwv should run");
         assert!(out.status.success(), "rwv explain {token} failed");
-        let printed = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let printed = common::strip_version_banner(&stdout);
         let printed = printed.trim_end_matches('\n');
 
         // Compared against the PAGE, not against `entry_for_token` — that is
@@ -265,7 +266,8 @@ fn a_verb_serves_its_bundle_and_no_token_contests_one() {
         .args(["explain", "lock"])
         .output()
         .expect("rwv should run");
-    let printed = String::from_utf8_lossy(&out.stdout);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let printed = common::strip_version_banner(&stdout);
     assert!(
         printed.starts_with("# rwv lock"),
         "the verb bundle must win, got:\n{}",

@@ -10,12 +10,14 @@
 //!   produces no changes (templates + Rust types are in sync).
 //! - {{MSG:auto_relock}} resolves in the assembled sync-to doc and matches the
 //!   string `repoweave::sync::auto_relock_commit_message` emits.
+//! - The runtime version banner: `rwv explain <verb>` and `rwv explain
+//!   <token>` each open with the same version line `rwv --version` reports.
 
 mod common;
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
-use repoweave::explain::known_verbs;
+use repoweave::explain::{documented_tokens, known_verbs};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -210,6 +212,42 @@ fn every_acceptance_verb_has_a_discoverable_explain_entry() {
             .success()
             .stdout(predicate::str::contains(format!("# rwv {verb}")));
     }
+}
+
+/// Both `rwv explain <verb>` and `rwv explain <token>` must open with the
+/// exact line `rwv --version` prints — the committed `.md` carries no stamp
+/// of its own, so this is the only place the running binary's version
+/// reaches an `explain` reader. Pinned against the `--version` subprocess
+/// output rather than `repoweave::rwv_version()` directly, so the test fails
+/// if the emission is dropped from `explain()` even though the library
+/// function it would have read from still exists.
+#[test]
+fn explain_verb_and_token_open_with_the_version_line() {
+    let version_assert = rwv().arg("--version").assert().success();
+    let version_stdout = String::from_utf8(version_assert.get_output().stdout.clone()).unwrap();
+    let version_line = version_stdout.trim_end();
+
+    let verb_assert = rwv().args(["explain", "status"]).assert().success();
+    let verb_stdout = String::from_utf8(verb_assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        verb_stdout.lines().next(),
+        Some(version_line),
+        "`rwv explain status` must open with the same line as `rwv --version` \
+         ({version_line:?}); got:\n{verb_stdout}"
+    );
+
+    let token = documented_tokens()
+        .into_iter()
+        .next()
+        .expect("at least one token is documented");
+    let token_assert = rwv().args(["explain", token]).assert().success();
+    let token_stdout = String::from_utf8(token_assert.get_output().stdout.clone()).unwrap();
+    assert_eq!(
+        token_stdout.lines().next(),
+        Some(version_line),
+        "`rwv explain {token}` must open with the same line as `rwv --version` \
+         ({version_line:?}); got:\n{token_stdout}"
+    );
 }
 
 /// Drift-safety check: re-running the generator must produce byte-for-byte
