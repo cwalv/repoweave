@@ -230,6 +230,50 @@ fn encoded_file_url_matches_the_bare_path_origin() {
     );
 }
 
+/// A remote whose configured URL the manifest matches, but whose resolved
+/// URL a `url.<base>.insteadOf` rule rewrites (the common `git@github.com:`
+/// rewrite for `https://github.com/`, set here in a fixture `HOME`'s global
+/// `.gitconfig`), must not be flagged — doctor compares the configured URL,
+/// not the one `git remote get-url` would resolve it to.
+#[test]
+fn origin_url_mismatch_is_clean_under_an_instead_of_rewrite() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    let manifest_url = "https://github.com/myorg/myrepo.git";
+    add_remote(&repo_abs, "origin", manifest_url);
+
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("github/myorg/myrepo", manifest_url, "owned")],
+    );
+
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n",
+    )
+    .unwrap();
+
+    let out = rwv()
+        .env("HOME", &home)
+        .args(["doctor"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("origin-url-mismatch") && !stdout.contains("origin URL mismatch"),
+        "an insteadOf rewrite must not read as a mismatch against the manifest's \
+         unrewritten URL; got:\n{stdout}"
+    );
+}
+
 // ===========================================================================
 // 2. lock-sha-unreachable
 // ===========================================================================

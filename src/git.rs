@@ -2279,40 +2279,35 @@ impl Vcs for GitVcs {
     }
 
     fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError> {
+        let key = format!("remote.{GIT_DEFAULT_REMOTE_NAME}.url");
         let output = git_command()
-            .args(["remote", "get-url", GIT_DEFAULT_REMOTE_NAME])
+            .args(["config", "--get", &key])
             .current_dir(repo)
             .output()
             .map_err(|e| VcsError::Io {
-                ctx: format!("failed to spawn git remote get-url {GIT_DEFAULT_REMOTE_NAME}"),
+                ctx: format!("failed to spawn git config --get {key}"),
                 source: e,
             })?;
 
         if !output.status.success() {
-            // "No such remote" → remote absent, not an error.
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("No such remote") || stderr.contains("no such remote") {
+            // `git config --get` exits 1 with nothing on stdout or stderr
+            // when the key is unset — the remote doesn't exist. Any other
+            // failure (bad config file, ambiguous key) carries stderr and is
+            // a real error.
+            if output.stdout.is_empty() && output.stderr.is_empty() {
                 return Ok(None);
             }
             return Err(VcsError::CommandFailed {
-                args: vec![
-                    "remote".into(),
-                    "get-url".into(),
-                    GIT_DEFAULT_REMOTE_NAME.into(),
-                ],
+                args: vec!["config".into(), "--get".into(), key],
                 repo: repo.to_path_buf(),
-                stderr: stderr.into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             });
         }
 
         let url = String::from_utf8(output.stdout)
             .map(|s| s.trim().to_string())
             .map_err(|_| VcsError::CommandFailed {
-                args: vec![
-                    "remote".into(),
-                    "get-url".into(),
-                    GIT_DEFAULT_REMOTE_NAME.into(),
-                ],
+                args: vec!["config".into(), "--get".into(), key],
                 repo: repo.to_path_buf(),
                 stderr: "git output not valid UTF-8".into(),
             })?;

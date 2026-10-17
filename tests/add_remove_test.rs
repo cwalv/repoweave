@@ -742,6 +742,74 @@ fn add_local_path_percent_encodes_space_and_percent_in_the_origin_url() {
     assert!(clone_dest.join("README").exists());
 }
 
+/// A pre-existing clone's `origin` remote is configured with one URL but a
+/// `url.<base>.insteadOf` rule (set here in a fixture `HOME`'s global
+/// `.gitconfig`, the common rewrite that forces SSH for `https://github.com/`
+/// URLs) resolves it to another for every git operation that touches the
+/// network. The local-path arm must record the configured URL, not the one
+/// the rewrite resolves it to.
+#[test]
+fn add_local_path_records_the_configured_url_not_the_instead_of_rewrite() {
+    let tmp = common::tempdir().unwrap();
+
+    let bare = tmp.path().join("bare.git");
+    init_bare_repo_with_commit(&bare);
+
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let configured_url = "https://github.com/myorg/myrepo.git";
+    std::fs::write(
+        home.join(".gitconfig"),
+        format!(
+            "[url \"{}\"]\n\tinsteadOf = {configured_url}\n[user]\n\temail = test@test.com\n\tname = Test\n",
+            bare.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    let repo_path = "local/acme/insteadof-repo";
+    let local_dir = workspace.join(repo_path);
+    std::fs::create_dir_all(&local_dir).unwrap();
+    let run = |args: &[&str]| {
+        let status = common::git()
+            .env("HOME", &home)
+            .args(args)
+            .current_dir(&local_dir)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed to start");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+    run(&["init", "--initial-branch=main"]);
+    run(&["remote", "add", "origin", configured_url]);
+    run(&["fetch", "origin"]);
+    run(&["remote", "set-head", "origin", "-a"]);
+
+    rwv()
+        .env("HOME", &home)
+        .args(["add", repo_path])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let manifest_path = workspace.join("projects/test-project/rwv.toml");
+    let manifest =
+        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let entry = manifest
+        .get_entry(&RepoPath::new(repo_path).unwrap())
+        .expect("manifest must record the added repo");
+    let url = entry.url.to_string();
+
+    assert_eq!(
+        url, configured_url,
+        "the manifest must record the configured remote URL, not the \
+         insteadOf-rewritten one actually used to fetch; got: {url}"
+    );
+}
+
 #[test]
 fn add_new_records_the_branch_git_init_actually_created() {
     let tmp = common::tempdir().unwrap();

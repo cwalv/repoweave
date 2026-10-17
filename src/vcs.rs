@@ -2649,17 +2649,25 @@ pub trait Vcs: Send + Sync {
     /// failures along the way silently leave the working tree alone.
     fn refresh_working_tree_to_head_if_safe(&self, repo: &Path);
 
-    /// Return the fetch URL of a named remote in `repo`, or `None` when
-    /// that remote does not exist.
+    /// Return the configured URL of a named remote in `repo`, or `None` when
+    /// that remote does not exist. Never applies a rewrite rule (git's
+    /// `url.<base>.insteadOf`) — the value as recorded, not as resolved for
+    /// a transport operation.
     ///
     /// For git: runs
-    /// `git remote get-url origin`. Returns `None` when the remote is
-    /// absent (git exits non-zero with "No such remote"). Returns
-    /// `Some(url)` with the URL string as git reports it. Other errors
-    /// (I/O failures, non-UTF-8 output) propagate as [`VcsError`].
+    /// `git config --get remote.origin.url`, which reads the config entry
+    /// directly instead of `git remote get-url origin`, whose job is
+    /// exactly to apply `insteadOf`. Returns `None` when the remote is
+    /// absent (the key is unset; git exits non-zero with nothing on stdout
+    /// or stderr). Returns `Some(url)` with the configured URL string.
+    /// Other errors (I/O failures, non-UTF-8 output) propagate as
+    /// [`VcsError`].
     ///
     /// Used by `rwv doctor`'s provenance checks to compare the clone's
-    /// recorded URL against the manifest URL.
+    /// recorded URL against the manifest URL, and by `rwv add`'s
+    /// local-path adoption to read back the URL to record — both compare
+    /// against or write into `rwv.toml`, which holds the URL the operator
+    /// configured, not one a local `insteadOf` rule happens to resolve it to.
     fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError>;
 
     /// Return `true` when `sha` names a commit object that exists in
