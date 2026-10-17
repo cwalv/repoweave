@@ -10,7 +10,7 @@ Pick this lens up if you've ever lost an iteration to the version-bump dance: ed
 
 In a monorepo, you change a library and its consumer in the same commit. In a polyrepo, the typical workflow forces a version dance for every iteration — even when you know the change is small and the consumer is going to be fine.
 
-repoweave eliminates the development-time version dance by generating ecosystem workspace files (`package.json` workspaces, `go.work`, `Cargo.toml`'s `[workspace]`, etc.) that point at the local clones. To the build tool, the manifest repos *are* the workspace members — it doesn't look on the registry for `@chatly/protocol`, it looks in `github/chatly/protocol/` on disk. This holds where the ecosystem can legally represent the active repos as one workspace; repos that declare their own nested workspace root (a Cargo limitation) must be opted out and are resolved via the registry instead (see [cargo-workspace opt-out](../../reference/integrations/cargo-workspace.md#nested-workspaces)).
+repoweave eliminates the development-time version dance by generating ecosystem workspace files (`package.json` workspaces, `go.work`, `Cargo.toml`'s `[workspace]`, etc.) that point at the local clones. To the build tool, the member repos *are* the workspace members — it doesn't look on the registry for `@chatly/protocol`, it looks in `github/chatly/protocol/` on disk. This holds where the ecosystem can legally represent the active repos as one workspace; repos that declare their own nested workspace root (a Cargo limitation) must be opted out and are resolved via the registry instead (see [cargo-workspace opt-out](../../reference/integrations/cargo-workspace.md#nested-workspaces)).
 
 ```mermaid
 flowchart LR
@@ -62,7 +62,7 @@ Ecosystem tools (Cargo, Go, npm) catch incompatible bumps during development —
 
 In a monorepo, "the tip" is a single SHA. In a polyrepo, "the tip" is a moving target across N repos. What does "stable" mean when your system spans ten repositories that each move independently?
 
-repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every manifest repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum have identical commits checked out across every member repo.
+repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every member repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum have identical commits checked out across every member repo.
 
 Branches of the project repo carry their own lock files. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; an `rc` branch's lock points at a release candidate. Cross-repo "channels" are just branches of the project repo, each carrying a coherent lock.
 
@@ -92,7 +92,7 @@ repoweave's sync surface is a direction-explicit verb pair:
 - **`rwv sync <source>`** (default strategy `ff`) — CWD absorbs the source workspace's state; under `--strategy rebase`, CWD's unique commits land on top of source's tip. CWD changes; source is read-only. Use this to pull work in (e.g., absorb primary's new commits into a feature workweave before landing).
 - **`rwv sync-to [<target>]`** (default strategy `rebase`) — CWD's committed state lands in the target workspace. CWD first rebases onto the target's state and auto-relocks, then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
 
-Both verbs run the same phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff, so lock-only commits become empty patches and are dropped, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the manifest repos to the named workspace's lock targets using the chosen strategy (`ff` or `rebase`); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips. For `rwv sync-to`, a final step fast-forwards the target workspace to CWD's converged tips.
+Both verbs run the same phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff, so lock-only commits become empty patches and are dropped, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the member repos to the named workspace's lock targets using the chosen strategy (`ff` or `rebase`); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips. For `rwv sync-to`, a final step fast-forwards the target workspace to CWD's converged tips.
 
 `rwv.lock` is never merged. It is recomputed fresh every time. Lock-file conflicts are prevented by a per-project-repo `rwv.lock merge=rwv-ours` invariant in `.gitattributes` that `rwv doctor --fix` installs; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry the committed attribute. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
@@ -111,7 +111,7 @@ repoweave is a coordination layer, not a VCS wrapper. Two things follow from tha
 
 **Global visibility, local control.** `rwv status`, `rwv doctor` give a bird's-eye view across N repos — branches, tips, lock relations, drift detection. You don't have to round-robin through repositories to find out where things stand.
 
-But ordinary git commands stay first-class. `git commit`, `git branch`, `git push` work in each manifest repo exactly as they always do. repoweave doesn't try to wrap them with `rwv commit` or `rwv branch` — those wrappers would be all friction and no signal.
+But ordinary git commands stay first-class. `git commit`, `git branch`, `git push` work in each member repo exactly as they always do. repoweave doesn't try to wrap them with `rwv commit` or `rwv branch` — those wrappers would be all friction and no signal.
 
 For *coordinated* cross-repo operations where the value is in the coordination — role-aware push policy, lock-precondition checks, manifest-aware ordering — `rwv push` earns its keep. For ad-hoc bulk operations where the coordination is just "do this in each repo," unix composition (`rwv status --json | jq ... | xargs git ...`) is the right shape. See [verb-vs-composition](../joints/verb-vs-composition.md) for the design principle and [run a command across repos](../../how-to/run-a-command-across-repos.md) for canonical recipes.
 
@@ -119,7 +119,7 @@ The gita integration is an opt-in alternative for users who prefer a dedicated m
 
 ## Atomic-ish project snapshots
 
-`rwv lock` snapshots every manifest repo's git `HEAD` into `projects/<name>/rwv.lock`, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, etc.) are maintained alongside it in `projects/<name>/` by integration install hooks. Committed together in the project repo, they pin both layers — which commit of each member repo and which versions of external dependencies — so reproducing the project repo's commit reproduces the whole world.
+`rwv lock` snapshots every member repo's git `HEAD` into `projects/<name>/rwv.lock`, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, etc.) are maintained alongside it in `projects/<name>/` by integration install hooks. Committed together in the project repo, they pin both layers — which commit of each member repo and which versions of external dependencies — so reproducing the project repo's commit reproduces the whole world.
 
 This is monorepo atomic-ness without monorepo storage cost. The commit-and-lock dance is two phases (commit each repo, then `rwv lock --commit`), not atomic the way a single monorepo commit is, but the result is the same: a coherent point-in-time snapshot of the entire system.
 
@@ -144,13 +144,13 @@ A useful heuristic for staying inside the monorepo-ergonomics envelope:
 Examples of things this rules out by analogy:
 
 - **You can't cherry-pick between sibling branches of a monorepo subtree to share work** without going through trunk. Likewise, don't cross-pick between sibling workweaves. Coordinate via the shared parent (sync up, then sync down).
-- **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch with a matched branch across every manifest repo. Today this is per-repo manual work; conceptually it's the same operation.
+- **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch with a matched branch across every member repo. Today this is per-repo manual work; conceptually it's the same operation.
 
 The heuristic is a guideline, not a hard rule. Two patterns worth being explicit about:
 
 **Long-lived workweaves are fine** when the flow direction is clear. A persistent "stable channel" workweave that always tracks the latest released lock is a reasonable architecture, not an anti-pattern. The tool tracks parent edges; the discipline is just "don't skip levels and don't cross-pick."
 
-**Cross-repo branch-name consistency is a UX direction, not a hard rule.** Having `main` everywhere (or all `develop`) reduces cognitive load — but if some manifest repo's branch is `master` and another's is `trunk`, the workspace still works. The real UX gap is the absence of a one-verb cross-repo branch operation, not the names themselves.
+**Cross-repo branch-name consistency is a UX direction, not a hard rule.** Having `main` everywhere (or all `develop`) reduces cognitive load — but if some member repo's branch is `master` and another's is `trunk`, the workspace still works. The real UX gap is the absence of a one-verb cross-repo branch operation, not the names themselves.
 
 ## Guidelines
 

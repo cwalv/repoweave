@@ -1,7 +1,7 @@
 # Lock as derived state
 
 `rwv.lock` is derived state. Its contents are fully determined by
-running `rwv lock` against the current manifest-repo tips on disk. That
+running `rwv lock` against the current member-repo tips on disk. That
 single property has outsized consequences for the rest of the design,
 and this joint pulls them together.
 
@@ -10,16 +10,16 @@ and this joint pulls them together.
 A piece of state is derived when there is a function from other state
 to it and the function is the source of truth. The lock entries' values
 are not opinions; they are reads of `git rev-parse HEAD` (one per
-manifest repo) baked into a file. Re-running the function on the same
+member repo) baked into a file. Re-running the function on the same
 inputs always yields the same lock.
 
 Useful frame for what this implies:
 
 | Question | Single-repo analog | repoweave analog |
 |---|---|---|
-| Where does new state come from? | `git commit` on a working tree | `git commit` in each manifest repo |
-| What captures cross-repo state? | n/a — single repo | `rwv lock` snapshots the manifest repo tips |
-| Is the snapshot meaningful before commit? | No — uncommitted edits don't have SHAs | No — uncommitted edits in manifest repos don't have SHAs |
+| Where does new state come from? | `git commit` on a working tree | `git commit` in each member repo |
+| What captures cross-repo state? | n/a — single repo | `rwv lock` snapshots the member repo tips |
+| Is the snapshot meaningful before commit? | No — uncommitted edits don't have SHAs | No — uncommitted edits in member repos don't have SHAs |
 | Can two operators produce identical snapshots? | Yes, given the same commits | Yes, given the same commit set per repo |
 
 The lock is to a project what `git commit` is to a working tree: a
@@ -28,13 +28,13 @@ disk. It is not a coordinator, not a config, not a constraint.
 
 ## `rwv lock` is a pure git snapshot
 
-`rwv lock` reads each manifest repo's current HEAD and writes the
+`rwv lock` reads each member repo's current HEAD and writes the
 resulting set of SHAs (plus a small amount of bookkeeping) into
 `rwv.lock`. It does not:
 
 - Fetch anything from the network.
 - Run integration installs.
-- Mutate any manifest repo's working tree.
+- Mutate any member repo's working tree.
 - Read the previous lock.
 
 The last point matters: `rwv lock` does not respect or honor or
@@ -96,7 +96,7 @@ records. The lock is the *artifact*; manifest commits are the *source*.
 
 ## What the lock contains
 
-The persisted shape is small: one entry per manifest repo, pinning it to
+The persisted shape is small: one entry per member repo, pinning it to
 its 40-character commit SHA (never a tag or branch name, even when a tag
 points at `HEAD`). Detailed schema lives in
 [reference/formats](../../reference/formats.md); the conceptual point

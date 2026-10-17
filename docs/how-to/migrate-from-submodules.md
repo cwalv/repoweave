@@ -65,7 +65,7 @@ git commit -m "Retire git submodules in favor of repoweave project"
 
 A `git-repo` manifest repository (`manifests/default.xml`) already separates the composition record from member repositories, so it maps directly to `projects/<name>/rwv.toml`:
 
-1. **Initialize the project:** Run `rwv init <project>` in a new weave root (or `rwv init <manifest-repo-url> --adopt` if you are converting the existing manifest repository in place).
+1. **Initialize the project:** Run `rwv init <project>` in a new weave root (or `rwv init <manifest-repository-url> --adopt` if you are converting the existing manifest repository in place).
 2. **Add each `<project>` element from `default.xml`:** Construct the full remote URL from `<remote fetch="..."/>` + `<project name="..."/>` and run `rwv add <url> --role <owned|fork|dependency>`. If `<project revision="..."/>` names a non-default branch, set `version = "<branch>"` on that entry in `projects/<project>/rwv.toml` and run `rwv fetch`.
 3. **Replace `<copyfile>` / `<linkfile>` entries:** Configure the [`static-files` integration](../reference/integrations/static-files.md) in `projects/<project>/rwv.toml` to surface shared build files (`Makefile`, `justfile`, `.editorconfig`) at the weave root.
 4. **Lock and verify:** Run `rwv lock --commit` and `rwv doctor` to verify that all member clones are attached to their tracked branches and `rwv.lock` is current.

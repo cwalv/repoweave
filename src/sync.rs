@@ -683,7 +683,7 @@ pub struct SyncJsonOutput {
     /// advisory to sit in, so a parallel `--json` sync carries no advisory
     /// at all. Run `-j 1` (or omit `-j`) to receive one.
     pub advisories: Vec<AdvisoryOutput>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
@@ -699,7 +699,7 @@ pub struct SyncJsonOutput {
 /// - `resumed` — the phase a `--continue` resumed from; absent on a fresh run.
 /// - `project_repo_advance` — step-3 advance of `projects/<project>/.git`;
 ///   omitted when the project repo was already at CWD's tip (no-op advance).
-/// - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest
+/// - per-outcome `step3_advance` — step-3 advance SHA pair for each member
 ///   repo; omitted on a no-op advance.
 /// - `placements` — file placements in both workspaces, the target's included.
 ///
@@ -750,7 +750,7 @@ pub struct SyncToJsonOutput {
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_repo_advance: Option<Step3AdvanceOutput>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
@@ -846,7 +846,7 @@ pub struct MemberNdjsonRecord<'a> {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum AdvanceOutput {
-    /// A manifest repo; the envelope carries it as that repo's
+    /// A member repo; the envelope carries it as that repo's
     /// `step3_advance`.
     Step3Advance {
         path: String,
@@ -1323,7 +1323,7 @@ fn manifest_repo_failure_message(
         Some(op) => {
             let hint = vcs.conflict_resolution_hint(op);
             format!(
-                "sync hit conflicts in one or more manifest repos (see per-repo lines above).\n\
+                "sync hit conflicts in one or more member repos (see per-repo lines above).\n\
                  \n\
                  To resolve each conflicted repo:\n\
                    cd <repo>\n\
@@ -1334,7 +1334,7 @@ fn manifest_repo_failure_message(
             )
         }
         None => format!(
-            "sync hit failures in one or more manifest repos (see per-repo lines above).\n\
+            "sync hit failures in one or more member repos (see per-repo lines above).\n\
              \n\
              Fix the underlying issue in each failed repo, then:\n\
                {resume}   # resume; already-converged repos are no-ops\n\
@@ -5823,11 +5823,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // target lacks, so the un-advanced lock stays true about them.
     if any_ff_failure {
         if emit_text {
-            eprintln!("  (project): not advanced — a manifest repo did not land (see above)");
+            eprintln!("  (project): not advanced — a member repo did not land (see above)");
         }
         crate::refuse!(
             RefusalKind::OpParked,
-            "sync-to advance-target failed for one or more manifest repos (see above).\n\
+            "sync-to advance-target failed for one or more member repos (see above).\n\
              The target's project repo was NOT advanced, so its lock still describes the \
              target's pre-op state rather than naming revisions the target does not have.\n\
              Op-state remains in both workspaces.\n\
@@ -5870,7 +5870,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             crate::refuse!(
                 RefusalKind::OpParked,
                 "sync-to advance-target could not advance the target's project repo (see \
-                 above). Every manifest repo landed, so the target holds the work but its \
+                 above). Every member repo landed, so the target holds the work but its \
                  lock does not yet name those tips.\n\
                  Op-state remains in both workspaces.\n\
                  Rerun `{resume}` after resolving, or `rwv abort` to roll the whole op back.",
@@ -6254,7 +6254,7 @@ fn retire_workweave_after_sync_to(
     if !diverged.is_empty() {
         crate::refuse!(
             RefusalKind::RetireNotConverged,
-            "--retire: workweave's manifest repos differ from target after sync-to; \
+            "--retire: workweave's member repos differ from target after sync-to; \
              refusing to delete:\n  {diverged}\n\
              \n\
              To reconcile: sync the divergent repo(s), then run:\n\

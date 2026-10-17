@@ -11,7 +11,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
   - Each member repo has a `role` (`owned`, `fork`, `dependency`, `reference`): `owned` and `fork` are read-write and included in `rwv push`; `dependency` is included in ecosystem workspace files and workweave branches but skipped by `rwv push`; `reference` is excluded from ecosystem workspace files and checked out with read-only tracked regular files (write bits removed).
 
 - **Workweave**: An isolated parallel workspace at `.workweaves/<project>--<name>/` (sibling of the weave root by default) for a single task or agent.
-  - Every manifest repo (plus `projects/<project>/`) is materialized as a `git worktree` of the canonical weave-root clone attached to the ephemeral branch `<project>--<name>` (with `role = "reference"` tracked regular files set read-only).
+  - Every member repo (plus `projects/<project>/`) is materialized as a `git worktree` of the canonical weave-root clone attached to the ephemeral branch `<project>--<name>` (with `role = "reference"` tracked regular files set read-only).
   - Carries a `.rwv-workweave` marker recording `{primary, project, parent}` (mutually exclusive with `.rwv-active`, which is primary-only).
 
 - **Lock & sync**: `rwv.lock` pins every member repo to a commit SHA (never a tag or branch name).
@@ -60,7 +60,7 @@ rwv push
 | `rwv remove PATH` | Unregister a repo from `rwv.toml` and regenerate integration files |
 | `rwv role PATH ROLE` | Change a repo's role (`owned`, `fork`, `dependency`, `reference`) and settle files |
 | `rwv lock` | Snapshot current repo HEAD SHAs into `rwv.lock` (`--commit` to commit) |
-| `rwv push` | Push manifest repos then the project repo from the primary weave |
+| `rwv push` | Push member repos then the project repo from the primary weave |
 | `rwv workweave PROJECT create NAME` | Create an isolated workweave on branch `PROJECT--NAME` |
 | `rwv workweave PROJECT list` | List active workweaves for a project |
 | `rwv workweave PROJECT log` | Show unique commits or `--diff` in a workweave vs its parent |

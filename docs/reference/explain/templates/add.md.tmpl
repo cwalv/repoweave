@@ -14,7 +14,7 @@ the `rwv.toml` change.
 
 Clones always land at the **canonical path** under the primary weave root,
 regardless of whether `rwv add` is invoked from inside a workweave. This
-reflects the shared-clone topology: manifest repos are global infrastructure,
+reflects the shared-clone topology: member repos are global infrastructure,
 with `git worktree` providing per-workweave isolation. (See
 `rwv explain workweave` for the workweave topology model.)
 

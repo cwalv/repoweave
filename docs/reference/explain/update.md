@@ -135,7 +135,7 @@ Schema:
       }
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -269,7 +269,7 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
           "type": "string"
         },
         "workweave": {

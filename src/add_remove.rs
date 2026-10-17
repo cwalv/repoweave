@@ -175,7 +175,7 @@ pub(crate) fn settle_manifest(
     let missing = missing_active_members(root, manifest.iter_entries());
     if !missing.is_empty() {
         eprintln!(
-            "warning: {} manifest repo(s) not on disk; managed files left unchanged:",
+            "warning: {} member repo(s) not on disk; managed files left unchanged:",
             missing.len()
         );
         for path in &missing {

@@ -31,8 +31,8 @@ Five terms recur throughout the docs:
 - **weave** — a repoweave workspace; a directory containing `projects/` and cloned member repos.
 - **workweave** — a worktree-derived sandbox of a weave (isolated parallel cross-repo work).
 - **project** — the small coordination repo under `projects/<name>/`, carrying `rwv.toml` and `rwv.lock`.
-- **manifest repo** (or **member repo**) — a repo listed in a project's `rwv.toml`. The repos you actually work in; regular clones at `<registry>/<owner>/<repo>/`.
-- **lock** (`rwv.lock`) — pins each manifest repo to a specific 40-character commit SHA. Derived from manifest-repo tips; never edited by hand.
+- **member repo** — a repo listed in a project's `rwv.toml`. The repos you actually work in; regular clones at `<registry>/<owner>/<repo>/`.
+- **lock** (`rwv.lock`) — pins each member repo to a specific 40-character commit SHA. Derived from member-repo tips; never edited by hand.
 
 For the full vocabulary, see [reference/glossary](./reference/glossary.md).
 

@@ -217,11 +217,11 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
 ├── work/                                     # weave root (primary weave)
 │   ├── github/
 │   │   ├── chatly/
-│   │   │   ├── server/                       # manifest repo (clone)
-│   │   │   ├── web/                          # manifest repo
-│   │   │   └── protocol/                     # manifest repo
+│   │   │   ├── server/                       # member repo (clone)
+│   │   │   ├── web/                          # member repo
+│   │   │   └── protocol/                     # member repo
 │   │   └── socketio/
-│   │       └── engine.io/                    # manifest repo (fork)
+│   │       └── engine.io/                    # member repo (fork)
 │   │
 │   ├── projects/
 │   │   ├── web-app/                          # project repo

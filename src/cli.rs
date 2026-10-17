@@ -91,7 +91,7 @@ pub enum Commands {
         #[arg(long)]
         no_suppress: bool,
     },
-    /// Print workspace root path
+    /// Print weave root path
     Resolve,
 
     // ── Setup & lifecycle ─────────────────────────────────────────────────────
@@ -272,7 +272,7 @@ pub enum Commands {
     },
     /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
     ///
-    /// Absorbs `<source>`'s committed lock and advances each manifest repo to the locked SHA.
+    /// Absorbs `<source>`'s committed lock and advances each member repo to the locked SHA.
     /// Default strategy is `ff` (fast-forward only); pass `--strategy=rebase` when histories
     /// have diverged and ff would bail.
     ///
@@ -334,7 +334,7 @@ pub enum Commands {
     /// contribution.
     SyncTo {
         /// Target workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary workspace root). Omit to target
+        /// (absolute, or relative to the primary weave root). Omit to target
         /// the recorded parent from `.rwv-workweave`; errors if not in a workweave.
         /// Must not be passed alongside `--continue` (target is then read from op-state).
         #[arg(conflicts_with = "do_continue")]
@@ -364,7 +364,7 @@ pub enum Commands {
         #[arg(long, conflicts_with = "do_continue")]
         discard_local_commits: bool,
         /// Land work then delete the workweave on success (requires clean worktree and
-        /// manifest repos converged with target after sync-to completes).
+        /// member repos converged with target after sync-to completes).
         #[arg(long, conflicts_with = "do_continue")]
         retire: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`).
@@ -392,7 +392,7 @@ pub enum Commands {
     },
 
     // ── Network & publishing ──────────────────────────────────────────────────
-    /// Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding.
+    /// Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding.
     Push {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
@@ -400,7 +400,7 @@ pub enum Commands {
         /// Print the push plan without executing
         #[arg(long)]
         dry_run: bool,
-        /// Force-push every repo in the operation (manifest repos and the project repo). Default deny.
+        /// Force-push every repo in the operation (member repos and the project repo). Default deny.
         #[arg(long)]
         force: bool,
         /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
@@ -409,7 +409,7 @@ pub enum Commands {
         /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
         #[arg(long = "repo")]
         repos: Vec<String>,
-        /// Number of parallel per-repo workers for manifest-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
+        /// Number of parallel per-repo workers for member-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
@@ -546,7 +546,7 @@ pub enum WorkweaveAction {
     /// tree via `.gitignore` and audit-visible via the file itself.
     SetContainer {
         /// Absolute path to record. Relative paths resolve against the
-        /// primary workspace root.
+        /// primary weave root.
         path: String,
     },
     /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.

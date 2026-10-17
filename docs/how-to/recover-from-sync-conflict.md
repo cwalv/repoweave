@@ -25,7 +25,7 @@ When a project-repo replay or member-repo rebase hits a textual conflict, `rwv` 
 
 ```text
   github/chatly/server: Rebase in <weave-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
-Error: sync hit conflicts in one or more manifest repos (see per-repo lines above).
+Error: sync hit conflicts in one or more member repos (see per-repo lines above).
 
 To resolve each conflicted repo:
 cd <repo>

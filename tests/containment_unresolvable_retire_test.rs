@@ -237,7 +237,7 @@ fn retire_names_repos_differ_with_no_verdict_when_the_pair_is_unresolvable() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--retire: workweave's manifest repos differ from target after sync-to"),
+        stderr.contains("--retire: workweave's member repos differ from target after sync-to"),
         "must name itself as the retire divergence refusal; stderr:\n{stderr}"
     );
 

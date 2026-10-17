@@ -9,7 +9,7 @@ not discover a new one.
 
 Given a `source` (full URL or `owner/repo` shorthand), `fetch` clones the
 project repo into `projects/<name>/`, reads its `rwv.lock`, and then clones
-or attaches every manifest repo at the revision the lock records. When the
+or attaches every member repo at the revision the lock records. When the
 lock is absent (first-time bootstrap), `fetch` clones repos at branch HEAD
 and writes a new lock from those HEAD SHAs. When a manifest entry is missing
 from an existing lock, it is added additively at branch HEAD — already-pinned
@@ -93,7 +93,7 @@ its branch with `git checkout <branch>` in that repo; use `rwv update` when
 the intent is to move the *lock* forward to branch HEAD instead.
 
 `--frozen` is the CI mode: if the lock is absent or does not cover every
-manifest repo (an *incomplete* lock), the command errors instead of writing.
+member repo (an *incomplete* lock), the command errors instead of writing.
 It changes lock validation only — present clones are realigned exactly as
 they are without it, and the realignment gate still applies. Reference repos
 that fail to clone are skipped without failing the overall run.
@@ -118,7 +118,7 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
   mode). In-place mode requires an active project — it errors if CWD is
   not inside a workspace or no project is active.
 - `--frozen` — CI mode: error if the lock is missing or does not cover all
-  manifest repos. Never writes the lock.
+  member repos. Never writes the lock.
 - `--allow-non-empty-dir` — bootstrap into a non-empty directory that is not
   already a workspace (normally an error). Only meaningful in bootstrap mode;
   rejected when `<source>` is absent.
@@ -186,7 +186,7 @@ Schema:
 
 ## Exit codes
 
-- `0` — the project repo and every non-reference manifest repo cloned or
+- `0` — the project repo and every non-reference member repo cloned or
   checked out successfully (reference repos that failed are warnings, not
   errors). Under `--json`, exit `0` means every outcome has `"status": "ok"`
   or `"skipped"`.
@@ -279,7 +279,7 @@ rwv fetch --detach-checkouts
 - *lock file does not exist* (with `--frozen`) — the project has no
   `rwv.lock`; run without `--frozen` to bootstrap it.
 - *lock file is incomplete* (with `--frozen`) — the lock does not cover all
-  manifest repos; update the lock with `rwv update` first.
+  member repos; update the lock with `rwv update` first.
 - *aligning … is not a fast-forward* — the pin is not a descendant of the
   branch tip (an older lock, or a branch carrying commits `origin` does not
   have). Reconcile the branch with the pin yourself and re-run, or pass

@@ -1841,7 +1841,7 @@ impl WorkspaceContext {
 /// never independently computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resolution {
-    /// Primary workspace root, in the wire spelling.
+    /// Primary weave root, in the wire spelling.
     ///
     /// A `String` and not a `PathBuf` so the spelling is decided at
     /// construction rather than by serde: this is a published absolute path
@@ -2156,7 +2156,7 @@ impl MarkerDefect {
     pub fn refusal(&self, marker_path: &Path) -> String {
         match self {
             MarkerDefect::DanglingPrimary { primary } => format!(
-                "{} names primary: {}, which is not a repoweave workspace root. \
+                "{} names primary: {}, which is not a weave root. \
                  A copied or rsync'd workweave tree is the usual cause. Repair \
                  `primary:` to name the workspace this tree belongs to, or delete \
                  {} to adopt this tree as a standalone weave.",
@@ -3755,7 +3755,7 @@ mod tests {
 
         let err = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap_err();
         assert!(
-            format!("{err}").contains("not a repoweave workspace root"),
+            format!("{err}").contains("not a weave root"),
             "unexpected error: {err}"
         );
     }
@@ -3840,10 +3840,7 @@ mod tests {
             WorkspaceContext::resolve_invocation_tolerating_disputed_root(&dir, None).unwrap_err();
         let msg = format!("{err}");
         let canon = dir.canonicalize().unwrap();
-        assert!(
-            msg.contains("not a repoweave workspace root"),
-            "unexpected error: {msg}"
-        );
+        assert!(msg.contains("not a weave root"), "unexpected error: {msg}");
         assert!(
             msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
             "must name the marker: {msg}"

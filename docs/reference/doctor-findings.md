@@ -642,7 +642,7 @@ machine's absolute path.
 #### `foreign-primary-other-workspace`
 
 **Warning. Report-only.** The marker's `primary:` resolves to a different but
-perfectly valid workspace root — the normal shape when several weaves share
+perfectly valid weave root — the normal shape when several weaves share
 one workweave container. It is not a defect in this workweave, so it is the
 one finding excluded from the text report; every sibling weave's doctor would
 otherwise repeat this about every other sibling. It is still enumerated under
@@ -1280,7 +1280,7 @@ reason the reflog is never cut.
 
 ### `stale-op-state`
 
-**Warning. Report-only.** A `.rwv-op` file is present at a workspace root.
+**Warning. Report-only.** A `.rwv-op` file is present at a weave root.
 The finding reports the file's age, its path, and the `verb` that started the
 op (`sync` or `sync-to`).
 

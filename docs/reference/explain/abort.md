@@ -17,7 +17,7 @@ target workspace are rolled back.
 
 ### What is restored
 
-For each manifest repo and the project repo in every involved workspace, abort
+For each member repo and the project repo in every involved workspace, abort
 applies a two-rail verified-restore:
 
 **Rail 1 — pre-abort reference.** Before restoring any repo, a durable
@@ -137,7 +137,7 @@ even after the successful sync completes. The op-state file is still removed
 git reset --hard refs/rwv/pre-op/<op-id>
 ```
 
-Manifest-repo savepoints are deleted on success regardless; only the project
+Member-repo savepoints are deleted on success regardless; only the project
 repo tombstone is preserved.
 
 ## Invocation

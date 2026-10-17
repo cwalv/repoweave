@@ -20,7 +20,7 @@ Three tiers, bottom-up:
 
 | Tier | What's "stable" at this tier | Joint |
 |---|---|---|
-| **2 — Revisions** | Each manifest repo on disk is at the SHA recorded in `rwv.lock`. | [pyramid-of-stability](./pyramid-of-stability.md) |
+| **2 — Revisions** | Each member repo on disk is at the SHA recorded in `rwv.lock`. | [pyramid-of-stability](./pyramid-of-stability.md) |
 | **1 — Refs** | No silent drift between sibling worktrees on the same branch. | [shared-refs-drift](./shared-refs-drift.md) |
 | **0 — Artifacts** | Every member repo is one canonical store with worktree-linked checkouts. | this joint |
 
@@ -44,13 +44,13 @@ a spec to enforce.
 Three invariants, stated in VCS-neutral vocabulary. The next section
 maps each to its git realization.
 
-### I1 — Single canonical store per manifest repo
+### I1 — Single canonical store per member repo
 
-Each manifest repo named in any project's `rwv.toml` has exactly one
+Each member repo named in any project's `rwv.toml` has exactly one
 **canonical store** in the weave: a fully-materialized clone at
 `<weave>/<repo_path>`. That clone holds the object DAG and the refs for
 the repo. Nothing under `<parent>/.workweaves/` is a standalone clone of
-any manifest repo.
+any member repo.
 
 `repo_path` here is a given, not a choice this joint makes: it is derived
 from a clone source's identity — the registry set on
@@ -58,14 +58,14 @@ from a clone source's identity — the registry set on
 registry's own name, to the first path segment — never asserted by a verb
 from an operator-typed path.
 
-Operationally: when `rwv add` materializes a new manifest repo, the
+Operationally: when `rwv add` materializes a new member repo, the
 canonical store always lands at primary's `<weave>/<repo_path>`, even
 when the verb runs from inside a workweave. Workweaves do not host
 their own clones.
 
 ### I2 — Workweave checkouts are linked into the canonical store
 
-For every manifest repo, whatever its role (including `role = "reference"`,
+For every member repo, whatever its role (including `role = "reference"`,
 whose tracked files are made read-only on disk), each workweave's on-disk view
 is a **linked workspace** — a workspace whose object DAG and refs come from
 the canonical store, not from a separate copy. Every commit reachable in
@@ -136,7 +136,7 @@ Every check above tier 0 depends on these three invariants:
 
 The pattern in all three is the same: every higher-tier check is sound
 *within* one object DAG. Multiple physically separate DAGs for the same
-manifest repo turn every higher-tier check into a coin toss whose outcome
+member repo turn every higher-tier check into a coin toss whose outcome
 depends on which DAG the check happened to consult.
 
 ## Case study: a canonical store held inside a workweave
@@ -201,7 +201,7 @@ hierarchy joint is where the operational story lives.
 
 The invariants are about clone topology, not about repo-internal state:
 
-- rwv does not require that every clone of a manifest repo across
+- rwv does not require that every clone of a member repo across
   different weaves share an object DAG. The invariants are scoped to
   one weave at a time. Two weaves on the same machine can each hold
   their own canonical store of the same repo; they are independent

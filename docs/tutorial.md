@@ -68,7 +68,7 @@ The result:
 └── .rwv-active                       # "web-app"
 ```
 
-`rwv fetch` reads `rwv.lock` and aligns clones to the pinned commits — it never advances existing pins to upstream branch tips (if a manifest repo is missing from `rwv.lock` altogether and `--frozen` is not set, `rwv fetch` records its initial entry). To advance existing repos to their remote branch tips: `rwv update`.
+`rwv fetch` reads `rwv.lock` and aligns clones to the pinned commits — it never advances existing pins to upstream branch tips (if a member repo is missing from `rwv.lock` altogether and `--frozen` is not set, `rwv fetch` records its initial entry). To advance existing repos to their remote branch tips: `rwv update`.
 
 ## 2. Get the latest
 
@@ -76,7 +76,7 @@ The result:
 rwv update
 ```
 
-**`rwv update` is the verb that gets the latest.** It advances each manifest repo to the branch HEAD configured in `rwv.toml` (`version = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
+**`rwv update` is the verb that gets the latest.** It advances each member repo to the branch HEAD configured in `rwv.toml` (`version = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
 
 Compare:
 
@@ -118,7 +118,7 @@ cd ~/work
 rwv lock --commit
 ```
 
-`rwv lock` reads the current 40-character commit SHA from each manifest repo's `HEAD` and writes `projects/web-app/rwv.lock` (`--commit` stages and commits `rwv.lock` in `projects/web-app/` in one step, or you can run `rwv lock` followed by `git -C projects/web-app commit`). Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
+`rwv lock` reads the current 40-character commit SHA from each member repo's `HEAD` and writes `projects/web-app/rwv.lock` (`--commit` stages and commits `rwv.lock` in `projects/web-app/` in one step, or you can run `rwv lock` followed by `git -C projects/web-app commit`). Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
 
 Now push the member repo commits and the updated project lock together:
 
@@ -136,7 +136,7 @@ Anyone else can now reproduce your exact state:
 rwv fetch chatly/web-app --frozen
 ```
 
-`--frozen` errors if `rwv.lock` is incomplete — some manifest repo has no entry (suitable for CI). Without `--frozen`, `rwv fetch` aligns each repo to the SHA recorded in `rwv.lock`, adding any missing entries; a stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
+`--frozen` errors if `rwv.lock` is incomplete — some member repo has no entry (suitable for CI). Without `--frozen`, `rwv fetch` aligns each repo to the SHA recorded in `rwv.lock`, adding any missing entries; a stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
 
 ## Where to go next
 

@@ -9,7 +9,7 @@ source's tip (with `rwv.lock` excluded so lock-only commits become no-ops).
 The manifest that replay produces decides CWD's members: one it names that
 CWD lacks is materialized, and one it no longer names is pruned after every
 repo has replayed, so a parked op removes no checkout. The source workspace's
-`rwv.lock` drives Phase 2: each manifest repo in CWD is advanced to the SHA
+`rwv.lock` drives Phase 2: each member repo in CWD is advanced to the SHA
 the source has locked. Phase 3 regenerates CWD's `rwv.lock` from the
 now-merged manifest tips and commits it. Per-repo
 conflicts are reported with non-zero exit; already-converged repos are
@@ -205,7 +205,7 @@ Schema:
       }
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -554,7 +554,7 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
           "type": "string"
         },
         "workweave": {

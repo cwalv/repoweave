@@ -509,13 +509,13 @@ The published docs layer **persuasive entry and perspective pages** onto
 
 Use **weave root** (not "weave directory" or "workspace root") for the
 top-level directory containing `projects/` and canonical member clones; **member
-repo** (not "manifest repo" or "constituent repo") for an `rwv.toml` `[repos]`
-entry; **project repo** for `projects/<name>/`; **workweave** (or **seat** when
-referring to an agent's persistent checkout) for an isolated parallel
-workspace; and distinguish **materialize** (populating member checkouts and
-ecosystem state via `rwv materialize`, `rwv sync`, or `rwv workweave create`)
-from **activate** (switching `.rwv-active` and root-level ecosystem symlinks
-via `rwv activate`).
+repo** (not "manifest repo" or "constituent repo") for an `rwv.toml`
+`[repositories]` entry; **project repo** for `projects/<name>/`; **workweave**
+(or **seat** when referring to an agent's persistent checkout) for an isolated
+parallel workspace; and distinguish **materialize** (populating member
+checkouts and ecosystem state via `rwv materialize`, `rwv sync`, or `rwv
+workweave create`) from **activate** (switching `.rwv-active` and root-level
+ecosystem symlinks via `rwv activate`).
 
 ### American spelling
 

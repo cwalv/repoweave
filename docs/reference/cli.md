@@ -78,7 +78,7 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 
 Two modes, keyed on whether `<source>` is given:
 
-- **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed manifest repo to its canonical slot.
+- **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed member repo to its canonical slot.
 - **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.toml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `missing-canonical-clone` and `dangling-reference` findings from `rwv doctor` point here). Run from the weave root.
 
 How `rwv fetch` handles each manifest repository:
@@ -113,7 +113,7 @@ Anchored by `tests/doc_claims_fetch_test.rs`.
 
 ### `rwv update [...]`
 
-**The verb that gets the latest.** Advance each manifest repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`.
+**The verb that gets the latest.** Advance each member repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`.
 
 The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `version` declares, and `update` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
 
@@ -234,7 +234,7 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 
 | Flag | Effect |
 |---|---|
-| `--strategy ff\|rebase` | Default `ff`. Applies uniformly to project and manifest repos; `rwv.lock` is excluded from the per-commit merge inputs git uses during rebase replay and regenerated in Phase 3. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
+| `--strategy ff\|rebase` | Default `ff`. Applies uniformly to project and member repos; `rwv.lock` is excluded from the per-commit merge inputs git uses during rebase replay and regenerated in Phase 3. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from source, hard-resetting the project repo to source's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
 | `--continue` | Resume a sync interrupted mid-op. All parameters, the project included, are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`, which asserts rather than rebinds — naming a project other than the recorded one is refused) |
@@ -286,19 +286,19 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 
 **Preconditions** (evaluated before any network call):
 - **Primary weave only** — refused inside a workweave (`push-from-workweave`); land work into primary with `rwv sync-to` first.
-- **Lock freshness** — every manifest repo's HEAD must match its `rwv.lock` entry (`stale-lock`).
+- **Lock freshness** — every member repo's HEAD must match its `rwv.lock` entry (`stale-lock`).
 - **Project repo branch** — `projects/<project>` must be on its canonical default branch (`main` / `master`), not on a detached HEAD or non-default branch.
 
 | Flag | Effect |
 |---|---|
 | `--role` / `--repo` | Selector filters |
-| `--force` | Force-push every repo in the operation (manifest repos and the project repo). Default deny. The lock-precondition check still runs unconditionally |
-| `-j N` | Parallel push (up to N concurrent for manifest repos; project repo always last and serial) |
+| `--force` | Force-push every repo in the operation (member repos and the project repo). Default deny. The lock-precondition check still runs unconditionally |
+| `-j N` | Parallel push (up to N concurrent for member repos; project repo always last and serial) |
 | `--json` / `-j N` | Structured output / parallel push (NDJSON when N > 1) |
 | `--dry-run` | Print the push plan without executing |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-`--json` emits the envelope `{"$schema": "...", "outcomes": [...]}`. Manifest-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. See [JSON envelope convention](#--json-envelope-convention).
+`--json` emits the envelope `{"$schema": "...", "outcomes": [...]}`. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. See [JSON envelope convention](#--json-envelope-convention).
 
 Anchored by `tests/doc_claims_push_test.rs` and `tests/push_json_test.rs`. See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
@@ -362,7 +362,7 @@ See [Doctor findings](./doctor-findings.md) for the complete catalog of wire `--
 
 Create an isolated workweave for `<project>`:
 
-1. **Manifest worktrees** — creates a git worktree on an ephemeral `<project>--<name>` branch for every manifest repo (`owned`, `fork`, `dependency`, and `reference`), with `reference` repos' tracked regular files set read-only (`chmod -w`, preserving symlinks).
+1. **Manifest worktrees** — creates a git worktree on an ephemeral `<project>--<name>` branch for every member repo (`owned`, `fork`, `dependency`, and `reference`), with `reference` repos' tracked regular files set read-only (`chmod -w`, preserving symlinks).
 2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on `<project>--<name>` and writes `.rwv-workweave` at the workweave root.
 3. **Surfacing & local excludes** — verifies existing integration files in `projects/<project>/` and surfaces workweave-root symlinks without authoring config files or running install hooks (run `rwv materialize` inside the workweave to run install hooks), and lists ephemeral weave-root entries in the project worktree's `.git/info/exclude` (never `.gitignore`).
 
@@ -396,7 +396,7 @@ Show this workweave's unique commits versus its recorded parent, per repo, inclu
 | `--diff` | Show the unique diff versus the parent instead of the commit listing. Anchored at the common ancestor, so commits the parent gained after the fork are not shown as reversals |
 | `--json` | Emit machine-readable JSON |
 
-Text output includes one `=== <path> ===` section per manifest repo followed by `=== (project) ===` for the project repo. `--json` emits an object with `workweave`, `parent`, `diff` (boolean), `repos[]` (each carrying `path`, `role`, `head`, `parent_tip`, `unique_commits[]` with `{ "sha", "subject" }`, `diff_base`, and `diff`), and `project_repo` (same shape as each element of `repos[]`, with `path` set to `"(project)"`).
+Text output includes one `=== <path> ===` section per member repo followed by `=== (project) ===` for the project repo. `--json` emits an object with `workweave`, `parent`, `diff` (boolean), `repos[]` (each carrying `path`, `role`, `head`, `parent_tip`, `unique_commits[]` with `{ "sha", "subject" }`, `diff_base`, and `diff`), and `project_repo` (same shape as each element of `repos[]`, with `path` set to `"(project)"`).
 
 ### `rwv workweave [--hook-mode] [--claude-hook] <project> <action>`
 
@@ -520,7 +520,7 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 
 `--role` parsing is **case-insensitive** (`--role Owned`, `--role OWNED` both work).
 
-`--repo` patterns match against the *manifest-repo path* (e.g., `github/chatly/server`), not against project repo paths.
+`--repo` patterns match against the *member-repo path* (e.g., `github/chatly/server`), not against project repo paths.
 
 ### Pattern prefixes
 

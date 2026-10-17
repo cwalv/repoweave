@@ -787,7 +787,7 @@ fn doctor_reports_a_distinct_marker_unverifiable_finding_per_defect() {
     let unreadable_line = line_for("demo--unreadable");
 
     assert!(
-        dangling_line.contains("is not a repoweave workspace root"),
+        dangling_line.contains("is not a weave root"),
         "got: {dangling_line}"
     );
     assert!(

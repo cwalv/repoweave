@@ -46,7 +46,7 @@ analog.
 
 ### `rwv push` (not `publish`)
 
-Pure transmit. Pushes commits in manifest repos within the default
+Pure transmit. Pushes commits in member repos within the default
 scope (owned + fork), then the project repo last; refuses on lock
 mismatch. Dependency and reference repos are excluded from the default
 scope (not operator-writable). The lock is **read** as a precondition
@@ -59,7 +59,7 @@ verb.
 
 ### `rwv update` (not `pull`)
 
-Advances each manifest repo to its branch HEAD and re-snapshots
+Advances each member repo to its branch HEAD and re-snapshots
 `rwv.lock`. The principal artifact is the new lock; the network fetch
 exists in service of the snapshot. The audience expectation maps
 cleanly to `cargo update` / `npm update`: "go get the latest versions
@@ -119,7 +119,7 @@ The single-repo analog is `sl rebase --dest <bookmark>` or `git rebase
 <branch> && git merge --ff-only`: strategy is available, just without a
 dedicated cross-workspace verb. rwv's contribution is not a new concept —
 single-repo VCSes can do local-to-local alignment too — it is the
-multi-repo bundling: loop over N manifest repos with lock-excluded replay,
+multi-repo bundling: loop over N member repos with lock-excluded replay,
 regenerate `rwv.lock` in Phase 3, and handle workspace lifecycle
 (`--retire`). The sync vocabulary is doing real work, not inventing a new
 direction concept.

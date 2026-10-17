@@ -73,7 +73,7 @@ pub struct FetchJsonOutput {
     /// a canonical clone it realigned, and from a workweave each worktree it
     /// created there. Empty, not absent, when it placed none.
     pub placements: Vec<PlacementOutput>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,

@@ -85,7 +85,7 @@ pub struct UpdateJsonOutput {
     /// How the files of each checkout the advance moved were placed. Empty,
     /// not absent, when it moved none.
     pub placements: Vec<PlacementOutput>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,

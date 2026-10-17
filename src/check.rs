@@ -1117,7 +1117,7 @@ pub enum WorkweaveTreeIntegrityKind {
     UnregisteredDir,
     /// The marker's `primary:` path does not resolve to the workspace this
     /// scan was started from, and the path itself resolves to no workspace
-    /// either (missing, or exists but is not a workspace root) — e.g. an
+    /// either (missing, or exists but is not a weave root) — e.g. an
     /// rsync'd workweave whose marker still points at the origin machine's
     /// absolute path. Report-only.
     ForeignPrimary {
@@ -1126,7 +1126,7 @@ pub enum WorkweaveTreeIntegrityKind {
         marker_primary: PathBuf,
     },
     /// The marker's `primary:` path does not match this workspace, but
-    /// resolves to a different, valid workspace root — the normal shape
+    /// resolves to a different, valid weave root — the normal shape
     /// when several weaves share one workweave container. Not a defect in
     /// this workweave, so excluded from the default text report: every
     /// sibling weave's doctor would otherwise repeat this about every other
@@ -1305,7 +1305,7 @@ pub enum ProvenanceKind {
 /// The four sub-kinds enumerate the ways the bottom tier of the stability
 /// stack
 /// ([clone-topology.md](../../docs/explanation/joints/clone-topology.md))
-/// can break: a manifest repo's slot at `<weave>/<repo_path>` must be a
+/// can break: a member repo's slot at `<weave>/<repo_path>` must be a
 /// "canonical store" (a full clone), and every workweave checkout
 /// `<workweave>/<repo_path>` must be a linked workspace whose VCS common
 /// store resolves to that canonical store. Each variant names a distinct
@@ -6917,7 +6917,7 @@ pub struct DoctorJsonOutput {
     /// `rwv-*` executables were found. Never a failed check — the inventory
     /// is the audit surface for the PATH trust boundary.
     pub plugins: Vec<crate::plugins::PluginRecord>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
@@ -8440,7 +8440,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         format!(
                             "{workweave}/{repo}: canonical clone for `{repo}` is absent \
                              (expected at {}) — this worktree cannot be classified; \
-                             run `rwv fetch` from the workspace root to \
+                             run `rwv fetch` from the weave root to \
                              re-materialize it, then re-run `rwv doctor` to verify",
                             canonical_path.display()
                         ),

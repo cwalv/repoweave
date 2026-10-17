@@ -31,7 +31,7 @@ Git submodules pin a commit SHA from one repo inside another. They solve the rep
 
 **git submodules win when:** your use case is purely pinning — a firmware repo that vendors a hardware-abstraction library at a known commit, a docs repo that embeds a spec. No writable workspace needed, no parallel work, no agent integration.
 
-**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update` advances every manifest repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
+**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update` advances every member repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
 
 ## git subtree
 

@@ -17,19 +17,19 @@ CWD, and target is only ever advanced via fast-forward.
    source and CWD as destination. End state: CWD has target's history with CWD's
    unique commits replayed on top (per `--strategy`).
 
-2. **Step 2 — auto-relock.** If step 1 moved any manifest-repo tip in CWD,
+2. **Step 2 — auto-relock.** If step 1 moved any member-repo tip in CWD,
    regenerate `rwv.lock` and commit it in CWD's project repo with the message
    `lock: auto-relock after sync from <source>`. This keeps the lock consistent without requiring
    a separate `rwv lock` invocation.
 
-3. **Step 3 — FF-advance target.** Fast-forward the branch each manifest repo
+3. **Step 3 — FF-advance target.** Fast-forward the branch each member repo
    and the project repo in target is on to CWD's converged tips. This step is
    always FF regardless of `--strategy` — all rewriting happened in CWD during
    step 1. If FF is not possible (e.g. concurrent modification), the operation
-   bails with an actionable error. The manifest repos go first and the project
-   repo last: the project repo carries the lock, so advancing it while a manifest
+   bails with an actionable error. The member repos go first and the project
+   repo last: the project repo carries the lock, so advancing it while a member
    repo failed to land would leave the target's lock naming revisions the target
-   does not hold. A failed manifest repo skips the project advance entirely. A
+   does not hold. A failed member repo skips the project advance entirely. A
    member CWD holds and a target workweave lacks is created there, on the
    target's ephemeral branch, at CWD's tip.
 
@@ -62,7 +62,7 @@ ahead of target.)
 ### Source-side cleanliness preflight
 
 Before step 1 begins, `sync-to` checks that CWD has no uncommitted **tracked**
-changes in any manifest repo or (outside `rwv.lock`) in the project repo.
+changes in any member repo or (outside `rwv.lock`) in the project repo.
 Untracked files are fine. A project repo that is dirty only in `rwv.lock` is
 also fine — the op commits that file itself. If tracked dirt is found, sync-to
 refuses up front, naming the offending paths, so you can commit or stash before
@@ -87,7 +87,7 @@ place — move or remove the file, then `rwv sync-to --continue`.
 
 ### Op-start auto-relock
 
-If one or more of CWD's manifest repos has new commits since the last lock
+If one or more of CWD's member repos has new commits since the last lock
 (`LockRelation::Ahead` — lock is behind HEAD), `sync-to` auto-relocks at op
 start (after writing savepoints, so the auto-relock commit is covered by
 `rwv abort`). One line per affected repo is printed naming the repo and how
@@ -146,7 +146,7 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
 ```
 
 - `<target>` is the target workspace: `primary`, a bare workweave name, or
-  a path (absolute, or relative to the primary workspace root). Omit inside
+  a path (absolute, or relative to the primary weave root). Omit inside
   a workweave to auto-target the parent recorded in `.rwv-workweave`. Required
   in a primary weave.
 - `--json` emits machine-readable output (see Output below).
@@ -226,7 +226,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each member repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -272,7 +272,7 @@ Schema:
       ]
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -566,7 +566,7 @@ Schema:
       "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
         {
-          "description": "Project repo, then manifest repos: Phase 1' and Phase 2.",
+          "description": "Project repo, then member repos: Phase 1' and Phase 2.",
           "type": "string",
           "enum": [
             "replay"
@@ -643,7 +643,7 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
           "type": "string"
         },
         "workweave": {
@@ -1268,7 +1268,7 @@ rwv abort
   refusal names, then retry. `--allow-stale-lock` skips the check, but for a
   target whose lock is behind its HEAD it only defers the failure to step 3 —
   refresh that lock instead.
-- *uncommitted tracked changes in source* — CWD has tracked dirt in a manifest
+- *uncommitted tracked changes in source* — CWD has tracked dirt in a member
   repo or project repo (outside `rwv.lock`). Commit or stash the changes, then
   retry.
 - *target is on a detached HEAD* — a target repo has no branch for step 3 to

@@ -198,7 +198,7 @@ restore both sides independently.
 
 ### replay
 
-Runs **Phase 1'** (project repo) followed by **Phase 2** (manifest repos) — the project-repo step is called *Phase 1'* because it runs ahead of Phase 2 so the replayed `rwv.toml` determines which member checkouts exist before Phase 2 advances them and Phase 3 (`relock`) snapshots their tips:
+Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the project-repo step is called *Phase 1'* because it runs ahead of Phase 2 so the replayed `rwv.toml` determines which member checkouts exist before Phase 2 advances them and Phase 3 (`relock`) snapshots their tips:
 
 - **Phase 1' — project repo, lock-excluded**: replay CWD's unique
   project commits onto the named workspace's project tip using
@@ -207,7 +207,7 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (manifest repos) — th
   and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
   branch pointer advances without replaying anything.
 
-- **Phase 2 — manifest repos**: advance each of CWD's manifest repo
+- **Phase 2 — member repos**: advance each of CWD's member repo
   branches to the named workspace's lock target, using the chosen
   `--strategy`. Exception: a plain `sync` from a workweave source whose
   lock is behind its committed HEAD targets that source's committed tips
@@ -244,7 +244,7 @@ that manifest lacks is pruned. Role plays no part.
 
 **Nothing is pruned until every repo has replayed.** The prune runs after
 Phase 2, so an op that parks, on a project-repo conflict or a
-manifest-repo one, has removed no checkout yet, and the prune runs on
+member-repo one, has removed no checkout yet, and the prune runs on
 `--continue`. `rwv abort` restores refs and cannot bring back a deleted
 checkout, so this ordering is what lets an aborted op leave CWD's
 checkouts as it found them.
@@ -300,32 +300,32 @@ it automatically with a message like `lock: auto-relock after sync from
 <named-workspace>`.
 
 On completion, record the per-repo **converged tips** in the owner
-record: the HEAD of each manifest repo and the project repo, keyed by
+record: the HEAD of each member repo and the project repo, keyed by
 repo path (e.g. `github/foo/bar`) and `"(project)"`. These are consumed
 by advance-target and by abort's HEAD-verified restore.
 
 Re-entry rule: regenerating a lock that is already current is a no-op.
 
 Relock runs under every verb and strategy. `--strategy=ff` makes replay a
-no-op, not this phase: whatever last moved CWD's manifest repos — an
+no-op, not this phase: whatever last moved CWD's member repos — an
 operator's fix between a stranded op and its resume, most of all — leaves
 a lock that no longer pins them, and advance-target publishes that lock.
 
 ### advance-target (sync-to only)
 
-FF-advance every manifest repo and the project repo in the target
+FF-advance every member repo and the project repo in the target
 workspace to CWD's converged tips (written during relock). This step is
 always fast-forward regardless of `--strategy` — all rewriting happened
 in CWD during replay.
 
 Re-entry rule: ff to an already-reached tip is a no-op.
 
-**Ordering rule: manifest repos first, project repo last, and the project
+**Ordering rule: member repos first, project repo last, and the project
 advance is gated on all of them landing.** The project repo carries the
 lock and the lock names the manifest tips, so advancing it past a
-manifest repo that did not land would leave the target asserting
+member repo that did not land would leave the target asserting
 revisions it does not hold — the one target state no later phase
-repairs. Manifest repos that did land stay landed: their pre-op
+repairs. Member repos that did land stay landed: their pre-op
 revisions are ancestors of what the target now holds, so the
 un-advanced lock remains true about them, and it is the benign
 lock-behind-HEAD shape `rwv lock --commit` refreshes.
@@ -338,7 +338,7 @@ the idempotent re-entry rule a `--continue` depends on.
 
 ### retire (--retire only)
 
-Run the merged-check (manifest repo tips equal in CWD and target after
+Run the merged-check (member repo tips equal in CWD and target after
 the preceding advance-target) and the dirty-check (no worktree has
 uncommitted changes), then delete the workweave. A failure from either
 check preserves the op record at phase `retire` — `--continue` retries
@@ -346,7 +346,7 @@ after the operator reconciles; `rwv abort` rolls back the whole op,
 target included. The removal itself is idempotent (a missing workweave
 directory is a no-op).
 
-Retire compares **manifest repo tips** rather than project repo tips.
+Retire compares **member repo tips** rather than project repo tips.
 The project repo's post-sync state can diverge from the target by
 exactly the auto-relock commit Phase 3 writes. That commit is purely
 derived, so manifest tip equality is the accurate "work has converged"
@@ -367,7 +367,7 @@ Exception: when `--discard-local-commits` discarded project commits
 savepoint is preserved as a tombstone even after the sync completes —
 the only remaining reference to the discarded commits (`rwv abort` will
 refuse once op-state is cleared, but `git reset --hard refs/rwv/pre-op/<op-id>`
-in the project repo still recovers them). Manifest-repo savepoints are
+in the project repo still recovers them). Member-repo savepoints are
 dropped regardless.
 
 ## Op-state records (`.rwv-op` and `.rwv-op-lease`)
@@ -419,7 +419,7 @@ the replay phase in two passes:
 2. **Post-advance (rebased repos):** because a rebase lands at a fresh SHA
    unknowable before the rebase runs, the actual tip is captured right after
    the rebase succeeds — for the project repo (serial Phase 1') immediately,
-   for parallel manifest repos in a single batch-write after the fan-out
+   for parallel member repos in a single batch-write after the fan-out
    joins.
 
 `advanced_tips` is cleared in the same atomic owner-record persist that
@@ -502,10 +502,10 @@ sessions generally want the latest state, not a stale pin.
 
 ## Strategy choice
 
-Both repo classes — project repo (Phase 1') and manifest repos (Phase
+Both repo classes — project repo (Phase 1') and member repos (Phase
 2) — run under the same `--strategy` choice.
 
-| Strategy | Project repo treatment | Manifest repo treatment |
+| Strategy | Project repo treatment | Member repo treatment |
 |---|---|---|
 | `ff` (default for `sync`) | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
 | `rebase` (default for `sync-to`) | Replay CWD's unique commits onto named-workspace's tip; lock excluded | Advance CWD's repos to named-workspace's lock targets |
@@ -647,7 +647,7 @@ contains no VCS-specific spellings.
 ## Parallel sync (`-j N`) and NDJSON
 
 Both `rwv sync` and `rwv sync-to` support parallel execution. The
-manifest-repo loop in Phase 2 fans out across a bounded worker pool
+member-repo loop in Phase 2 fans out across a bounded worker pool
 when `-j N` is set with `N > 1`.
 
 `--json` interacts with parallel mode in a specific way:

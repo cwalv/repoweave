@@ -17,19 +17,19 @@ CWD, and target is only ever advanced via fast-forward.
    source and CWD as destination. End state: CWD has target's history with CWD's
    unique commits replayed on top (per `--strategy`).
 
-2. **Step 2 — auto-relock.** If step 1 moved any manifest-repo tip in CWD,
+2. **Step 2 — auto-relock.** If step 1 moved any member-repo tip in CWD,
    regenerate `rwv.lock` and commit it in CWD's project repo with the message
    `{{MSG:auto_relock}}`. This keeps the lock consistent without requiring
    a separate `rwv lock` invocation.
 
-3. **Step 3 — FF-advance target.** Fast-forward the branch each manifest repo
+3. **Step 3 — FF-advance target.** Fast-forward the branch each member repo
    and the project repo in target is on to CWD's converged tips. This step is
    always FF regardless of `--strategy` — all rewriting happened in CWD during
    step 1. If FF is not possible (e.g. concurrent modification), the operation
-   bails with an actionable error. The manifest repos go first and the project
-   repo last: the project repo carries the lock, so advancing it while a manifest
+   bails with an actionable error. The member repos go first and the project
+   repo last: the project repo carries the lock, so advancing it while a member
    repo failed to land would leave the target's lock naming revisions the target
-   does not hold. A failed manifest repo skips the project advance entirely. A
+   does not hold. A failed member repo skips the project advance entirely. A
    member CWD holds and a target workweave lacks is created there, on the
    target's ephemeral branch, at CWD's tip.
 
@@ -62,7 +62,7 @@ ahead of target.)
 ### Source-side cleanliness preflight
 
 Before step 1 begins, `sync-to` checks that CWD has no uncommitted **tracked**
-changes in any manifest repo or (outside `rwv.lock`) in the project repo.
+changes in any member repo or (outside `rwv.lock`) in the project repo.
 Untracked files are fine. A project repo that is dirty only in `rwv.lock` is
 also fine — the op commits that file itself. If tracked dirt is found, sync-to
 refuses up front, naming the offending paths, so you can commit or stash before
@@ -87,7 +87,7 @@ place — move or remove the file, then `rwv sync-to --continue`.
 
 ### Op-start auto-relock
 
-If one or more of CWD's manifest repos has new commits since the last lock
+If one or more of CWD's member repos has new commits since the last lock
 (`LockRelation::Ahead` — lock is behind HEAD), `sync-to` auto-relocks at op
 start (after writing savepoints, so the auto-relock commit is covered by
 `rwv abort`). One line per affected repo is printed naming the repo and how
@@ -146,7 +146,7 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
 ```
 
 - `<target>` is the target workspace: `primary`, a bare workweave name, or
-  a path (absolute, or relative to the primary workspace root). Omit inside
+  a path (absolute, or relative to the primary weave root). Omit inside
   a workweave to auto-target the parent recorded in `.rwv-workweave`. Required
   in a primary weave.
 - `--json` emits machine-readable output (see Output below).
@@ -296,7 +296,7 @@ rwv abort
   refusal names, then retry. `--allow-stale-lock` skips the check, but for a
   target whose lock is behind its HEAD it only defers the failure to step 3 —
   refresh that lock instead.
-- *uncommitted tracked changes in source* — CWD has tracked dirt in a manifest
+- *uncommitted tracked changes in source* — CWD has tracked dirt in a member
   repo or project repo (outside `rwv.lock`). Commit or stash the changes, then
   retry.
 - *target is on a detached HEAD* — a target repo has no branch for step 3 to

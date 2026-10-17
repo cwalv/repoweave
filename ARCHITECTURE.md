@@ -177,7 +177,7 @@ All durable rwv state is files. There is no database and no cache directory.
 | `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. |
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
 | `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs` | `projects/<project>/` | The primary's inverse view: container path, name→path map, and `RefRegistry` receipts. |
-| `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a workspace root | The owner record of an in-flight multi-repo operation. §5. |
+| `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
 
@@ -325,7 +325,7 @@ Per phase: `run_replay`, `run_relock`,
 touches any member checkout. It then loads the manifest that replay
 produced and decides the member set against it: `materialize_missing_repo`
 for a member that manifest names, the source's lock names, and CWD lacks;
-then the Phase 2 fan-out over the manifest repos; then `prune_dropped_repo`
+then the Phase 2 fan-out over the member repos; then `prune_dropped_repo`
 for a member the pre-op manifest named and the replayed one does not. The
 pre-op manifest is read at the project repo's savepoint, so a `--continue`
 weighs the same set the interrupted run did. Relock regenerates the lock
@@ -342,7 +342,7 @@ fan-out, so an op that parks defers it to `--continue`, and an aborted op
 has pruned nothing. That matters because savepoints are refs: `rwv abort`
 can move a ref back but cannot bring back a deleted checkout. The cost is
 that a prune waits on conflicts in repos unrelated to the pruned member,
-and a manifest-repo park finds the project repo already replayed;
+and a member-repo park finds the project repo already replayed;
 abort's verified restore covers it through the project tip recorded right
 after Phase 1'.
 

@@ -77,7 +77,7 @@ between invocations (`.runtime/`, `.claude/`, etc.) is preserved. Re-invocation
 is the standard "ensure workweave exists" path.
 
 **What `create` writes:**
-1. One `git worktree` per manifest repo, whatever its role (plus the project
+1. One `git worktree` per member repo, whatever its role (plus the project
    repo), at `{workweave}/{repo-path}/`, on a fresh ephemeral branch.
 2. A copy of every rwv-owned generated file the source workspace has accepted
    — its lockfiles, plus the `.rwv-owned-digests` record attesting them. These
@@ -116,7 +116,7 @@ environment.
 
 Delete a workweave. Refuses if:
 
-- Any worktree (project repo or manifest repo) has **uncommitted changes**
+- Any worktree (project repo or member repo) has **uncommitted changes**
   (staged, unstaged, or untracked files outside `.gitignore`).
 - Any worktree HEAD holds **commits not reachable from the recorded parent
   or the primary weave** — i.e., unmerged work that would be permanently
@@ -152,7 +152,7 @@ List existing workweave names for the project. One name per line.
 
 ### `rwv workweave <project> log [--diff] [--json]`
 
-Show this workweave's **unique commits vs its recorded parent**, per manifest
+Show this workweave's **unique commits vs its recorded parent**, per member
 repo and the project repo (`projects/<project>`). Must be run from inside a
 workweave.
 

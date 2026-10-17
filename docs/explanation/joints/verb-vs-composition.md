@@ -32,7 +32,7 @@ Three categories qualify:
 2. **Cross-repo dependency ordering.** The verb must do work in repo A
    before doing it in repo B because A's state is a precondition for
    the eventual recorded state. The lock-as-precondition relationship
-   between manifest repos and the project repo is the canonical
+   between member repos and the project repo is the canonical
    example.
 3. **rwv-owned state mutation.** The operation must read or write
    files rwv owns: `rwv.toml`, `rwv.lock`, `.rwv-active`,
@@ -75,7 +75,7 @@ SHAs. Bootstrap when no lock exists.
   fetched and to which recorded SHA; the VCS impl owns the remote name
   but the manifest knows which SHAs to target.
 - *Cross-repo dependency ordering?* The project repo must come first
-  to read the lock; manifest repos follow.
+  to read the lock; member repos follow.
 - *rwv-owned state?* The lock is read.
 
 Pass. The "fetch all my repos" composition exists (`rwv status --json
@@ -84,12 +84,12 @@ itself, and cannot read the lock-target SHA for each repo.
 
 ### `rwv update`
 
-Advances each manifest repo to its branch HEAD and re-snapshots the
+Advances each member repo to its branch HEAD and re-snapshots the
 lock.
 
 - *Per-repo policy from role?* No — the remote is the backend's to
   name, and it names one for every repo.
-- *Cross-repo ordering?* The manifest repos must advance before the
+- *Cross-repo ordering?* The member repos must advance before the
   lock is regenerated; the lock generation is the verb's whole point.
 - *rwv-owned state?* The lock is written.
 
@@ -106,7 +106,7 @@ the snapshot logic and lock format.
 
 ### `rwv push`
 
-Pushes each manifest repo in the default scope (owned + fork), then
+Pushes each member repo in the default scope (owned + fork), then
 the project repo last; refuses on lock mismatch.
 
 - *Per-repo policy from role?* Yes — `Role::Dependency` and
@@ -130,13 +130,13 @@ and not `publish`.
 A direction-explicit pair. `rwv sync <source>` aligns CWD with another
 workspace's committed state; `rwv sync-to <target>` pushes CWD's
 committed state into another workspace. Both run Phase 1' (project
-repo, lock-excluded), Phase 2 (manifest repos), Phase 3 (re-lock) on
+repo, lock-excluded), Phase 2 (member repos), Phase 3 (re-lock) on
 the destination workspace.
 See [sync-semantics](./sync-semantics.md).
 
-- *Per-repo policy from role?* Yes — manifest repos and project repo
+- *Per-repo policy from role?* Yes — member repos and project repo
   follow different strategies for the same `--strategy` choice (the
-  project repo excludes the lock from the merge; manifest repos
+  project repo excludes the lock from the merge; member repos
   don't).
 - *Cross-repo ordering?* Yes — Phase 1' must complete before replay
   can read the member set its manifest names, and Phase 2 before Phase 3
@@ -193,7 +193,7 @@ non-trivial coordination logic.
 ### `rwv pull`
 
 Proposed as a symmetry-with-push counterpart: "fetch and merge in all
-manifest repos."
+member repos."
 
 - *Per-repo policy from role?* No — the same backend-named remote
   `rwv fetch` uses (`origin` in the git impl).

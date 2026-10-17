@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends [`SyncJsonOutput`] with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends [`SyncJsonOutput`] with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each member repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -47,7 +47,7 @@
       ]
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -341,7 +341,7 @@
       "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (sync-to only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
         {
-          "description": "Project repo, then manifest repos: Phase 1' and Phase 2.",
+          "description": "Project repo, then member repos: Phase 1' and Phase 2.",
           "type": "string",
           "enum": [
             "replay"
@@ -418,7 +418,7 @@
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
           "type": "string"
         },
         "workweave": {

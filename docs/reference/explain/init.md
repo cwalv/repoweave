@@ -36,7 +36,7 @@ project directory inside the existing workspace.
 1. Validates `<name>` against rwv's naming rules, before anything touches
    disk.
 2. Bootstraps the workspace skeleton if CWD is empty.
-3. Resolves the workspace root from CWD.
+3. Resolves the weave root from CWD.
 4. Creates `projects/<name>/`.
 5. Runs `git init` in the new directory.
 6. Writes a skeletal `rwv.toml` (a bare `[repositories]` table).

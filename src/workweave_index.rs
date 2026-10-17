@@ -205,7 +205,7 @@ pub fn index_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
 pub fn default_container(primary_root: &Path) -> PathBuf {
     primary_root
         .parent()
-        .expect("workspace root should have a parent")
+        .expect("weave root should have a parent")
         .join(".workweaves")
 }
 

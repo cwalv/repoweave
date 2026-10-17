@@ -26,7 +26,7 @@ For the design rationale — what earns a place in core versus a plugin, and why
 | Variable | Value | Unset when |
 |---|---|---|
 | `RWV_VERSION` | `rwv` semver | never |
-| `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
+| `RWV_WORKSPACE` | primary weave root (absolute path) | no workspace resolved |
 | `RWV_WORKWEAVE` | `<project>--<name>` | not in a workweave, or in one the registry does not name |
 | `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |
 | `RWV_PROJECT` | resolved project name | no workspace resolved |
@@ -52,7 +52,7 @@ A plugin that needs to invoke `rwv` — to read status, consume `--json` output,
 rwv -C "$RWV_WORKSPACE" status --project "$RWV_PROJECT" --json
 ```
 
-`$RWV_WORKSPACE` is always the **primary** workspace root. This form is correct for reaching primary — and a plugin never needs a separate lookup to find it; it is already sitting in the envelope. `rwv resolve` has no flag for this; the envelope is the only lookup you need.
+`$RWV_WORKSPACE` is always the **primary** weave root. This form is correct for reaching primary — and a plugin never needs a separate lookup to find it; it is already sitting in the envelope. `rwv resolve` has no flag for this; the envelope is the only lookup you need.
 
 **Reaching primary is not the same as reaching the checkout the plugin is running in.** If the plugin should operate on the *same* workweave it was dispatched from, add `-w` — `$RWV_WORKWEAVE` is already in the `<project>--<name>` shape `-w` expects, and it subsumes `--project` (the workweave name's own prefix resolves the project, so drop `--project` when you pass it):
 

@@ -36,9 +36,9 @@ pub const PUSH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("push-re
 
 /// One per-repo outcome record in `rwv push --json` output.
 ///
-/// Manifest-repo records use `kind` values `pushed`, `skipped`, and `failed`.
+/// Member-repo records use `kind` values `pushed`, `skipped`, and `failed`.
 /// The project-repo record uses `kind` values `project-repo-pushed` and
-/// `project-repo-failed`, making it distinguishable from manifest-repo records
+/// `project-repo-failed`, making it distinguishable from member-repo records
 /// in the same flat `outcomes` array.
 ///
 /// Choosing option (a) — a `kind` field — over option (b) (two separate
@@ -49,11 +49,11 @@ pub const PUSH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("push-re
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PushOutcomeOutput {
-    /// Manifest repo was pushed successfully.
+    /// Member repo was pushed successfully.
     Pushed { path: String, absolute_path: String },
-    /// Manifest repo was skipped (e.g. by a selector filter).
+    /// Member repo was skipped (e.g. by a selector filter).
     Skipped { path: String, absolute_path: String },
-    /// Manifest repo push failed.
+    /// Member repo push failed.
     Failed {
         path: String,
         absolute_path: String,
@@ -65,7 +65,7 @@ pub enum PushOutcomeOutput {
         path: String,
         absolute_path: String,
         /// The project name (e.g. `"my-app"`). Distinguishes the project repo's
-        /// path convention (`projects/<name>/`) from manifest-repo paths.
+        /// path convention (`projects/<name>/`) from member-repo paths.
         project: String,
     },
     /// Project repo push failed.
@@ -88,7 +88,7 @@ impl PushOutcomeOutput {
 /// Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).
 ///
 /// Shape: `{ "$schema": "<url>", "outcomes": [<PushOutcomeOutput>, ...] }`.
-/// Manifest-repo records appear first, in manifest order; the project-repo
+/// Member-repo records appear first, in manifest order; the project-repo
 /// record is appended last (reflecting push ordering). Consumers can
 /// distinguish the project-repo record by checking `kind` for
 /// `"project-repo-pushed"` or `"project-repo-failed"`.
@@ -97,7 +97,7 @@ pub struct PushJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub outcomes: Vec<PushOutcomeOutput>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
@@ -596,7 +596,7 @@ pub fn run_push(
     if !push_errors.is_empty() {
         if !json {
             eprintln!(
-                "rwv push: {}/{} manifest repo(s) failed; project repo not pushed:",
+                "rwv push: {}/{} member repo(s) failed; project repo not pushed:",
                 push_errors.len(),
                 plan_items.len(),
             );
@@ -620,19 +620,19 @@ pub fn run_push(
 
         crate::refuse!(
             RefusalKind::ProjectPushWithheld,
-            "manifest-repo push failures aborted before project-repo push; \
-             manifest-side partial state may exist — inspect and retry"
+            "member-repo push failures aborted before project-repo push; \
+             member-side partial state may exist — inspect and retry"
         );
     }
 
     if !json {
         if skipped > 0 {
             println!(
-                "rwv push: pushed {} manifest repo(s); {} skipped (non-writable role; pass --repo or --role to include)",
+                "rwv push: pushed {} member repo(s); {} skipped (non-writable role; pass --repo or --role to include)",
                 pushed, skipped
             );
         } else {
-            println!("rwv push: pushed {} manifest repo(s)", pushed);
+            println!("rwv push: pushed {} member repo(s)", pushed);
         }
     }
 
@@ -685,8 +685,8 @@ pub fn run_push(
             }
         }
         anyhow::bail!(
-            "project-repo push failed after all manifest repos pushed cleanly: {e}. \
-             Manifest-side state is published; the lock carrier is not. \
+            "project-repo push failed after all member repos pushed cleanly: {e}. \
+             Member-side state is published; the lock carrier is not. \
              Retry `rwv push` once the project-repo issue is resolved."
         );
     }

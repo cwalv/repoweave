@@ -244,7 +244,7 @@ impl std::fmt::Display for OpVerb {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpPhase {
-    /// Project repo, then manifest repos: Phase 1' and Phase 2.
+    /// Project repo, then member repos: Phase 1' and Phase 2.
     Replay,
     /// Regenerate and commit `rwv.lock` (today's Phase 3). On completion,
     /// converged tips are written into the owner record.

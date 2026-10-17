@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Snapshot each manifest repo's current HEAD into `rwv.lock`. No network
+Snapshot each member repo's current HEAD into `rwv.lock`. No network
 access, no integration hooks, no manifest mutations. `lock` is a pure
 local operation: it reads each repo's HEAD from disk and writes the
 resulting snapshot into the project's `rwv.lock`.
@@ -24,7 +24,7 @@ is refused as an unknown revision.
 ### Lock as derived state
 
 `rwv.lock` is derived state — its contents are fully determined by the
-current HEAD SHAs of the manifest repos. Running `lock` on the same
+current HEAD SHAs of the member repos. Running `lock` on the same
 inputs always produces the same lock. This has two practical consequences:
 
 1. Hand-editing `rwv.lock` has no lasting effect: the next `lock` run
@@ -39,7 +39,7 @@ the same inputs always produces the same result.
 
 ### When to run `lock`
 
-Run `rwv lock` after committing changes across manifest repos (or in a
+Run `rwv lock` after committing changes across member repos (or in a
 single repo) to record the new cross-repo state. Common patterns:
 
 - Manual cross-repo feature: commit in each affected repo, then `rwv lock`

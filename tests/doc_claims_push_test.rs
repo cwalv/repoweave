@@ -247,8 +247,7 @@ fn push_project_repo_pushed_after_manifest_repos() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("project repo not pushed")
-            || stderr.contains("manifest-side partial state"),
+        stderr.contains("project repo not pushed") || stderr.contains("member-side partial state"),
         "error should surface project-not-pushed / partial state; got: {stderr}"
     );
 }

@@ -5,7 +5,7 @@
   "type": "object",
   "oneOf": [
     {
-      "description": "A manifest repo; the envelope carries it as that repo's `step3_advance`.",
+      "description": "A member repo; the envelope carries it as that repo's `step3_advance`.",
       "type": "object",
       "required": [
         "from_sha",

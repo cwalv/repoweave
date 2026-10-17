@@ -440,7 +440,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "push",
-            summary: "publish manifest repos then the project repo to shared remotes",
+            summary: "publish member repos then the project repo to shared remotes",
             schema: Some(schema_push),
             schema_record: Some(schema_push_record),
         },
@@ -5407,7 +5407,7 @@ mod tests {
     #[test]
     fn envelope_output_check_passes_when_all_documented() {
         let protocol_md = "| `RWV_VERSION` | rwv semver | never |\n\
-                      | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
+                      | `RWV_WORKSPACE` | primary weave root | no workspace resolved |\n\
                       | `RWV_WORKWEAVE` | workweave identity | not in a workweave |\n\
                       | `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |\n\
                       | `RWV_PROJECT` | resolved project name | no project resolved |\n";
@@ -5454,7 +5454,7 @@ mod tests {
     fn envelope_output_check_covers_conditional_var() {
         // Everything except RWV_WORKWEAVE is documented.
         let protocol_md = "| `RWV_VERSION` | rwv semver | never |\n\
-                      | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
+                      | `RWV_WORKSPACE` | primary weave root | no workspace resolved |\n\
                       | `RWV_PROJECT` | resolved project name | no project resolved |\n";
         let errors = check_envelope_output_documented(protocol_md);
         assert!(

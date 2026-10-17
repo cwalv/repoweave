@@ -5,7 +5,7 @@
   "type": "object",
   "oneOf": [
     {
-      "description": "Manifest repo was pushed successfully.",
+      "description": "Member repo was pushed successfully.",
       "type": "object",
       "required": [
         "absolute_path",
@@ -31,7 +31,7 @@
       }
     },
     {
-      "description": "Manifest repo was skipped (e.g. by a selector filter).",
+      "description": "Member repo was skipped (e.g. by a selector filter).",
       "type": "object",
       "required": [
         "absolute_path",
@@ -57,7 +57,7 @@
       }
     },
     {
-      "description": "Manifest repo push failed.",
+      "description": "Member repo push failed.",
       "type": "object",
       "required": [
         "absolute_path",
@@ -113,7 +113,7 @@
           "type": "string"
         },
         "project": {
-          "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from manifest-repo paths.",
+          "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from member-repo paths.",
           "type": "string"
         }
       }

@@ -32,7 +32,7 @@ against the primary weave root. The source must be a workspace whose
 
 ### What create writes
 
-1. One `git worktree` per manifest repo, whatever its role (plus the project
+1. One `git worktree` per member repo, whatever its role (plus the project
    repo), at `{workweave}/{repo-path}/`, each on a fresh flat ephemeral branch
    named `{project}--{name}` (with `/` in scoped project names encoded as `+`).
    Each worktree belongs to the canonical weave-root clone, so a nested
@@ -72,8 +72,8 @@ To proceed, do one of:
   3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
 ```
 
-The check covers only `projects/<project>/`. Manifest-repo worktrees are
-forked at HEAD by `git worktree add`, so uncommitted edits in manifest
+The check covers only `projects/<project>/`. Member-repo worktrees are
+forked at HEAD by `git worktree add`, so uncommitted edits in member
 repos are not captured and not checked.
 
 Pass `--capture-dirty` to opt in to capturing the dirty state. Captured
@@ -152,13 +152,13 @@ Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a si
 Retire is a phase in the sync-to machine, not a separate command. It runs
 only after `advance-target` has completed successfully. It does two checks:
 
-**Merged-check** — every manifest repo in CWD must have the same HEAD as
+**Merged-check** — every member repo in CWD must have the same HEAD as
 the corresponding repo in the target workspace. After a successful
 `advance-target`, both sides have been fast-forwarded to CWD's converged
 tips, so this should hold. Retire refuses (with the diverged repos listed)
 if it does not.
 
-The check compares **manifest repo tips**, not project repo tips. The
+The check compares **member repo tips**, not project repo tips. The
 project repo's post-sync state can diverge from the target by the
 auto-relock commit Phase 3 writes. That commit is purely derived
 and will be regenerated on the parent's next sync, so comparing project
@@ -172,7 +172,7 @@ changes. Any dirty path blocks retire.
 
 On success, retire calls `delete_workweave` with `force: false`:
 
-- Every manifest-repo worktree is removed (`git worktree remove`), whatever
+- Every member-repo worktree is removed (`git worktree remove`), whatever
   its role.
 - Stale `.git/worktrees/` entries are pruned.
 - Each repo's ephemeral branch (`{project}--{name}`) is deleted if its

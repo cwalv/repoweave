@@ -2,13 +2,13 @@
 
 ## Purpose
 
-Publish a cross-repo feature to shared remotes. Pushes manifest repos first,
+Publish a cross-repo feature to shared remotes. Pushes member repos first,
 then the project repo last — the project repo carries the committed lock that
 pins manifest SHAs, so collaborators' `rwv fetch` must never see a committed
 lock referencing unpushed manifest commits.
 
 Refuses if invoked from a workweave (workweave branches shouldn't leak to
-shared remotes). Refuses if any manifest repo's HEAD disagrees with its lock
+shared remotes). Refuses if any member repo's HEAD disagrees with its lock
 entry (lock-precondition check). Use `rwv lock` to snapshot local state before
 pushing, or `git checkout` to align with the lock.
 
@@ -34,14 +34,14 @@ rwv push [--json] [-j <N>] [--dry-run] [--force] [--role <role>] [--repo <select
 ```
 
 - `--json` emits machine-readable output (see Output below).
-- `-j <N>` runs up to `N` manifest-repo pushes in parallel. Default is `1`
+- `-j <N>` runs up to `N` member-repo pushes in parallel. Default is `1`
   (serial), so the `--json` envelope shape is the unsurprising default and
   the envelope/NDJSON switch only happens when the user opts in with `-j > 1`.
   The project-repo push always runs serially as the last step regardless of
   `-j`.
 - `--dry-run` prints the push plan without executing any pushes.
 - `--force` force-pushes every repo in the operation.
-- `--role` / `--repo` narrow the manifest-repo push loop (union semantics)
+- `--role` / `--repo` narrow the member-repo push loop (union semantics)
   and override the default `[owned, fork]` scope. When either flag is
   present, the caller's selectors are used verbatim — pass `--role owned
   --role fork` to reproduce the bare default explicitly. The
@@ -65,10 +65,10 @@ Under `--json` with `-j 1` (default), output is the pretty-printed envelope:
 }
 ```
 
-Outcome `kind` tags for manifest repos: `pushed`, `skipped` (e.g. filtered
+Outcome `kind` tags for member repos: `pushed`, `skipped` (e.g. filtered
 by selector), `failed`. The project-repo record is always the last entry in `outcomes` and
 uses kind `project-repo-pushed` or `project-repo-failed` — its kind tag is the
-only way to distinguish it from manifest-repo records in the flat array. Failed
+only way to distinguish it from member-repo records in the flat array. Failed
 records carry a `message` field with the free-form error from the git push.
 
 Under `--json -j N` with `N > 1`, the envelope is dropped and output switches
@@ -84,7 +84,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PushJsonOutput",
-  "description": "Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Manifest-repo records appear first, in manifest order; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
+  "description": "Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Member-repo records appear first, in manifest order; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
   "type": "object",
   "required": [
     "$schema",
@@ -101,7 +101,7 @@ Schema:
       }
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -114,10 +114,10 @@ Schema:
   },
   "definitions": {
     "PushOutcomeOutput": {
-      "description": "One per-repo outcome record in `rwv push --json` output.\n\nManifest-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from manifest-repo records in the same flat `outcomes` array.\n\nChoosing option (a) — a `kind` field — over option (b) (two separate arrays) because: a single flat array supports uniform streaming in NDJSON mode without requiring consumers to merge two streams; the `kind` tag already carries all the type information consumers need; and the kebab-case kind-tag convention matches sync/status/doctor precedent.",
+      "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from member-repo records in the same flat `outcomes` array.\n\nChoosing option (a) — a `kind` field — over option (b) (two separate arrays) because: a single flat array supports uniform streaming in NDJSON mode without requiring consumers to merge two streams; the `kind` tag already carries all the type information consumers need; and the kebab-case kind-tag convention matches sync/status/doctor precedent.",
       "oneOf": [
         {
-          "description": "Manifest repo was pushed successfully.",
+          "description": "Member repo was pushed successfully.",
           "type": "object",
           "required": [
             "absolute_path",
@@ -140,7 +140,7 @@ Schema:
           }
         },
         {
-          "description": "Manifest repo was skipped (e.g. by a selector filter).",
+          "description": "Member repo was skipped (e.g. by a selector filter).",
           "type": "object",
           "required": [
             "absolute_path",
@@ -163,7 +163,7 @@ Schema:
           }
         },
         {
-          "description": "Manifest repo push failed.",
+          "description": "Member repo push failed.",
           "type": "object",
           "required": [
             "absolute_path",
@@ -213,7 +213,7 @@ Schema:
               "type": "string"
             },
             "project": {
-              "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from manifest-repo paths.",
+              "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from member-repo paths.",
               "type": "string"
             }
           }
@@ -265,7 +265,7 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
           "type": "string"
         },
         "workweave": {
@@ -287,7 +287,7 @@ Schema:
 
 ## Exit codes
 
-- `0` — all in-scope manifest repos pushed (non-writable roles skipped by
+- `0` — all in-scope member repos pushed (non-writable roles skipped by
   default or by selector); project repo pushed.
 - non-zero — at least one manifest push failed (project repo not pushed), or
   the project-repo push failed after manifest pushes succeeded.
@@ -320,13 +320,13 @@ rwv push --json -j 4 | jq -c 'select(.kind == "failed" or .kind == "project-repo
 
 ## Common errors
 
-- *lock-state mismatch* — one or more manifest repos' HEAD differs from the
+- *lock-state mismatch* — one or more member repos' HEAD differs from the
   recorded lock SHA. Run `rwv lock` to snapshot current state, or check out
   the locked SHA in each repo.
 - *refusing to push from workweave* — run `rwv sync-to primary` (or
   `rwv sync-to`) to land changes on primary, then push from there.
 - *project repo not on canonical branch* — check out the canonical branch
   before pushing.
-- *manifest-repo push failures* — inspect the `failed` outcomes in `--json`
+- *member-repo push failures* — inspect the `failed` outcomes in `--json`
   output. The project repo is NOT pushed when any manifest push fails; retry
   after resolving the failures.

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PushJsonOutput",
-  "description": "Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Manifest-repo records appear first, in manifest order; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
+  "description": "Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Member-repo records appear first, in manifest order; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
   "type": "object",
   "required": [
     "$schema",
@@ -18,7 +18,7 @@
       }
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -31,10 +31,10 @@
   },
   "definitions": {
     "PushOutcomeOutput": {
-      "description": "One per-repo outcome record in `rwv push --json` output.\n\nManifest-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from manifest-repo records in the same flat `outcomes` array.\n\nChoosing option (a) — a `kind` field — over option (b) (two separate arrays) because: a single flat array supports uniform streaming in NDJSON mode without requiring consumers to merge two streams; the `kind` tag already carries all the type information consumers need; and the kebab-case kind-tag convention matches sync/status/doctor precedent.",
+      "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from member-repo records in the same flat `outcomes` array.\n\nChoosing option (a) — a `kind` field — over option (b) (two separate arrays) because: a single flat array supports uniform streaming in NDJSON mode without requiring consumers to merge two streams; the `kind` tag already carries all the type information consumers need; and the kebab-case kind-tag convention matches sync/status/doctor precedent.",
       "oneOf": [
         {
-          "description": "Manifest repo was pushed successfully.",
+          "description": "Member repo was pushed successfully.",
           "type": "object",
           "required": [
             "absolute_path",
@@ -57,7 +57,7 @@
           }
         },
         {
-          "description": "Manifest repo was skipped (e.g. by a selector filter).",
+          "description": "Member repo was skipped (e.g. by a selector filter).",
           "type": "object",
           "required": [
             "absolute_path",
@@ -80,7 +80,7 @@
           }
         },
         {
-          "description": "Manifest repo push failed.",
+          "description": "Member repo push failed.",
           "type": "object",
           "required": [
             "absolute_path",
@@ -130,7 +130,7 @@
               "type": "string"
             },
             "project": {
-              "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from manifest-repo paths.",
+              "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from member-repo paths.",
               "type": "string"
             }
           }
@@ -182,7 +182,7 @@
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
           "type": "string"
         },
         "workweave": {

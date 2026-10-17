@@ -235,8 +235,7 @@ fn push_dash_j_mid_batch_failure_skips_project_repo() {
         "aggregated error report should name the failing repo; got: {stderr}"
     );
     assert!(
-        stderr.contains("project repo not pushed")
-            || stderr.contains("manifest-side partial state"),
+        stderr.contains("project repo not pushed") || stderr.contains("member-side partial state"),
         "error should surface project-not-pushed / partial state; got: {stderr}"
     );
 }

@@ -32,7 +32,7 @@ Commands:
   activate     Activate a project (switch `.rwv-active`, surface weave-root symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
   materialize  Settle drift, clean up disabled integrations, repair missing weave-root symlinks, and run integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
   prime        Print structured workspace context for agent system prompts
-  resolve      Print workspace root path
+  resolve      Print weave root path
   add          Add a repo to the active project
   fetch        Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references)
   init         Initialize a new project
@@ -45,7 +45,7 @@ Commands:
   abort        Restore CWD workspace to its pre-sync state using savepoint refs
   sync         Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
   sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
-  push         Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding
+  push         Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding
   update       Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock
   completions  Generate shell completions
   explain      Agent-oriented reflection: per-verb markdown bundle (purpose, invocation, output, JSON Schema)

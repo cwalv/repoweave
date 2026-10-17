@@ -61,7 +61,7 @@ recreate it under a name that does not collide.
 
 **Condition.** A repo path spells `\`.
 
-**Why.** A manifest repo path is a POSIX-shaped key that becomes a directory
+**Why.** A member repo path is a POSIX-shaped key that becomes a directory
 path on every platform. Accepting `\` would make one manifest mean two
 different trees depending on the OS reading it.
 
@@ -270,7 +270,7 @@ naming rules exclude on top of git's.
 
 ### `lock-state-mismatch`
 
-**Condition.** Manifest repos disagree with the committed lock, at push time.
+**Condition.** Member repos disagree with the committed lock, at push time.
 
 **Why.** The project repo carries the lock that pins manifest SHAs. Publishing
 it while the clones say something else would hand collaborators a lock
@@ -599,15 +599,15 @@ or choose a fresh directory.
 
 ### `project-push-withheld`
 
-**Condition.** Manifest repos failed to push, so the project repo was
+**Condition.** Member repos failed to push, so the project repo was
 not pushed.
 
-**Why.** The project repo carries the lock pinning manifest SHAs. Publishing
-it after a partial manifest push would advertise revisions collaborators
+**Why.** The project repo carries the lock pinning member SHAs. Publishing
+it after a partial member push would advertise revisions collaborators
 cannot fetch. Withholding it is the decision, not an accident of ordering.
 
-**Exits.** Fix the manifest-repo failures the run listed and re-run `rwv push`.
-Manifest-side state may already be published; the lock carrier is not, so no
+**Exits.** Fix the member-repo failures the run listed and re-run `rwv push`.
+Member-side state may already be published; the lock carrier is not, so no
 collaborator has seen an inconsistent pair.
 
 ### `project-repo-off-canonical-branch`

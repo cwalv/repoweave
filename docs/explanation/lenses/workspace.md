@@ -13,11 +13,11 @@ A weave holds two kinds of subdirectories, and the path tells you which is which
 | Kind | Path | Purpose |
 |---|---|---|
 | **Project** | `projects/{name}/` | Coordination. `rwv.toml`, `rwv.lock`, docs. No importable code. |
-| **Manifest repo** | `{registry}/{owner}/{repo}/` | Code. Build tools look here. Other repos import from here. |
+| **Member repo** | `{registry}/{owner}/{repo}/` | Code. Build tools look here. Other repos import from here. |
 
 The project repo *governs* the workspace: it carries the manifest (which repos, with what roles), the lock (pinned revisions), and any cross-cutting docs that don't belong to any single repo (architecture, decision records, onboarding notes). It is a normal git repo with normal git history — but it doesn't contain importable code, which keeps its history pure: the project's coordination story isn't entangled with any one library's revision log.
 
-The manifest repos are the work surfaces. They're regular clones — `cd github/chatly/server && git status` works. No bare repos, no `.git` file indirection, universal tool compatibility.
+The member repos are the work surfaces. They're regular clones — `cd github/chatly/server && git status` works. No bare repos, no `.git` file indirection, universal tool compatibility.
 
 ## Why split coordination from code?
 
@@ -28,7 +28,7 @@ Most multi-repo setups put the "what" of the project — which repos at which ve
 - **A home for scraps.** Project-wide notes, design documents, and small coordination scripts can land in the project repo without forking some other repository or inventing a "contrib" folder.
 - **Lightweight.** The project repo carries no code, so it stays fast to clone and move.
 
-It is the *owner* of the workspace without being a *parent* in the filesystem sense — every manifest repo stays sovereign.
+It is the *owner* of the workspace without being a *parent* in the filesystem sense — every member repo stays sovereign.
 
 ## Roles: change resistance, made explicit
 
@@ -77,7 +77,7 @@ See [switch projects](../../how-to/switch-projects.md) for the operational recip
 
 ## Reproducibility: `rwv.lock`
 
-The lock file pins each manifest repo to an exact 40-character commit SHA — never a tag or branch name, even when a tag points at `HEAD` (tags and branches can move; a commit SHA cannot):
+The lock file pins each member repo to an exact 40-character commit SHA — never a tag or branch name, even when a tag points at `HEAD` (tags and branches can move; a commit SHA cannot):
 
 `projects/web-app/rwv.lock`, with the entry fields not under discussion elided:
 
@@ -98,7 +98,7 @@ The lock file is *derived state*: produced by `rwv lock`, `rwv update`, or `rwv 
 
 ## Provenance: the registry/owner/repo path
 
-Manifest repos live at `{registry}/{owner}/{repo}/`. The first segment is a short name for where the repo came from — `github` for `github.com`, `gitlab` for `gitlab.com`, custom names for self-hosted hosts.
+Member repos live at `{registry}/{owner}/{repo}/`. The first segment is a short name for where the repo came from — `github` for `github.com`, `gitlab` for `gitlab.com`, custom names for self-hosted hosts.
 
 This follows Go's GOPATH precedent (`$GOPATH/src/github.com/owner/repo`), shortened. It does several jobs:
 
@@ -106,7 +106,7 @@ This follows Go's GOPATH precedent (`$GOPATH/src/github.com/owner/repo`), shorte
 - **No collisions.** Two `web-app` repos owned by different organizations can coexist on disk without renaming.
 - **Discovery.** `find github/chatly/` lists every chatly repo on disk; `find . -name '.git' -type d` lists everything across all owners.
 
-Project paths are simpler — `projects/{name}/`. They use short names because there's typically one of each per workspace; if names collide across organizations, `rwv` prompts for a scoped path (`projects/{owner}/{name}/`). The asymmetry is intentional: manifest repos are physical clones whose path encodes their origin; projects are coordination entities referred to by short name.
+Project paths are simpler — `projects/{name}/`. They use short names because there's typically one of each per workspace; if names collide across organizations, `rwv` prompts for a scoped path (`projects/{owner}/{name}/`). The asymmetry is intentional: member repos are physical clones whose path encodes their origin; projects are coordination entities referred to by short name.
 
 ## What ecosystem tools see
 
@@ -118,7 +118,7 @@ Integrations (`npm-workspaces`, `go-work`, `cargo-workspace`, `uv-workspace`, `p
 
 ## The shape, in one paragraph
 
-A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. Intent verbs (`add`, `remove`, `update`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
+A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Member repos live at `{registry}/{owner}/{repo}/` as regular clones. Intent verbs (`add`, `remove`, `update`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
 
 ## Related
 

@@ -81,7 +81,7 @@ rwv workweave web-app create agent-refactor
 
 # Agent works in that workweave:
 cd ../.workweaves/web-app--agent-refactor
-# ... edits, tests, commits across manifest repos ...
+# ... edits, tests, commits across member repos ...
 
 # Bring it home, with one verb (auto-relocks CWD at op-start, then lands and deletes):
 rwv sync-to --retire

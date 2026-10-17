@@ -583,8 +583,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("project repo not pushed")
-            || stderr.contains("manifest-side partial state"),
+        stderr.contains("project repo not pushed") || stderr.contains("member-side partial state"),
         "error should mention partial state / project-not-pushed; got: {stderr}"
     );
 }
