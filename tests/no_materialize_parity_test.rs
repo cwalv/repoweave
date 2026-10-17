@@ -203,6 +203,21 @@ fn the_authoring_verbs_take_no_materialize() {
         .expect("fixture: `rwv add` should have recorded the new member")
         .to_string();
 
+    let adopted = remote(
+        weave.tmp.path(),
+        "web3",
+        &[("package.json", &package("web3"))],
+    );
+    common::git_in(
+        weave.tmp.path(),
+        &[
+            "clone",
+            &adopted,
+            &weave.ws.join("github/acme/web3").to_string_lossy(),
+        ],
+    );
+    weave.assert_flag_suppresses_hooks(&["add", "--adopt", "github/acme/web3"]);
+
     weave.assert_flag_suppresses_hooks(&["role", &member, "owned"]);
     weave.assert_flag_suppresses_hooks(&["update"]);
     weave.assert_flag_suppresses_hooks(&["remove", &member]);
@@ -320,6 +335,36 @@ fn a_source_fetch_takes_no_materialize_for_its_first_activation() {
                 .trim(),
             "app",
             "the flag skips the hooks, not the activation"
+        );
+    }
+}
+
+/// An in-place fetch activates the weave's only project when none is active,
+/// and that activation's hooks honor the flag as a bootstrap fetch's do.
+#[test]
+fn an_in_place_fetch_takes_no_materialize_for_the_project_it_selects() {
+    let weave = Weave::new();
+
+    for flagged in [true, false] {
+        std::fs::remove_file(weave.ws.join(".rwv-active")).unwrap();
+        let _ = weave.npm_runs();
+        let mut args = vec!["fetch"];
+        if flagged {
+            args.push("--no-materialize");
+        }
+        let report = weave.ok(&args);
+        assert_eq!(
+            weave.npm_runs().is_empty(),
+            flagged,
+            "`rwv {}`: the selected project's hooks ran iff the flag was absent:\n{report}",
+            args.join(" ")
+        );
+        assert_eq!(
+            std::fs::read_to_string(weave.ws.join(".rwv-active"))
+                .unwrap_or_default()
+                .trim(),
+            "app",
+            "the flag skips the hooks, not the selection:\n{report}"
         );
     }
 }

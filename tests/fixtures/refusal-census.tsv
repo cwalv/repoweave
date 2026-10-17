@@ -1,6 +1,6 @@
 # file	token-or-disposition	instrument-that-reads-this-site	sites
 src/activate.rs	(untokened:internal-invariant)	-	1
-src/activate.rs	(untokened:tally)	-	3
+src/activate.rs	(untokened:tally)	-	4
 src/activate.rs	conflicting-root-write	tests/tool_written_lock_adoption_test.rs	1
 src/activate.rs	no-active-project	tests/project_and_source_spelling_test.rs	1
 src/activate.rs	shared-name-contested	-	1
@@ -46,7 +46,7 @@ src/init.rs	occupied-bootstrap-dir	-	1
 src/init.rs	project-dir-occupied	-	2
 src/init.rs	provider-cannot-mint-url	tests/refusal_arrival_test.rs	1
 src/init.rs	unknown-registry	-	1
-src/integration_runner.rs	(untokened:integration-channel)	-	6
+src/integration_runner.rs	(untokened:integration-channel)	-	7
 src/integrations/cargo_workspace.rs	(untokened:integration-channel)	-	6
 src/integrations/go_work.rs	(untokened:integration-channel)	-	3
 src/integrations/merge.rs	(untokened:integration-channel)	-	1

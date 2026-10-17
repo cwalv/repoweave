@@ -11,6 +11,10 @@ they never move a version an existing lock file pins.
 already committed in the project directory and wires up the workspace for
 use. Regeneration belongs to the verbs that change what those files are
 generated from; see [file-ownership](../../explanation/joints/file-ownership.md).
+The one write it makes into them is a setting whose right value is a fact
+about this machine rather than about `rwv.toml` — cargo-workspace's
+`rustc-wrapper` key, present exactly where the wrapper is on `PATH` — which
+every materialization brings to this host's answer.
 
 ### `.rwv-active`
 
@@ -27,7 +31,10 @@ previous state.
 
 ### Integration file generation and ownership
 
-`activate` does not regenerate integration files — it surfaces them. The flow:
+`activate` does not regenerate integration files — it surfaces them. Unless
+`--no-materialize` is passed, the host-dependent settings are brought to this
+host's answer first, so the verification pass does not report as drift what
+this run settles. Then the flow:
 
 1. **Verification pass:** the integrations' `verify()` is called to detect
    drift between on-disk generated content and what they would produce now
@@ -55,7 +62,9 @@ previous state.
    one cannot be created, every link steps 2 and 3 had removed or created is
    put back before the error is reported.
 4. **Install hooks:** integration install commands run against the now-in-place
-   symlinks. Suppressed by `--no-materialize`, and withheld while a generated
+   symlinks. A hook whose tool is not on `PATH` is skipped with a
+   `tool-missing` warning and the other hooks still run; a hook that runs and
+   fails is an error. Suppressed by `--no-materialize`, and withheld while a generated
    file rwv attests holds content it never accepted — a hook re-runs its
    generator and records what it produces as accepted, which would answer that
    fork on the operator's behalf. Settle it with `rwv materialize
@@ -94,8 +103,8 @@ rwv activate <project> [--no-materialize]
 - `--no-materialize` — skip integration install hooks (`npm install`, `uv sync`,
   etc.) for a fast context-switch. Useful when you are only switching to a
   different project's editors and tools, and the install state is already
-  correct. `rwv materialize` runs them later, and is the only way to run them
-  inside a workweave.
+  correct. `rwv materialize` runs them later, at primary or inside a
+  workweave.
 
 Run `rwv --help activate` for the full clap surface.
 
@@ -107,15 +116,22 @@ Integration verification drift (if any) is reported as warnings on stderr:
 [warning (drift)] <integration>: <message>
 ```
 
-Install hook output goes to stderr. On success, `.rwv-active` is written (no
-confirmation message by default).
+Install hook output goes to stderr, the tools' own stdout included. A hook
+skipped for a missing tool prints:
+
+```
+[warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize`
+```
+
+On success, `.rwv-active` is written (no confirmation message by default).
 
 ## Exit codes
 
 - `0` — project activated successfully.
 - non-zero — workspace could not be resolved, manifest parse failure, called
   from inside a workweave, or one or more integration install hooks returned
-  an error.
+  an error. A hook skipped because its tool is not on `PATH` is a warning,
+  not an error.
 
 ## Examples
 
