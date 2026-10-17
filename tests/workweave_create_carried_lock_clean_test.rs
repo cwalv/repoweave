@@ -149,10 +149,10 @@ impl Weave {
     }
 
     fn commit(&self, message: &str) {
-        common::git_in(&self.project(), &["add", "-A"]);
-        common::git_in(&self.project(), &["commit", "-q", "-m", message]);
+        common::git_in(self.project(), &["add", "-A"]);
+        common::git_in(self.project(), &["commit", "-q", "-m", message]);
         assert_eq!(
-            common::git_in(&self.project(), &["status", "--porcelain"]),
+            common::git_in(self.project(), &["status", "--porcelain"]),
             "",
             "fixture: the source is clean before create"
         );
@@ -183,12 +183,12 @@ impl Weave {
             "the seat holds the lock:\n{report}"
         );
         assert_eq!(
-            common::git_in(&self.project(), &["status", "--porcelain"]),
+            common::git_in(self.project(), &["status", "--porcelain"]),
             "",
             "create must leave the source clean:\n{report}"
         );
         (
-            common::git_in(&self.seat_project(), &["status", "--porcelain"]),
+            common::git_in(self.seat_project(), &["status", "--porcelain"]),
             report,
         )
     }
@@ -201,7 +201,7 @@ fn create_over_a_committed_consistent_lock_leaves_the_seat_clean() {
     }
     let weave = Weave::new("");
     assert!(
-        !common::git_in(&weave.project(), &["ls-files", "Cargo.lock"]).is_empty(),
+        !common::git_in(weave.project(), &["ls-files", "Cargo.lock"]).is_empty(),
         "fixture: this arm commits the lock"
     );
     let (status, report) = weave.create();
@@ -218,7 +218,7 @@ fn create_over_a_carried_consistent_lock_leaves_the_seat_clean() {
     }
     let weave = Weave::new("/Cargo.lock\n/.rwv-owned-digests\n");
     assert!(
-        common::git_in(&weave.project(), &["ls-files", "Cargo.lock"]).is_empty(),
+        common::git_in(weave.project(), &["ls-files", "Cargo.lock"]).is_empty(),
         "fixture: this arm ignores the lock, so only the carry brings it"
     );
     let (status, report) = weave.create();
