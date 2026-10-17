@@ -174,6 +174,35 @@ fn build_output_shaped_directories_with_no_real_repo_are_not_reported() {
     );
 }
 
+/// A package manager can plant something `Vcs::is_repo` accepts at this exact
+/// shape — a git-sourced npm/yarn dependency installed with its own committed
+/// `.git`, say — so the leaf holding a real repo is not enough to tell
+/// `node_modules/@scope/pkg` or `target/<host>/<repo>` apart from a stray
+/// clone. The name has to be.
+#[test]
+fn ecosystem_build_output_containing_a_real_repo_is_still_not_reported() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+
+    plant_clone(
+        &tmp,
+        &ws.join("node_modules").join("@scope").join("pkg"),
+        "pkg.git",
+    );
+    plant_clone(
+        &tmp,
+        &ws.join("target").join("acme").join("vendored"),
+        "vendored.git",
+    );
+
+    let findings = doctor_findings(&ws, &["--all"]);
+    assert!(
+        !findings.iter().any(|(k, _)| k == "unknown-segment-clone"),
+        "a real repo under node_modules/ or target/ must still read as ecosystem \
+         state, not a stray clone: {findings:?}"
+    );
+}
+
 /// A weave sitting inside an enclosing git repository (a `$HOME` dotfiles
 /// repo, say) must not read its own build output as a repo: `git rev-parse
 /// --git-dir` succeeds from any directory under the enclosing repo by

@@ -809,22 +809,24 @@ pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
 /// clone sitting there is dangling-reference-silent: not orphan-reported,
 /// its lock and HEAD never compared against anything.
 ///
-/// A name alone can't tell a registry segment from `target/` (cargo build
-/// output can land at `root` because `Cargo.toml` surfaces there) or
-/// `node_modules/@scope/pkg` (same three-segment shape as a registry path,
-/// also reachable if a weave root hosts an npm member) — neither holds a
-/// real repo at the leaf, so requiring `vcs.is_repo()` there, the same test
-/// [`scan_repos_on_disk`] applies, is what tells them apart from a stray
-/// clone rather than guessing from the directory name. `projects/` is
-/// excluded by name rather than by that test: a project repo legitimately
-/// holds its own nested checkouts (a submodule), and those belong to the
-/// project, not to this scan. A dot-prefixed name is excluded the same way
-/// — every registry segment this tree mints is a bare host or `local`, never
-/// dot-prefixed, so a dot-dir is never a candidate worth descending into.
+/// `target/` and `node_modules/` are excluded by name rather than by
+/// `vcs.is_repo()`, the test [`scan_repos_on_disk`] applies: cargo build
+/// output and installed npm/pnpm packages both reach `root`'s member depth
+/// (`Cargo.toml` and `package.json` surface there), and a package manager can
+/// still plant something `vcs.is_repo()` accepts underneath — a git-sourced
+/// dependency installed with its own committed `.git`, or a workspace-linked
+/// package placed as a symlink. `projects/` is excluded by the same by-name
+/// rule: a project repo legitimately holds its own nested checkouts (a
+/// submodule), and those belong to the project, not to this scan. A
+/// dot-prefixed name is excluded the same way — every registry segment this
+/// tree mints is a bare host or `local`, never dot-prefixed, so a dot-dir is
+/// never a candidate worth descending into.
 ///
 /// Empty while any project manifest fails to parse: that manifest may name
 /// the segment, so no directory can be called unnamed.
 pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
+    const ECOSYSTEM_TOOL_STATE_DIRS: &[&str] = &["target", "node_modules"];
+
     let (known, any_unparseable) = registry_segments_and_unparseable(root);
     if any_unparseable {
         return Vec::new();
@@ -839,7 +841,12 @@ pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
         .flatten()
         .filter(|entry| entry.path().is_dir())
         .filter_map(|entry| entry.file_name().into_string().ok())
-        .filter(|name| !name.starts_with('.') && name != PROJECTS_DIR && !known.contains(name))
+        .filter(|name| {
+            !name.starts_with('.')
+                && name != PROJECTS_DIR
+                && !known.contains(name)
+                && !ECOSYSTEM_TOOL_STATE_DIRS.contains(&name.as_str())
+        })
         .flat_map(|segment| repos_under_segment(root, &segment, vcs))
         .collect()
 }
