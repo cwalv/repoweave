@@ -179,7 +179,17 @@ fn workweave_create_leaves_an_unactivated_wrapper_config_missing_in_both() {
 
     // No `doctor --fix` here — the source is a freshly written rwv.toml with
     // nothing ever authored into it.
-    rwv_with_path(&["workweave", "web-app", "create", "agent-1"], &ws, &path);
+    rwv_with_path(
+        &[
+            "workweave",
+            "web-app",
+            "create",
+            "agent-1",
+            "--no-materialize",
+        ],
+        &ws,
+        &path,
+    );
 
     let seat = tmp.path().join(".workweaves/web-app--agent-1");
     assert!(

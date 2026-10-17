@@ -649,17 +649,20 @@ fn activate_runs_the_install_hook_and_no_materialize_withholds_it() {
     assert_eq!(argv.trim(), "install", "activate runs `npm install`");
 }
 
-/// When the install command is not on PATH, activate refuses: it names the
-/// missing tool, exits non-zero, and leaves `.rwv-active` unwritten.
+/// When the install command is not on PATH, activate does not fail over it:
+/// the hook is skipped with a `tool-missing` warning naming the tool, and
+/// `.rwv-active` is written. A hook whose tool is there and fails is still an
+/// activate failure, which leaves `.rwv-active` unwritten.
 ///
-/// The precondition is forced by handing the child a PATH with nothing on
-/// it, because a test that merely hopes npm is absent measures the host. The
-/// withheld `.rwv-active` is the half worth having: an exit code says the run
-/// failed, and this says the workspace was not left pointing at a project
-/// whose tooling never installed.
+/// The missing tool is forced by handing the child a PATH with nothing on it,
+/// because a test that merely hopes npm is absent measures the host. The
+/// failing half is the control: without it, a hook that never ran at all
+/// would read the same as one that skipped for its tool.
 #[cfg(unix)]
 #[test]
-fn activate_refuses_when_the_install_command_is_missing() {
+fn activate_warns_when_the_install_command_is_missing_and_fails_when_it_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
     let tmp = common::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
     make_npm_workspace(&ws_root, "frontend");
@@ -673,15 +676,41 @@ fn activate_refuses_when_the_install_command_is_missing() {
         .current_dir(&ws_root)
         .output()
         .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "a tool that is not installed is a warning, not an activate failure; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "[warning] npm-workspaces: npm is not on PATH, so this integration's install \
+             hook did not run"
+        ),
+        "the operator is owed the name of the tool that is missing; got:\n{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws_root.join(".rwv-active"))
+            .unwrap_or_default()
+            .trim(),
+        "npm-proj"
+    );
 
+    std::fs::remove_file(ws_root.join(".rwv-active")).unwrap();
+    let failing_bin = tmp.path().join("failing-bin");
+    std::fs::create_dir_all(&failing_bin).unwrap();
+    let npm = failing_bin.join("npm");
+    std::fs::write(&npm, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = rwv()
+        .args(["activate", "npm-proj"])
+        .env("PATH", &failing_bin)
+        .current_dir(&ws_root)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
         "a failed install hook is an activate failure, not a warning"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("npm is not on PATH"),
-        "the operator is owed the name of the tool that is missing; got:\n{stderr}"
     );
     assert!(
         stderr.contains("activate hook failed"),

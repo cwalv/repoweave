@@ -1,8 +1,8 @@
 //! cargo-workspace's `rustc-wrapper` key tracks the host at every
 //! materialization, not only when the managed files are authored: `rwv
-//! materialize` and the first activation `rwv fetch` performs both write it
-//! where the wrapper is on `PATH` and strip it where it is not, and the weave
-//! root links the file in the same pass.
+//! materialize`, the first activation `rwv fetch` performs, and `rwv workweave
+//! create` write it where the wrapper is on `PATH` and strip it where it is
+//! not, and the weave root links the file in the same pass.
 //!
 //! Unix only: the `cargo` and `sccache` stand-ins are shebang scripts a child
 //! resolves off `PATH`, the boundary `common::cargo_stand_in_path` states.
@@ -185,5 +185,27 @@ fn fetch_fits_the_wrapper_key_at_its_first_activation() {
     assert!(
         surfaced_config(&fresh, "app").is_some_and(|c| c.contains(WRAPPER_KEY)),
         "fetch's first activation must write the wrapper key and link it:\n{report}"
+    );
+}
+
+#[test]
+fn workweave_create_fits_the_wrapper_key_in_the_new_seat() {
+    let tmp = common::tempdir().unwrap();
+    let url = crate_remote(tmp.path());
+    let ws = weave(tmp.path(), &url);
+    let bin = tmp.path().join("bin");
+    let path = common::cargo_stand_in_path(&bin);
+
+    rwv(&ws, &path, &["doctor", "--fix"]);
+    let project = ws.join("projects/app");
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "-m", "authored"]);
+
+    install_sccache(&bin);
+    let report = rwv(&ws, &path, &["workweave", "app", "create", "seat"]);
+    let seat = tmp.path().join(".workweaves/app--seat");
+    assert!(
+        surfaced_config(&seat, "app").is_some_and(|c| c.contains(WRAPPER_KEY)),
+        "create's materialization must write the wrapper key in the seat and link it:\n{report}"
     );
 }

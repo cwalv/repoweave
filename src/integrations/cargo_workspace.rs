@@ -973,6 +973,22 @@ impl Integration for CargoWorkspace {
         if cfg.rustc_wrapper.is_none() || !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(());
         }
+        let cargo_dir = ctx.output_dir.join(".cargo");
+        if let Some(link) = [cargo_dir.join("config.toml"), cargo_dir]
+            .into_iter()
+            .find(|p| {
+                p.symlink_metadata()
+                    .is_ok_and(|m| m.file_type().is_symlink())
+            })
+        {
+            eprintln!(
+                "[warning] cargo-workspace: the rustc-wrapper key was not fitted to this \
+                 host: {} is a symlink, and a write through it could land outside this \
+                 weave",
+                crate::path_spelling::operator_path(&link)
+            );
+            return Ok(());
+        }
         Self::apply_rustc_wrapper(ctx, &cfg)
     }
 

@@ -981,7 +981,13 @@ fn create_workweave_generates_ecosystem_files() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "cargo-project", "create", "eco"])
+        .args([
+            "workweave",
+            "cargo-project",
+            "create",
+            "eco",
+            "--no-materialize",
+        ])
         .current_dir(&ws)
         .assert()
         .success();

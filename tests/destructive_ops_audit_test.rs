@@ -227,6 +227,21 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "discard_captured_change: deletes a working file the \
+            parent commit does not record — the second half of a move whose \
+            first half copied it elsewhere. Gated inside the method, not on \
+            its callers: the file is read back and must hold exactly the \
+            bytes the caller passes as captured, and status must report it \
+            untracked, or added with nothing staged its working file does \
+            not show. Any other state returns an outcome and touches nothing, \
+            so what is deleted is always a byte-for-byte copy of what the \
+            caller holds.",
+    },
+    Allowed {
+        file: "git.rs",
         pattern: "\"-D\"",
         count: 1,
         callers: &[],

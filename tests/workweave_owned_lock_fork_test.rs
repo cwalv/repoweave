@@ -2,9 +2,11 @@
 //! rwv-accepted `Cargo.lock` must hold that same lock.
 //!
 //! rwv-owned generated files are gitignore-eligible, so the project repo's
-//! worktree checkout that `workweave create` makes arrives without one, and
-//! the create-time activation suppresses install hooks — a fresh workweave
-//! therefore had neither the lock nor the `.rwv-owned-digests` record of it.
+//! worktree checkout that `workweave create` makes arrives without one, and a
+//! create run with `--no-materialize` runs no hook to produce one — a fresh
+//! workweave therefore had neither the lock nor the `.rwv-owned-digests`
+//! record of it. The fixture creates that way, so the carry is the only route
+//! the lock can arrive by.
 //! The first `rwv doctor --fix` then produced one by running
 //! `cargo generate-lockfile`, which resolves against the registry as of that
 //! moment and discards any previous resolve, and re-stamped the digest to
@@ -196,7 +198,13 @@ fn fixture(source_lock: Option<&str>) -> Fixture {
     std::fs::create_dir_all(&weaveroot).unwrap();
     let create_output = {
         let output = common::rwv()
-            .args(["workweave", "web-app", "create", "agent-1"])
+            .args([
+                "workweave",
+                "web-app",
+                "create",
+                "agent-1",
+                "--no-materialize",
+            ])
             .current_dir(&ws)
             .output()
             .expect("rwv workweave create should run");

@@ -193,8 +193,8 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
 ///
 /// The activation is run twice: once with the ambient PATH so the managed file
 /// gets authored, then once narrowed. Without the first run the narrowed one
-/// fails on the missing-managed-file precheck that sits above the hook, and
-/// the test would be passing on a refusal that has nothing to do with the tool.
+/// fails on the missing-managed-file precheck that sits above the hook, before
+/// the tool is ever looked up.
 fn activate_on_a_path_without(manifest: &str, body: &str) -> (bool, String) {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
@@ -236,53 +236,71 @@ fn activate_on_a_path_without(manifest: &str, body: &str) -> (bool, String) {
     (output.status.success(), report)
 }
 
-/// With cargo off the PATH the activation hook has nothing to run, and the
-/// verb fails saying so rather than reporting a success it did not achieve.
+/// The warning a hook whose `tool` is not on PATH leaves, in place of a run.
+fn skipped_hook_warning(integration: &str, tool: &str) -> String {
+    format!(
+        "[warning] {integration}: {tool} is not on PATH, so this integration's install \
+         hook did not run"
+    )
+}
+
+/// With cargo off the PATH the activation hook has nothing to run: the verb
+/// succeeds and reports `tool-missing` as a warning naming the tool, rather
+/// than failing over a tool that is not installed.
 ///
 /// Driven as a subprocess so this runs on every host rather than only on one
 /// without cargo installed. In-process it could not: the hook resolves cargo
-/// by spawning it, inheriting whatever environment the caller has, and a test
-/// cannot narrow its own process PATH while other tests run beside it.
+/// on the PATH of whatever environment the caller has, and a test cannot
+/// narrow its own process PATH while other tests run beside it.
 #[test]
-fn cargo_activation_hook_refuses_when_cargo_is_off_the_path() {
+fn cargo_activation_hook_warns_when_cargo_is_off_the_path() {
     let (ok, report) = activate_on_a_path_without(
         "Cargo.toml",
         "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     );
-    assert!(!ok, "activate must not report success:\n{report}");
     assert!(
-        report.contains("cargo"),
-        "the failure must name the tool it could not run:\n{report}"
+        ok,
+        "a tool that is not installed must not fail activate:\n{report}"
+    );
+    assert!(
+        report.contains(&skipped_hook_warning("cargo-workspace", "cargo")),
+        "the skipped hook must be reported, naming its tool:\n{report}"
     );
 }
 
 /// npm's half of the same claim. `NpmWorkspaces` is separate code from
-/// `CargoWorkspace`, so its refusal is its own assertion rather than one the
+/// `CargoWorkspace`, so its outcome is its own assertion rather than one the
 /// cargo test covers.
 #[test]
-fn npm_activation_hook_refuses_when_npm_is_off_the_path() {
+fn npm_activation_hook_warns_when_npm_is_off_the_path() {
     let (ok, report) = activate_on_a_path_without(
         "package.json",
         "{\"name\":\"server\",\"version\":\"0.1.0\"}",
     );
-    assert!(!ok, "activate must not report success:\n{report}");
     assert!(
-        report.contains("npm"),
-        "the failure must name the tool it could not run:\n{report}"
+        ok,
+        "a tool that is not installed must not fail activate:\n{report}"
+    );
+    assert!(
+        report.contains(&skipped_hook_warning("npm-workspaces", "npm")),
+        "the skipped hook must be reported, naming its tool:\n{report}"
     );
 }
 
 /// uv's half of the same claim, separate for the same reason.
 #[test]
-fn uv_activation_hook_refuses_when_uv_is_off_the_path() {
+fn uv_activation_hook_warns_when_uv_is_off_the_path() {
     let (ok, report) = activate_on_a_path_without(
         "pyproject.toml",
         "[project]\nname = \"server\"\nversion = \"0.1.0\"\nrequires-python = \">=3.9\"\n",
     );
-    assert!(!ok, "activate must not report success:\n{report}");
     assert!(
-        report.contains("uv"),
-        "the failure must name the tool it could not run:\n{report}"
+        ok,
+        "a tool that is not installed must not fail activate:\n{report}"
+    );
+    assert!(
+        report.contains(&skipped_hook_warning("uv-workspace", "uv")),
+        "the skipped hook must be reported, naming its tool:\n{report}"
     );
 }
 

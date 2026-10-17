@@ -1540,7 +1540,7 @@ impl Vcs for GitVcs {
             .filter(|entry| entry.path == arg || entry.renamed_from.as_deref() == Some(arg))
             .map(|entry| (entry.staged, entry.worktree))
             .collect();
-        let remove_file = || {
+        let delete_working_file = || {
             std::fs::remove_file(&file).map_err(|e| VcsError::Io {
                 ctx: format!("failed to remove {}", file.display()),
                 source: e,
@@ -1554,9 +1554,9 @@ impl Vcs for GitVcs {
             }
             [(b'A', b' ')] => {
                 Self::run(&["reset", "-q", "--", arg], repo)?;
-                remove_file()?;
+                delete_working_file()?;
             }
-            [(b'?', b'?')] => remove_file()?,
+            [(b'?', b'?')] => delete_working_file()?,
             _ => return Ok(DiscardOutcome::HoldsUncapturedChange),
         }
         Ok(DiscardOutcome::Discarded)

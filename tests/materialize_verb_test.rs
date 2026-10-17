@@ -148,7 +148,7 @@ fn fixture() -> Fixture {
     let weaveroot = root.join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
     let out = common::rwv()
-        .args(["workweave", "app", "create", "agent-1"])
+        .args(["workweave", "app", "create", "agent-1", "--no-materialize"])
         .current_dir(&ws)
         .output()
         .expect("rwv should run");

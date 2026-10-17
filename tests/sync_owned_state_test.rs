@@ -302,7 +302,16 @@ fn fixture() -> Fixture {
 
     f.relock_and_commit();
     std::fs::create_dir_all(f.ws.parent().unwrap().join(".workweaves")).unwrap();
-    f.rwv(&["workweave", "web-app", "create", "agent-1"], &f.ws);
+    f.rwv(
+        &[
+            "workweave",
+            "web-app",
+            "create",
+            "agent-1",
+            "--no-materialize",
+        ],
+        &f.ws,
+    );
 
     assert_eq!(
         std::fs::read(f.ww_lock()).unwrap().as_slice(),

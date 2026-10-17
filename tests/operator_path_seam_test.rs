@@ -437,6 +437,21 @@ const ROUTED: &[Routed] = &[
         renders: 1,
         prints: "the commands that preview and delete a workspace's ignored files, for an operator to run",
     },
+    Routed {
+        file: "workweave.rs",
+        scope: "",
+        needle: r#""workweave created at {}; only its install hooks did not complete. Fix \"#,
+        renders: 1,
+        prints: "create's failure at the install hooks, naming the workweave it kept",
+    },
+    Routed {
+        file: "integrations/cargo_workspace.rs",
+        scope: "",
+        needle: r#""[warning] cargo-workspace: the rustc-wrapper key was not fitted to this \"#,
+        renders: 1,
+        prints: "the notice that a symlinked `.cargo` path kept the wrapper key from being \
+                 fitted, naming the link",
+    },
 ];
 
 /// The macros a message is rendered by. A construct is one of these calls.

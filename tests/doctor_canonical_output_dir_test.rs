@@ -348,7 +348,16 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
-    let create = rwv_in(&["workweave", "web-app", "create", "agent-1"], &ws);
+    let create = rwv_in(
+        &[
+            "workweave",
+            "web-app",
+            "create",
+            "agent-1",
+            "--no-materialize",
+        ],
+        &ws,
+    );
     let ww = weaveroot.join("web-app--agent-1");
     assert!(
         ww.join("projects/web-app/rwv.toml").exists(),
