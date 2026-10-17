@@ -231,10 +231,14 @@ fn encoded_file_url_matches_the_bare_path_origin() {
 }
 
 /// A remote whose configured URL the manifest matches, but whose resolved
-/// URL a `url.<base>.insteadOf` rule rewrites (the common `git@github.com:`
-/// rewrite for `https://github.com/`, set here in a fixture `HOME`'s global
-/// `.gitconfig`), must not be flagged — doctor compares the configured URL,
-/// not the one `git remote get-url` would resolve it to.
+/// URL a `url.<base>.insteadOf` rule rewrites to a different host entirely
+/// (a corporate mirror of `https://github.com/`, set here in a fixture
+/// `HOME`'s global `.gitconfig`), must not be flagged — doctor compares the
+/// configured URL, not the one `git remote get-url` would resolve it to.
+/// The rewrite target changes host rather than just scheme/syntax (unlike
+/// the scp-style `git@host:owner/repo` rewrite, which `clone_urls_equivalent`
+/// already treats as equivalent to its `https://host/owner/repo` form) so
+/// this pins the fix rather than the pre-existing normalization.
 #[test]
 fn origin_url_mismatch_is_clean_under_an_instead_of_rewrite() {
     let tmp = common::tempdir().unwrap();
@@ -255,7 +259,7 @@ fn origin_url_mismatch_is_clean_under_an_instead_of_rewrite() {
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(
         home.join(".gitconfig"),
-        "[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n",
+        "[url \"https://git-mirror.corp.example/gh/\"]\n\tinsteadOf = https://github.com/\n",
     )
     .unwrap();
 
