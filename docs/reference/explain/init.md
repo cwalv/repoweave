@@ -92,6 +92,9 @@ Progress messages to stderr:
 - `Adopted project '<name>' at <path>` — `--adopt` completed successfully.
 
 Integration activation output follows on stderr (symlinks created/updated).
+With `--adopt --no-materialize` it ends with `[skipped] core: the install hooks
+did not run (--no-materialize); `rwv materialize` runs them`, and a hook whose
+tool is not on `PATH` is skipped with its `tool-missing` warning.
 
 ## Exit codes
 

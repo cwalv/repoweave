@@ -82,6 +82,7 @@ use repoweave::push::{
     PUSH_SCHEMA_URL,
 };
 use repoweave::share::FilePlacement;
+use repoweave::skipped::{SkipReason, SkippedEffect};
 use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
@@ -373,6 +374,20 @@ fn fetch_outcomes() -> Vec<FetchOutcomeOutput> {
     .collect()
 }
 
+/// One record of every shape a skipped side effect takes.
+fn every_skip() -> Vec<SkippedEffect> {
+    let mut skips = vec![
+        SkippedEffect::install_hooks(SkipReason::NoMaterialize),
+        SkippedEffect::install_hooks(SkipReason::InsideWorkweave),
+        SkippedEffect::tool_missing("npm-workspaces", "npm"),
+        SkippedEffect::activation_while_active("other", "app"),
+        SkippedEffect::hooks_while_active("app"),
+    ];
+    skips.extend(SkippedEffect::not_presented("other"));
+    skips.extend(SkippedEffect::narrowed());
+    skips
+}
+
 fn fetch_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -382,6 +397,7 @@ fn fetch_corpus() -> Vec<(&'static str, Value)> {
                 outcomes: fetch_outcomes(),
                 placements: placements(),
                 resolution: Some(resolution()),
+                skipped: every_skip(),
             }),
         ),
         (
@@ -391,6 +407,7 @@ fn fetch_corpus() -> Vec<(&'static str, Value)> {
                 outcomes: Vec::new(),
                 placements: Vec::new(),
                 resolution: None,
+                skipped: Vec::new(),
             }),
         ),
     ]
@@ -925,6 +942,7 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
                 repos: update_records(),
                 placements: placements(),
                 resolution: Some(primary_resolution()),
+                skipped: every_skip(),
             }),
         ),
         (
@@ -934,6 +952,7 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
                 repos: Vec::new(),
                 placements: Vec::new(),
                 resolution: None,
+                skipped: Vec::new(),
             }),
         ),
     ]

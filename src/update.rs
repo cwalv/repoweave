@@ -89,6 +89,10 @@ pub struct UpdateJsonOutput {
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+    /// The materialization side effects this update skipped, each naming the
+    /// command that performs it. Empty, not absent, when it skipped none.
+    #[serde(default)]
+    pub skipped: Vec<crate::skipped::SkippedEffect>,
 }
 
 /// One NDJSON record emitted by `rwv update --json -j N` with `N > 1`.
@@ -392,6 +396,7 @@ fn update_for_project(
                 repos: json_records,
                 placements,
                 resolution: ctx.resolution(),
+                skipped: Vec::new(),
             };
             let out = serde_json::to_string_pretty(&envelope)
                 .context("failed to serialize update output")?;
@@ -431,8 +436,8 @@ fn update_for_project(
     // proves nothing about the repos it skipped, so it leaves the managed files
     // alone and `rwv doctor --fix` remains the repair path.
     let mut authored = BTreeSet::new();
-    if filter.is_empty() {
-        match workweave_dir {
+    let skipped = if filter.is_empty() {
+        let skipped = match workweave_dir {
             Some(dir) => crate::activate::activate_workweave_intent(project_name.as_str(), dir),
             None => crate::activate::activate_intent_with_options(project_name.as_str(), ctx, opts),
         }
@@ -457,7 +462,14 @@ fn update_for_project(
         {
             eprintln!("[warning] {}: {}", issue.integration, issue.message);
         }
-    }
+        skipped
+    } else {
+        let skipped = crate::skipped::SkippedEffect::narrowed().to_vec();
+        skipped
+            .iter()
+            .for_each(crate::skipped::SkippedEffect::report);
+        skipped
+    };
 
     // The regenerated content and the lock that records the tips it was
     // derived from are one change: commit them together, after authoring.
@@ -476,6 +488,7 @@ fn update_for_project(
             repos: json_records,
             placements,
             resolution: ctx.resolution(),
+            skipped,
         };
         let out =
             serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;

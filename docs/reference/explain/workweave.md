@@ -230,7 +230,9 @@ Run `rwv --help workweave` for the full clap surface.
 `create` — no stdout output on success (workweave path to stdout only when
 `--hook-mode` is set). Progress and warnings go to stderr, and so does the
 output of the install hooks' tools, so the `--hook-mode` path is the only
-thing on stdout.
+thing on stdout. With `--no-materialize` it says so in one line: `[skipped]
+core: the install hooks did not run (--no-materialize); `rwv materialize` runs
+them`.
 
 `delete` — no output on success.
 

@@ -187,7 +187,7 @@ pub(crate) fn settle_manifest(
     }
 
     match activate_intent_for(project.as_str(), ctx, opts) {
-        Ok(()) => {
+        Ok(_) => {
             // Report only: the manifest change has already landed.
             for issue in crate::activate::member_incompatibilities(root, project, manifest) {
                 eprintln!("[warning] {}: {}", issue.integration, issue.message);

@@ -196,6 +196,10 @@ fn update_json_envelope_round_trips() {
         ],
         placements: Vec::new(),
         resolution: None,
+        skipped: vec![repoweave::skipped::SkippedEffect::tool_missing(
+            "npm-workspaces",
+            "npm",
+        )],
     };
 
     let json = serde_json::to_string(&envelope).expect("serializes");
@@ -219,12 +223,23 @@ fn update_json_envelope_round_trips() {
     // Second record: up-to-date.
     assert_eq!(repos[1]["kind"], "up-to-date");
 
+    assert_eq!(
+        v["skipped"],
+        serde_json::json!([{
+            "effect": "install-hooks",
+            "integration": "npm-workspaces",
+            "reason": {"tool-missing": {"tool": "npm"}},
+            "remedy": "rwv materialize",
+        }])
+    );
+
     // Typed round-trip.
     let decoded: UpdateJsonOutput = serde_json::from_str(&json).expect("deserializes");
     assert_eq!(decoded.schema_url, UPDATE_SCHEMA_URL);
     assert_eq!(decoded.repos.len(), 2);
     assert_eq!(decoded.repos[0].kind, UpdateKind::Updated);
     assert_eq!(decoded.repos[1].kind, UpdateKind::UpToDate);
+    assert_eq!(decoded.skipped, envelope.skipped);
 }
 
 /// The `error` field is omitted when `kind != failed` (skip_serializing_if).

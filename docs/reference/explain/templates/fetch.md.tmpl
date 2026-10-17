@@ -171,7 +171,8 @@ Under `--json`, output switches to machine-readable format:
   {
     "$schema": "<url>",
     "outcomes": [ { "path": "...", ... }, ... ],
-    "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
+    "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+    "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
   }
   ```
 
@@ -196,6 +197,31 @@ the fetch creates there for a member the workweave lacks, under the
 workweave's path. The envelope lists them under `placements`, empty when
 nothing was placed; NDJSON streams each as its own line, whose `$schema`
 names `placement-record.json`.
+
+A fetch that does not activate a project, or activates one without running its
+hooks, says so in one line naming the command that does it:
+
+- a bootstrap fetch while another project is active: `rwv fetch: skipping
+  auto-activate (project '<active>' already active); `rwv activate <fetched>`
+  selects it and runs its install hooks` (on stdout in text mode, stderr under
+  `--json`);
+- an in-place fetch while its project is already active: `[skipped] core: the
+  install hooks did not run (project `<project>` was already active, so this
+  fetch activated nothing); `rwv materialize` runs them` — or, for a project the
+  weave root does not present, `(`<project>` is not the project this weave root
+  presents); `rwv activate <project>` runs them`;
+- an activation run with `--no-materialize`: `[skipped] core: the install hooks
+  did not run (--no-materialize); `rwv materialize` runs them`;
+- a hook whose tool is not on `PATH`: its `tool-missing` warning.
+
+The envelope records the same facts in `skipped`. Each record carries
+`effect` (`install-hooks`, `integration-files`, `weave-root-links` or
+`activation`), `integration` (present only when one integration's part was
+skipped), `reason` (`no-materialize`, `inside-workweave` or `narrowed`, or an
+object naming what it concerns: `{"tool-missing": {"tool": …}}`,
+`{"not-presented": {"project": …}}`, `{"project-already-active": {"project":
+…}}`) and `remedy`, the command that performs the effect. NDJSON output carries
+no `skipped` records; the lines still say it.
 
 The `$schema` URL points to the committed schema artifact. See the Schema
 section below.

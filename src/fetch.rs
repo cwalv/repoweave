@@ -13,11 +13,15 @@ use crate::placement::PlacementOutput;
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry;
 use crate::selector::RepoFilter;
+use crate::skipped::{SkipReason, SkippedEffect};
 use crate::vcs::{
     project_vcs, vcs_for, HeadAttachment, RawRefName, ReplayExclusionState, ResolvedRevisionId,
     TrackingRef, Vcs, VcsError,
 };
-use crate::workspace::{project_dir, projects_dir, Checkout, Resolution, WorkspaceContext};
+use crate::workspace::{
+    observe_root, project_dir, projects_dir, Checkout, Resolution, RootObservation,
+    WorkspaceContext,
+};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -79,6 +83,10 @@ pub struct FetchJsonOutput {
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+    /// The materialization side effects this fetch skipped, each naming the
+    /// command that performs it. Empty, not absent, when it skipped none.
+    #[serde(default)]
+    pub skipped: Vec<SkippedEffect>,
 }
 
 impl FetchJsonOutput {
@@ -403,7 +411,26 @@ pub fn run_fetch_in_place(
         } else {
             eprintln!("{msg}");
         }
-        crate::activate::activate_with_options(project.as_str(), invocation, activation)?;
+        envelope
+            .skipped
+            .extend(crate::activate::activate_with_options(
+                project.as_str(),
+                invocation,
+                activation,
+            )?);
+    } else {
+        let presented = observe_root(ctx.active_path())
+            .as_ref()
+            .and_then(RootObservation::presented_project)
+            .cloned();
+        let skip = match presented {
+            Some(active) if active == name => SkippedEffect::hooks_while_active(active.as_str()),
+            _ => SkippedEffect::install_hooks(SkipReason::NotPresented {
+                project: name.to_string(),
+            }),
+        };
+        skip.report();
+        envelope.skipped.push(skip);
     }
     if output == OutputMode::JsonEnvelope {
         envelope.print()?;
@@ -718,6 +745,7 @@ fn fetch_project_repos(
         outcomes: Vec::new(),
         placements: Vec::new(),
         resolution,
+        skipped: Vec::new(),
     };
     let envelope_records = &mut envelope.outcomes;
 
@@ -876,15 +904,14 @@ fn fetch_project_repos(
     if let Some(activation) = auto_activate {
         match crate::workspace::read_active_project(workspace_root) {
             Some(active) => {
+                let skip = SkippedEffect::activation_while_active(active.as_str(), name);
                 // Route to stderr in JSON mode so stdout stays JSON-only.
-                let msg = format!(
-                    "rwv fetch: skipping auto-activate (project '{active}' already active)"
-                );
                 if json {
-                    eprintln!("{msg}");
+                    eprintln!("{}", skip.line());
                 } else {
-                    println!("{msg}");
+                    println!("{}", skip.line());
                 }
+                envelope.skipped.push(skip);
             }
             None => {
                 // Resolve the freshly-bootstrapped workspace to build the
@@ -893,7 +920,11 @@ fn fetch_project_repos(
                 // invocation context.
                 let ctx =
                     crate::workspace::WorkspaceContext::resolve_invocation(workspace_root, None)?;
-                crate::activate::activate_with_options(name, &ctx, activation)?;
+                envelope
+                    .skipped
+                    .extend(crate::activate::activate_with_options(
+                        name, &ctx, activation,
+                    )?);
             }
         }
     }

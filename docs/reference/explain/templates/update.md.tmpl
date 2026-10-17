@@ -86,6 +86,21 @@ the standing arm for the same finding; both run the same predicate. Because it
 goes to stderr, `--json` stdout stays purely structured and the envelope below
 is unchanged.
 
+A side effect the update skipped is said on stderr, one line each, naming the
+command that performs it, and nothing is said when it skipped none:
+
+- narrowed by `--role` or `--repo`, it regenerates no integration files
+  (`[skipped] core: the integration files were not regenerated (the update was
+  narrowed by --role or --repo); `rwv doctor --fix` regenerates them`) and runs
+  no install hooks (the same line for hooks, naming `rwv materialize`);
+- with `--no-materialize`, or inside a workweave, it runs no install hooks
+  (`[skipped] core: the install hooks did not run (--no-materialize); `rwv
+  materialize` runs them`, or `(an authoring verb runs none inside a
+  workweave)`);
+- a hook whose tool is not on `PATH` is skipped with a `tool-missing` warning.
+
+The envelope records the same facts in `skipped`.
+
 Under `--json -j 1` (or `--json` with a single-repo project), output is
 the envelope:
 
@@ -93,7 +108,8 @@ the envelope:
 {
   "$schema": "<url>",
   "repos": [ { "path": "...", "kind": "updated", ... }, ... ],
-  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
 }
 ```
 
@@ -116,6 +132,15 @@ rewrote gets a placement record: `path`, `absolute_path`, and `files`
 (`reflinked`, `hardlinked`, `written`). The envelope lists them under
 `placements`, empty when nothing was placed; NDJSON streams each as its own
 line, whose `$schema` names `placement-record.json`.
+
+Each record in `skipped` carries `effect` (`install-hooks`,
+`integration-files`, `weave-root-links` or `activation`), `integration`
+(present only when one integration's part was skipped), `reason`
+(`no-materialize`, `inside-workweave` or `narrowed`, or an object naming what
+it concerns: `{"tool-missing": {"tool": …}}`, `{"not-presented": {"project":
+…}}`, `{"project-already-active": {"project": …}}`) and `remedy`, the command
+that performs the effect. NDJSON output carries no `skipped` records; the lines
+on stderr still say it.
 
 Schema:
 

@@ -86,6 +86,21 @@ the standing arm for the same finding; both run the same predicate. Because it
 goes to stderr, `--json` stdout stays purely structured and the envelope below
 is unchanged.
 
+A side effect the update skipped is said on stderr, one line each, naming the
+command that performs it, and nothing is said when it skipped none:
+
+- narrowed by `--role` or `--repo`, it regenerates no integration files
+  (`[skipped] core: the integration files were not regenerated (the update was
+  narrowed by --role or --repo); `rwv doctor --fix` regenerates them`) and runs
+  no install hooks (the same line for hooks, naming `rwv materialize`);
+- with `--no-materialize`, or inside a workweave, it runs no install hooks
+  (`[skipped] core: the install hooks did not run (--no-materialize); `rwv
+  materialize` runs them`, or `(an authoring verb runs none inside a
+  workweave)`);
+- a hook whose tool is not on `PATH` is skipped with a `tool-missing` warning.
+
+The envelope records the same facts in `skipped`.
+
 Under `--json -j 1` (or `--json` with a single-repo project), output is
 the envelope:
 
@@ -93,7 +108,8 @@ the envelope:
 {
   "$schema": "<url>",
   "repos": [ { "path": "...", "kind": "updated", ... }, ... ],
-  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ]
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
 }
 ```
 
@@ -116,6 +132,15 @@ rewrote gets a placement record: `path`, `absolute_path`, and `files`
 (`reflinked`, `hardlinked`, `written`). The envelope lists them under
 `placements`, empty when nothing was placed; NDJSON streams each as its own
 line, whose `$schema` names `placement-record.json`.
+
+Each record in `skipped` carries `effect` (`install-hooks`,
+`integration-files`, `weave-root-links` or `activation`), `integration`
+(present only when one integration's part was skipped), `reason`
+(`no-materialize`, `inside-workweave` or `narrowed`, or an object naming what
+it concerns: `{"tool-missing": {"tool": …}}`, `{"not-presented": {"project":
+…}}`, `{"project-already-active": {"project": …}}`) and `remedy`, the command
+that performs the effect. NDJSON output carries no `skipped` records; the lines
+on stderr still say it.
 
 Schema:
 
@@ -157,9 +182,50 @@ Schema:
           "type": "null"
         }
       ]
+    },
+    "skipped": {
+      "description": "The materialization side effects this update skipped, each naming the command that performs it. Empty, not absent, when it skipped none.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SkippedEffect"
+      }
     }
   },
   "definitions": {
+    "Effect": {
+      "description": "The side effect that did not happen.",
+      "oneOf": [
+        {
+          "description": "The integrations' install hooks (`npm install`, `uv sync`, `cargo fetch`, …).",
+          "type": "string",
+          "enum": [
+            "install-hooks"
+          ]
+        },
+        {
+          "description": "Regenerating the integrations' managed and generated files.",
+          "type": "string",
+          "enum": [
+            "integration-files"
+          ]
+        },
+        {
+          "description": "Refreshing the weave root's links onto the project's files.",
+          "type": "string",
+          "enum": [
+            "weave-root-links"
+          ]
+        },
+        {
+          "description": "Activating a fetched project: selecting it, surfacing its links and running its install hooks.",
+          "type": "string",
+          "enum": [
+            "activation"
+          ]
+        }
+      ]
+    },
     "FilePlacement": {
       "description": "How a member's tracked files reached a workspace.",
       "type": "object",
@@ -295,6 +361,123 @@ Schema:
         "workweave_unregistered": {
           "description": "`true` when the invocation resolved into a workweave whose directory no registry entry names, so `workweave` above is absent for a reason that is not \"this is the primary\".\n\nSerialized only in that state, so the primary and a registered workweave emit exactly the bytes they emitted before this field existed. `rwv doctor --fix` registers such a directory, after which this is absent and `workweave` carries the identity.",
           "type": "boolean"
+        }
+      }
+    },
+    "SkipReason": {
+      "description": "Why the effect did not happen.",
+      "oneOf": [
+        {
+          "description": "`--no-materialize` was passed.",
+          "type": "string",
+          "enum": [
+            "no-materialize"
+          ]
+        },
+        {
+          "description": "An authoring verb ran inside a workweave, where it runs no hooks.",
+          "type": "string",
+          "enum": [
+            "inside-workweave"
+          ]
+        },
+        {
+          "description": "The CLI the integration's hook drives is not on `PATH`.",
+          "type": "object",
+          "required": [
+            "tool-missing"
+          ],
+          "properties": {
+            "tool-missing": {
+              "type": "object",
+              "required": [
+                "tool"
+              ],
+              "properties": {
+                "tool": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The verb acted on a project the weave root does not present.",
+          "type": "object",
+          "required": [
+            "not-presented"
+          ],
+          "properties": {
+            "not-presented": {
+              "type": "object",
+              "required": [
+                "project"
+              ],
+              "properties": {
+                "project": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "`rwv update` was narrowed by `--role` or `--repo`.",
+          "type": "string",
+          "enum": [
+            "narrowed"
+          ]
+        },
+        {
+          "description": "A project was already active, so the fetch selected none.",
+          "type": "object",
+          "required": [
+            "project-already-active"
+          ],
+          "properties": {
+            "project-already-active": {
+              "type": "object",
+              "required": [
+                "project"
+              ],
+              "properties": {
+                "project": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SkippedEffect": {
+      "description": "One materialization side effect a verb skipped on this run.",
+      "type": "object",
+      "required": [
+        "effect",
+        "reason",
+        "remedy"
+      ],
+      "properties": {
+        "effect": {
+          "$ref": "#/definitions/Effect"
+        },
+        "integration": {
+          "description": "The integration whose part of `effect` was skipped; absent when the whole effect was.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/definitions/SkipReason"
+        },
+        "remedy": {
+          "description": "The command that performs the effect.",
+          "type": "string"
         }
       }
     },

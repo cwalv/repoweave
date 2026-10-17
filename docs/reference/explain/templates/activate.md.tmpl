@@ -123,6 +123,13 @@ skipped for a missing tool prints:
 [warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize`
 ```
 
+With `--no-materialize`, the skipped hooks are said in one line naming the verb
+that runs them:
+
+```
+[skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them
+```
+
 On success, `.rwv-active` is written (no confirmation message by default).
 
 ## Exit codes

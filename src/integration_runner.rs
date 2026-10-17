@@ -14,6 +14,7 @@ use crate::integration::{
     is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, Severity,
 };
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
+use crate::skipped::SkippedEffect;
 use crate::workspace::ContainerKind;
 
 /// Shared base data for constructing `IntegrationContext` per integration.
@@ -336,26 +337,27 @@ pub fn run_activate_hooks(
     integrations: &[&dyn Integration],
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
-) -> Vec<Issue> {
-    for_each_enabled(integrations, manifest, |integration, config| {
+) -> HookRun {
+    let mut skipped = Vec::new();
+    let issues = for_each_enabled(integrations, manifest, |integration, config| {
         let ctx = ctx_base.build_context(config, manifest);
         let outcome = integration
             .activate_hook(&ctx)
             .map_err(|e| anyhow::anyhow!("activate hook failed: {e}"))?;
-        Ok(match outcome {
-            HookOutcome::Done => Vec::new(),
-            HookOutcome::ToolMissing(tool) => vec![Issue {
-                integration: integration.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "{tool} is not on PATH, so this integration's install hook did not \
-                     run; install {tool}, then run `rwv materialize`"
-                ),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: false,
-            }],
-        })
-    })
+        if let HookOutcome::ToolMissing(tool) = outcome {
+            skipped.push(SkippedEffect::tool_missing(integration.name(), tool));
+        }
+        Ok(Vec::new())
+    });
+    HookRun { issues, skipped }
+}
+
+/// What [`run_activate_hooks`] came back with.
+pub struct HookRun {
+    /// What the hooks that ran reported, a failure among them as an error.
+    pub issues: Vec<Issue>,
+    /// The hooks that did not run because their tool is not on `PATH`.
+    pub skipped: Vec<SkippedEffect>,
 }
 
 /// Run [`Integration::fit_to_host`] for each enabled integration, collecting a
@@ -815,7 +817,7 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
         assert!(issues.is_empty());
 
         let enabled_calls: Vec<_> = enabled
@@ -838,7 +840,7 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].integration, "cargo");
         assert_eq!(issues[0].severity, Severity::Error);
@@ -854,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn activate_hooks_tool_missing_is_a_warning_and_others_still_run() {
+    fn activate_hooks_tool_missing_is_a_skip_and_others_still_run() {
         let toolless =
             MockIntegration::new("pnpm", true).with_hook_outcome(HookOutcome::ToolMissing("pnpm"));
         let succeeding = MockIntegration::new("npm", true);
@@ -865,12 +867,13 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].integration, "pnpm");
-        assert_eq!(issues[0].kind, IssueKind::ToolMissing);
-        assert_eq!(issues[0].severity, Severity::Warning);
-        assert!(issues[0].message.contains("pnpm is not on PATH"));
+        let run = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        assert!(run.issues.is_empty(), "a missing tool is no failure");
+        assert_eq!(
+            run.skipped,
+            vec![SkippedEffect::tool_missing("pnpm", "pnpm")],
+            "the skipped hook is recorded, naming its tool"
+        );
 
         let npm_hook_calls = succeeding
             .calls()
@@ -895,7 +898,7 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
         assert!(issues.is_empty());
 
         let hook_calls: Vec<_> = integration
@@ -916,7 +919,7 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
         assert!(issues.is_empty());
 
         let hook_calls: Vec<_> = integration

@@ -47,6 +47,7 @@ fn fetch_json_envelope_round_trips() {
         ],
         placements: Vec::new(),
         resolution: None,
+        skipped: Vec::new(),
     };
 
     let json = serde_json::to_string(&envelope).expect("serializes");

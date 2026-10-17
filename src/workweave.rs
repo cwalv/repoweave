@@ -2273,7 +2273,7 @@ pub fn create_workweave(
     // is kept, as `add` keeps a manifest change whose hooks failed.
     let hooks_failed =
         match crate::activate::activate_workweave(project.as_str(), &workweave_dir, activation) {
-            Ok(()) => None,
+            Ok(_) => None,
             Err(crate::activate::ActivationFailure::BeforeHooks(e)) => return Err(e),
             Err(crate::activate::ActivationFailure::AtHooks(e)) => Some(e),
         };

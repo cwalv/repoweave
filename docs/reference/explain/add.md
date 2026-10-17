@@ -149,6 +149,21 @@ Progress messages to stderr:
 
 Integration activation output (symlinks created/removed) goes to stderr.
 
+A side effect the verb skipped is said on stderr in one line naming the
+command that performs it; nothing is said when it skipped none:
+
+- with `--no-materialize`: `[skipped] core: the install hooks did not run
+  (--no-materialize); `rwv materialize` runs them`;
+- inside a workweave, where an authoring verb runs no hooks: `[skipped] core:
+  the install hooks did not run (an authoring verb runs none inside a
+  workweave); `rwv materialize` runs them`;
+- for a project the weave root does not present (`--project`), whose files it
+  regenerates and stops there: `[skipped] core: the weave-root links were not
+  refreshed (`<project>` is not the project this weave root presents); `rwv
+  activate <project>` refreshes them`, and the same line for the install hooks,
+  ending `runs them`;
+- for a hook whose tool is not on `PATH`: its `tool-missing` warning.
+
 ## Exit codes
 
 - `0` — repo added (or already present), manifest updated, activation

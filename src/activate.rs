@@ -52,6 +52,7 @@ use crate::owned_state::{
     reset_unreadable_ledger, stamp_owned_digest,
 };
 use crate::refusal::RefusalKind;
+use crate::skipped::{SkipReason, SkippedEffect};
 use crate::symlink::LinkTarget;
 use crate::vcs::Vcs;
 use crate::workspace::{
@@ -132,7 +133,7 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
 /// Surfaces the existing on-disk artifacts and verifies them, **never
 /// authoring**. Runs integration activate hooks (`npm install`, `uv sync`,
 /// etc.) by default. See [`activate_with_options`] to suppress them.
-pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_with_options(project, ctx, ActivateOptions::default())
 }
 
@@ -144,7 +145,10 @@ pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
 /// the root's surfacing is refreshed only when `project` is already the
 /// selected one. That is what makes `--project` a one-shot target rather
 /// than a project switch.
-pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn activate_intent(
+    project: &str,
+    ctx: &WorkspaceContext,
+) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_intent_with_options(project, ctx, ActivateOptions::default())
 }
 
@@ -163,13 +167,8 @@ pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<
 /// produce one, so a hook-suppressed `--fix` reports the lock as regenerable
 /// and then leaves it missing. Hooks only fire when doctor already found
 /// safe-to-fix drift, so a clean weave still pays nothing.
-pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()> {
-    activate_at(
-        weave_dir,
-        project,
-        ActivateOptions::default(),
-        ActivationMode::Intent,
-    )
+pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<Vec<SkippedEffect>> {
+    activate_at(weave_dir, project, None, ActivationMode::Intent)
 }
 
 /// Run intent-mode activation with explicit options: `opts` carries the
@@ -178,8 +177,13 @@ pub fn activate_intent_with_options(
     project: &str,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
-) -> anyhow::Result<()> {
-    activate_at(ctx.primary_path(), project, opts, ActivationMode::Intent)
+) -> anyhow::Result<Vec<SkippedEffect>> {
+    activate_at(
+        ctx.primary_path(),
+        project,
+        opts.skip_reason(),
+        ActivationMode::Intent,
+    )
 }
 
 /// Run `rwv materialize`: the integration hooks, for the project this checkout
@@ -201,7 +205,7 @@ pub fn materialize(
     ctx: &WorkspaceContext,
     consent: Option<DriftConsent>,
     undeclared: Option<RemoveUndeclaredLinksConsent>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<SkippedEffect>> {
     let root = ctx.active_path();
     crate::op_state::check_no_op_in_progress(&[root]).context(
         "materialize does not start while an operation is in flight in this \
@@ -230,7 +234,7 @@ pub fn materialize(
     activate_at(
         root,
         project.as_str(),
-        ActivateOptions::default(),
+        None,
         ActivationMode::Materialize(consent),
     )
 }
@@ -535,6 +539,13 @@ pub struct ActivateOptions {
     pub no_materialize: bool,
 }
 
+impl ActivateOptions {
+    /// Why this activation runs no install hooks, if it runs none.
+    fn skip_reason(self) -> Option<SkipReason> {
+        self.no_materialize.then_some(SkipReason::NoMaterialize)
+    }
+}
+
 /// Run activate with options. Public so the CLI can pass `--no-materialize`.
 ///
 /// The witness lookup is the workweave guard. Activate has no meaning inside
@@ -548,7 +559,7 @@ pub fn activate_with_options(
     project: &str,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<SkippedEffect>> {
     // Named for the act, not for a verb: `init` and `fetch` activate in-process
     // too, and a refusal naming `activate` would name a verb its reader did not
     // run.
@@ -569,12 +580,18 @@ pub fn activate_with_options(
         ),
     };
 
-    activate_at(ctx.primary_path(), project, opts, ActivationMode::Context)?;
+    let skipped = activate_at(
+        ctx.primary_path(),
+        project,
+        opts.skip_reason(),
+        ActivationMode::Context,
+    )?;
 
     // Project SELECTION, after activation rather than inside it. An activate
     // hook that errored bails above, so a partially-activated workspace
     // still does not record success.
-    primary.select_project(&ProjectName::new(project)?)
+    primary.select_project(&ProjectName::new(project)?)?;
+    Ok(skipped)
 }
 
 /// Run every enabled integration's `deactivate` against `project_dir`.
@@ -600,10 +617,10 @@ pub fn strip_project_regions(
 fn activate_at(
     root: &Path,
     project: &str,
-    opts: ActivateOptions,
+    skip: Option<SkipReason>,
     mode: ActivationMode,
-) -> anyhow::Result<()> {
-    activate_in_phases(root, project, opts, mode).map_err(ActivationFailure::into_error)
+) -> anyhow::Result<Vec<SkippedEffect>> {
+    activate_in_phases(root, project, skip, mode).map_err(ActivationFailure::into_error)
 }
 
 /// How far an activation got before it failed, which is what decides whether
@@ -635,21 +652,27 @@ pub(crate) fn activate_intent_for(
     project: &str,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
-) -> Result<(), ActivationFailure> {
+) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     match &ctx.checkout {
         Checkout::Workweave { dir, .. } => workweave_intent(project, dir),
-        Checkout::Primary { .. } => {
-            activate_in_phases(ctx.primary_path(), project, opts, ActivationMode::Intent)
-        }
+        Checkout::Primary { .. } => activate_in_phases(
+            ctx.primary_path(),
+            project,
+            opts.skip_reason(),
+            ActivationMode::Intent,
+        ),
     }
 }
 
+/// The phases of an activation, returning the side effects it skipped. Each is
+/// reported on stderr as it is decided, so a caller that only needs the verb
+/// to say so can drop the list; one with a `--json` envelope records it.
 fn activate_in_phases(
     root: &Path,
     project: &str,
-    opts: ActivateOptions,
+    skip: Option<SkipReason>,
     mode: ActivationMode,
-) -> Result<(), ActivationFailure> {
+) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     let project_name =
         ProjectName::new(project).map_err(|e| ActivationFailure::BeforeHooks(e.into()))?;
     let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
@@ -673,19 +696,21 @@ fn activate_in_phases(
         &manifest,
         &integrations,
         &ctx_base,
-        opts,
+        skip.is_none(),
         mode,
     )
     .map_err(ActivationFailure::BeforeHooks)?
     else {
-        return Ok(());
+        let skipped = SkippedEffect::not_presented(project).to_vec();
+        skipped.iter().for_each(SkippedEffect::report);
+        return Ok(skipped);
     };
     run_hooks(
         project_vcs.as_ref(),
         &integrations,
         &manifest,
         &ctx_base,
-        opts,
+        skip,
         mode,
         &noticed,
     )
@@ -703,7 +728,7 @@ fn author_and_surface(
     manifest: &Manifest,
     integrations: &[&dyn Integration],
     ctx_base: &IntegrationContextBase,
-    opts: ActivateOptions,
+    materializing: bool,
     mode: ActivationMode,
 ) -> anyhow::Result<Option<Vec<String>>> {
     match mode {
@@ -714,7 +739,7 @@ fn author_and_surface(
         ActivationMode::Context => {
             // Ahead of the verify pass, so it does not report as drift what
             // this materialization is about to settle.
-            if !opts.no_materialize {
+            if materializing {
                 fit_to_host(integrations, manifest, ctx_base)?;
             }
             // Two passes:
@@ -839,14 +864,17 @@ fn run_hooks(
     integrations: &[&dyn Integration],
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
-    opts: ActivateOptions,
+    skip: Option<SkipReason>,
     mode: ActivationMode,
     noticed: &[String],
-) -> anyhow::Result<()> {
-    if !opts.no_materialize && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
+) -> anyhow::Result<Vec<SkippedEffect>> {
+    let mut skipped = Vec::new();
+    if skip.is_none() && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
         refuse_hooks_over_malformed_settings(integrations, manifest, ctx_base)?;
-        let hook_issues = run_activate_hooks(integrations, manifest, ctx_base);
-        report_and_check_activate_hook_issues(&hook_issues)?;
+        let hooks = run_activate_hooks(integrations, manifest, ctx_base);
+        hooks.skipped.iter().for_each(SkippedEffect::report);
+        skipped.extend(hooks.skipped);
+        report_and_check_activate_hook_issues(&hooks.issues)?;
         // A tool the hooks ran may have written past its link — a first
         // generation by a renaming writer replaces the link that dangled.
         let after_hooks = match mode {
@@ -868,12 +896,17 @@ fn run_hooks(
             eprintln!("[warning] core: surfacing: {notice}");
         }
     }
+    if let Some(reason) = skip {
+        let hooks = SkippedEffect::install_hooks(reason);
+        hooks.report();
+        skipped.push(hooks);
+    }
 
     if matches!(mode, ActivationMode::Materialize(_)) {
         reset_ledger_no_generator_rebuilt(&ctx_base.output_dir)?;
     }
 
-    Ok(())
+    Ok(skipped)
 }
 
 /// Make `unreadable-owned-state` clearable in a project whose integrations
@@ -1292,8 +1325,13 @@ pub(crate) fn activate_workweave(
     project: &str,
     workweave_dir: &Path,
     opts: ActivateOptions,
-) -> Result<(), ActivationFailure> {
-    activate_in_phases(workweave_dir, project, opts, ActivationMode::Context)
+) -> Result<Vec<SkippedEffect>, ActivationFailure> {
+    activate_in_phases(
+        workweave_dir,
+        project,
+        opts.skip_reason(),
+        ActivationMode::Context,
+    )
 }
 
 /// Run **intent-mode** activation inside a workweave: content is authored
@@ -1307,17 +1345,21 @@ pub(crate) fn activate_workweave(
 /// a workweave. `rwv doctor --fix` deliberately does NOT come through here —
 /// it uses [`activate_intent_at`], which runs the hooks; see that function
 /// for why a repair verb cannot suppress them.
-pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
+pub fn activate_workweave_intent(
+    project: &str,
+    workweave_dir: &Path,
+) -> anyhow::Result<Vec<SkippedEffect>> {
     workweave_intent(project, workweave_dir).map_err(ActivationFailure::into_error)
 }
 
-fn workweave_intent(project: &str, workweave_dir: &Path) -> Result<(), ActivationFailure> {
+fn workweave_intent(
+    project: &str,
+    workweave_dir: &Path,
+) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     activate_in_phases(
         workweave_dir,
         project,
-        ActivateOptions {
-            no_materialize: true,
-        },
+        Some(SkipReason::InsideWorkweave),
         ActivationMode::Intent,
     )
 }
@@ -2762,15 +2804,8 @@ mod tests {
         tmp
     }
 
-    fn activate_context_with_hooks(root: &Path) -> anyhow::Result<()> {
-        activate_at(
-            root,
-            "demo",
-            ActivateOptions {
-                no_materialize: false,
-            },
-            ActivationMode::Context,
-        )
+    fn activate_context_with_hooks(root: &Path) -> anyhow::Result<Vec<SkippedEffect>> {
+        activate_at(root, "demo", None, ActivationMode::Context)
     }
 
     #[test]

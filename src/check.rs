@@ -9565,7 +9565,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             // PRIMARY project's managed files — `activate_intent_at` takes the
             // weave dir, and `workspace_dir` is `ctx.active_path()`.
             match crate::activate::activate_intent_at(project.name.as_str(), workspace_dir) {
-                Ok(()) => println!(
+                Ok(_) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
                     project.name
                 ),
