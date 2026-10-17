@@ -823,46 +823,78 @@ impl TomlDoc {
     /// list to hand `set_marker`) can decorate a leaf without re-deriving the
     /// marker text and prefix-building logic itself.
     pub(crate) fn decorate_key(table: &mut toml_edit::Table, leaf: &str) {
-        let Some(mut key_mut) = table.key_mut(leaf) else {
-            return;
-        };
-        let decor = key_mut.leaf_decor_mut();
-        let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
-        if existing.contains(TOML_MARKER_TEXT) {
-            return;
+        let header = Self::is_header_table(table, leaf);
+        if header {
+            if let Some(toml_edit::Item::Table(sub)) = table.get_mut(leaf) {
+                sub.set_implicit(false);
+            }
         }
-        // Preserve any existing prefix (comments/blank lines the user wrote).
-        let new = if existing.is_empty() {
-            TOML_MARKER_PREFIX.to_string()
-        } else if existing.ends_with('\n') {
-            format!("{}{}", existing, TOML_MARKER_PREFIX)
-        } else {
-            format!("{}\n{}", existing, TOML_MARKER_PREFIX)
-        };
-        decor.set_prefix(new);
+        Self::edit_marker_decor(table, leaf, |decor| {
+            // A header table with no prefix of its own renders a blank line
+            // above it; keep it.
+            let unset = if header { "\n" } else { "" };
+            let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or(unset);
+            if existing.contains(TOML_MARKER_TEXT) {
+                return;
+            }
+            // Preserve any existing prefix (comments/blank lines the user wrote).
+            let new = if existing.is_empty() {
+                TOML_MARKER_PREFIX.to_string()
+            } else if existing.ends_with('\n') {
+                format!("{}{}", existing, TOML_MARKER_PREFIX)
+            } else {
+                format!("{}\n{}", existing, TOML_MARKER_PREFIX)
+            };
+            decor.set_prefix(new);
+        });
     }
 
     /// Does `leaf`'s decor prefix carry the marker text? The per-key read
     /// counterpart of [`Self::decorate_key`] — same crate-visibility reason.
     pub(crate) fn key_has_marker(table: &toml_edit::Table, leaf: &str) -> bool {
-        let Some(key_mut) = table.key(leaf) else {
-            return false;
+        let decor = match table.get(leaf) {
+            Some(toml_edit::Item::Table(sub)) if !sub.is_dotted() => Some(sub.decor()),
+            _ => table.key(leaf).map(|key| key.leaf_decor()),
         };
-        let decor = key_mut.leaf_decor();
         decor
-            .prefix()
+            .and_then(|d| d.prefix())
             .and_then(|r| r.as_str())
             .is_some_and(|s| s.contains(TOML_MARKER_TEXT))
+    }
+
+    /// Whether `leaf` is a sub-table written under its own `[header]` line.
+    fn is_header_table(table: &toml_edit::Table, leaf: &str) -> bool {
+        matches!(table.get(leaf), Some(toml_edit::Item::Table(sub)) if !sub.is_dotted())
+    }
+
+    /// Edit the decor whose prefix is the line above `leaf`.
+    ///
+    /// For `key = value` that is the key's leaf decor. For a sub-table under
+    /// its own header it is the table's decor: toml_edit renders the key's leaf
+    /// decor inside the header's brackets, as `[# comment\na.b]`, which no TOML
+    /// parser accepts.
+    fn edit_marker_decor(
+        table: &mut toml_edit::Table,
+        leaf: &str,
+        edit: impl FnOnce(&mut toml_edit::Decor),
+    ) {
+        if Self::is_header_table(table, leaf) {
+            if let Some(toml_edit::Item::Table(sub)) = table.get_mut(leaf) {
+                edit(sub.decor_mut());
+            }
+        } else if let Some(mut key) = table.key_mut(leaf) {
+            edit(key.leaf_decor_mut());
+        }
     }
 
     /// Strip the marker line from `leaf`'s decor prefix, keeping any other
     /// prefix content. Crate-visible for the same reason as
     /// [`Self::decorate_key`].
     pub(crate) fn undecorate_key(table: &mut toml_edit::Table, leaf: &str) {
-        let Some(mut key_mut) = table.key_mut(leaf) else {
-            return;
-        };
-        let decor = key_mut.leaf_decor_mut();
+        Self::edit_marker_decor(table, leaf, Self::strip_marker_line);
+    }
+
+    fn strip_marker_line(decor: &mut toml_edit::Decor) {
         let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
         if existing.is_empty() {
             return;
@@ -2385,6 +2417,47 @@ mod tests {
             let path = dir.path().join(name);
             std::fs::write(&path, content).unwrap();
             path
+        }
+
+        /// A table-valued owned key is marked on the line above its header.
+        /// The key's leaf decor would render inside the brackets, as
+        /// `[# managed by rwv\nworkspace.package]`.
+        #[test]
+        fn a_header_table_is_marked_above_its_header_and_still_parses() {
+            let dir = TempDir::new().unwrap();
+            let path = write_file(&dir, "Cargo.toml", "[package]\nname = \"root\"\n");
+
+            let owned = vec![(
+                kp(&["workspace", "package"]),
+                Ownership::Author,
+                OwnedValue::Object(BTreeMap::new()),
+            )];
+            merge_activate::<TomlDoc>(&path, &owned).unwrap();
+
+            let text = std::fs::read_to_string(&path).unwrap();
+            let doc = TomlDoc::parse(&text).unwrap_or_else(|e| panic!("{e:#}\n{text}"));
+            assert!(
+                text.contains("# managed by rwv\n[workspace.package]"),
+                "the marker sits on its own line above the header:\n{text}"
+            );
+            assert!(doc.has_marker(&[kp(&["workspace", "package"])]));
+
+            merge_activate::<TomlDoc>(&path, &owned).unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&path).unwrap(),
+                text,
+                "a second pass neither re-marks nor moves the table"
+            );
+
+            assert_eq!(
+                strip_deactivate::<TomlDoc>(&path, &[kp(&["workspace", "package"])]).unwrap(),
+                StripOutcome::Stripped
+            );
+            let stripped = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !stripped.contains("managed by rwv") && !stripped.contains("workspace"),
+                "the strip takes the table and its marker:\n{stripped}"
+            );
         }
 
         const UV_SEED: &str = r#"[project]
