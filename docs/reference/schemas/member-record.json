@@ -57,7 +57,7 @@
       }
     },
     {
-      "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+      "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it. The op runs to completion and then exits 1.",
       "type": "object",
       "required": [
         "absolute_path",

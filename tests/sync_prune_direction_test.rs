@@ -508,22 +508,256 @@ fn json_records_a_pruned_member() {
     assert!(!common::under(&s1, EXTRA).exists());
 }
 
+/// A seat behind a drop whose checkout of the dropped member holds untracked
+/// work, so replay's prune of it is refused.
+fn seat_with_an_unprunable_drop(weave: &Weave) -> PathBuf {
+    let s1 = seat_behind_a_drop(weave);
+    std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
+    s1
+}
+
+const COMPLETED: &str =
+    "completed: replay and relock finished and op-state is cleared, so `rwv abort` does not apply";
+
+/// The op ran to completion and only the prune was refused: exit 1, a message
+/// that says abort does not apply and names the checkout, the checkout and
+/// its work still on disk, and no op-state left for abort to find.
+fn assert_completed_with_the_checkout_left(out: &Output, verb: &str, s1: &Path) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    for expected in [
+        format!("{verb} {COMPLETED}"),
+        format!(":\n  {EXTRA}\n"),
+        format!("Re-running {verb} will not prune it."),
+    ] {
+        assert!(
+            stderr.contains(&expected),
+            "expected {expected:?}:\n{stderr}"
+        );
+    }
+    assert!(common::under(s1, EXTRA).join("scratch.txt").is_file());
+    assert!(!s1.join(".rwv-op").exists(), "{stderr}");
+    let abort = run(s1, &["abort"]);
+    assert!(
+        String::from_utf8_lossy(&abort.stderr).contains("no operation in progress"),
+        "abort must agree that it does not apply"
+    );
+}
+
+#[test]
+fn a_refused_prune_fails_the_sync_once_it_completes() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+
+    let out = run(&s1, &["sync", "primary"]);
+    assert_completed_with_the_checkout_left(&out, "sync", &s1);
+    assert!(!names_extra(&s1), "the relock must have run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "{EXTRA}: prune skipped: {EXTRA}: dropped from lock but worktree has uncommitted \
+             changes; commit/discard, then remove the checkout by hand"
+        )) && !stderr.contains("re-run sync"),
+        "a re-run cannot prune what the relock no longer names, so the remedy must not \
+         offer one:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_refused_prune_fails_sync_to_once_it_completes() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+
+    let out = run(&s1, &["sync-to"]);
+    assert_completed_with_the_checkout_left(&out, "sync-to", &s1);
+    assert!(!weave.root.join(".rwv-op-lease").exists());
+    assert!(!names_extra(&s1) && !names_extra(&weave.root));
+}
+
+/// Replay refuses the prune, then the op `args` starts parks on a relock
+/// commit the project repo refuses. Returns the seat and the refusing hook.
+fn park_in_relock_after_a_refused_prune(weave: &Weave, args: &[&str]) -> (PathBuf, PathBuf) {
+    let s1 = seat_behind_a_drop(weave);
+    for (workspace, file) in [(&weave.root, "primary.txt"), (&s1, "seat.txt")] {
+        let lib = lib_dir(workspace);
+        std::fs::write(lib.join(file), "work\n").unwrap();
+        common::git_in(&lib, &["add", file]);
+        common::git_in(&lib, &["commit", "-m", file]);
+        succeed(workspace, &["lock", "--commit"]);
+    }
+    std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
+    let hooks = weave.root.parent().unwrap().join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("commit-msg");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    common::git_in(
+        project_dir(&weave.root),
+        &["config", "core.hooksPath", &hooks.to_string_lossy()],
+    );
+
+    let parked = run(&s1, args);
+    let parked_stderr = String::from_utf8_lossy(&parked.stderr);
+    assert!(
+        !parked.status.success() && s1.join(".rwv-op").exists(),
+        "the refused relock commit must park the op:\n{parked_stderr}"
+    );
+    assert!(
+        parked_stderr.contains(&format!("{EXTRA}: prune skipped")),
+        "replay must have refused the prune before the park:\n{parked_stderr}"
+    );
+    (s1, hook)
+}
+
+/// The resume re-enters at relock, past replay, and still finds the checkout
+/// replay left.
+#[test]
+fn a_resume_past_replay_still_fails_on_the_checkout_replay_left() {
+    let weave = weave();
+    let (s1, hook) =
+        park_in_relock_after_a_refused_prune(&weave, &["sync", "primary", "--strategy", "rebase"]);
+
+    std::fs::remove_file(&hook).unwrap();
+    let out = run(&s1, &["sync", "--continue"]);
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("prune skipped"),
+        "the resume must not have re-run replay"
+    );
+    assert_completed_with_the_checkout_left(&out, "sync", &s1);
+}
+
+/// A resumed `sync-to` that re-entered past replay has no outcomes to report,
+/// and still prints its envelope once complete.
+#[test]
+fn json_a_complete_sync_to_resumed_past_replay_prints_its_envelope() {
+    let weave = weave();
+    let (s1, hook) = park_in_relock_after_a_refused_prune(&weave, &["sync-to"]);
+
+    std::fs::remove_file(&hook).unwrap();
+    let out = run(&s1, &["sync-to", "--continue", "--json"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains(&format!("sync-to {COMPLETED}")), "{stderr}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let envelope: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("a complete op prints its envelope ({e}):\n{stdout}"));
+    assert_eq!(envelope["complete"], true, "{envelope:#}");
+    assert_eq!(envelope["resumed"], "relock", "{envelope:#}");
+    assert_eq!(envelope["outcomes"], serde_json::json!([]), "{envelope:#}");
+}
+
 #[test]
 fn json_records_a_refused_prune_with_its_token() {
     let weave = weave();
-    let s1 = seat_behind_a_drop(&weave);
-    std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
+    let s1 = seat_with_an_unprunable_drop(&weave);
 
-    let members = members_of(&s1, &["sync", "primary", "--json"]);
+    let out = run(&s1, &["sync", "primary", "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let envelope: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("a completed op prints its envelope ({e}):\n{stdout}"));
+    assert_eq!(envelope["complete"], true, "{envelope:#}");
+    let members = envelope["members"].as_array().unwrap().clone();
     assert_one_member(&members, "prune-refused", &s1);
     assert_eq!(members[0]["refusal"], "dirty-checkout", "{members:#?}");
     assert!(
-        members[0]["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("uncommitted changes")),
+        members[0]["message"].as_str().is_some_and(
+            |m| m.contains("uncommitted changes") && m.contains("remove the checkout by hand")
+        ),
         "{members:#?}"
     );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(&format!("sync {COMPLETED}")),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(common::under(&s1, EXTRA).is_dir());
+    assert!(!s1.join(".rwv-op").exists());
+}
+
+#[test]
+fn json_a_sync_to_whose_prune_was_refused_is_complete_and_exits_1() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+
+    let out = run(&s1, &["sync-to", "--json"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(envelope["complete"], true, "{envelope:#}");
+    assert_one_member(
+        envelope["members"].as_array().unwrap(),
+        "prune-refused",
+        &s1,
+    );
+}
+
+/// A parked op prints its envelope too, and says it is not complete.
+#[test]
+fn json_a_parked_sync_is_not_complete() {
+    let weave = weave();
+    let s1 = seat(&weave, &weave.root, "s1");
+    commit_note(&lib_dir(&s1), "seat\n");
+    commit_note(&lib_dir(&weave.root), "primary\n");
+    succeed(&weave.root, &["lock", "--commit"]);
+
+    let out = run(&s1, &["sync", "primary", "--strategy", "rebase", "--json"]);
+    assert!(!out.status.success());
+    assert!(s1.join(".rwv-op").exists(), "the conflict must park the op");
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "a parked op prints its envelope ({e}):\n{}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    assert_eq!(envelope["complete"], false, "{envelope:#}");
+}
+
+#[test]
+fn json_a_clean_sync_is_complete() {
+    let weave = weave();
+    let s1 = seat_behind_a_drop(&weave);
+
+    let stdout = succeed(&s1, &["sync", "primary", "--json"]);
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(envelope["complete"], true, "{envelope:#}");
+}
+
+#[test]
+fn ndjson_a_refused_prune_streams_its_line_and_exits_1() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+
+    let out = run(&s1, &["sync", "primary", "--json", "-j", "2"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let members: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|r| {
+            r["$schema"]
+                .as_str()
+                .is_some_and(|url| url.ends_with("/member-record.json"))
+        })
+        .collect();
+    assert_one_member(&members, "prune-refused", &s1);
 }
 
 #[test]

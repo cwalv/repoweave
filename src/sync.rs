@@ -34,6 +34,7 @@ use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// Which side of a sync a check or error is reporting against.
@@ -672,8 +673,14 @@ pub struct SyncJsonOutput {
     /// What replay did with each member checkout its per-repo outcomes do
     /// not cover: kept, pruned, or a prune that was refused. Empty, not
     /// absent, when there are none. A `prune-refused` entry is a checkout left
-    /// on disk that no manifest names; branch on it.
+    /// on disk that no manifest names; branch on it. The op still completes,
+    /// and then exits 1.
     pub members: Vec<MemberOutput>,
+    /// True iff the op ran its last phase and cleared its op-state, so nothing
+    /// remains to `--continue` or `rwv abort`; false when a phase stopped it
+    /// with its op-state held. A complete op exits 1 when `members` carries a
+    /// `prune-refused` entry.
+    pub complete: bool,
     /// Standing advisories raised during this sync (e.g. delivered changes
     /// touching a materialized input). Empty, not absent, when there are
     /// none — a consumer branches on length rather than presence.
@@ -744,8 +751,14 @@ pub struct SyncToJsonOutput {
     /// What replay did with each member checkout its per-repo outcomes do
     /// not cover: kept, pruned, or a prune that was refused. Empty, not
     /// absent, when there are none. A `prune-refused` entry is a checkout left
-    /// on disk that no manifest names; branch on it.
+    /// on disk that no manifest names; branch on it. The op still completes,
+    /// and then exits 1.
     pub members: Vec<MemberOutput>,
+    /// True iff the op ran its last phase and cleared its op-state, so nothing
+    /// remains to `--continue` or `rwv abort`; false when a phase stopped it
+    /// with its op-state held. A complete op exits 1 when `members` carries a
+    /// `prune-refused` entry.
+    pub complete: bool,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -792,7 +805,8 @@ pub enum MemberOutput {
     Pruned { path: String, absolute_path: String },
     /// The replayed manifest no longer names this member, but removing its
     /// checkout was refused. The checkout is still on disk, and once the op
-    /// relocks no manifest or lock names it.
+    /// relocks no manifest or lock names it. The op runs to completion and
+    /// then exits 1.
     PruneRefused {
         path: String,
         absolute_path: String,
@@ -1944,10 +1958,20 @@ impl RemovalCause {
         }
     }
 
+    /// The last step of a remedy. A dropped checkout the op could not prune
+    /// stays unpruned: the next op starts from a manifest that no longer names
+    /// it, so re-running sync is not a way to remove it.
     fn rerun(self) -> &'static str {
         match self {
-            Self::DroppedFromLock => "re-run sync",
+            Self::DroppedFromLock => "remove the checkout by hand",
             Self::RemoveDelete => "re-run `rwv remove --delete`",
+        }
+    }
+
+    fn then_rerun(self, first: &str) -> String {
+        match self {
+            Self::DroppedFromLock => format!("{first}, then {}", self.rerun()),
+            Self::RemoveDelete => format!("{first} and {}, or remove manually", self.rerun()),
         }
     }
 }
@@ -2001,7 +2025,7 @@ pub(crate) fn plan_checkout_removal(
     project_name: &ProjectName,
     cause: RemovalCause,
 ) -> anyhow::Result<CheckoutRemoval> {
-    let (dropped, rerun) = (cause.situation(), cause.rerun());
+    let dropped = cause.situation();
     let dest = ctx.active_path().join(repo_path.as_path());
     if !dest.exists() {
         return Ok(CheckoutRemoval(Removal::Absent));
@@ -2009,8 +2033,8 @@ pub(crate) fn plan_checkout_removal(
     if vcs.has_uncommitted_changes(&dest).unwrap_or(true) {
         crate::refuse!(
             RefusalKind::DirtyCheckout,
-            "{repo_path}: {dropped} but worktree has uncommitted changes; \
-             commit/discard and {rerun}, or remove manually"
+            "{repo_path}: {dropped} but worktree has uncommitted changes; {}",
+            cause.then_rerun("commit/discard")
         );
     }
 
@@ -2027,8 +2051,8 @@ pub(crate) fn plan_checkout_removal(
                         let is_ancestor = vcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
                         if !is_ancestor {
                             crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
-                                "{repo_path}: {dropped} but worktree has commits not in canonical clone; \
-                                 push/merge them and {rerun}, or remove manually"
+                                "{repo_path}: {dropped} but worktree has commits not in canonical clone; {}",
+                                cause.then_rerun("push/merge them")
                             );
                         }
                     }
@@ -2107,7 +2131,8 @@ pub(crate) fn plan_checkout_removal(
                                     "{repo_path}: {dropped}, but counting {short}'s \
                                      commits against its remote counterpart failed; refusing \
                                      to remove a clone whose unpushed work could not be \
-                                     ruled out — push and {rerun}, or remove manually"
+                                     ruled out — {}",
+                                    cause.then_rerun("push")
                                 )
                             })
                             .map_err(|e| {
@@ -2128,8 +2153,8 @@ pub(crate) fn plan_checkout_removal(
             if any_local_only {
                 crate::refuse!(
                     RefusalKind::DroppedRepoHasUniqueCommits,
-                    "{repo_path}: {dropped} but clone has local-only commits; \
-                     push them and {rerun}, or remove manually"
+                    "{repo_path}: {dropped} but clone has local-only commits; {}",
+                    cause.then_rerun("push them")
                 );
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
@@ -2249,6 +2274,12 @@ pub trait OutputHandler: Send + Sync {
     ///
     /// Default implementation is a no-op: only the sync-to envelope reports it.
     fn record_resumed(&self, _phase: op_state::OpPhase) {}
+
+    /// Record that the op ran its last phase and cleanup cleared its op-state.
+    /// Never called when a phase stops the op.
+    ///
+    /// Default implementation is a no-op: only the envelopes report it.
+    fn record_complete(&self) {}
 }
 
 /// Where an op is running and what it is landing into, as the machine
@@ -2340,6 +2371,7 @@ pub struct JsonEnvelopeHandler<'a> {
     advisories: &'a Mutex<Vec<AdvisoryOutput>>,
     placements: &'a Mutex<Vec<PlacementOutput>>,
     members: &'a Mutex<Vec<MemberOutput>>,
+    complete: &'a AtomicBool,
 }
 
 impl OutputHandler for JsonEnvelopeHandler<'_> {
@@ -2377,6 +2409,10 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
     fn record_placement(&self, placement: PlacementOutput) {
         let mut guard = self.placements.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(placement);
+    }
+
+    fn record_complete(&self) {
+        self.complete.store(true, Ordering::Relaxed);
     }
 }
 
@@ -2484,6 +2520,7 @@ pub struct JsonEnvelopeSyncToHandler<'a> {
     resumed: &'a Mutex<Option<op_state::OpPhase>>,
     placements: &'a Mutex<Vec<PlacementOutput>>,
     members: &'a Mutex<Vec<MemberOutput>>,
+    complete: &'a AtomicBool,
 }
 
 impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
@@ -2504,6 +2541,10 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
     fn record_resumed(&self, phase: op_state::OpPhase) {
         let mut guard = self.resumed.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(phase);
+    }
+
+    fn record_complete(&self) {
+        self.complete.store(true, Ordering::Relaxed);
     }
 
     fn record_member(&self, member: MemberOutput) {
@@ -2861,12 +2902,62 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     .context("failed to advance phase between iterations")?;
             }
             None => {
+                let stranded = stranded_checkouts(ctx)?;
                 cleanup(ctx)?;
+                ctx.handler.record_complete();
                 announce_completion(ctx);
-                return Ok(());
+                return fail_on_stranded_checkouts(ctx.verb, &stranded);
             }
         }
     }
+}
+
+/// The member checkouts the op's replay dropped and could not prune: named by
+/// CWD's manifest as the op found it, named by no manifest now, and still on
+/// disk. Read before cleanup, which drops the savepoint the op-start manifest
+/// is read at; derived rather than carried from replay, so a resumed op that
+/// re-entered past replay still finds them. A retire that deleted CWD left
+/// none.
+fn stranded_checkouts(ctx: &OpContext<'_>) -> anyhow::Result<Vec<RepoPath>> {
+    if !ctx.cwd_workspace_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let current = Manifest::from_path(&ctx.cwd_project_dir.join(Manifest::FILE_NAME))
+        .context("failed to reload CWD's manifest to look for unpruned checkouts")?;
+    Ok(pre_op_manifest(ctx)?
+        .iter_repo_paths()
+        .filter(|repo_path| {
+            !current.contains_repo(repo_path)
+                && ctx.cwd_workspace_dir.join(repo_path.as_path()).exists()
+        })
+        .cloned()
+        .collect())
+}
+
+/// A completed op that left a dropped checkout on disk partially failed, and
+/// nothing the op can still do repairs it: its op-state is already gone.
+fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[RepoPath]) -> anyhow::Result<()> {
+    if stranded.is_empty() {
+        return Ok(());
+    }
+    let n = stranded.len();
+    let (s, them, are) = if n == 1 {
+        ("", "it", "is")
+    } else {
+        ("s", "them", "are")
+    };
+    anyhow::bail!(
+        "{verb} completed: replay and relock finished and op-state is cleared, so `rwv abort` \
+         does not apply. Pruning was refused for {n} member checkout{s} the manifest no longer \
+         names, and {them} {are} still on disk:\n  {list}\n\
+         Re-running {verb} will not prune {them}. Once nothing in {them} is needed, remove {them} \
+         by hand.",
+        list = stranded
+            .iter()
+            .map(RepoPath::as_str)
+            .collect::<Vec<_>>()
+            .join("\n  "),
+    )
 }
 
 /// The op-scope completion claim, made where the machine is terminal for this
@@ -7149,6 +7240,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
     let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
+    let complete = AtomicBool::new(false);
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
@@ -7166,6 +7258,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
             advisories: &advisories,
             placements: &placements,
             members: &members,
+            complete: &complete,
         };
         run_machine(MachineVerb::Sync, ctx, &request, &handler)
     };
@@ -7181,6 +7274,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
         advisories,
         placements,
         members,
+        complete.into_inner(),
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
         false,
@@ -7233,6 +7327,7 @@ fn run_sync_json_impl(
     advisories: Vec<AdvisoryOutput>,
     placements: Vec<PlacementOutput>,
     members: Vec<MemberOutput>,
+    complete: bool,
     schema_url: &str,
     project_level_result: anyhow::Result<()>,
     emit_empty_envelope: bool,
@@ -7256,6 +7351,7 @@ fn run_sync_json_impl(
             outcomes: records,
             placements,
             members,
+            complete,
             advisories,
             resolution,
         };
@@ -7345,6 +7441,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
+    let complete = AtomicBool::new(false);
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
     let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
@@ -7372,6 +7469,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             resumed: &resumed,
             placements: &placements,
             members: &members,
+            complete: &complete,
         };
         run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
@@ -7385,13 +7483,14 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let coordinates = coordinates.into_inner().unwrap_or_else(|e| e.into_inner());
     let retired = retired.into_inner().unwrap_or_else(|e| e.into_inner());
     let resumed = resumed.into_inner().unwrap_or_else(|e| e.into_inner());
+    let complete = complete.into_inner();
 
     let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
 
     // Nothing to describe when we never reached the per-repo loop (a
     // project-level precondition failure): the error is the whole story, and
-    // the tail propagates it.
-    let envelope = if ndjson || (records.is_empty() && project_level_result.is_err()) {
+    // the tail propagates it. A complete op is described however it exits.
+    let envelope = if ndjson || (records.is_empty() && project_level_result.is_err() && !complete) {
         None
     } else {
         // Splice step3_advance into each per-outcome record.
@@ -7427,6 +7526,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             outcomes,
             placements,
             members,
+            complete,
             project_repo_advance,
             resolution: ctx.resolution(),
         })

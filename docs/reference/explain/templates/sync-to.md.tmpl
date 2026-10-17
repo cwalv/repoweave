@@ -190,6 +190,7 @@ pretty-printed envelope:
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
   "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "complete": true,
   "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
 }
 ```
@@ -203,6 +204,10 @@ moved a branch pointer is streamed as its own line, with `$schema` naming
 `kind: "project-repo-advance"` for the project repo, each with `from_sha` and
 `to_sha`. These are the envelope's per-outcome `step3_advance` and its
 `project_repo_advance`.
+
+`complete` is as on `rwv sync`: true once every step ran and op-state is
+cleared, whatever the exit code, so a complete op prints its envelope even on
+a resume that has no outcomes to report.
 
 `placements` covers both workspaces: a checkout here that replay moved or
 created, and one in the target that advance-target moved or created. Each is
@@ -226,8 +231,13 @@ Schema:
 
 ## Exit codes
 
-- `0` — all three steps completed; target is at CWD's tip.
-- non-zero — at least one step failed; inspect the error output for details.
+- `0` — all three steps completed; target is at CWD's tip, and every member
+  checkout the replayed manifest no longer names was pruned from CWD.
+- non-zero — at least one step failed (inspect the error output for
+  details), or every step completed but replay could not prune a member
+  checkout from CWD. In the second case op-state is cleared, so `rwv abort`
+  does not apply; the error names each checkout left on disk, and each has a
+  `prune-refused` record under `members`.
 
 ## Examples
 

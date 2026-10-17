@@ -110,7 +110,8 @@ pretty-printed envelope:
   "$schema": "<url>",
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
-  "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+  "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "complete": true
 }
 ```
 
@@ -140,8 +141,16 @@ member and the replayed manifest names it), `pruned` (the replayed manifest
 no longer names it and its checkout was removed), and `prune-refused` (the
 same, but removing the checkout was refused). A `prune-refused` record
 carries the refusal's `refusal` token and the full `message`; its checkout is
-left on disk with no manifest naming it, and the sync still exits 0, so
-branch on this record. The list is empty, not absent, when there are none.
+left on disk with no manifest naming it. The op still runs to completion and
+clears its op-state, then exits 1, so `rwv abort` does not apply and
+re-running the sync does not prune the checkout: remove it by hand. The list
+is empty, not absent, when there are none.
+
+`complete` is true when the op ran its last phase and cleared its op-state,
+leaving nothing to `--continue` or `rwv abort`, and false when a phase
+stopped it with op-state held. It is what tells a complete op that exited 1
+over a `prune-refused` record from a parked one. NDJSON has no envelope to
+carry it; `rwv status` reports whether an op is still in progress.
 
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
 switches to NDJSON — one JSON record per line, streamed to stdout the
@@ -169,6 +178,7 @@ Schema:
   "required": [
     "$schema",
     "advisories",
+    "complete",
     "members",
     "outcomes",
     "placements"
@@ -184,8 +194,12 @@ Schema:
         "$ref": "#/definitions/AdvisoryOutput"
       }
     },
+    "complete": {
+      "description": "True iff the op ran its last phase and cleared its op-state, so nothing remains to `--continue` or `rwv abort`; false when a phase stopped it with its op-state held. A complete op exits 1 when `members` carries a `prune-refused` entry.",
+      "type": "boolean"
+    },
     "members": {
-      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it.",
+      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it. The op still completes, and then exits 1.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/MemberOutput"
@@ -470,7 +484,7 @@ Schema:
           }
         },
         {
-          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it. The op runs to completion and then exits 1.",
           "type": "object",
           "required": [
             "absolute_path",
@@ -1109,9 +1123,13 @@ Schema:
 
 ## Exit codes
 
-- `0` — every repo reached a converged or already-ahead state.
-- non-zero — at least one repo failed; inspect outcomes with `kind:
-  "failed"` for details.
+- `0` — every repo reached a converged or already-ahead state, and every
+  member checkout the replayed manifest no longer names was pruned.
+- non-zero — at least one repo failed (inspect outcomes with `kind:
+  "failed"` for details), or the op completed but pruning a member checkout
+  was refused. In the second case replay and relock finished and op-state is
+  cleared, so `rwv abort` does not apply; the error names each checkout left
+  on disk, and each has a `prune-refused` record under `members`.
 
 ## Examples
 

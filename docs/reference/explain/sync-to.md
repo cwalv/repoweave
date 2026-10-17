@@ -190,6 +190,7 @@ pretty-printed envelope:
   "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
   "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
   "members": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "complete": true,
   "project_repo_advance": { "from_sha": "...", "to_sha": "..." }
 }
 ```
@@ -203,6 +204,10 @@ moved a branch pointer is streamed as its own line, with `$schema` naming
 `kind: "project-repo-advance"` for the project repo, each with `from_sha` and
 `to_sha`. These are the envelope's per-outcome `step3_advance` and its
 `project_repo_advance`.
+
+`complete` is as on `rwv sync`: true once every step ran and op-state is
+cleared, whatever the exit code, so a complete op prints its envelope even on
+a resume that has no outcomes to report.
 
 `placements` covers both workspaces: a checkout here that replay moved or
 created, and one in the target that advance-target moved or created. Each is
@@ -230,6 +235,7 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
+    "complete",
     "members",
     "outcomes",
     "placements",
@@ -240,8 +246,12 @@ Schema:
     "$schema": {
       "type": "string"
     },
+    "complete": {
+      "description": "True iff the op ran its last phase and cleared its op-state, so nothing remains to `--continue` or `rwv abort`; false when a phase stopped it with its op-state held. A complete op exits 1 when `members` carries a `prune-refused` entry.",
+      "type": "boolean"
+    },
     "members": {
-      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it.",
+      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it. The op still completes, and then exits 1.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/MemberOutput"
@@ -526,7 +536,7 @@ Schema:
           }
         },
         {
-          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it. The op runs to completion and then exits 1.",
           "type": "object",
           "required": [
             "absolute_path",
@@ -1198,8 +1208,13 @@ Schema:
 
 ## Exit codes
 
-- `0` — all three steps completed; target is at CWD's tip.
-- non-zero — at least one step failed; inspect the error output for details.
+- `0` — all three steps completed; target is at CWD's tip, and every member
+  checkout the replayed manifest no longer names was pruned from CWD.
+- non-zero — at least one step failed (inspect the error output for
+  details), or every step completed but replay could not prune a member
+  checkout from CWD. In the second case op-state is cleared, so `rwv abort`
+  does not apply; the error names each checkout left on disk, and each has a
+  `prune-refused` record under `members`.
 
 ## Examples
 

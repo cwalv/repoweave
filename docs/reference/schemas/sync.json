@@ -6,6 +6,7 @@
   "required": [
     "$schema",
     "advisories",
+    "complete",
     "members",
     "outcomes",
     "placements"
@@ -21,8 +22,12 @@
         "$ref": "#/definitions/AdvisoryOutput"
       }
     },
+    "complete": {
+      "description": "True iff the op ran its last phase and cleared its op-state, so nothing remains to `--continue` or `rwv abort`; false when a phase stopped it with its op-state held. A complete op exits 1 when `members` carries a `prune-refused` entry.",
+      "type": "boolean"
+    },
     "members": {
-      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it.",
+      "description": "What replay did with each member checkout its per-repo outcomes do not cover: kept, pruned, or a prune that was refused. Empty, not absent, when there are none. A `prune-refused` entry is a checkout left on disk that no manifest names; branch on it. The op still completes, and then exits 1.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/MemberOutput"
@@ -307,7 +312,7 @@
           }
         },
         {
-          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it.",
+          "description": "The replayed manifest no longer names this member, but removing its checkout was refused. The checkout is still on disk, and once the op relocks no manifest or lock names it. The op runs to completion and then exits 1.",
           "type": "object",
           "required": [
             "absolute_path",
