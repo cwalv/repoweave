@@ -4065,7 +4065,7 @@ fn split_attribute_line(line: &str) -> Option<(&str, &str)> {
 ///    case is `standalone-in-workweave`). Cross-DAG merged-checks are silent.
 ///
 /// The scanner is read-only. Only `standalone-in-workweave` has a `--fix`
-/// arm, [`repair_standalone_members`]; the other three need an object-store
+/// arm, `repair_standalone_members`; the other three need an object-store
 /// migration.
 ///
 /// A workspace that the VCS doesn't recognize as a repo at all is skipped
