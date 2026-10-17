@@ -166,7 +166,17 @@ const ALLOWLIST: &[Allowed] = &[
             --discard-unmerged-commits at CLI dispatch. \
             Both list what is lost first. The per-ref DESTROYs inside \
             the same verb each additionally hold their own warrant (R3); \
-            this entry covers the directory removal only.",
+            this entry covers the directory removal only. \
+            (4) runs through remove_tree_outlasting_child_handles, whose \
+            other caller is replace_standalone_member, the `doctor --fix` \
+            arm for standalone-in-workweave: it removes the full clone it \
+            renamed aside only after the worktree replacing it was born, \
+            and only behind refuse_unless_replaceable, which refuses while \
+            the clone holds a ref whose tip no canonical ref reaches, any \
+            file no commit records (ignored files included), or a worktree \
+            of its own, and lists each. No override. What goes with it \
+            that no precondition reads: its reflog and its repository-local \
+            config and hooks, as with a workweave delete.",
     },
     Allowed {
         file: "workweave.rs",

@@ -124,7 +124,7 @@ src/workweave.rs	registry-path-disagreement	-	1
 src/workweave.rs	replace-target-holds-work	-	2
 src/workweave.rs	repo-without-commits	-	1
 src/workweave.rs	stale-registry-entry	-	5
-src/workweave.rs	standalone-in-workweave	-	1
+src/workweave.rs	standalone-in-workweave	-	2
 src/workweave.rs	target-dir-occupied	-	2
 src/workweave.rs	uncommitted-work	-	1
 src/workweave.rs	unmerged-commits	-	1

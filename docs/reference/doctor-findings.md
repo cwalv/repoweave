@@ -862,7 +862,7 @@ The invariants and the reasoning are in
 
 #### `standalone-in-workweave`
 
-A full clone is hosted under `.workweaves/` instead of at the manifest's
+**Auto-fixable.** A full clone is hosted under `.workweaves/` instead of at the manifest's
 canonical slot — the inverted-primary case, where the canonical store has
 migrated into one workweave and other workweaves link into *it*.
 

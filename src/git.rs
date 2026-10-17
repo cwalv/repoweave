@@ -1488,15 +1488,19 @@ impl Vcs for GitVcs {
 
     fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, VcsError> {
         // One record per dirty entry, untracked included; none means clean.
-        Ok(!Self::porcelain_status(repo, true)?.is_empty())
+        Ok(!Self::porcelain_status(repo, StatusReach::Untracked)?.is_empty())
     }
 
     fn dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        Self::dirty_file_names_inner(repo, false)
+        Self::dirty_file_names_inner(repo, StatusReach::Untracked)
     }
 
     fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        Self::dirty_file_names_inner(repo, true)
+        Self::dirty_file_names_inner(repo, StatusReach::Tracked)
+    }
+
+    fn unrecorded_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        Self::dirty_file_names_inner(repo, StatusReach::Ignored)
     }
     fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {
         let mut args: Vec<&str> = vec!["add", "--"];
@@ -1522,7 +1526,7 @@ impl Vcs for GitVcs {
         Ok(!out.status.success())
     }
     fn staged_paths(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        Ok(Self::porcelain_status(repo, false)?
+        Ok(Self::porcelain_status(repo, StatusReach::Tracked)?
             .into_iter()
             .filter(|entry| entry.staged != b' ' && entry.staged != b'?')
             .map(|entry| entry.path)
@@ -2329,6 +2333,48 @@ impl Vcs for GitVcs {
         Ok(status.success())
     }
 
+    fn refs_unreachable_from(&self, repo: &Path, other: &Path) -> Result<Vec<String>, VcsError> {
+        let listing = Self::run(&["for-each-ref", "--format=%(objectname) %(refname)"], repo)?;
+        let mut tips: Vec<(String, String)> = listing
+            .lines()
+            .filter_map(|line| line.split_once(' '))
+            .map(|(sha, name)| (name.to_owned(), sha.to_owned()))
+            .collect();
+        if let HeadObservation::Detached { at } = self.observe_head(repo)? {
+            tips.push(("HEAD".to_owned(), at.as_str().to_owned()));
+        }
+        let shas: BTreeSet<&str> = tips.iter().map(|(_, sha)| sha.as_str()).collect();
+        let held = Self::objects_held(other, &shas)?;
+        let mut unreached: BTreeSet<&str> = shas.difference(&held).copied().collect();
+        let held: Vec<&str> = held.into_iter().collect();
+        // Batched so the argument list stays under Windows' command-line
+        // limit; a batch with no output is a batch `other` reaches entirely.
+        for batch in held.chunks(200) {
+            let mut args = vec!["rev-list", "--max-count=1"];
+            args.extend_from_slice(batch);
+            args.extend(["--not", "--all"]);
+            if Self::run_trimmed(&args, other)?.is_empty() {
+                continue;
+            }
+            for &sha in batch {
+                let ahead = Self::run_trimmed(
+                    &["rev-list", "--max-count=1", sha, "--not", "--all"],
+                    other,
+                )?;
+                if !ahead.is_empty() {
+                    unreached.insert(sha);
+                }
+            }
+        }
+        let mut names: Vec<String> = tips
+            .iter()
+            .filter(|(_, sha)| unreached.contains(sha.as_str()))
+            .map(|(name, _)| name.clone())
+            .collect();
+        names.sort();
+        Ok(names)
+    }
+
     fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf> {
         // `--path-format=absolute --git-common-dir` returns the absolute path
         // of the shared object/refs store, regardless of whether `workspace`
@@ -2866,6 +2912,14 @@ impl GitVcs {
     }
 }
 
+/// How far past tracked files a `git status` read looks.
+#[derive(Clone, Copy)]
+enum StatusReach {
+    Tracked,
+    Untracked,
+    Ignored,
+}
+
 /// One record of `git status --porcelain -z` v1.
 ///
 /// The working-tree column is not carried: no caller has needed it, and a
@@ -2887,13 +2941,12 @@ impl GitVcs {
     /// Decoded lossily rather than through [`GitVcs::run`], which refuses
     /// output that is not UTF-8: a changed path git cannot spell in UTF-8
     /// still leaves the tree dirty, and that answer must not become an error.
-    fn porcelain_status(
-        repo: &Path,
-        include_untracked: bool,
-    ) -> Result<Vec<PorcelainEntry>, VcsError> {
+    fn porcelain_status(repo: &Path, reach: StatusReach) -> Result<Vec<PorcelainEntry>, VcsError> {
         let mut args = vec!["status", "--porcelain", "-z"];
-        if !include_untracked {
-            args.push("--untracked-files=no");
+        match reach {
+            StatusReach::Tracked => args.push("--untracked-files=no"),
+            StatusReach::Untracked => {}
+            StatusReach::Ignored => args.push("--ignored"),
         }
         let out = git_command()
             .args(&args)
@@ -2935,8 +2988,8 @@ impl GitVcs {
 
     /// Every path `git status --porcelain` reports, with a rename naming
     /// both its source and its destination.
-    fn dirty_file_names_inner(repo: &Path, tracked_only: bool) -> Result<Vec<String>, VcsError> {
-        Ok(Self::porcelain_status(repo, !tracked_only)?
+    fn dirty_file_names_inner(repo: &Path, reach: StatusReach) -> Result<Vec<String>, VcsError> {
+        Ok(Self::porcelain_status(repo, reach)?
             .into_iter()
             .flat_map(|entry| std::iter::once(entry.path).chain(entry.renamed_from))
             .collect())
@@ -3240,6 +3293,27 @@ impl GitVcs {
             repo: dir.to_path_buf(),
             stderr: "git output not valid UTF-8".to_string(),
         })
+    }
+
+    /// The objects among `ids` the repository at `repo` holds, of any type.
+    fn objects_held<'a>(
+        repo: &Path,
+        ids: &BTreeSet<&'a str>,
+    ) -> Result<BTreeSet<&'a str>, VcsError> {
+        if ids.is_empty() {
+            return Ok(BTreeSet::new());
+        }
+        let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        let report = Self::run_with_stdin(&["cat-file", "--batch-check"], repo, input.as_bytes())?;
+        let missing: BTreeSet<&str> = report
+            .lines()
+            .filter_map(|line| line.strip_suffix(" missing"))
+            .collect();
+        Ok(ids
+            .iter()
+            .copied()
+            .filter(|id| !missing.contains(id))
+            .collect())
     }
 
     fn index_entries(workspace: &Path) -> Result<Vec<IndexEntry>, VcsError> {

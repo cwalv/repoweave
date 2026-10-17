@@ -365,6 +365,10 @@ impl Vcs for FakeVcs {
         unsupported("tracked_dirty_file_names")
     }
 
+    fn unrecorded_file_names(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("unrecorded_file_names")
+    }
+
     fn is_tracked(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {
         unsupported("is_tracked")
     }
@@ -575,6 +579,10 @@ impl Vcs for FakeVcs {
 
     fn commit_object_exists(&self, _repo: &Path, _sha: &str) -> Result<bool, VcsError> {
         unsupported("commit_object_exists")
+    }
+
+    fn refs_unreachable_from(&self, _repo: &Path, _other: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("refs_unreachable_from")
     }
 
     fn list_stale_worktree_registrations(&self, _repo: &Path) -> Result<Vec<PathBuf>, VcsError> {

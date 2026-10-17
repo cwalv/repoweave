@@ -1139,6 +1139,196 @@ pub(crate) fn materialize_member(
     Ok(Materialized { at: start, files })
 }
 
+/// Whether `store`, the store the VCS resolved for `checkout`, is the one
+/// `checkout` holds itself — a full clone, not a workspace linked into a store
+/// elsewhere.
+pub(crate) fn is_own_store(store: &Path, checkout: &Path) -> bool {
+    let own = crate::git::store_path_in(checkout);
+    let resolved = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    resolved(store) == resolved(&own)
+}
+
+/// Replace the full clone at `repo_path` in the workweave at `workweave_dir`
+/// with the worktree [`materialize_member`] gives a member the workweave
+/// lacks, born at the revision the clone has checked out so the files on disk
+/// read as they did.
+///
+/// [`refuse_unless_replaceable`] runs first. The clone is renamed aside while
+/// the worktree is born and removed once it is; a birth that fails before
+/// anything stands at the slot renames it back.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn replace_standalone_member(
+    vcs: &dyn Vcs,
+    primary_root: &Path,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    workweave: &WorkweaveName,
+    repo_path: &RepoPath,
+    role: Role,
+) -> anyhow::Result<Materialized> {
+    let slot = workweave_dir.join(repo_path.as_path());
+    let canonical = primary_root.join(repo_path.as_path());
+    let leaf = repo_path
+        .as_str()
+        .rsplit_once('/')
+        .map_or(repo_path.as_str(), |(_, leaf)| leaf);
+    let aside = slot.with_file_name(format!(".{leaf}.rwv-replaced"));
+    let at = refuse_unless_replaceable(vcs, &slot, &canonical, &aside)?;
+
+    std::fs::rename(&slot, &aside).with_context(|| {
+        format!(
+            "failed to move the full clone at {} aside to {}",
+            slot.display(),
+            aside.display()
+        )
+    })?;
+
+    // A worktree once registered at the slot is stale now that the slot is
+    // empty, and git refuses to add one where a registration stands.
+    let born = vcs
+        .worktree_prune(&canonical)
+        .map_err(anyhow::Error::from)
+        .and_then(|()| {
+            materialize_member(
+                vcs,
+                primary_root,
+                workweave_dir,
+                project,
+                workweave,
+                repo_path,
+                role,
+                at.as_str(),
+            )
+        });
+    match born {
+        Ok(born) => {
+            remove_tree_outlasting_child_handles(&aside).with_context(|| {
+                format!(
+                    "created the worktree for {repo_path}, but the full clone it replaced is \
+                     still at {}",
+                    aside.display()
+                )
+            })?;
+            Ok(born)
+        }
+        Err(e) if slot.symlink_metadata().is_err() => match std::fs::rename(&aside, &slot) {
+            Ok(()) => Err(e),
+            Err(restore) => Err(e.context(format!(
+                "the full clone of {repo_path} is left at {} (moving it back failed: {restore})",
+                aside.display()
+            ))),
+        },
+        Err(e) => Err(e.context(format!(
+            "the full clone of {repo_path} is left at {}",
+            aside.display()
+        ))),
+    }
+}
+
+/// Refuse to replace the full clone at `standalone` while it holds anything
+/// the canonical clone at `canonical` would not give back, while there is no
+/// full clone at `canonical` to link a worktree into, or while something
+/// already stands at `aside`, where the clone is to be moved. Every reason is
+/// reported, not just the first. Returns the revision `standalone` has
+/// checked out.
+fn refuse_unless_replaceable(
+    vcs: &dyn Vcs,
+    standalone: &Path,
+    canonical: &Path,
+    aside: &Path,
+) -> anyhow::Result<ResolvedRevisionId> {
+    let listed = |items: &[String]| format!("\n      {}", items.join("\n      "));
+    let mut reasons: Vec<String> = Vec::new();
+
+    if aside.symlink_metadata().is_ok() {
+        reasons.push(format!(
+            "{} already exists, and the clone is moved there while its worktree is \
+             created. An interrupted repair leaves one behind: check that nothing in it is \
+             needed, then remove it.",
+            aside.display()
+        ));
+    }
+
+    let canonical_is_clone = match vcs.resolve_canonical_store(canonical) {
+        None => {
+            reasons.push(format!(
+                "there is no canonical clone at {} to link a worktree into; `rwv fetch` in \
+                 the primary weave materializes it.",
+                canonical.display()
+            ));
+            false
+        }
+        Some(store) if !is_own_store(&store, canonical) => {
+            reasons.push(format!(
+                "the canonical slot {} is itself a worktree of {}, not a full clone to link \
+                 a worktree into; `rwv doctor` reports it as clone-topology.",
+                canonical.display(),
+                store.display()
+            ));
+            false
+        }
+        Some(_) => true,
+    };
+
+    let own = standalone
+        .canonicalize()
+        .unwrap_or_else(|_| standalone.to_path_buf());
+    let dependents: Vec<String> = vcs
+        .list_worktrees(standalone)?
+        .into_iter()
+        .filter(|wt| wt.canonicalize().unwrap_or_else(|_| wt.clone()) != own)
+        .map(|wt| wt.display().to_string())
+        .collect();
+    if !dependents.is_empty() {
+        reasons.push(format!(
+            "other worktrees link into its store, and removing it would orphan them; \
+             remove them first:{}",
+            listed(&dependents)
+        ));
+    }
+
+    let unrecorded = vcs.unrecorded_file_names(standalone)?;
+    if !unrecorded.is_empty() {
+        reasons.push(format!(
+            "it holds files no commit records (uncommitted, untracked or ignored); commit, \
+             move or delete them:{}",
+            listed(&unrecorded)
+        ));
+    }
+
+    if canonical_is_clone {
+        let unreached = vcs.refs_unreachable_from(standalone, canonical)?;
+        if !unreached.is_empty() {
+            reasons.push(format!(
+                "these refs hold commits no ref of the canonical clone at {} reaches; land \
+                 those commits there, or delete the refs:{}",
+                canonical.display(),
+                listed(&unreached)
+            ));
+        }
+    }
+
+    let at = match vcs.resolve_revision(standalone, "HEAD") {
+        Ok(at) => Some(at),
+        Err(VcsError::RevisionNotFound { .. }) => {
+            reasons.push("its HEAD names no commit to create the worktree at.".to_owned());
+            None
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    match at {
+        Some(at) if reasons.is_empty() => Ok(at),
+        _ => crate::refuse!(
+            RefusalKind::StandaloneInWorkweave,
+            "not replacing the full clone at {} with a worktree of the canonical clone:\n  - {}\n\n\
+             Nothing was changed. Re-run `rwv doctor --fix` once each of these is resolved.",
+            standalone.display(),
+            reasons.join("\n  - "),
+        ),
+    }
+}
+
 /// Whether a hook refused the operation this error reports.
 ///
 /// The birth path converts its [`VcsError`] to `anyhow::Error` before a caller

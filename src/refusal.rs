@@ -206,8 +206,9 @@ pub enum RefusalKind {
     /// A branch in this workweave's namespace carries the pre-flat shape.
     /// Shared with the finding.
     UnmigratedEphemeralBranch,
-    /// A checkout inside a workweave is a canonical store other worktrees link
-    /// into. Shared with the finding.
+    /// A checkout inside a workweave is a full clone rather than a worktree of
+    /// the canonical clone, and the verb will not remove it. Shared with the
+    /// finding.
     StandaloneInWorkweave,
     /// No registry recognizes the argument, in either direction.
     NoMatchingRegistry,

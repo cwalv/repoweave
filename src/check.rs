@@ -388,9 +388,7 @@ pub enum CheckViolation {
     ///
     /// All four sub-kinds are silent for every higher-tier `rwv doctor`
     /// check (those operate on revisions and content; this one operates on
-    /// the physical object-store topology). Repair is an object-store
-    /// migration — a re-parenting — which is out of `--fix` scope per the
-    /// alpha guideline.
+    /// the physical object-store topology).
     CloneTopology {
         /// Absolute path of the workspace that exhibits the violation. For
         /// `WeaveCloneIsWorktree` and `DisconnectedWeaveClone`, this is the
@@ -792,8 +790,8 @@ impl CheckViolation {
                 | ProvenanceKind::PlacementDisagreement { .. } => ReportOnly,
             },
             CheckViolation::CloneTopology { sub_kind, .. } => match sub_kind {
-                CloneTopologyKind::StandaloneInWorkweave { .. }
-                | CloneTopologyKind::DisconnectedWeaveClone { .. }
+                CloneTopologyKind::StandaloneInWorkweave { .. } => Auto,
+                CloneTopologyKind::DisconnectedWeaveClone { .. }
                 | CloneTopologyKind::WrongParentWorktree { .. }
                 | CloneTopologyKind::WeaveCloneIsWorktree { .. } => ReportOnly,
             },
@@ -1320,6 +1318,12 @@ pub enum CloneTopologyKind {
     ///
     /// A member slot holding a symlink is not scanned: read through the link
     /// it is the canonical store itself. It is reported as `workweave-drift`.
+    ///
+    /// `--fix` replaces the clone with a worktree of the canonical clone on
+    /// the workweave's ephemeral branch, at the commit the clone has checked
+    /// out, unless the clone holds something the canonical clone would not
+    /// give back: commits no canonical ref reaches, uncommitted, untracked or
+    /// ignored files, or worktrees of its own.
     StandaloneInWorkweave {
         /// Absolute path of the standalone canonical store under
         /// `.workweaves/`.
@@ -4060,8 +4064,9 @@ fn split_attribute_line(line: &str) -> Option<(&str, &str)> {
 ///    store is not CAN's store (and is not WW_i's own store either — that
 ///    case is `standalone-in-workweave`). Cross-DAG merged-checks are silent.
 ///
-/// All four are report-only: repair is an object-store migration. The
-/// scanner is read-only.
+/// The scanner is read-only. Only `standalone-in-workweave` has a `--fix`
+/// arm, [`repair_standalone_members`]; the other three need an object-store
+/// migration.
 ///
 /// A workspace that the VCS doesn't recognize as a repo at all is skipped
 /// (not a topology violation — it might just be a manifest entry that
@@ -4145,10 +4150,6 @@ pub fn scan_clone_topology(
             let ww_store_canon = ww_store_raw
                 .canonicalize()
                 .unwrap_or_else(|_| ww_store_raw.clone());
-            let ww_self_store = crate::git::store_path_in(&ww_checkout);
-            let ww_self_store_canon = ww_self_store
-                .canonicalize()
-                .unwrap_or_else(|_| ww_self_store.clone());
 
             // Capture a representative for the disconnected-weave-clone
             // diagnosis below. Prefer a store that disagrees with the
@@ -4168,7 +4169,7 @@ pub fn scan_clone_topology(
             // store sits at `<workweave>/<repo>/.git`). This is the
             // inverted-primary shape: the canonical has migrated into one
             // workweave.
-            if ww_store_canon == ww_self_store_canon {
+            if crate::workweave::is_own_store(&ww_store_raw, &ww_checkout) {
                 violations.push(CheckViolation::CloneTopology {
                     workspace_path: ww_checkout.clone(),
                     repo: repo.clone(),
@@ -5753,6 +5754,50 @@ fn repair_member_gaps(
                 "workweave-drift fix failed for {}/{}: {e:#}",
                 gap.workweave, gap.repo
             )),
+        }
+    }
+}
+
+/// `--fix` for `standalone-in-workweave` in the workweaves
+/// [`workweaves_in_scope`] names: replace each member that is a full clone
+/// with a worktree of the canonical clone, or report why it was left.
+fn repair_standalone_members(
+    ctx: &crate::workspace::WorkspaceContext,
+    project_scope: Option<&str>,
+    fix_errors: &mut Vec<String>,
+) {
+    for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        for (repo, entry) in loaded.manifest.iter_entries() {
+            let slot = workweave_dir.join(repo.as_path());
+            if crate::workweave::is_symlinked_member(&slot) {
+                continue;
+            }
+            let vcs = crate::vcs::vcs_for(entry.vcs_type);
+            let standalone = vcs
+                .resolve_canonical_store(&slot)
+                .is_some_and(|store| crate::workweave::is_own_store(&store, &slot));
+            if !standalone {
+                continue;
+            }
+            match crate::workweave::replace_standalone_member(
+                vcs.as_ref(),
+                ctx.primary_path(),
+                &workweave_dir,
+                &loaded.name,
+                &workweave,
+                repo,
+                entry.role,
+            ) {
+                Ok(born) => println!(
+                    "[fixed] core: replaced the full clone of {repo} in workweave {workweave} \
+                     with a worktree of the canonical clone at {at}{files}",
+                    at = &born.at.as_str()[..born.at.as_str().len().min(12)],
+                    files = crate::share::files_note(born.files),
+                ),
+                Err(e) => fix_errors.push(format!(
+                    "clone-topology fix left {workweave}/{repo} standing: {e:#}"
+                )),
+            }
         }
     }
 }
@@ -7906,8 +7951,9 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         CloneTopologyKind::StandaloneInWorkweave { store_path } => format!(
                             "clone-topology: standalone clone of `{repo}` lives in a workweave \
                              ({}); the canonical store should be at `<weave>/{repo}` not under \
-                             `.workweaves/` (report-only; repair requires object-store re-parenting \
-                             — re-clone into the canonical slot and reconnect workweaves)",
+                             `.workweaves/` (`rwv doctor --fix` replaces it with a worktree of \
+                             the canonical clone unless it holds commits, files or worktrees \
+                             the canonical clone lacks)",
                             store_path.display(),
                         ),
                         CloneTopologyKind::DisconnectedWeaveClone {
@@ -9763,6 +9809,7 @@ pub fn run_check(
             ctx.active_project().map(|p| p.as_str())
         };
         repair_member_gaps(ctx, project_scope, &mut fix_errors);
+        repair_standalone_members(ctx, project_scope, &mut fix_errors);
     }
 
     let world = load_doctor_world(ctx, scope_all)?;

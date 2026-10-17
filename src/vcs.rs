@@ -2056,6 +2056,15 @@ pub trait Vcs: Send + Sync {
     /// `git status --porcelain -z --untracked-files=no`.
     fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
+    /// [`Vcs::dirty_file_names`] with the paths the VCS's ignore rules hide
+    /// from status added: everything in the workspace no commit records, so
+    /// everything deleting the workspace would lose that its history would not
+    /// give back.
+    ///
+    /// For git: parses `git status --porcelain -z --ignored`, which reports a
+    /// wholly untracked or wholly ignored directory once, as `<dir>/`.
+    fn unrecorded_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
     /// Return `true` when the regular file at `path` (relative to `repo`)
     /// holds exactly the bytes the working copy's parent commit records for
     /// it, so the VCS can give back what overwriting it would lose.
@@ -2683,6 +2692,20 @@ pub trait Vcs: Send + Sync {
     /// force-push removed the commit from reachable history, or after a
     /// fresh clone that has never fetched a now-detached SHA.
     fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError>;
+
+    /// Every ref of the repository at `repo`, and its HEAD when detached,
+    /// whose tip no ref of the repository at `other` reaches: history `other`
+    /// lacks outright, or holds only where nothing names it. Empty when
+    /// `other` reaches all of `repo`'s named history.
+    ///
+    /// Names are spelled as the VCS spells them in full (`refs/heads/main`,
+    /// `refs/stash`, `HEAD`), sorted.
+    ///
+    /// For git: lists `git for-each-ref` and a detached `HEAD` in `repo`,
+    /// asks `other` which tips it holds with `git cat-file --batch-check`,
+    /// and which of those its refs reach with `git rev-list <tip>... --not
+    /// --all`.
+    fn refs_unreachable_from(&self, repo: &Path, other: &Path) -> Result<Vec<String>, VcsError>;
 
     /// Resolve the absolute path of the canonical object/refs store backing
     /// the workspace at `workspace`.
