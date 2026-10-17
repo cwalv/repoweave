@@ -1178,8 +1178,8 @@ pub(crate) fn replace_standalone_member(
     std::fs::rename(&slot, &aside).with_context(|| {
         format!(
             "failed to move the full clone at {} aside to {}",
-            slot.display(),
-            aside.display()
+            crate::path_spelling::operator_path(&slot),
+            crate::path_spelling::operator_path(&aside)
         )
     })?;
 
@@ -1206,7 +1206,7 @@ pub(crate) fn replace_standalone_member(
                 format!(
                     "created the worktree for {repo_path}, but the full clone it replaced is \
                      still at {}",
-                    aside.display()
+                    crate::path_spelling::operator_path(&aside)
                 )
             })?;
             Ok(born)
@@ -1215,12 +1215,12 @@ pub(crate) fn replace_standalone_member(
             Ok(()) => Err(e),
             Err(restore) => Err(e.context(format!(
                 "the full clone of {repo_path} is left at {} (moving it back failed: {restore})",
-                aside.display()
+                crate::path_spelling::operator_path(&aside)
             ))),
         },
         Err(e) => Err(e.context(format!(
             "the full clone of {repo_path} is left at {}",
-            aside.display()
+            crate::path_spelling::operator_path(&aside)
         ))),
     }
 }
@@ -1245,7 +1245,7 @@ fn refuse_unless_replaceable(
             "{} already exists, and the clone is moved there while its worktree is \
              created. An interrupted repair leaves one behind: check that nothing in it is \
              needed, then remove it.",
-            aside.display()
+            crate::path_spelling::operator_path(aside)
         ));
     }
 
@@ -1254,7 +1254,7 @@ fn refuse_unless_replaceable(
             reasons.push(format!(
                 "there is no canonical clone at {} to link a worktree into; `rwv fetch` in \
                  the primary weave materializes it.",
-                canonical.display()
+                crate::path_spelling::operator_path(canonical)
             ));
             false
         }
@@ -1262,8 +1262,8 @@ fn refuse_unless_replaceable(
             reasons.push(format!(
                 "the canonical slot {} is itself a worktree of {}, not a full clone to link \
                  a worktree into; `rwv doctor` reports it as clone-topology.",
-                canonical.display(),
-                store.display()
+                crate::path_spelling::operator_path(canonical),
+                crate::path_spelling::operator_path(&store)
             ));
             false
         }
@@ -1312,7 +1312,7 @@ fn refuse_unless_replaceable(
             reasons.push(format!(
                 "these refs hold commits no ref of the canonical clone at {} reaches; land \
                  those commits there, or delete the refs:{}",
-                canonical.display(),
+                crate::path_spelling::operator_path(canonical),
                 listed(&unreached)
             ));
         }
@@ -1333,7 +1333,7 @@ fn refuse_unless_replaceable(
             RefusalKind::StandaloneInWorkweave,
             "not replacing the full clone at {} with a worktree of the canonical clone:\n  - {}\n\n\
              Nothing was changed. Re-run `rwv doctor --fix` once each of these is resolved.",
-            standalone.display(),
+            crate::path_spelling::operator_path(standalone),
             reasons.join("\n  - "),
         ),
     }

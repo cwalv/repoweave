@@ -1508,10 +1508,10 @@ impl Vcs for GitVcs {
     }
 
     fn ignored_removal_hint(&self, workspace: &Path) -> String {
-        let at = crate::path_spelling::operator_path(workspace);
         format!(
             "`git -C {at} clean -X -n` lists what would go, and `git -C {at} clean -X -f` \
-             deletes it"
+             deletes it",
+            at = crate::path_spelling::operator_path(workspace),
         )
     }
     fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {
