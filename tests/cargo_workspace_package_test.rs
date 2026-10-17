@@ -114,11 +114,11 @@ fn doctor_fix_leaves_workspace_package_parseable_and_marked() {
     let ws = weave(tmp.path());
 
     let (_, out) = rwv(&["doctor", "--fix"], &ws);
+    assert_parseable_and_marked(&ws, "`rwv doctor --fix`");
     assert!(
         out.contains("[fixed] core: regenerated integration content"),
-        "fixture: `doctor --fix` must regenerate the unauthored Cargo.toml:\n{out}"
+        "`doctor --fix` must report the regeneration it ran:\n{out}"
     );
-    assert_parseable_and_marked(&ws, "`rwv doctor --fix`");
 
     let metadata = std::process::Command::new("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
