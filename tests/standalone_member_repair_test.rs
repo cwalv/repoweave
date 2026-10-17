@@ -516,6 +516,13 @@ fn a_birth_that_refuses_moves_the_clone_back() {
     settle_index(&weave.clone);
     let clone_before = repo_state(&weave.clone);
     let bytes_before = tree_bytes(&weave.clone);
+    for walked in [Path::new("README.md"), &Path::new(".git").join("HEAD")] {
+        assert!(
+            bytes_before.contains_key(walked),
+            "the byte snapshot must reach {}",
+            walked.display()
+        );
+    }
 
     let (code, out) = doctor_fix(&weave);
     assert_eq!(code, Some(1), "{out}");
