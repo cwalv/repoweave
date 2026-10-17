@@ -17,6 +17,8 @@ rwv fetch chatly/web-app --frozen
 
 During development, workspace integrations resolve cross-repo imports to local checkouts without version bumps or registry publishes. When a member repository is published externally (crates.io, npm, PyPI, Go module proxy), tag and publish in dependency order after locking.
 
+A version bump usually also changes the ecosystem lockfile in `projects/<project>/` (`Cargo.lock`, `package-lock.json`, `uv.lock`). `rwv lock --commit` commits only `rwv.lock` and a changed `rwv.toml`, and refuses while another tracked file there has uncommitted changes. When it refuses, write the lock with `rwv lock` and commit both files with git, as the npm recipe below does.
+
 ### Cargo (crates.io)
 
 ```bash
@@ -39,10 +41,11 @@ git tag v1.1.0 && git push origin v1.1.0
 
 ```bash
 cd github/chatly/web
-npm version 1.1.0                      # bumps package.json and creates a git commit + tag
+npm version 1.1.0                      # bumps package.json, commits and tags it, updates package-lock.json
 npm publish
-cd ../..
-rwv lock --commit
+cd ../../..
+rwv lock
+git -C projects/web-app commit -am "Release web 1.1.0"   # rwv.lock and package-lock.json
 rwv push && git -C github/chatly/web push origin v1.1.0
 ```
 
@@ -53,7 +56,7 @@ cd github/chatly/ml-service
 # bump version in pyproject.toml and commit
 git tag v1.1.0 && git push origin v1.1.0
 uv build && uv publish
-cd ../..
+cd ../../..
 rwv lock --commit
 ```
 
@@ -61,10 +64,10 @@ Note that `uv`'s `[tool.uv.sources]` `workspace = true` overrides version constr
 
 ## Compatible vs. breaking version bumps
 
-- **Compatible bump (`protocol` `1.0.0` → `1.1.0`, `server` requires `^1.0`):** Bump `protocol`, commit, tag `v1.1.0`, and run `rwv lock --commit` to record the new commit SHAs in `rwv.lock` alongside the updated ecosystem lockfile (`Cargo.lock`, `package-lock.json`, `uv.lock`).
+- **Compatible bump (`protocol` `1.0.0` → `1.1.0`, `server` requires `^1.0`):** Bump `protocol`, commit, and tag `v1.1.0`. Then record the new commit SHA in `rwv.lock` and commit it with the updated ecosystem lockfile (`Cargo.lock`, `package-lock.json`, `uv.lock`): `rwv lock`, then `git -C projects/<project> commit -am "Release protocol 1.1.0"`.
 - **Breaking bump (`protocol` `2.0.0`, `server` requires `^1.0`):**
   1. Update `protocol` to `2.0.0` and `server`'s dependency constraint to `^2.0`, and commit both.
-  2. Run `rwv lock --commit` to snapshot both repositories' commit SHAs into `rwv.lock`.
+  2. Run `rwv lock` to snapshot both repositories' commit SHAs into `rwv.lock`, and commit it with the ecosystem lockfile as above.
   3. Tag and publish `protocol` `v2.0.0` first, then `server`.
 
 ## Include the commit SHA in binary versions

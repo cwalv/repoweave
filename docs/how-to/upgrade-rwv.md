@@ -3,9 +3,12 @@
 Before replacing the `rwv` binary, finish or abort any in-flight sync using the **old** binary; after upgrading, migrate workweave markers, manifests, and locks from the primary weave root:
 
 ```bash
-# 1. Before upgrading (with the old rwv binary): clear any in-flight sync
+# 1. Before upgrading (with the old rwv binary): clear any in-flight sync,
+#    then repair until a weave-wide doctor run is clean
 rwv status
 rwv abort                           # if an operation is in progress
+rwv doctor --fix --all
+rwv doctor --all                    # a clean run records the health floor
 
 # 2. After installing the new rwv binary (from the primary weave root):
 rwv doctor --fix                    # migrate .rwv-workweave markers and reference worktrees
@@ -78,6 +81,18 @@ rwv materialize --remove-undeclared-links
 ```
 
 That unlinks only the undeclared symlink without touching any target file.
+
+## The health floor and bridge versions
+
+A release can drop the repair arms for on-disk states older than some version. Before it does, a weave has to record that it was clean under a version that still had them: that record is the health floor. A text-mode `rwv doctor --all` run with no `--kind` filter records it when the run is clean, meaning no error and nothing left that `rwv doctor --fix` would repair. `rwv doctor` without `--all`, with `--kind`, or with `--json` records nothing. The record names the rwv version that made the run, and a run by an older binary never lowers it.
+
+A binary whose release dropped such arms refuses `rwv doctor` (`health-floor-too-low`, exit 1) when the weave's floor is below the version it requires, or when no floor was ever recorded, and names a bridge version:
+
+```text
+Error: this weave's health floor records version <recorded>, below the <minimum> this rwv requires: migratory repair arms for older states were removed in this release. Step through version <bridge>: install rwv <bridge>, run `rwv doctor --fix --all` until `rwv doctor --all` reports clean (which records the floor), then upgrade again
+```
+
+Follow it: install the bridge version, run `rwv doctor --fix --all` until `rwv doctor --all` reports clean, then install the newer rwv again. Running the pre-upgrade commands at the top of this page, which end with a clean `rwv doctor --all` under the old binary, keeps the floor current so the refusal does not arise.
 
 ## Related
 

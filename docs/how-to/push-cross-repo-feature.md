@@ -8,11 +8,14 @@ rwv push
 
 ## Preconditions and default scope
 
-Before pushing any remote, `rwv push` enforces three preconditions:
+Before pushing any remote, and under `--dry-run` too, `rwv push` refuses unless all of these hold:
 
-- **Primary weave only:** `rwv push` refuses when invoked inside a workweave so ephemeral workweave branches are never pushed to shared remotes. Land workweave changes into the primary weave with `rwv sync-to` first.
-- **Canonical branch in the project repo:** `projects/<project>/` must be on its tracked branch, not a detached `HEAD`.
-- **Lock agreement:** Every member repository's `HEAD` must match the revision pinned in `rwv.lock`.
+- **Primary weave only:** `rwv push` refuses when invoked inside a workweave (`push-from-workweave`) so ephemeral workweave branches are never pushed to shared remotes. Land workweave changes into the primary weave with `rwv sync-to` first.
+- **Canonical branch in the project repo:** `projects/<project>/` must be on its tracked branch, not a detached `HEAD` (`head-not-on-branch`).
+- **`origin/HEAD` recorded:** the project repo must know its remote's default branch (`no-remote-default-branch`). A clone made by `rwv fetch` has it; after creating the remote yourself, run `git -C projects/<project> remote set-head origin main`.
+- **Committed project repo:** `projects/<project>/` must have no uncommitted changes to tracked files and no untracked `rwv.toml` or `rwv.lock` (`dirty-checkout`), because push publishes the project repo's last commit. Commit with `rwv lock --commit`, `rwv update --commit`, or `git -C projects/<project> commit`.
+- **Lock agreement:** Every member repository's `HEAD` must match the revision pinned in `rwv.lock` (`lock-state-mismatch`).
+- **Attached member branches:** every member repository in scope must be on a branch, not a detached `HEAD` (`unpushable-repo-branch`).
 
 By default, `rwv push` pushes member repositories with `role = "owned"` and `role = "fork"` (`fork` URLs must point to your writable fork; see [Roles reference](../reference/roles.md#fork)) and skips `dependency` and `reference` repositories. The project repository (`projects/<project>/`) is pushed last, only after every in-scope member push succeeds, so collaborators never fetch a `rwv.lock` that references unpushed member commits.
 
@@ -42,8 +45,10 @@ If a member repository's `HEAD` differs from `rwv.lock`, `rwv push` refuses befo
 ```text
 rwv push: 1 repo(s) disagree with /home/user/work/projects/web-app/rwv.lock:
   - github/chatly/server: HEAD abc1234 differs from lock e1f2a3b
-Hint: run `rwv lock` to capture local state, or `git checkout` in each repo to align with the lock.
+Hint: run `rwv lock --commit` to capture local state, or `git checkout` in each repo to align with the lock.
 Error: lock-state mismatch — refusing to push before clone state and lock agree
+
+rwv explain lock-state-mismatch
 ```
 
 - **To publish the new local commits:** Snapshot and commit the updated lock, then push:
@@ -51,7 +56,13 @@ Error: lock-state mismatch — refusing to push before clone state and lock agre
   rwv lock --commit
   rwv push
   ```
-- **To publish the existing lock:** Align the diverged checkout to the locked revision (`rwv fetch` or `git checkout`), then re-run `rwv push`.
+- **To publish the existing lock:** Move the member's branch back to the locked revision, keeping the unlocked commits on a branch of their own, then push:
+  ```bash
+  git -C github/chatly/server branch keep-local
+  git -C github/chatly/server reset --keep <lock-sha>
+  rwv push
+  ```
+  `rwv fetch` does not do this: it refuses to move a branch backward (not a fast-forward). A detached checkout at the locked revision (`rwv fetch --detach-checkouts` or `git checkout <lock-sha>`) does not either: `rwv push` refuses a detached member (`unpushable-repo-branch`).
 
 ## Related
 
