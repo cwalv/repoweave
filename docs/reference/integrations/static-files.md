@@ -1,17 +1,17 @@
 # static-files
 
-Symlinks declared files from the project directory (`projects/<project>/`) to the weave root on activation. Escape hatch for top-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else tools expect at the weave root.
+Symlinks declared files from the project directory (`projects/<project>/`) to the weave root. Escape hatch for top-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else tools expect at the weave root.
 
 | | |
 |---|---|
 | Default enabled | no |
 | Auto-detects | n/a (configured explicitly) |
-| Generates | symlinks declared files to weave root |
+| Surfaces | declared files from `projects/<project>/` at the weave root |
 | Install hook | — |
 
 ## Configuration
 
-Disabled by default. Enable explicitly in `rwv.toml`:
+Disabled by default. Enable explicitly in `rwv.toml`; the table takes `enabled` and `files`, and any other key is refused when `rwv.toml` is parsed:
 
 ```toml
 [integrations.static-files]
@@ -19,7 +19,7 @@ enabled = true
 files = ["turbo.json", "nx.json", ".eslintrc.json", ".prettierrc"]
 ```
 
-Each file listed in `files` must exist in the project directory (e.g., `projects/web-app/turbo.json`). On activation, the integration symlinks each file to the weave root so tools find them where they expect.
+Each file listed in `files` must exist in the project directory (e.g., `projects/web-app/turbo.json`). `rwv doctor --fix`, `rwv activate`, `rwv materialize`, and the authoring verbs symlink each file to the weave root so tools find them where they expect.
 
 ### Entry forms
 
@@ -43,48 +43,11 @@ A plain entry is branch content. Each workweave surfaces its own checkout of `pr
 
 The primary's copy is the one that has to exist. While it is absent, the link is not created.
 
-A name may not appear both in `files` (in either form) and in `[workweave] link`; `rwv doctor` reports the combination as `config-rejected` and activation refuses it.
+A name may not appear both in `files` (in either form) and in `[workweave] link`. `rwv doctor` reports the combination as a `config-rejected` error and exits 1; `rwv activate` prints the same message as a warning and continues; the authoring verbs (`rwv add`, `remove`, `update`, `role`) refuse and put `rwv.toml` back.
 
-## How it works
+### Examples
 
-Unlike ecosystem integrations that auto-detect repos and generate config, `static-files` does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the weave root via symlinks.
-
-If a declared file is missing from the project directory, the integration prints a warning (`config-rejected`) during `rwv doctor`, and activation skips the missing file without failing.
-
-## Deactivation
-
-Symlinks are removed by the activation framework. A link counts as surfacing only when it reads the declared path in a project directory: `projects/<project>/<path>` relative to the weave root, or, for a primary-sourced entry in a workweave, the same path under the primary. Any other link at a declared name is left alone. The original files in the project directory, including the primary's copy behind a primary-sourced link, are untouched.
-
-## Check
-
-`rwv doctor` runs `static-files` checks:
-
-- `malformed-settings` (error) if `[integrations.static-files]` contains unknown keys or invalid entry forms.
-- `config-rejected` (error) if any path appears in both `integrations.static-files.files` and `[workweave] link`.
-- `config-rejected` (warning) if any declared file is missing from `projects/<project>/`. In a workweave, primary-sourced entries (`from = "primary"`) are not checked against the workweave's own project directory, since that is not the copy they surface.
-
-The framework-level Axis-1 surfacing check (run by `rwv doctor`) additionally
-warns when a surfacing symlink for a declared file is missing or mis-resolved
-at the weave root — for example, after a manual `rm` of a symlink, after
-enabling the integration in an existing workweave, or after a file is added to
-the `files` list after a workweave was created. These surfacing warnings are
-emitted framework-side (not by this integration's `check()`) and are safe to
-fix with `rwv doctor --fix`. A real file occupying the surfacing path is
-reported but never auto-clobbered.
-
-For a primary-sourced entry in a workweave, the expected link is the absolute
-path into the primary's project directory. `rwv doctor` reports a missing link,
-or a link that reads the workweave's own copy, as safe to fix, and
-`rwv doctor --fix` replaces it in the existing workweave. A link that resolves
-somewhere `rwv`'s surfacing never points (for example, into a different tree's
-`projects/`) is reported as not auto-fixed and left in place; remove it, and
-`rwv doctor --fix` creates the expected one. After an entry is dropped from
-`files`, the link it left is reported like any other undeclared surfacing link
-and removed by `rwv materialize --remove-undeclared-links`.
-
-## Examples
-
-### Turborepo with npm workspaces
+#### Turborepo with npm workspaces
 
 A project using Turborepo for build caching alongside npm workspaces:
 
@@ -130,7 +93,7 @@ files = ["turbo.json"]
 
 After activation, the weave root contains `package.json` (from `npm-workspaces`) and `turbo.json` (symlinked). Turborepo discovers packages from `package.json` workspaces and reads its pipeline config from `turbo.json` — both at the weave root where it expects them.
 
-### Linter and formatter configs
+#### Linter and formatter configs
 
 ESLint and Prettier expect their config at the weave root to apply across all packages:
 
@@ -151,7 +114,7 @@ files = [".eslintrc.json", ".prettierrc"]
 
 The `"root": true` setting tells ESLint to stop walking up the directory tree, so it doesn't pick up a config from a parent directory outside the weave.
 
-### Nx build orchestrator
+#### Nx build orchestrator
 
 ```toml
 [integrations.pnpm-workspaces]
@@ -179,7 +142,7 @@ files = ["nx.json"]
 
 Nx discovers packages from `pnpm-workspace.yaml` and reads task configuration from `nx.json`. Run `pnpm exec nx run-many -t build` to build all affected packages in dependency order.
 
-### Shared issue-tracker state
+#### Shared issue-tracker state
 
 A tracker that keeps its database in a directory beside the project's files, such as beads' `.beads`, needs every workweave to reach the primary's copy. A workweave's own checkout carries only the tracked configuration:
 
@@ -191,7 +154,7 @@ files = ["CLAUDE.md", { path = ".beads", from = "primary" }]
 
 At the primary, `.beads` links `projects/<project>/.beads`. In every workweave of the project, `.beads` links the primary's `projects/<project>/.beads` directly, so a tool that finds `.beads` by searching upward from its working directory reaches the same database from anywhere in the workweave. `CLAUDE.md` stays branch content: each workweave sees its own edits.
 
-### Toolchain versions (`.mise.toml`)
+#### Toolchain versions (`.mise.toml`)
 
 [mise](https://mise.jdx.dev/) reads `.mise.toml` from the directory you `cd` into:
 
@@ -212,7 +175,7 @@ python = "3.12"
 
 After activation, `mise install` at the weave root installs the declared versions. Combine with direnv (`use mise` in `.envrc`) for automatic activation on `cd`.
 
-### Environment activation (`.envrc`)
+#### Environment activation (`.envrc`)
 
 [direnv](https://direnv.net/) reads `.envrc` on `cd`:
 
@@ -225,7 +188,7 @@ files = [".envrc"]
 ```bash
 # projects/web-app/.envrc
 use mise                                      # activate toolchain versions from .mise.toml
-export GITA_PROJECT_HOME="$PWD/gita"          # point gita at the generated config
+export GITA_PROJECT_HOME="$PWD"               # gita reads $GITA_PROJECT_HOME/gita/
 export DATABASE_URL="postgres://localhost/web_app_dev"
 export NODE_ENV="development"
 ```
@@ -234,7 +197,7 @@ Run `direnv allow` once after creating or modifying `.envrc`.
 
 `.envrc` files often contain developer-local paths or credentials. Consider what belongs in the committed `.envrc` versus a `.envrc.local` that each developer maintains separately.
 
-### Makefile or justfile
+#### Makefile or justfile
 
 A `Makefile` or [`justfile`](https://github.com/casey/just) at the weave root provides a consistent command interface across the multi-repo workspace:
 
@@ -261,3 +224,44 @@ lint:
 ```
 
 A `justfile` (or `Makefile`) is useful for documenting multi-step project commands — such as running `rwv materialize` to refresh workspace dependencies, or running lint after a format pass.
+
+## Managed and generated files
+
+Unlike ecosystem integrations that auto-detect repos and generate config, `static-files` does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the weave root via symlinks.
+
+If a declared file is missing from the project directory, `rwv doctor` reports it as a `config-rejected` warning, and the verbs that surface files skip it with a warning rather than failing.
+
+## Install hook
+
+None.
+
+## Deactivation
+
+`static-files` authors no content, so there is nothing to strip. A link counts as surfacing only when it reads the declared path in a project directory: `projects/<project>/<path>` relative to the weave root, or, for a primary-sourced entry in a workweave, the same path under the primary. Any other link at a declared name is left alone. The original files in the project directory, including the primary's copy behind a primary-sourced link, are untouched.
+
+- **Disabled** (`enabled = false`): `rwv materialize` removes the weave-root links the integration surfaced.
+- **Name dropped from `files`**: the link it left is reported like any other undeclared surfacing link and removed by `rwv materialize --remove-undeclared-links`.
+
+## Diagnostics
+
+Reported by `rwv doctor`.
+
+| Kind | Severity | Condition | Repair |
+|---|---|---|---|
+| [`malformed-settings`](../doctor-findings.md#malformed-settings) | error | A `files` entry that is neither a string nor a `{ path, from }` table — a table with another key, or a `from` value other than `"primary"`. | Correct the entry the message names. |
+| [`config-rejected`](../doctor-findings.md#config-rejected) | error | A path appears in both `integrations.static-files.files` and `[workweave] link`. | Remove the name from one of the two. |
+| [`config-rejected`](../doctor-findings.md#config-rejected) | warning | A declared file is missing from `projects/<project>/`. In a workweave, primary-sourced entries (`from = "primary"`) are not checked against the workweave's own project directory, since that is not the copy they surface. | Create the file, or drop it from `files`. |
+| [`surfacing`](../doctor-findings.md#surfacing) | warning | The weave-root link for a declared file is missing or mis-resolved — for example, after a manual `rm` of a symlink, after enabling the integration in an existing workweave, or after a file is added to `files` after a workweave was created. A real file occupying the path is reported but never auto-clobbered. | `rwv doctor --fix` |
+
+For a primary-sourced entry in a workweave, the expected link is the absolute
+path into the primary's project directory. `rwv doctor` reports a missing link,
+or a link that reads the workweave's own copy, as safe to fix, and
+`rwv doctor --fix` replaces it in the existing workweave. A link that resolves
+somewhere `rwv`'s surfacing never points (for example, into a different tree's
+`projects/`) is reported as not auto-fixed and left in place; remove it, and
+`rwv doctor --fix` creates the expected one.
+
+## Related
+
+- [add an integration](../../how-to/add-an-integration.md#surface-static-files-at-the-weave-root) — the enable-and-surface recipe
+- [Integrations reference](./index.md#build-orchestration) — build orchestrators that read the surfaced files

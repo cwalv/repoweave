@@ -22,16 +22,24 @@ For *enabling* an existing integration in a project, see
 pub trait Integration {
     fn name(&self) -> &str;
     fn default_enabled(&self) -> bool;
+    fn detection_manifests(&self) -> &[&str] { &[] }
+    fn settings_keys(&self) -> &'static [&'static str] { &[] }
 
-    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()>;
+    fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>>;
     fn deactivate(&self, root: &Path) -> anyhow::Result<()>;
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>>;
 
-    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> { Ok(()) }
-    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> { Vec::new() }
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> { self.generated_files(ctx) }
-    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> { Ok(Vec::new()) }
-    fn member_incompatibility(&self, ctx: &IntegrationContext)
+    fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
+        Ok(HookOutcome::Done)
+    }
+    fn fit_to_host(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> { Ok(()) }
+    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<SurfacedFile> { Vec::new() }
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
+        self.generated_files(ctx)
+    }
+    fn verify(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> { Ok(Vec::new()) }
+    fn owned_paths_on_disk(&self, _ctx: &IntegrationContext) -> Vec<OwnedPath> { Vec::new() }
+    fn member_incompatibility(&self, _ctx: &IntegrationContext)
         -> anyhow::Result<Option<MemberIncompatibility>> { Ok(None) }
 }
 ```
@@ -39,44 +47,107 @@ pub trait Integration {
 ### Required methods
 
 - **`name`** — unique identifier (e.g., `"npm-workspaces"`). Used as the config
-  key in `rwv.toml`'s `[integrations]` table.
+  key in `rwv.toml`'s `[integrations]` table; parsing `rwv.toml` refuses a
+  table whose name no built-in integration has.
 - **`default_enabled`** — whether the integration runs without explicit opt-in.
-- **`activate`** — author the managed content. Called from the *intent* verbs
-  only; see [the trigger model](../explanation/joints/file-ownership.md#the-trigger-model)
-  for which verbs those are and why.
-- **`deactivate`** — remove what this integration owns. Called during workweave
-  deletion and before re-running `activate`. Takes a bare `&Path`, not a
+- **`activate`** — author the managed content. Called on the authoring path
+  only — the intent verbs, and `rwv doctor --fix` when it regenerates; see
+  [the trigger model](../explanation/joints/file-ownership.md#the-trigger-model)
+  for which verbs those are and why. Returns findings the way `check` and
+  `verify` do: read settings through `ctx.settings_or_issue` and return the
+  `MalformedSettings` issue it hands back rather than bailing.
+- **`deactivate`** — remove what this integration owns from the project
+  directory `root`. Called from two places: `rwv workweave delete`, for every
+  enabled integration, on the workweave's project checkout before the
+  directory is removed; and `rwv materialize`, for a *disabled* integration
+  whose `owned_paths_on_disk` reports a `MarkedRegion`. On the second path
+  materialize removes the `WholeFile` entries itself and calls `deactivate`
+  only for the region strip, because `deactivate` deletes the files it knows
+  about without asking whether rwv wrote them. Takes a bare `&Path`, not a
   context, so owned keys must be static per-integration constants.
-- **`check`** — read-only inspection. Return `Vec<Issue>` for problems detected.
-  Called during `rwv doctor`.
+- **`check`** — read-only inspection of preconditions: tool availability,
+  settings, member topology. Called during `rwv doctor`. The install hooks are
+  refused while any enabled integration's `check` returns a
+  `MalformedSettings` issue, so an integration whose hook reads settings must
+  have `check` deserialize them too; one that reports malformed settings only
+  from `verify` leaves its hooks unguarded.
 
 **A hook's `Err` carries no kind.** `for_each_enabled` captures it as
 `Issue { kind: IssueKind::IntegrationFailed, .. }`, which is the only kind the
 runner can mint, so a condition that has a published kind must be *returned* as
 an `Issue` rather than bailed. The published set is
 `docs/reference/doctor-findings.md`, and the vaguest row on that page is what an
-operator gets for anything raised the other way. `activate` and `activate_hook`
-have no `Issue` channel at all, so a condition either of them detects that an
-operator needs to look up has to be reported by `check` or `verify` too — the
-bail there is a second line of defense, never the only report.
+operator gets for anything raised the other way. `activate`, `check` and
+`verify` return `Vec<Issue>`. `activate_hook` returns a `HookOutcome` and
+`fit_to_host` and `deactivate` return `()`, so none of the three has an `Issue`
+channel: a condition any of them detects that an operator needs to look up has
+to be reported by `check` or `verify` too — the bail there is a second line of
+defense, never the only report.
 
 ### Provided methods
 
+- **`detection_manifests`** — every filename the integration passes to
+  `ctx.detect_repos_with_manifest`. The runner precomputes one detection list
+  per declared filename before any integration runs; a filename detected by
+  but not declared here misses the cache and falls back to a live filesystem
+  scan on every call. Ecosystem-tool output the integration never scans for
+  (`go.work.sum`, `Cargo.lock`) does not belong here.
+- **`settings_keys`** — the keys the integration reads from its
+  `[integrations.<name>]` table, besides the framework's own `enabled`.
+  Parsing `rwv.toml` refuses any other key in that table, so an integration
+  that reads settings returns `settings_struct_keys::<T>()` of the type it
+  deserializes them into. The default, empty, means only `enabled` parses.
 - **`activate_hook`** — run install commands (`npm install`, `uv sync`,
-  `cargo fetch`) after `activate` has written config files. Fires whenever the
-  workspace's set of active repos may have changed; users suppress it with
-  `rwv activate --no-materialize`. The hook materializes what membership and the
-  recorded pins imply and never moves a pin — an implementation that
-  re-resolves an existing lock does not belong here.
+  `cargo fetch`) after the config files are in place. Run the tool through
+  `run_install_tool` (`src/integrations/mod.rs`), which returns `None` when
+  the program is not on `PATH`; return `HookOutcome::ToolMissing(<tool>)` for
+  that, and the runner reports it as a `tool-missing` warning while the other
+  integrations' hooks still run. A tool that runs and fails is a bail, which
+  reaches the operator as `integration-failed` and fails the verb.
+  `--no-materialize` suppresses the hook on every verb that takes the flag. The
+  hook materializes what membership and the recorded pins imply and never moves
+  a pin — an implementation that re-resolves an existing lock does not belong
+  here.
+- **`fit_to_host`** — bring content whose right value is a fact about this
+  host, not about `rwv.toml`, to this host's answer (cargo-workspace's
+  `rustc-wrapper` key, which exists exactly where the wrapper binary is on
+  `PATH`). Runs at every materialization — wherever the install hooks are not
+  suppressed — ahead of surfacing, so a file it creates is linked in the same
+  pass. It owns only what a machine decides; content the manifest decides
+  belongs to `activate`. An `Err` becomes `integration-failed` and stops the
+  install hooks for that run.
 - **`generated_files`** — paths this integration *fully* owns, relative to
   `output_dir`: whole-write and whole-delete safe, and eligible for
-  `.gitignore`. Used by the activation framework to detect orphaned files.
+  `.gitignore`. Each is a `SurfacedFile`, constructed with
+  `SurfacedFile::written_through_link` (an ecosystem tool writes the path at
+  the weave root, through a link that may precede the file — lockfiles) or
+  `SurfacedFile::written_at_source` (the file is in the project directory
+  before it is linked); `.from_primary()` makes the link read the primary's
+  checkout. Declaring a file here means "surface this", not "rwv wrote this".
 - **`managed_files`** — the wider set including hybrid files, which are
   surfaced by symlink, never gitignored, and only ever strip-edited. Defaults
   to `generated_files()`, so a fully-owned integration implements just the one.
+  The union of the two is what surfacing links; where the two disagree about a
+  path's `SurfacedSource`, `WrittenThroughLink` wins.
 - **`verify`** — drift detection, separate from `check`: `check`
   answers "is the environment able to do this", `verify` answers "has what we
-  wrote been changed underneath us".
+  wrote been changed underneath us". Must not author; the recovery verb is
+  `rwv doctor --fix`, which re-runs `activate` when a finding is
+  `safe_to_fix`. An enabled integration whose files are not on disk yet
+  reports them here as `ManagedFileMissing` — that finding is what makes
+  `rwv doctor --fix` author a newly enabled integration.
+- **`owned_paths_on_disk`** — where this integration's ownership is written
+  under `output_dir` right now, each path tagged with its cleanup shape:
+  `OwnedPath::WholeFile` (rwv wrote all of it; cleanup is removal) or
+  `OwnedPath::MarkedRegion` (cleanup is `deactivate`'s strip). The one hook
+  meaningful for a *disabled* integration: it drives the
+  `disabled-integration-artifact` finding and what `rwv materialize` strips.
+  Attribute by ownership evidence on disk — the marker (`holds_owned_region`),
+  a byte-exact comparison against what `activate` would write now, or the
+  marker on the workspace file a lock was resolved from — never by presence at
+  the declared path. **The default is empty**, which is safe and inert: a
+  disabled integration that does not override it is never reported and its
+  files are never cleaned up.
 - **`member_incompatibility`** — report a member the integration's own tooling
   cannot build with. Results are collected in one place and shared by
   `rwv doctor` and `rwv update`.
@@ -87,14 +158,15 @@ Each hook receives an `IntegrationContext` (`src/integration.rs`) with:
 
 | Field | Description |
 |---|---|
-| `output_dir` | Where generated files are written — the project directory (`projects/<project>/`) |
-| `workspace_root` | Where repos live on disk. In a workweave this still points at the primary root, so detection works when clones are not duplicated |
+| `output_dir` | Where managed and generated files live: `<workspace_root>/projects/<project>`, in every weave and for every verb |
+| `workspace_root` | The weave root the verb is acting on — the primary root at the primary, the workweave directory inside one. Repo detection scans under it |
+| `container_kind` | `ContainerKind::Primary` or `ContainerKind::Workweave`, already resolved by the verb. Read it here rather than probing `workspace_root` for a marker file |
 | `project` | The active project name |
 | `repos` | Repo entries from the project's `rwv.toml`, as an ordered `(path, entry)` list |
 | `config` | Per-integration config from the `[integrations.<name>]` table in `rwv.toml` |
 | `all_repos_on_disk` | All repos found on disk under registry directories. Computed once, shared across integrations |
 | `all_project_paths` | All project paths. Computed once, shared across integrations |
-| `detection_cache` | Manifest filename → repo paths containing it. Populated once per activation/check cycle, before any integration runs |
+| `detection_cache` | Manifest filename → repo paths containing it, for every filename the integrations about to run declare in `detection_manifests`. Populated once per cycle, before any integration runs |
 | `workweave` | The project's `[workweave]` config, if any. Present so an integration can detect a name claimed by two sections at once |
 
 ## Helper methods
@@ -104,11 +176,14 @@ Each hook receives an `IntegrationContext` (`src/integration.rs`) with:
 - **`ctx.detect_repos_with_manifest(filename)`** — active repos containing a
   given manifest file (e.g. `"package.json"`), served from `detection_cache`
   when warm and falling back to a live scan under `workspace_root`.
+- **`ctx.settings_or_issue::<T>(name)`** — the typed settings, or the
+  `MalformedSettings` issue to return when the table does not deserialize into
+  `T`. The issue names the field and is `safe_to_fix: false`.
 
-Both are on-disk gated. A repo declared in `rwv.toml` but not cloned is not
-"pending" — it is simply absent from every list, which is why an intent verb
-withholds authoring when the member set is incomplete rather than writing a
-smaller-but-wrong file.
+The two detection helpers are on-disk gated. A repo declared in `rwv.toml` but
+not cloned is not "pending" — it is simply absent from every list, which is why
+an intent verb withholds authoring when the member set is incomplete rather
+than writing a smaller-but-wrong file.
 
 ## Hybrid merge helper (`ManagedDoc`)
 
@@ -144,22 +219,27 @@ Key design details of that signature:
 
 - **`KeyPath` is `Vec<String>`, not a dotted `&str`:** VS Code's `settings."files.exclude"` is `["settings", "files.exclude"]`, where the second segment contains a literal dot.
 - **Marker methods take `owned_keys`:** TOML places `# managed by rwv` as a per-key decoration rather than a document header, whereas JSON ignores the slice and uses its top-level marker key (`x-repoweave` or `rwv.generated`).
-- **`key_present` drives the generate-vs-verify switch:** when a managed key is present on disk with no marker, `merge_activate` defers rather than overwriting and records the key as `UserHeld` in `MergeResult`.
+- **`key_present` drives the generate-vs-verify switch:** when an `Author` key is present on disk with no marker, `merge_activate` defers rather than overwriting and lists the key in `MergeResult::deferred`. `MergeResult` is `{ authored, deferred }`; the operator-facing report of that state comes from `verify`, through `drift_issues`, as `IssueKind::ManagedFileUserHeld`.
 - **`Ownership::Author` vs. `Ownership::DefaultOnly`:** `Author` keys are written and stripped by `rwv`; `DefaultOnly` keys are written only when absent and never overwritten or stripped.
-- **`strip_deactivate` returns `StripOutcome` (`Absent`, `UserHeld`, `Stripped`):** callers that need to gate removing a co-requisite generated file (such as an ecosystem lockfile) learn whether the strip happened without re-reading the file.
+- **`strip_deactivate` returns `StripOutcome` (`Absent`, `UserHeld`, `Stripped`):** callers that need to gate removing a co-requisite generated file (such as an ecosystem lockfile) learn whether the strip happened without re-reading the file. `StripOutcome::UserHeld` is the strip-side name for the unmarked state. `holds_owned_region` answers the same marker question read-only, for `owned_paths_on_disk`.
 - **Implementations:** `JsonDoc` (`serde_json` — npm and vscode), `TomlDoc` (`toml_edit` — cargo and uv), `YamlDoc` / line-editor (pnpm), and `GoWorkDoc` (`go.work` `use` block merger). Because `deactivate(root: &Path)` receives no `IntegrationContext`, owned keys are static per-integration constants.
+
+The verify side has shared helpers in the same file: `drift_issues` (the USER-HELD / DRIFT / CLEAN dispatch), `missing_issue`, `orphaned_region_issues` (a marked region no membership justifies), and `fully_owned_drift_issue`. Use them so every integration's findings carry the same kinds and message templates.
 
 For a new integration:
 
-- **Fully rwv-owned:** implement `activate` as a whole-write, `deactivate` as a whole-delete, and list the file in `generated_files()`.
-- **Hybrid:** implement via `ManagedDoc`, never whole-write or whole-delete a user file, land both `merge_activate` and `strip_deactivate` in the same change, and cover the three regression test shapes (`activate-preserves`, `deactivate-strips-keeps`, `deactivate-deletes-if-empty`).
+- **Fully rwv-owned:** implement `activate` as a whole-write, `deactivate` as a whole-delete, list the file in `generated_files()`, report it from `verify` (`missing_issue` / `fully_owned_drift_issue`), and return it from `owned_paths_on_disk()` as `OwnedPath::WholeFile` only where its bytes are what `activate` would write now.
+- **Hybrid:** implement via `ManagedDoc`, never whole-write or whole-delete a user file, land both `merge_activate` and `strip_deactivate` in the same change, return the file from `owned_paths_on_disk()` as `OwnedPath::MarkedRegion` where `holds_owned_region` finds the marker, and cover the three regression test shapes (`activate-preserves`, `deactivate-strips-keeps`, `deactivate-deletes-if-empty`).
+- **Either:** if the integration reads settings, return `settings_struct_keys::<T>()` from `settings_keys()` and deserialize them in `check` through `ctx.settings_or_issue`.
 
 ## Registration
 
 New integrations are registered in `builtin_integrations()` in
 `src/integrations/mod.rs`. Add a `Box::new(YourIntegration)` entry alongside the
-existing built-ins; the rest of `rwv` picks it up automatically. The returned
-order is the order everything runs in.
+existing built-ins; the rest of `rwv` picks it up automatically, including the
+manifest parser, which builds the accepted `[integrations.<name>]` names and
+keys from this list and each entry's `settings_keys()`. The returned order is
+the order everything runs in.
 
 ## Style guidelines
 

@@ -13,8 +13,8 @@ Repoweave separates authoring workspace config files, selecting the active proje
 
 | Task | Command | Works in |
 |---|---|---|
-| Mutate membership and automatically re-author managed files | `rwv add`, `rwv remove`, `rwv update`, `rwv role` | Primary weave or workweave |
-| Re-author managed files after hand-editing `rwv.toml`, or repair missing weave-root symlinks | `rwv doctor --fix` | Primary weave or workweave |
+| Mutate membership and automatically re-author managed files (install hooks run at the primary only) | `rwv add`, `rwv remove`, `rwv update`, `rwv role` | Primary weave or workweave |
+| Re-author managed files after hand-editing `rwv.toml` (author a newly enabled integration), or repair missing weave-root symlinks | `rwv doctor --fix` | Primary weave or workweave |
 | Strip artifacts from newly disabled integrations and run install hooks (`npm install`, `uv sync`, `cargo fetch`) | `rwv materialize` | Primary weave or workweave |
 | Switch `.rwv-active`, re-point weave-root symlinks to `<project>`, and run install hooks (never authors files) | `rwv activate <project>` | Primary weave only |
 
@@ -26,7 +26,9 @@ Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) update managed 
 rwv doctor --fix
 ```
 
-`rwv doctor --fix` updates the `rwv`-managed sections of hybrid files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`) while preserving user-authored keys, regenerates owned files (`gita/`, `.code-workspace`), and repairs any missing surfacing symlinks in the current workspace.
+`rwv doctor --fix` regenerates when `rwv doctor` reports something it can fix — a newly enabled integration's files missing, or managed content that differs from what `rwv.toml` implies. It updates the `rwv`-managed sections of hybrid files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`, `<project>.code-workspace`) while preserving user-authored keys, rewrites the fully-owned `gita/` CSVs, runs the install hooks, and repairs any missing surfacing symlinks in the current workspace. A clean `rwv doctor` means `--fix` has nothing to do.
+
+One setting is not compared: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`. A change to it lands at the next authoring verb (`rwv add`, `remove`, `update`, `role`), or at the next `rwv doctor --fix` that regenerates for another reason.
 
 If your `rwv.toml` edit disabled an integration (`enabled = false`), follow up with `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
 
@@ -36,7 +38,7 @@ rwv materialize
 
 ## After `rwv sync` or inside a workweave
 
-`rwv activate` is refused inside a workweave because a workweave's project is fixed at creation. To run integration install hooks inside a workweave (or at the primary weave without switching projects) after `rwv sync` brings in new membership or lock changes:
+`rwv activate` is refused inside a workweave because a workweave's project is fixed at creation, and the authoring verbs run no install hooks there. To run integration install hooks inside a workweave (or at the primary weave without switching projects) after `rwv sync` brings in new membership or lock changes:
 
 ```bash
 rwv materialize
@@ -46,7 +48,7 @@ Install hooks materialize current membership without advancing versions already 
 
 ## Resolve unaccepted drift on generated files
 
-When an attested generated file holds edits that `rwv` never wrote or accepted, verbs that run install hooks withhold the hooks and list the drifted paths. Choose whether to overwrite the file from current inputs or accept the on-disk content:
+When an attested generated file (`Cargo.lock`) holds edits that `rwv` never wrote or accepted, `rwv materialize` stops and lists the drifted paths, and a `rwv doctor --fix` that would regenerate withholds the regeneration and names the same choice. Choose whether to overwrite the file from current inputs or accept the on-disk content:
 
 ```bash
 rwv materialize --regenerate-drifted   # discard unaccepted edits and re-derive from inputs
@@ -57,7 +59,7 @@ What `--regenerate-drifted` discards is not saved by `rwv`; copy anything you wa
 
 ## Remove weave-root symlinks for undeclared filenames
 
-Dropping a filename from `integrations.static-files.files` in `rwv.toml` leaves the earlier weave-root symlink in place (`rwv doctor` reports it as a `surfacing` warning). Unlink those undeclared symlinks without touching the target files they point to:
+Dropping a filename from `integrations.static-files.files` in `rwv.toml`, removing an ecosystem's last member repo, or uninstalling a `rustc-wrapper` binary leaves the earlier weave-root symlink in place (`rwv doctor` reports it as a `surfacing` warning). Unlink those undeclared symlinks without touching the target files they point to:
 
 ```bash
 rwv materialize --remove-undeclared-links

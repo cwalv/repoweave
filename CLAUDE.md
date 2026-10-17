@@ -411,9 +411,7 @@ and register rules:
 
 1. **Maintainer and architecture surfaces (`CLAUDE.md`, `ARCHITECTURE.md`,
    `docs/internals/*.md`)** — excluded from `docs/SUMMARY.md` and exempt from
-   `check_no_internals_on_operator_surfaces` (except
-   `docs/internals/writing-integrations.md`, which is also linked under
-   Reference in `docs/SUMMARY.md` with an explicit gate carve-out).
+   `check_no_internals_on_operator_surfaces`.
    - `ARCHITECTURE.md` carries the public rigor signal on the GitHub landing
      page: module ownership map, process model, sync phase machine, trait seams,
      and plugin dispatch. It links out to `docs/` for user-facing contracts

@@ -7,9 +7,19 @@ Merges `[tool.uv.workspace]` and `[tool.uv.sources]` entries into a project-leve
 | Default enabled | yes |
 | Auto-detects | member repos with `pyproject.toml` |
 | Manages | `pyproject.toml` (hybrid merge) |
-| Install hook | `uv sync` (if `uv` is on `PATH`) |
+| Generates | `uv.lock`, written by `uv sync` ([commit policy](./index.md#committed-files-and-committability)) |
+| Install hook | `uv sync` |
 
-## Managed keys
+## Configuration
+
+Enabled by default. The table takes only `enabled`:
+
+```toml
+[integrations.uv-workspace]
+enabled = false
+```
+
+## Managed and generated files
 
 `rwv` owns only these keys inside `projects/<project>/pyproject.toml`:
 
@@ -21,18 +31,13 @@ Merges `[tool.uv.workspace]` and `[tool.uv.sources]` entries into a project-leve
 
 All other tables (`[project]`, `[build-system]`, `[tool.ruff]`, `[tool.pytest]`, etc.) and comments are user-owned and survive authoring and deactivation unmodified.
 
-## Generated file
-
 ```toml
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
 # managed by rwv
-members = [
-    "github/chatly/protocol",
-    "github/chatly/server",
-]
+members = ["github/chatly/protocol", "github/chatly/server"]
 
 [tool.uv.sources]
 chatly-protocol = { workspace = true }
@@ -41,33 +46,15 @@ chatly-server = { workspace = true }
 
 Written in `projects/<project>/pyproject.toml` and surfaced at the weave root via symlink. Committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `.venv/` is gitignored tool state; `uv.lock` is fully rwv-owned, and its commit-vs-gitignore status is the operator's choice — see [Committed files and committability](./index.md#committed-files-and-committability).
 
-## Install hook
-
-Runs `uv sync` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, and authoring verbs (unless `--no-materialize` is passed) to update `.venv/` and `uv.lock` ([commit policy](./index.md#committed-files-and-committability)).
-
-## Deactivation
-
-Gated on the `# managed by rwv` marker on `[tool.uv.workspace].members`: strips `members` and `{ workspace = true }` entries in `[tool.uv.sources]`, prunes empty `[tool.uv.workspace]`, `[tool.uv.sources]`, `[tool.uv]`, and `[tool]` tables, and deletes `pyproject.toml` only when the document is otherwise empty. Preserves `[project]`, `[tool.ruff]`, `[tool.uv].package`, and user-authored source entries (`git`, `url`, `index`, `path`). Leaves unmarked `pyproject.toml` files, `.venv/`, and `uv.lock` ([commit policy](./index.md#committed-files-and-committability)) untouched.
-
-## Check
-
-`rwv doctor` reports:
-
-- **`tool-missing`** (warning): member repos with `pyproject.toml` are present, but `uv` is not on `PATH`.
-
-## Verify (drift)
-
-`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave create`) run the read-only Axis-2 verify pass on `projects/<project>/pyproject.toml`:
-
-- **MISSING** (`managed-file-missing`, `safe_to_fix = true`): `pyproject.toml` is absent while Python member repos are present (`rwv doctor --fix` creates it).
-- **DRIFT** (`managed-file-drift`, `safe_to_fix = true`): `# managed by rwv` is present on `members`, but `[tool.uv.workspace].members` differs from what `rwv.toml` declares (or no Python member repos remain and the marked `[tool.uv.workspace]` region is orphaned).
-- **USER-HELD** (`managed-file-drift`, `safe_to_fix = false`): `[tool.uv.workspace].members` is present without `# managed by rwv`. `rwv` leaves the file untouched; add `# managed by rwv` above `members` or remove `[tool.uv.workspace]` to hand ownership to `rwv`.
-
-## Notes
+### Version constraints inside the workspace
 
 uv's `workspace = true` silently overrides version constraints, so version mismatches only surface *outside* the workspace. This is different from Cargo/Go/npm, which catch constraint mismatches in-workspace. Test the published artifact in a separate environment before announcing a release.
 
-## Polyglot cargo+uv: a compiled extension can go stale
+## Install hook
+
+Runs `uv sync` at the weave root to update `.venv/` and `uv.lock` ([commit policy](./index.md#committed-files-and-committability)). Which verbs run it, and how `--no-materialize` skips it, is the same for every integration: see [Hook points](./index.md#hook-points). With `uv` absent from `PATH` the hook is skipped with a `tool-missing` warning and the verb continues; a `uv sync` that runs and fails is an error.
+
+### Polyglot cargo+uv: a compiled extension can go stale
 
 A repo carrying both `Cargo.toml` and `pyproject.toml` — a maturin/pyo3 bindings crate — is claimed by `cargo-workspace` and `uv-workspace` at once, with no conflict between the generated files. `uv sync` drives maturin, which drives cargo, and the result installs as an editable Python package backed by a compiled extension module.
 
@@ -85,3 +72,27 @@ uv run -m maturin_import_hook site install --detect-uv
 `site install` writes a `sitecustomize.py`, so the staleness check runs at every interpreter start in that environment with nothing to add per script; `--detect-uv` has the rebuild itself invoked through `uv`. Trade-off: every import of an editable-installed maturin package now pays that check — negligible once the build is current, a rebuild when it is not — so treat it as a development-environment convenience and keep it out of anything shipped: `MATURIN_IMPORT_HOOK_ENABLED=0` disables it without removing the `install()` call or the site hook, for a production image built from a dev virtualenv.
 
 rwv does not run or configure this hook. The install hook's contract is scoped to membership and pins; tracking source edits inside an already-resolved package is import/build-time work the ecosystem's own tooling already does.
+
+## Deactivation
+
+Gated on the `# managed by rwv` marker on `[tool.uv.workspace].members`: strips `members` and `{ workspace = true }` entries in `[tool.uv.sources]`, prunes empty `[tool.uv.workspace]`, `[tool.uv.sources]`, `[tool.uv]`, and `[tool]` tables, and deletes `pyproject.toml` only when the document is otherwise empty. Preserves `[project]`, `[tool.ruff]`, `[tool.uv].package`, and user-authored source entries (`git`, `url`, `index`, `path`), so a file `rwv` seeded keeps `[tool.uv] package = false`. Unmarked `pyproject.toml` files are left untouched, and `.venv/` is never removed.
+
+- **Disabled** (`enabled = false`): `rwv materialize` strips the marked region, removes `uv.lock`, and removes both weave-root links.
+- **Last Python member removed**: the authoring verb strips the marked region on the same rule and leaves `uv.lock` in place. The weave-root links stay; `rwv doctor` reports them as `surfacing` warnings, and `rwv materialize --remove-undeclared-links` removes them.
+
+## Diagnostics
+
+Reported by `rwv doctor`. Verify rows also print on the context verbs listed under [Hook points](./index.md#hook-points).
+
+| Kind | Severity | Condition | Repair |
+|---|---|---|---|
+| [`tool-missing`](../doctor-findings.md#tool-missing) | warning | Member repos with `pyproject.toml` are present, but `uv` is not on `PATH`. | Install `uv`. |
+| [`managed-file-missing`](../doctor-findings.md#managed-file-missing) | warning | `pyproject.toml` is absent while Python member repos are present. | `rwv doctor --fix` |
+| [`managed-file-drift`](../doctor-findings.md#managed-file-drift) | warning | `# managed by rwv` is present on `members`, but `[tool.uv.workspace].members` differs from what `rwv.toml` declares, or no Python member repos remain and the marked region is still there. | `rwv doctor --fix` |
+| [`managed-file-user-held`](../doctor-findings.md#managed-file-user-held) | warning | `[tool.uv.workspace].members` is present without `# managed by rwv`. `rwv` leaves the file untouched. | Add `# managed by rwv` above `members`, or remove `[tool.uv.workspace]` to hand ownership to `rwv`. |
+| [`disabled-integration-artifact`](../doctor-findings.md#disabled-integration-artifact) | warning | The integration is disabled, and the marked region or `uv.lock` is still on disk. | `rwv materialize` |
+
+## Related
+
+- [cargo-workspace](./cargo-workspace.md) — the other half of a maturin/PyO3 bindings crate
+- [add an integration](../../how-to/add-an-integration.md) — enabling and disabling integrations
