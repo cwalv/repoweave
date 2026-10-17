@@ -786,8 +786,7 @@ pub fn run() -> anyhow::Result<()> {
             allow_non_empty_dir,
             no_reference,
             detach_checkouts,
-            roles,
-            repos,
+            selector,
             jobs,
             json,
             project,
@@ -801,7 +800,7 @@ pub fn run() -> anyhow::Result<()> {
             // Mint once from the parsed flag; the token threads down to
             // fetch_one, where it gates the realign-detach refusal.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
-            let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
+            let filter = selector.parse_filter()?;
             // The default resolves to min(nproc, 8), so --json without -j is
             // NDJSON on a multi-core host; the envelope needs an explicit -j 1.
             let jobs = crate::parallel::resolve_jobs(jobs);
@@ -1097,7 +1096,11 @@ pub fn run() -> anyhow::Result<()> {
             let commit = commit.then(|| lock::CommitMessage::from_flag(message));
             lock::lock(&ctx, dirty, commit)?;
         }
-        Some(Commands::Status { json, project }) => {
+        Some(Commands::Status {
+            json,
+            project,
+            selector,
+        }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped_tolerating_disputed_root(
                 &origin_dir,
@@ -1105,7 +1108,8 @@ pub fn run() -> anyhow::Result<()> {
                 use_workweave_flag,
             )?;
             refuse_symlinked_members_here(&ctx)?;
-            status::run_status(&ctx, json)?;
+            let filter = selector.parse_filter()?;
+            status::run_status(&ctx, json, &filter)?;
         }
         Some(Commands::Abort {
             abandon_foreign_tip,
@@ -1254,8 +1258,7 @@ pub fn run() -> anyhow::Result<()> {
             message,
             detach_checkouts,
             project,
-            roles,
-            repos,
+            selector,
             jobs,
             json,
             no_materialize,
@@ -1265,7 +1268,7 @@ pub fn run() -> anyhow::Result<()> {
             // Mint once from the parsed flag; the token threads down to
             // advance_checkout, where it gates the ff-or-refuse guard.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
-            let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
+            let filter = selector.parse_filter()?;
             // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
             // split mirrors sync: -j 1 (or unspecified with --json) emits the
             // envelope; -j > 1 streams NDJSON. Note: unlike sync, update defaults

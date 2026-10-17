@@ -2,6 +2,7 @@
 
 use crate::manifest::{Project, ProjectName};
 use crate::op_state;
+use crate::selector::RepoFilter;
 use crate::vcs::{vcs_for, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
@@ -244,7 +245,7 @@ fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<ProjectName> {
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
-pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
+pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> anyhow::Result<()> {
     // When a specific project is named (via .rwv-active or --project), verify
     // it exists on disk before proceeding. When no project is active, the
     // no-active-project path in project_names_for_ctx falls back to listing
@@ -299,6 +300,9 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
         };
 
         for (repo_path, entry) in &project.manifest.repositories {
+            if !filter.matches(repo_path, entry.role) {
+                continue;
+            }
             let vcs = vcs_for(entry.vcs_type);
             let repo_abs = workspace_dir.join(repo_path.as_path());
 

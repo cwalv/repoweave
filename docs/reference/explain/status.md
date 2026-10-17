@@ -12,11 +12,19 @@ inspect drift) without touching git plumbing themselves.
 
 ```
 rwv status [--json] [--project <name>]
+           [--role <role>]... [--repo <selector>]...
 ```
 
 - `--json` emits machine-readable output (see Output below).
 - `--project <name>` reports status for the named project without changing
   the active project (`.rwv-active` is untouched).
+- `--role` / `--repo` narrow the report to matching repos, in both the table
+  and the `--json` `repos` array. The grammar is the one `fetch`, `update`,
+  and `push` take: a bare `--repo` value matches a manifest path exactly,
+  `re:<pat>` as a regex, `glob:<pat>` as a glob; repeated flags, and `--role`
+  with `--repo`, combine as a union. With neither flag every repo is
+  reported. A filter that matches no repo is not an error: the table has no
+  rows, `repos` is `[]`, and the exit code is 0.
 
 Run `rwv status --help` for the full clap surface.
 

@@ -416,6 +416,14 @@ rather than only its outermost line, so a failure reported by `rwv doctor
 --fix`, an ownership-receipt warning from a workweave verb, or an integration
 hook names what actually went wrong beneath the step that failed.
 
+### `rwv status` takes `--role` and `--repo`
+
+`rwv status` accepts the selector flags `fetch`, `update` and `push` take:
+`--role <role>` and `--repo <selector>` (exact path, `re:<pat>`, or
+`glob:<pat>`), repeatable and combined as a union. They narrow both the table
+and the `--json` `repos` array. A filter that matches no repo reports nothing
+and exits 0.
+
 ## 0.23.0
 
 ### Refusals carry stable names

@@ -354,6 +354,7 @@ Show per-repo state for the CWD workspace.
 |---|---|
 | `--json` | Output as JSON (see envelope below) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+| `--role` / `--repo` | [Selector filters](#selector-grammar); narrow the table and the `--json` `repos` array. A filter matching no repo prints no rows and exits 0 |
 
 | Column | Values |
 |---|---|
@@ -590,7 +591,7 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 
 ## Selector grammar
 
-`rwv fetch`, `rwv update`, and `rwv push` share a selector surface for picking which repos to operate on.
+`rwv fetch`, `rwv update`, `rwv push`, and `rwv status` share a selector surface for picking which repos to operate on or report.
 
 ### Flags
 

@@ -12,7 +12,7 @@ pub mod dispatch;
 
 use std::ffi::OsString;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use clap_complete::Shell;
 
 use crate::manifest;
@@ -57,6 +57,24 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Option<Commands>,
+}
+
+#[derive(Args)]
+pub struct RepoSelectorArgs {
+    /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
+    #[arg(long = "role")]
+    pub roles: Vec<String>,
+    /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
+    #[arg(long = "repo")]
+    pub repos: Vec<String>,
+}
+
+impl RepoSelectorArgs {
+    pub fn parse_filter(
+        &self,
+    ) -> Result<crate::selector::RepoFilter, crate::selector::FilterError> {
+        crate::selector::RepoFilter::parse(&self.roles, &self.repos)
+    }
 }
 
 // Commands are listed in declaration order; that order is the grouping — no
@@ -146,12 +164,8 @@ pub enum Commands {
         /// Align a present repo even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing
         #[arg(long)]
         detach_checkouts: bool,
-        /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
-        #[arg(long = "role")]
-        roles: Vec<String>,
-        /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
-        #[arg(long = "repo")]
-        repos: Vec<String>,
+        #[command(flatten)]
+        selector: RepoSelectorArgs,
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
@@ -290,6 +304,8 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        #[command(flatten)]
+        selector: RepoSelectorArgs,
     },
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
@@ -465,12 +481,8 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
-        #[arg(long = "role")]
-        roles: Vec<String>,
-        /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
-        #[arg(long = "repo")]
-        repos: Vec<String>,
+        #[command(flatten)]
+        selector: RepoSelectorArgs,
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
