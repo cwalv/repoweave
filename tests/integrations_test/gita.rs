@@ -46,20 +46,21 @@ fn generates_repos_csv_with_correct_format() {
     integration.activate(&ctx).unwrap();
 
     let repos_csv = std::fs::read_to_string(root.join("gita/repos.csv")).unwrap();
-    assert!(repos_csv.starts_with("path,name,flags\n"));
-
     let lines: Vec<&str> = repos_csv.lines().collect();
-    // Header + 3 repos
-    assert_eq!(lines.len(), 4);
+    assert_eq!(
+        lines.len(),
+        3,
+        "one row per repo and no header:\n{repos_csv}"
+    );
 
     // Should be sorted by name (basename)
-    assert!(lines[1].contains(",protocol,"));
-    assert!(lines[2].contains(",server,"));
-    assert!(lines[3].contains(",web,"));
+    assert!(lines[0].ends_with(",protocol,,"));
+    assert!(lines[1].ends_with(",server,,"));
+    assert!(lines[2].ends_with(",web,,"));
 
     // Paths should be absolute
     let abs_prefix = root.to_string_lossy();
-    assert!(lines[1].starts_with(&*abs_prefix));
+    assert!(lines[0].starts_with(&*abs_prefix));
 }
 
 #[test]
@@ -81,9 +82,55 @@ fn generates_groups_csv_by_role() {
     integration.activate(&ctx).unwrap();
 
     let groups_csv = std::fs::read_to_string(root.join("gita/groups.csv")).unwrap();
-    assert!(groups_csv.starts_with("group,repos\n"));
-    assert!(groups_csv.contains("fork,protocol\n"));
-    assert!(groups_csv.contains("owned,server web\n"));
+    assert_eq!(groups_csv, "fork:protocol:\nowned:server web:\n");
+}
+
+/// Both CSVs match what gita itself writes for the same repos and groups.
+///
+/// The fixtures are gita 0.16.8.2's own output from `gita add` and
+/// `gita group add -n`, rows sorted by name and the root directory replaced
+/// by `{root}`. gita reads both files with fixed field names and no header —
+/// `path,name,type,flags` and colon-separated `name:repos:path` — so a header
+/// row is read as a repo or a group, and a comma in groups.csv puts the whole
+/// line in the group name. Python's csv module writes `\r\n` and reads either
+/// terminator, so the comparison is over lines.
+#[test]
+fn csvs_match_the_format_gita_writes() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+
+    let manifest = make_manifest(vec![
+        ("github/chatly/server", Role::Owned),
+        ("github/chatly/web", Role::Owned),
+        ("github/chatly/protocol", Role::Fork),
+    ]);
+    let project = ProjectName::new("test-project").unwrap();
+    let config = IntegrationConfig::default();
+    let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    Gita.activate(&ctx).unwrap();
+
+    let root_text = root.to_string_lossy();
+    for (written, fixture) in [
+        ("gita/repos.csv", include_str!("../fixtures/gita/repos.csv")),
+        (
+            "gita/groups.csv",
+            include_str!("../fixtures/gita/groups.csv"),
+        ),
+    ] {
+        let expected: Vec<String> = fixture
+            .lines()
+            .map(|line| line.replace("{root}", &root_text))
+            .collect();
+        assert!(!expected.is_empty(), "fixture {written} must hold rows");
+        let actual = std::fs::read_to_string(root.join(written)).unwrap();
+        assert_eq!(
+            actual.lines().collect::<Vec<_>>(),
+            expected,
+            "{written} must be in the format gita writes"
+        );
+    }
 }
 
 #[test]
@@ -167,7 +214,8 @@ fn repos_csv_paths_use_workspace_root_not_output_dir() {
     );
     // output_dir and workspace_root are different TempDirs, so output_dir
     // should NOT appear in the path column.
-    let data_lines: Vec<&str> = repos_csv.lines().skip(1).collect();
+    let data_lines: Vec<&str> = repos_csv.lines().collect();
+    assert!(!data_lines.is_empty(), "repos.csv must hold a row");
     for line in &data_lines {
         let path_field = line.split(',').next().unwrap();
         assert!(
@@ -233,7 +281,10 @@ fn csv_escaping_roundtrips_path_with_comma() {
 
     // Round-trip: parse with csv::Reader and verify the path field is intact.
     let repos_csv_path = root.join("gita/repos.csv");
-    let mut rdr = csv::Reader::from_path(&repos_csv_path).unwrap();
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_path(&repos_csv_path)
+        .unwrap();
     let records: Vec<_> = rdr.records().collect::<Result<_, _>>().unwrap();
     assert_eq!(records.len(), 1, "expected exactly one data row");
     let path_field = &records[0][0];
@@ -307,4 +358,58 @@ fn deactivate_removes_empty_gita_dir() {
         !root.join("gita").exists(),
         "gita/ directory should be removed when empty"
     );
+}
+
+/// An enabled gita with nothing on disk reports each CSV MISSING, fixable, so
+/// `rwv doctor --fix` has a finding to author it from. Activation clears both.
+#[test]
+fn verify_reports_each_absent_csv_missing_until_activated() {
+    use repoweave::integration::IssueKind;
+
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+    let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+    let project = ProjectName::new("test-project").unwrap();
+    let config = IntegrationConfig::default();
+    let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    let before = Gita.verify(&ctx).unwrap();
+    let mut missing: Vec<&str> = before
+        .iter()
+        .filter(|i| i.kind == IssueKind::ManagedFileMissing && i.safe_to_fix)
+        .map(|i| i.message.as_str())
+        .collect();
+    missing.sort();
+    assert_eq!(missing.len(), 2, "one MISSING per CSV: {before:?}");
+    assert!(missing[0].contains("groups.csv") && missing[1].contains("repos.csv"));
+
+    Gita.activate(&ctx).unwrap();
+    let after = Gita.verify(&ctx).unwrap();
+    assert!(after.is_empty(), "activated CSVs are clean: {after:?}");
+}
+
+/// A CSV whose bytes are not what rwv would author is DRIFT, fixable — the
+/// state a CSV written in an older format is in.
+#[test]
+fn verify_reports_a_csv_rwv_would_not_author_as_drift() {
+    use repoweave::integration::IssueKind;
+
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
+    let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+    let project = ProjectName::new("test-project").unwrap();
+    let config = IntegrationConfig::default();
+    let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    Gita.activate(&ctx).unwrap();
+    write_file(root, "gita/groups.csv", "group,repos\nowned,server\n");
+
+    let issues = Gita.verify(&ctx).unwrap();
+    assert_eq!(issues.len(), 1, "only the rewritten CSV drifts: {issues:?}");
+    assert_eq!(issues[0].kind, IssueKind::ManagedFileDrift);
+    assert!(issues[0].safe_to_fix);
+    assert!(issues[0].message.contains("groups.csv"));
+    assert!(issues[0].message.contains("rwv doctor --fix"));
 }

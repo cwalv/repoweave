@@ -1,6 +1,7 @@
 use crate::integration::{
     Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
 };
+use crate::integrations::merge::{fully_owned_drift_issue, missing_issue};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -38,11 +39,12 @@ impl Gita {
             .collect();
         repo_entries.sort_by(|a, b| a.1.cmp(&b.1));
 
+        // gita reads both files with fixed field names and no header row:
+        // `path,name,type,flags` and `name:repos:path`.
         let mut repos = csv::Writer::from_writer(Vec::new());
-        repos.write_record(["path", "name", "flags"]).ok()?;
         for (abs_path, name) in &repo_entries {
             repos
-                .write_record([abs_path.as_str(), name.as_str(), ""])
+                .write_record([abs_path.as_str(), name.as_str(), "", ""])
                 .ok()?;
         }
 
@@ -55,12 +57,13 @@ impl Gita {
                 .push(basename(rp));
         }
 
-        let mut groups = csv::Writer::from_writer(Vec::new());
-        groups.write_record(["group", "repos"]).ok()?;
+        let mut groups = csv::WriterBuilder::new()
+            .delimiter(b':')
+            .from_writer(Vec::new());
         for (group, mut names) in grouped {
             names.sort();
             groups
-                .write_record([group.as_str(), names.join(" ").as_str()])
+                .write_record([group.as_str(), names.join(" ").as_str(), ""])
                 .ok()?;
         }
 
@@ -143,6 +146,35 @@ impl Integration for Gita {
                 kind: IssueKind::ToolMissing,
                 safe_to_fix: true,
             });
+        }
+        Ok(issues)
+    }
+
+    /// Each CSV against the bytes [`Self::activate`] would write now: absent is
+    /// MISSING and any other bytes are DRIFT, both repaired by regenerating.
+    /// Fully owned, so there is no USER-HELD state to protect.
+    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let mut issues = Vec::new();
+        for (name, body) in Self::authored_csvs(ctx).unwrap_or_default() {
+            let path = ctx.output_dir.join(name);
+            match std::fs::read(&path) {
+                Err(e) if e.kind() == ErrorKind::NotFound => {
+                    issues.push(missing_issue(self.name(), &path));
+                }
+                Err(e) => issues.push(fully_owned_drift_issue(
+                    self.name(),
+                    &path,
+                    &format!("read failed: {e}"),
+                )),
+                Ok(on_disk) if on_disk != body.as_bytes() => {
+                    issues.push(fully_owned_drift_issue(
+                        self.name(),
+                        &path,
+                        "content differs from what rwv.toml implies",
+                    ));
+                }
+                Ok(_) => {}
+            }
         }
         Ok(issues)
     }

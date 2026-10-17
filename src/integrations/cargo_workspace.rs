@@ -157,7 +157,7 @@ use crate::integration::{
     Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
 };
 use crate::integrations::merge::{
-    drift_issues, fully_owned_parse_fail_issue, holds_owned_region, keypath, merge_activate,
+    drift_issues, fully_owned_drift_issue, holds_owned_region, keypath, merge_activate,
     missing_issue, orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath,
     ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
@@ -1457,7 +1457,7 @@ impl CargoWorkspace {
                 // — safe_to_fix=true so `--fix` regenerates. The file exists
                 // per the branch above, but its contents are unreadable; the
                 // regenerator will overwrite.
-                return vec![fully_owned_parse_fail_issue(
+                return vec![fully_owned_drift_issue(
                     self.name(),
                     &path,
                     &format!("read failed: {e}"),
@@ -1465,7 +1465,7 @@ impl CargoWorkspace {
             }
         };
         if let Err(e) = text.parse::<toml_edit::DocumentMut>() {
-            return vec![fully_owned_parse_fail_issue(
+            return vec![fully_owned_drift_issue(
                 self.name(),
                 &path,
                 &format!("TOML parse failed: {e}"),
