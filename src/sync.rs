@@ -6539,12 +6539,65 @@ fn same_workspace(a: &Path, b: &Path) -> bool {
     ca == cb
 }
 
-/// Execute `rwv abort` — verified-restore CWD workspace to its pre-sync state.
+/// Which of an op's workspaces a restore is running in, decided by the
+/// workspace's identity in the owner record and never by which of the two
+/// `rwv abort` was invoked from.
+#[derive(Clone, Copy)]
+enum AbortSide {
+    /// The workspace the op replayed in: the owner, savepointed under the base
+    /// op id, whose replay journals `advanced_tips`.
+    Replay,
+    /// The workspace a `sync-to` advanced, savepointed under
+    /// [`target_savepoint_id`] so that worktree pairs sharing one refdb don't
+    /// collide on savepoint or pre-abort ref names. Nothing journals intent
+    /// for it; its tips land in `converged_tips` at relock.
+    SyncToTarget,
+}
+
+impl AbortSide {
+    fn of(workspace: &Path, record: &OwnerRecord) -> Self {
+        if record.verb == OpVerb::SyncTo && same_workspace(workspace, &record.target) {
+            Self::SyncToTarget
+        } else {
+            Self::Replay
+        }
+    }
+
+    fn restore_id(self, op_id: &OpId) -> OpId {
+        match self {
+            Self::Replay => op_id.clone(),
+            Self::SyncToTarget => OpId::from_string(target_savepoint_id(op_id)),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Replay => "[source] ",
+            Self::SyncToTarget => "[target] ",
+        }
+    }
+}
+
+/// What a whole `rwv abort` has seen so far, across both of its workspaces.
+#[derive(Default)]
+struct AbortTally {
+    noise: AbortNoiseSummary,
+    any_foreign: bool,
+    any_failure: bool,
+}
+
+impl AbortTally {
+    fn clean(&self) -> bool {
+        !self.any_foreign && !self.any_failure
+    }
+}
+
+/// Execute `rwv abort` — verified-restore every workspace of the in-flight op
+/// to its pre-sync state, from whichever of them it is invoked in.
 ///
 /// Reads the op-state file (`.rwv-op`) to find the op-id, the involved
 /// workspaces, and the per-repo `converged_tips` recorded at relock. For
-/// `sync-to` ops, both CWD and the recorded target workspace are rolled
-/// back.
+/// `sync-to` ops, both the owner and the recorded target are rolled back.
 ///
 /// Two hardening rails:
 ///
@@ -6572,73 +6625,19 @@ pub fn run_abort(
 
     // resolve_to_owner follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
-    // the same full record. `workspace_dir` is still used for the repo scan below.
-    let (op_id, owner_record, extra_workspace_dirs): (OpId, OwnerRecord, Vec<PathBuf>) =
-        match op_state::resolve_to_owner(&workspace_dir)? {
-            Some(resolved) => {
-                // For sync-to: also roll back the target (the leased) workspace.
-                let extras = if resolved.record.verb == crate::op_state::OpVerb::SyncTo {
-                    // Determine which workspace is the "other" workspace to roll back.
-                    // The owner workspace is resolved.owner_workspace; the other workspace
-                    // for sync-to is target (when CWD is owner/source) or source (when
-                    // CWD is target/lease). We roll back workspace_dir if it differs
-                    // from the owner, and the owner's target regardless.
-                    let mut extras = Vec::new();
-                    // Always include the target workspace if we're at the owner.
-                    if same_workspace(&resolved.owner_workspace, &workspace_dir) {
-                        extras.push(resolved.record.target.clone());
-                    } else {
-                        // Invoked from the lease workspace: include the owner workspace
-                        // so its repos are also restored.
-                        extras.push(resolved.owner_workspace.clone());
-                    }
-                    extras
-                } else {
-                    vec![]
-                };
-                (
-                    OpId::from_string(resolved.record.id.clone()),
-                    resolved.record,
-                    extras,
-                )
-            }
-            None => crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress"),
-        };
-    // The op's tip table is phase-scoped (`PhaseTips`): exactly one of the two
-    // tables is populated at a time. `converged_tips` is the per-repo
-    // attributable-tip table. Keys: repo path string (e.g. `github/foo/bar`)
-    // for manifest repos, `project_repo_key` for the project repo. Empty before
-    // relock completes — in that case the attributable set reduces to
-    // {savepoint, advanced_tips, mid-op}.
-    //
-    // `advanced_tips` is the op's replay-phase intent: the planned target
-    // (ff advances) or captured actual tip (rebased advances), written before
-    // or right after each advance. Source/owner side only — target tips land
-    // in converged_tips post-relock. Empty for pre-field records and
-    // once converged — graceful degradation to pre-change behavior. The
-    // inactive half reads as an empty map so the `.get()` lookups below are
-    // unchanged.
-    let empty_tips = std::collections::BTreeMap::new();
-    let converged_tips = owner_record.tips.converged().unwrap_or(&empty_tips);
-    let advanced_tips = owner_record.tips.advanced().unwrap_or(&empty_tips);
-
-    // Side-specific restore ids: repos in the op's TARGET workspace were
-    // savepointed under `<op_id>-target` (see `target_savepoint_id`) so that
-    // worktree pairs sharing one refdb don't collide on savepoint or
-    // pre-abort ref names; the owner/source side uses the base op id.
-    // Keyed by WORKSPACE IDENTITY (is this the recorded target?), not by
-    // invocation side — abort may be invoked from either workspace, which
-    // inverts the cwd/extras loop-to-workspace mapping.
-    let restore_id_for = |ws: &Path| -> OpId {
-        if owner_record.verb == crate::op_state::OpVerb::SyncTo
-            && same_workspace(ws, &owner_record.target)
-        {
-            OpId::from_string(target_savepoint_id(&op_id))
-        } else {
-            op_id.clone()
-        }
+    // the same full record.
+    let Some(resolved) = op_state::resolve_to_owner(&workspace_dir)? else {
+        crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
     };
-    let cwd_restore_id = restore_id_for(&workspace_dir);
+    let other_workspace = (resolved.record.verb == OpVerb::SyncTo).then(|| {
+        if same_workspace(&resolved.owner_workspace, &workspace_dir) {
+            resolved.record.target.clone()
+        } else {
+            resolved.owner_workspace.clone()
+        }
+    });
+    let owner_record = resolved.record;
+    let op_id = OpId::from_string(owner_record.id.clone());
 
     // Both of the op's workspaces are enumerated under the op's own project,
     // whichever side abort was invoked from. A workspace's `.rwv-active` may
@@ -6653,218 +6652,87 @@ pub fn run_abort(
     let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir, op_project_name.clone())
         .context("failed to load CWD project")?;
     refuse_symlinked_members(&workspace_dir, &op_project_name)?;
-    for extra in &extra_workspace_dirs {
-        refuse_symlinked_members(extra, &op_project_name)?;
+    if let Some(other) = &other_workspace {
+        refuse_symlinked_members(other, &op_project_name)?;
     }
 
-    let mut any_failure = false;
-    let mut any_foreign = false;
-    let mut noise_summary = AbortNoiseSummary::default();
+    let mut tally = AbortTally::default();
 
-    // Restore CWD manifest repos first.
-    let project_vcs = project_vcs();
-    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
-        let vcs = vcs_for(entry.vcs_type);
-        let abs = workspace_dir.join(repo_path.as_path());
-        if !abs.exists() {
-            continue;
-        }
-        let intent = advanced_tips.get(repo_path.as_str()).map(String::as_str);
-        let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-        let consented = abandon.covers(repo_path.as_str());
-        match abort_one_repo(
-            vcs.as_ref(),
-            &abs,
-            &cwd_restore_id,
-            intent,
-            converged,
-            consented,
-        ) {
-            Ok(outcome) => report_abort_outcome(
-                vcs.as_ref(),
-                repo_path.as_str(),
-                &outcome,
-                Some(abs.as_path()),
-                consented,
-                &mut noise_summary,
-                &mut any_foreign,
-            ),
-            Err(e) => {
-                eprintln!("  {repo_path}: {e:#}");
-                any_failure = true;
-            }
-        }
-    }
-
-    // Restore CWD project repo.
-    let project_intent = advanced_tips.get(project_repo_key()).map(String::as_str);
-    let project_converged = converged_tips.get(project_repo_key()).map(String::as_str);
-    let project_consented = abandon.covers(project_repo_key());
-    match abort_one_repo(
-        project_vcs.as_ref(),
-        &cwd_project_dir,
-        &cwd_restore_id,
-        project_intent,
-        project_converged,
-        project_consented,
-    ) {
-        Ok(outcome) => report_abort_outcome(
-            project_vcs.as_ref(),
-            project_repo_key(),
-            &outcome,
-            Some(cwd_project_dir.as_path()),
-            project_consented,
-            &mut noise_summary,
-            &mut any_foreign,
-        ),
-        Err(e) => {
-            eprintln!("  (project): {e:#}");
-            any_failure = true;
-        }
-    }
-    settle_members(
+    restore_abort_workspace(
         &workspace_dir,
         &cwd_project_dir,
-        true,
-        &|vcs, member| {
-            vcs.resolve_pre_abort_ref(member, cwd_restore_id.as_str())
-                .map(|captured| captured.revision)
-        },
-        None,
+        &cwd_project,
+        AbortSide::of(&workspace_dir, &owner_record),
+        "",
+        &op_id,
+        &owner_record,
+        abandon,
+        &mut tally,
     );
 
-    // For sync-to: also roll back repos in the extra (target) workspaces.
-    // The target side does not have its own `converged_tips` entries — the
-    // recorded tips key off the source-side workspace's repo paths. For
-    // target-side repos, fall back to looking up by the same repo_path
-    // (typically identical across source/target via shared object stores);
-    // a target tip that diverged from the source convergence will surface
-    // as a foreign-tip refusal, which is the desired behavior.
-    for extra_dir in &extra_workspace_dirs {
-        // Side-specific id: `-target` namespace when this extra IS the
-        // recorded target workspace, base op id when it is the owner.
-        let extra_restore_id = restore_id_for(extra_dir);
-        // Best-effort: an extra workspace that does not present the op's
+    if let Some(other_dir) = &other_workspace {
+        // Best-effort: an other workspace that does not present the op's
         // project is skipped with a warning rather than restored from
         // whatever else lives there.
-        match WorkspaceContext::resolve_for_project(extra_dir, &op_project_name) {
-            Ok(extra_ctx) => {
-                let extra_project_dir =
-                    project_dir(extra_ctx.active_path(), op_project_name.as_str());
-                let extra_project = match Project::from_dir_skip_lock(
-                    &extra_project_dir,
-                    op_project_name.clone(),
-                ) {
-                    Ok(p) => p,
+        match WorkspaceContext::resolve_for_project(other_dir, &op_project_name) {
+            Ok(other_ctx) => {
+                let other_ws_dir = other_ctx.active_path().to_path_buf();
+                let other_project_dir = project_dir(&other_ws_dir, op_project_name.as_str());
+                match Project::from_dir_skip_lock(&other_project_dir, op_project_name.clone()) {
+                    Ok(other_project) => {
+                        let side = AbortSide::of(&other_ws_dir, &owner_record);
+                        restore_abort_workspace(
+                            &other_ws_dir,
+                            &other_project_dir,
+                            &other_project,
+                            side,
+                            side.label(),
+                            &op_id,
+                            &owner_record,
+                            abandon,
+                            &mut tally,
+                        );
+                        // Clear op-state from the other workspace only when
+                        // every repo so far restored — otherwise the operator
+                        // may want to re-run abort after reconciling.
+                        if tally.clean() {
+                            op_state::clear_all_at(&other_ws_dir);
+                        }
+                    }
                     Err(e) => {
                         eprintln!(
                             "  warning: could not load project at {}: {e}; skipping",
-                            extra_project_dir.display()
+                            other_project_dir.display()
                         );
-                        continue;
                     }
-                };
-                let extra_ws_dir = extra_ctx.active_path().to_path_buf();
-                for (repo_path, entry) in extra_project.manifest.iter_entries() {
-                    let vcs = vcs_for(entry.vcs_type);
-                    let abs = extra_ws_dir.join(repo_path.as_path());
-                    if !abs.exists() {
-                        continue;
-                    }
-                    // Target-side repos: advanced_tips is source/owner side only.
-                    // Target tips land in converged_tips post-relock; no intent entry.
-                    let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-                    let consented = abandon.covers(repo_path.as_str());
-                    match abort_one_repo(
-                        vcs.as_ref(),
-                        &abs,
-                        &extra_restore_id,
-                        None,
-                        converged,
-                        consented,
-                    ) {
-                        Ok(outcome) => report_abort_outcome(
-                            vcs.as_ref(),
-                            &format!("[target] {repo_path}"),
-                            &outcome,
-                            Some(abs.as_path()),
-                            consented,
-                            &mut noise_summary,
-                            &mut any_foreign,
-                        ),
-                        Err(e) => {
-                            eprintln!("  [target] {repo_path}: {e:#}");
-                            any_failure = true;
-                        }
-                    }
-                }
-                let extra_project_converged =
-                    converged_tips.get(project_repo_key()).map(String::as_str);
-                match abort_one_repo(
-                    project_vcs.as_ref(),
-                    &extra_project_dir,
-                    &extra_restore_id,
-                    None, // target-side: no advanced_tips entry
-                    extra_project_converged,
-                    project_consented,
-                ) {
-                    Ok(outcome) => report_abort_outcome(
-                        project_vcs.as_ref(),
-                        "[target] (project)",
-                        &outcome,
-                        Some(extra_project_dir.as_path()),
-                        project_consented,
-                        &mut noise_summary,
-                        &mut any_foreign,
-                    ),
-                    Err(e) => {
-                        eprintln!("  [target] (project): {e:#}");
-                        any_failure = true;
-                    }
-                }
-                settle_members(
-                    &extra_ws_dir,
-                    &extra_project_dir,
-                    true,
-                    &|vcs, member| {
-                        vcs.resolve_pre_abort_ref(member, extra_restore_id.as_str())
-                            .map(|captured| captured.revision)
-                    },
-                    None,
-                );
-                // Clear op-state from the extra workspace only when this side
-                // completed without a foreign-tip refusal — otherwise the
-                // operator may want to re-run abort after reconciling.
-                if !any_foreign && !any_failure {
-                    op_state::clear_all_at(&extra_ws_dir);
                 }
             }
             Err(e) => {
                 eprintln!(
                     "  warning: could not resolve workspace at {}: {e}; skipping",
-                    extra_dir.display()
+                    other_dir.display()
                 );
             }
         }
     }
 
     // Emit the aggregate noise summary (skipped / untouched) as a single line.
-    print_abort_noise_summary(&noise_summary);
+    print_abort_noise_summary(&tally.noise);
 
     // Print the recovery-options block ONCE, only when at least one repo
     // refused (foreign-tip violation). The per-repo block above shows the
     // evidence (savepoint, tip, blocking commits); this block tells the
     // operator what to do about it.
-    if any_foreign {
+    if tally.any_foreign {
         print_abort_recovery_options();
     }
 
     // Clear op-state from CWD workspace only on a fully clean abort. If any
     // repo refused (foreign tip) or errored, retain op-state so the operator
     // can re-run `rwv abort` after manually reconciling the divergence.
-    if !any_foreign && !any_failure {
+    if tally.clean() {
         op_state::clear_all_at(&workspace_dir);
-    } else if any_foreign {
+    } else if tally.any_foreign {
         eprintln!(
             "\nabort refused on at least one repo (foreign-tip violation); \
              op-state retained at {} so you can re-run `rwv abort` after \
@@ -6873,17 +6741,101 @@ pub fn run_abort(
         );
     }
 
-    if any_foreign {
+    if tally.any_foreign {
         crate::refuse!(
             RefusalKind::ForeignTip,
             "abort refused: foreign tip on at least one repo"
         );
     }
-    if any_failure {
+    if tally.any_failure {
         anyhow::bail!("abort completed with failures");
     }
 
     Ok(())
+}
+
+/// Restore one of the op's workspaces: its member repos, then its project
+/// repo, then settle its members. `label` prefixes every per-repo line; the
+/// workspace abort was invoked from carries none.
+///
+/// The op's tip table is phase-scoped (`PhaseTips`): `advanced_tips` during
+/// replay, `converged_tips` after relock, keyed by repo path for member repos
+/// and by `project_repo_key` for the project repo. The replay journal applies
+/// to the replay side only; converged tips apply to both, because
+/// advance-target lands the target on them.
+#[allow(clippy::too_many_arguments)]
+fn restore_abort_workspace(
+    workspace_dir: &Path,
+    project_dir: &Path,
+    project: &Project,
+    side: AbortSide,
+    label: &str,
+    op_id: &OpId,
+    owner_record: &OwnerRecord,
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    tally: &mut AbortTally,
+) {
+    let empty_tips = std::collections::BTreeMap::new();
+    let converged_tips = owner_record.tips.converged().unwrap_or(&empty_tips);
+    let advanced_tips = match side {
+        AbortSide::Replay => owner_record.tips.advanced().unwrap_or(&empty_tips),
+        AbortSide::SyncToTarget => &empty_tips,
+    };
+    let restore_id = side.restore_id(op_id);
+
+    let project_vcs = project_vcs();
+    let project_key = project_repo_key();
+    let repos = project
+        .manifest
+        .iter_entries()
+        .map(|(repo_path, entry)| {
+            (
+                repo_path.as_str(),
+                vcs_for(entry.vcs_type),
+                workspace_dir.join(repo_path.as_path()),
+            )
+        })
+        .filter(|(_, _, abs)| abs.exists())
+        .chain(std::iter::once((
+            project_key,
+            project_vcs,
+            project_dir.to_path_buf(),
+        )));
+    for (repo_key, vcs, abs) in repos {
+        let consented = abandon.covers(repo_key);
+        match abort_one_repo(
+            vcs.as_ref(),
+            &abs,
+            &restore_id,
+            advanced_tips.get(repo_key).map(String::as_str),
+            converged_tips.get(repo_key).map(String::as_str),
+            consented,
+        ) {
+            Ok(outcome) => report_abort_outcome(
+                vcs.as_ref(),
+                &format!("{label}{repo_key}"),
+                &outcome,
+                Some(abs.as_path()),
+                consented,
+                &mut tally.noise,
+                &mut tally.any_foreign,
+            ),
+            Err(e) => {
+                eprintln!("  {label}{repo_key}: {e:#}");
+                tally.any_failure = true;
+            }
+        }
+    }
+    settle_members(
+        workspace_dir,
+        project_dir,
+        true,
+        &|vcs, member| {
+            vcs.resolve_pre_abort_ref(member, restore_id.as_str())
+                .map(|captured| captured.revision)
+        },
+        None,
+    );
 }
 
 /// Restore a single repo as part of `rwv abort`.

@@ -12,8 +12,9 @@ get back to the last known-good position rather than continue forward.
 `rwv sync-to`). Every other workspace the op mutates holds a **thin lease**
 (`.rwv-op-lease`) pointing back at the owner. `abort` can be invoked from
 any involved workspace — from a leased workspace it follows the pointer to
-the owner record automatically. For `sync-to` ops, both CWD and the recorded
-target workspace are rolled back.
+the owner record automatically. For `sync-to` ops, both the initiating
+workspace and the recorded target are rolled back, whichever of the two
+`abort` is invoked from, and each repo gets the same verdict from either.
 
 ### What is restored
 
@@ -167,6 +168,11 @@ Per-repo restoration lines to stdout. Each line names the outcome:
 The abandoned-tip line is followed by the tip that was left behind and the
 reference it stays reachable at, so the abandonment is recoverable from the
 transcript alone.
+
+For a `sync-to`, lines for the workspace `abort` was invoked from carry no
+prefix, and lines for the op's other workspace carry its side: `[target]`
+when `abort` runs in the initiating workspace, `[source]` when it runs in
+the target.
 
 Non-actionable outcomes (`untouched` and `no savepoint`) are demoted to a
 single aggregate summary line printed at the end:
