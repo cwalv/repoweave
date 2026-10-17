@@ -391,6 +391,15 @@ impl Vcs for FakeVcs {
         unsupported("unstage_paths")
     }
 
+    fn discard_captured_change(
+        &self,
+        _repo: &Path,
+        _path: &Path,
+        _captured: &[u8],
+    ) -> Result<DiscardOutcome, VcsError> {
+        unsupported("discard_captured_change")
+    }
+
     fn has_staged_changes(&self, _repo: &Path) -> Result<bool, VcsError> {
         unsupported("has_staged_changes")
     }

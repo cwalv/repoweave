@@ -42,8 +42,8 @@ use crate::integration::{
 };
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
-    run_activate_hooks, run_activations, run_checks, run_deactivations, run_verifications,
-    IntegrationContextBase,
+    run_activate_hooks, run_activations, run_checks, run_deactivations, run_host_fits,
+    run_verifications, IntegrationContextBase,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
@@ -172,9 +172,8 @@ pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()>
     )
 }
 
-/// Run intent-mode activation with explicit options. Used by tests that need
-/// to drive the write path without running install hooks (the test
-/// equivalent of `rwv add --no-materialize` if that existed).
+/// Run intent-mode activation with explicit options: `opts` carries the
+/// intent verbs' `--no-materialize`.
 pub fn activate_intent_with_options(
     project: &str,
     ctx: &WorkspaceContext,
@@ -525,12 +524,14 @@ fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> any
     Ok(())
 }
 
-/// Options for [`activate_with_options`].
+/// Options for [`activate_with_options`] and the other activations a verb
+/// drives.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ActivateOptions {
-    /// When true, skip integration activate hooks (install commands like
-    /// `npm install`). Used by `rwv activate --no-materialize` for fast
-    /// context-switches.
+    /// When true, skip materialization: the integration install hooks
+    /// (install commands like `npm install`) and the host-dependent settings
+    /// fitted alongside them. Every verb that runs hooks takes it as
+    /// `--no-materialize`.
     pub no_materialize: bool,
 }
 
@@ -633,15 +634,13 @@ impl ActivationFailure {
 pub(crate) fn activate_intent_for(
     project: &str,
     ctx: &WorkspaceContext,
+    opts: ActivateOptions,
 ) -> Result<(), ActivationFailure> {
     match &ctx.checkout {
         Checkout::Workweave { dir, .. } => workweave_intent(project, dir),
-        Checkout::Primary { .. } => activate_in_phases(
-            ctx.primary_path(),
-            project,
-            ActivateOptions::default(),
-            ActivationMode::Intent,
-        ),
+        Checkout::Primary { .. } => {
+            activate_in_phases(ctx.primary_path(), project, opts, ActivationMode::Intent)
+        }
     }
 }
 
@@ -674,6 +673,7 @@ fn activate_in_phases(
         &manifest,
         &integrations,
         &ctx_base,
+        opts,
         mode,
     )
     .map_err(ActivationFailure::BeforeHooks)?
@@ -695,6 +695,7 @@ fn activate_in_phases(
 /// The integration content step for `mode`, then the weave root's surfacing,
 /// returning what surfacing reported. `None` when the root presents a different
 /// project, which leaves it, and the hooks that act through it, untouched.
+#[allow(clippy::too_many_arguments)]
 fn author_and_surface(
     project_vcs: &dyn Vcs,
     root: &Path,
@@ -702,6 +703,7 @@ fn author_and_surface(
     manifest: &Manifest,
     integrations: &[&dyn Integration],
     ctx_base: &IntegrationContextBase,
+    opts: ActivateOptions,
     mode: ActivationMode,
 ) -> anyhow::Result<Option<Vec<String>>> {
     match mode {
@@ -710,6 +712,11 @@ fn author_and_surface(
             report_and_check_activation_issues(&issues)?;
         }
         ActivationMode::Context => {
+            // Ahead of the verify pass, so it does not report as drift what
+            // this materialization is about to settle.
+            if !opts.no_materialize {
+                fit_to_host(integrations, manifest, ctx_base)?;
+            }
             // Two passes:
             //   - run_checks: environment/config preconditions (cargo not on
             //     PATH, declared static file missing, etc.). Same call as
@@ -752,6 +759,7 @@ fn author_and_surface(
                 SurfacingMode::Repair,
             )?;
             settle_arrived_drift(&ctx_base.output_dir, consent)?;
+            fit_to_host(integrations, manifest, ctx_base)?;
         }
     }
 
@@ -798,6 +806,27 @@ fn author_and_surface(
         eprintln!("[warning] core: surfacing: {notice}");
     }
     Ok(Some(notices))
+}
+
+/// Bring host-dependent content to this host's answer. A failure fails the
+/// verb ahead of the hooks, as a failed hook fails it after them.
+fn fit_to_host(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> anyhow::Result<()> {
+    let issues = run_host_fits(integrations, manifest, ctx_base);
+    for issue in &issues {
+        eprintln!("[error] {}: {}", issue.integration, issue.message);
+    }
+    if !issues.is_empty() {
+        anyhow::bail!(
+            "{} integration(s) could not bring host-dependent settings to this host; \
+             the install hooks were not run",
+            issues.len()
+        );
+    }
+    Ok(())
 }
 
 /// Run integration activate hooks (install commands). They operate on the
@@ -1250,34 +1279,29 @@ fn remove_activation_symlinks_in(
 /// return the primary root via the `.rwv-workweave` marker). Instead it works
 /// directly against the workweave directory.
 ///
-/// Install hooks (`npm install`, `cargo fetch`, …) are
-/// skipped at workweave creation: the workweave shares clones with
-/// primary, so install state is typically inherited rather than
-/// regenerated. `rwv materialize` is what runs them inside the workweave when
-/// a refresh is actually wanted.
+/// Install hooks (`npm install`, `cargo fetch`, …) run unless `opts` suppresses
+/// them: a workweave shares clones with primary, but `node_modules/`, `.venv/`
+/// and `target/` are per-checkout, and a new seat has none of them.
 ///
 /// Context mode here buys the surfacing-and-verify half only. The project
 /// SELECTION half — writing `.rwv-active` — is not skipped so much as
 /// absent: it lives in [`activate_with_options`] behind a `PrimaryIdentity`,
 /// and `workweave_dir` is a workweave root, whose project the
 /// `.rwv-workweave` marker already names.
-pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
-    activate_at(
-        workweave_dir,
-        project,
-        ActivateOptions {
-            no_materialize: true,
-        },
-        ActivationMode::Context,
-    )
+pub(crate) fn activate_workweave(
+    project: &str,
+    workweave_dir: &Path,
+    opts: ActivateOptions,
+) -> Result<(), ActivationFailure> {
+    activate_in_phases(workweave_dir, project, opts, ActivationMode::Context)
 }
 
 /// Run **intent-mode** activation inside a workweave: content is authored
 /// into the workweave's project directory, which writes through to the
 /// project repo the workweave is a view onto.
 ///
-/// Install hooks remain suppressed in the workweave (mirroring
-/// [`activate_workweave`]).
+/// Install hooks are suppressed: an intent verb inside a workweave leaves
+/// them to `rwv materialize`.
 ///
 /// Used by the intent verbs (`add`, `remove`, `update`) when they run inside
 /// a workweave. `rwv doctor --fix` deliberately does NOT come through here —

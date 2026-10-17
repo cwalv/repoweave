@@ -4,6 +4,7 @@
 //! the registry). A plain path is refused: a local remote is spelled
 //! `file://`, and a project already in the weave is fetched without a source.
 
+use crate::activate::ActivateOptions;
 use crate::cli::consent::DetachConsent;
 use crate::lock;
 use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
@@ -218,6 +219,7 @@ pub fn run_fetch(
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
+    activation: ActivateOptions,
 ) -> anyhow::Result<()> {
     let project_vcs = project_vcs();
 
@@ -282,7 +284,7 @@ pub fn run_fetch(
         filter,
         jobs,
         json,
-        /* auto_activate_on_bootstrap = */ true,
+        Some(activation),
         // Source-mode fetch runs before any WorkspaceContext is resolved; no
         // resolution block is available at this point.
         None,
@@ -333,6 +335,7 @@ pub fn run_fetch_in_place(
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
+    activation: ActivateOptions,
 ) -> anyhow::Result<()> {
     let invocation = ctx;
     let sole = sole_unselected_project(invocation);
@@ -367,7 +370,7 @@ pub fn run_fetch_in_place(
         filter,
         jobs,
         json,
-        /* auto_activate_on_bootstrap = */ false,
+        None,
         ctx.resolution(),
     )?;
 
@@ -400,7 +403,7 @@ pub fn run_fetch_in_place(
         } else {
             eprintln!("{msg}");
         }
-        crate::activate::activate(project.as_str(), invocation)?;
+        crate::activate::activate_with_options(project.as_str(), invocation, activation)?;
     }
     if output == OutputMode::JsonEnvelope {
         envelope.print()?;
@@ -506,9 +509,9 @@ fn materialize_workweave_members(
 /// lock-alignment, and lock-write behavior stays identical across both
 /// invocations.
 ///
-/// `auto_activate_on_bootstrap` toggles the first-fetch auto-activate step
-/// (only meaningful for SOURCE-mode — the in-place path selects its project
-/// itself, in [`run_fetch_in_place`]).
+/// `auto_activate` carries the options of the first-fetch auto-activate step,
+/// and is `None` where there is none to take: only SOURCE-mode has one — the
+/// in-place path selects its project itself, in [`run_fetch_in_place`].
 ///
 /// `resolution` is the resolved workspace coordinate block for the
 /// `--json` envelope. `None` when no `WorkspaceContext` is available (the
@@ -528,7 +531,7 @@ fn fetch_project_repos(
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
-    auto_activate_on_bootstrap: bool,
+    auto_activate: Option<ActivateOptions>,
     resolution: Option<Resolution>,
 ) -> anyhow::Result<FetchJsonOutput> {
     // Read the manifest
@@ -870,7 +873,7 @@ fn fetch_project_repos(
 
     // Activation is not part of lock coverage: `--frozen` and a filter both
     // still activate the project a first fetch created.
-    if auto_activate_on_bootstrap {
+    if let Some(activation) = auto_activate {
         match crate::workspace::read_active_project(workspace_root) {
             Some(active) => {
                 // Route to stderr in JSON mode so stdout stays JSON-only.
@@ -890,7 +893,7 @@ fn fetch_project_repos(
                 // invocation context.
                 let ctx =
                     crate::workspace::WorkspaceContext::resolve_invocation(workspace_root, None)?;
-                crate::activate::activate(name, &ctx)?;
+                crate::activate::activate_with_options(name, &ctx, activation)?;
             }
         }
     }

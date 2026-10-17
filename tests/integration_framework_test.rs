@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use repoweave::integration::{
-    is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
+    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, Severity,
+    SurfacedFile,
 };
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::RefName;
@@ -583,12 +584,12 @@ impl Integration for MockIntegrationWithActivateHook {
         Ok(vec![])
     }
 
-    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
         self.call_log.lock().unwrap().push((
             "activate_hook".into(),
             format!("project={}", ctx.project.as_str()),
         ));
-        Ok(())
+        Ok(HookOutcome::Done)
     }
 }
 

@@ -66,6 +66,7 @@ fn create(ws: &Path, project: &str, name: &str) -> PathBuf {
         false,
         false,
         None,
+        repoweave::activate::ActivateOptions::default(),
     )
     .expect("create should succeed")
 }

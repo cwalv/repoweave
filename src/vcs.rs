@@ -1888,6 +1888,18 @@ pub enum ReplayExclusionState {
     Current,
 }
 
+/// What [`Vcs::discard_captured_change`] did with one path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiscardOutcome {
+    /// The path is back to what the working copy's parent commit records.
+    Discarded,
+    /// Left alone: the working file no longer holds the captured bytes.
+    ChangedSinceCapture,
+    /// Left alone: the VCS holds an uncommitted version of the path that the
+    /// working file does not show, so the captured bytes are not all of it.
+    HoldsUncapturedChange,
+}
+
 /// What a checkout writes at one tracked path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackedFile {
@@ -2113,6 +2125,28 @@ pub trait Vcs: Send + Sync {
     /// For git: runs
     /// `git reset -q -- <paths>`.
     fn unstage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError>;
+
+    /// Put `path` (relative to `repo`) back to what the working copy's parent
+    /// commit records — absent, where it records nothing — when `captured`
+    /// is all of the uncommitted change to it: the working file holds exactly
+    /// `captured`, and the VCS holds no other uncommitted version of it.
+    /// Otherwise nothing is touched, and the outcome says which condition
+    /// failed.
+    ///
+    /// The caller has copied `captured` somewhere else; this is the other half
+    /// of the move, and it must never discard a byte the copy does not hold.
+    ///
+    /// For git: a staged version that differs from the working tree is the
+    /// uncommitted version the file does not show, as is any rename, type
+    /// change or conflict. Otherwise runs `git reset -q -- <path>` and
+    /// `git checkout-index -f -u -- <path>` where HEAD records the path, and
+    /// removes it from the index and the working tree where HEAD does not.
+    fn discard_captured_change(
+        &self,
+        repo: &Path,
+        path: &Path,
+        captured: &[u8],
+    ) -> Result<DiscardOutcome, VcsError>;
 
     /// Return `true` when something is marked for the next commit.
     ///

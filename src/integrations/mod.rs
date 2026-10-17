@@ -55,3 +55,31 @@ pub(crate) fn node_tool(name: &str) -> String {
 pub(crate) fn subprocess_cwd(root: &std::path::Path) -> &std::path::Path {
     dunce::simplified(root)
 }
+
+/// Run an install hook's tool from the weave root `root`, or `Ok(None)` without
+/// spawning anything when `program` is not on `PATH`.
+///
+/// The lookup comes first because a spawn error cannot say which input was
+/// missing: a working directory that does not exist fails with the same
+/// not-found kind as a program that does not.
+///
+/// The tool's stdout goes to rwv's stderr: a verb that runs hooks may owe its
+/// own stdout to a machine — `--json`, or the bare path `workweave create
+/// --hook-mode` prints for the agent runtime that reads it.
+pub(crate) fn run_install_tool(
+    program: &str,
+    args: &[&str],
+    root: &std::path::Path,
+) -> anyhow::Result<Option<std::process::ExitStatus>> {
+    use anyhow::Context;
+    if which::which(program).is_err() {
+        return Ok(None);
+    }
+    std::process::Command::new(program)
+        .args(args)
+        .current_dir(subprocess_cwd(root))
+        .stdout(std::io::stderr())
+        .status()
+        .map(Some)
+        .with_context(|| format!("failed to run {program}"))
+}

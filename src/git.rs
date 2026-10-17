@@ -2,8 +2,8 @@
 
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
-    ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef, PublishRef,
-    RawRefName, RawRevisionId, RefName, RemoteDefaultBranch, ReplayExclusionState,
+    DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
+    PublishRef, RawRefName, RawRevisionId, RefName, RemoteDefaultBranch, ReplayExclusionState,
     ResolvedRevisionId, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
     VerifiedRestoreOutcome, WorkspacePopulation,
 };
@@ -1524,6 +1524,43 @@ impl Vcs for GitVcs {
         args.extend_from_slice(paths);
         Self::run(&args, repo).map(|_| ())
     }
+    fn discard_captured_change(
+        &self,
+        repo: &Path,
+        path: &Path,
+        captured: &[u8],
+    ) -> Result<DiscardOutcome, VcsError> {
+        let arg = path_as_git_arg(path, "path")?;
+        let file = repo.join(path);
+        if std::fs::read(&file).ok().as_deref() != Some(captured) {
+            return Ok(DiscardOutcome::ChangedSinceCapture);
+        }
+        let columns: Vec<(u8, u8)> = Self::porcelain_status(repo, StatusReach::Untracked)?
+            .into_iter()
+            .filter(|entry| entry.path == arg || entry.renamed_from.as_deref() == Some(arg))
+            .map(|entry| (entry.staged, entry.worktree))
+            .collect();
+        let remove_file = || {
+            std::fs::remove_file(&file).map_err(|e| VcsError::Io {
+                ctx: format!("failed to remove {}", file.display()),
+                source: e,
+            })
+        };
+        match columns.as_slice() {
+            [] => {}
+            [(b' ', b'M')] | [(b'M', b' ')] => {
+                Self::run(&["reset", "-q", "--", arg], repo)?;
+                Self::run(&["checkout-index", "-f", "-u", "--", arg], repo)?;
+            }
+            [(b'A', b' ')] => {
+                Self::run(&["reset", "-q", "--", arg], repo)?;
+                remove_file()?;
+            }
+            [(b'?', b'?')] => remove_file()?,
+            _ => return Ok(DiscardOutcome::HoldsUncapturedChange),
+        }
+        Ok(DiscardOutcome::Discarded)
+    }
     fn has_staged_changes(&self, repo: &Path) -> Result<bool, VcsError> {
         // Exit 0 means no difference between index and HEAD, so a non-zero
         // exit is the positive answer and not a failure to report.
@@ -2933,13 +2970,12 @@ enum StatusReach {
 }
 
 /// One record of `git status --porcelain -z` v1.
-///
-/// The working-tree column is not carried: no caller has needed it, and a
-/// field nothing reads is a claim about the grammar that nothing checks.
 struct PorcelainEntry {
     /// Index column. `' '` when the index matches HEAD, `'?'` for a file git
     /// is not tracking.
     staged: u8,
+    /// Working-tree column. `' '` when the working file matches the index.
+    worktree: u8,
     /// The path the entry describes; for a rename or copy, the name after it.
     path: String,
     /// The name a rename moved `path` from, which the rename leaves changed
@@ -2991,6 +3027,7 @@ impl GitVcs {
             };
             entries.push(PorcelainEntry {
                 staged: columns.as_bytes()[0],
+                worktree: columns.as_bytes()[1],
                 path: path.to_owned(),
                 renamed_from: source.filter(|_| columns.contains('R')).map(str::to_owned),
             });

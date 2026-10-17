@@ -1,6 +1,6 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
-use crate::activate::{activate_intent_for, ActivationFailure, RestorePoint};
+use crate::activate::{activate_intent_for, ActivateOptions, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType,
@@ -161,6 +161,7 @@ pub(crate) fn settle_manifest(
     ctx: &WorkspaceContext,
     project: &ProjectName,
     edited: Option<&Manifest>,
+    opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
@@ -185,7 +186,7 @@ pub(crate) fn settle_manifest(
         return Ok(());
     }
 
-    match activate_intent_for(project.as_str(), ctx) {
+    match activate_intent_for(project.as_str(), ctx, opts) {
         Ok(()) => {
             // Report only: the manifest change has already landed.
             for issue in crate::activate::member_incompatibilities(root, project, manifest) {
@@ -230,7 +231,12 @@ pub(crate) fn settle_manifest(
 ///
 /// `ctx` is the already-resolved invocation context (with `--project`
 /// baked in when passed). Handlers must not re-resolve.
-pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn run_add(
+    url: &str,
+    role: Role,
+    ctx: &WorkspaceContext,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
     let parsed_url: RepoUrl = url.parse()?;
     let repo_path = match crate::registry::placement_result(&parsed_url) {
         Ok(repo_path) => repo_path,
@@ -306,7 +312,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             clone_into(vcs.as_ref(), &existing.url, &dest)?;
         }
         place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
-        return settle_manifest(ctx, &project, None);
+        return settle_manifest(ctx, &project, None, opts);
     }
 
     if vcs.is_repo(&dest) {
@@ -360,7 +366,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
 
         // Per-workspace state: the workweave's own copy when CWD is in one,
         // primary's otherwise.
-        settle_manifest(ctx, &project, Some(&manifest))
+        settle_manifest(ctx, &project, Some(&manifest), opts)
     })();
     added.map_err(|e| left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}")))?;
 
@@ -407,7 +413,12 @@ fn refuse_foreign_clone_at_placement(
 /// `rwv add --adopt <path>`: register the clone already at `path` under the
 /// primary weave root — the canonical layout regardless of CWD — recording
 /// the URL its origin remote names.
-pub fn run_add_adopt(path: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn run_add_adopt(
+    path: &str,
+    role: Role,
+    ctx: &WorkspaceContext,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
@@ -450,6 +461,7 @@ pub fn run_add_adopt(path: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::
             ctx,
             &project,
             registration.as_ref().map(|(manifest, _)| manifest),
+            opts,
         )
     })();
     added.map_err(|e| {
@@ -701,6 +713,7 @@ pub fn run_remove(
     delete: bool,
     delete_shared_clone: bool,
     ctx: &WorkspaceContext,
+    opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
@@ -736,7 +749,7 @@ pub fn run_remove(
         None
     };
 
-    settle_manifest(ctx, &project, removed.is_some().then_some(&manifest))?;
+    settle_manifest(ctx, &project, removed.is_some().then_some(&manifest), opts)?;
 
     if removed.is_some() {
         eprintln!("Removed '{}' from manifest", repo_path.as_str());
@@ -1059,6 +1072,7 @@ pub fn run_add_new(
     params: &[String],
     params_json: Option<&str>,
     ctx: &WorkspaceContext,
+    opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     // `rwv add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
@@ -1131,7 +1145,7 @@ pub fn run_add_new(
         if existing.url == plan.url {
             announce_already_registered(&repo_path);
             place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
-            return settle_manifest(ctx, &project, None);
+            return settle_manifest(ctx, &project, None, opts);
         }
         crate::refuse!(
             RefusalKind::OccupiedPlacement,
@@ -1258,7 +1272,7 @@ pub fn run_add_new(
         // commit lands.
         place_member_noting(vcs.as_ref(), ctx, &dest, &repo_path, role, &mut left)?;
 
-        settle_manifest(ctx, &project, Some(&manifest))
+        settle_manifest(ctx, &project, Some(&manifest), opts)
     })();
     added.map_err(|e| {
         left.refused(

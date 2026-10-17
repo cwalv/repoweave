@@ -323,6 +323,7 @@ fn create_no_submodule_invocation_for_repo_without_gitmodules() {
         false,
         false,
         None,
+        repoweave::activate::ActivateOptions::default(),
     );
 
     assert!(
@@ -478,6 +479,7 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
         false,
         false,
         None,
+        repoweave::activate::ActivateOptions::default(),
     )
     .expect("create should succeed");
 
@@ -533,6 +535,7 @@ fn doctor_scan_silent_for_repo_without_gitmodules() {
         false,
         false,
         None,
+        repoweave::activate::ActivateOptions::default(),
     )
     .expect("create should succeed");
 

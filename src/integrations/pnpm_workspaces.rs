@@ -1,5 +1,6 @@
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, merge_activate, missing_issue, orphaned_region_issues,
@@ -194,10 +195,10 @@ impl Integration for PnpmWorkspaces {
         ))
     }
 
-    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         if paths.is_empty() {
-            return Ok(());
+            return Ok(HookOutcome::Done);
         }
 
         // Full `pnpm install` (not `--lockfile-only`): activation is the
@@ -205,17 +206,17 @@ impl Integration for PnpmWorkspaces {
         // `rwv lock` previously and used `--lockfile-only` for that
         // reason. Run from workspace_root for the same reason npm does —
         // that's where the symlinks make member paths resolve correctly.
-        let status = std::process::Command::new(super::node_tool("pnpm"))
-            .args(["install"])
-            .current_dir(super::subprocess_cwd(ctx.workspace_root))
-            .status()
-            .context("failed to run pnpm")?;
+        let Some(status) =
+            super::run_install_tool(&super::node_tool("pnpm"), &["install"], ctx.workspace_root)?
+        else {
+            return Ok(HookOutcome::ToolMissing("pnpm"));
+        };
 
         if !status.success() {
             anyhow::bail!("pnpm install failed (exit {})", status);
         }
 
-        Ok(())
+        Ok(HookOutcome::Done)
     }
 
     /// `pnpm-workspace.yaml`'s marked `packages:` block, and the

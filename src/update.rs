@@ -137,6 +137,7 @@ pub struct UpdateNdjsonRecord<'a> {
 /// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
 /// loop on a bounded worker pool, prefixing stdout/stderr lines with the
 /// repo path. The lock write happens serially after all workers join.
+#[allow(clippy::too_many_arguments)]
 pub fn run_update(
     ctx: &WorkspaceContext,
     dirty: bool,
@@ -145,6 +146,7 @@ pub fn run_update(
     filter: &RepoFilter,
     jobs: usize,
     detach_checkouts: Option<DetachConsent>,
+    opts: crate::activate::ActivateOptions,
 ) -> anyhow::Result<()> {
     // Cross-verb advisory refusal (Correction 1, COVERAGE). `update` advances
     // tips and re-snapshots the lock in the active workspace; if an in-flight
@@ -172,6 +174,7 @@ pub fn run_update(
         filter,
         jobs,
         detach_checkouts,
+        opts,
     )
 }
 
@@ -209,6 +212,7 @@ fn update_for_project(
     filter: &RepoFilter,
     jobs: usize,
     detach_checkouts: Option<DetachConsent>,
+    opts: crate::activate::ActivateOptions,
 ) -> anyhow::Result<()> {
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
@@ -430,7 +434,7 @@ fn update_for_project(
     if filter.is_empty() {
         match workweave_dir {
             Some(dir) => crate::activate::activate_workweave_intent(project_name.as_str(), dir),
-            None => crate::activate::activate_intent(project_name.as_str(), ctx),
+            None => crate::activate::activate_intent_with_options(project_name.as_str(), ctx, opts),
         }
         .context("failed to regenerate integration content after update")?;
         authored = crate::activate::owned_paths(active_root, project_name, &project.manifest);

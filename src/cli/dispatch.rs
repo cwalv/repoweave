@@ -760,15 +760,24 @@ pub fn run() -> anyhow::Result<()> {
             params,
             params_json,
             project,
+            no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let activation = activate::ActivateOptions { no_materialize };
             if new {
-                add_remove::run_add_new(&url, role, &params, params_json.as_deref(), &ctx)?;
+                add_remove::run_add_new(
+                    &url,
+                    role,
+                    &params,
+                    params_json.as_deref(),
+                    &ctx,
+                    activation,
+                )?;
             } else if adopt {
-                add_remove::run_add_adopt(&url, role, &ctx)?;
+                add_remove::run_add_adopt(&url, role, &ctx, activation)?;
             } else {
-                add_remove::run_add(&url, role, &ctx)?;
+                add_remove::run_add(&url, role, &ctx, activation)?;
             }
         }
         Some(Commands::Fetch {
@@ -782,6 +791,7 @@ pub fn run() -> anyhow::Result<()> {
             jobs,
             json,
             project,
+            no_materialize,
         }) => {
             let mode = if frozen {
                 fetch::FetchMode::Frozen
@@ -819,6 +829,7 @@ pub fn run() -> anyhow::Result<()> {
                         &filter,
                         jobs,
                         json,
+                        activate::ActivateOptions { no_materialize },
                     )?;
                 }
                 None => {
@@ -855,6 +866,7 @@ pub fn run() -> anyhow::Result<()> {
                         &filter,
                         jobs,
                         json,
+                        activate::ActivateOptions { no_materialize },
                     )?;
                 }
             }
@@ -863,10 +875,15 @@ pub fn run() -> anyhow::Result<()> {
             project,
             provider,
             adopt,
+            no_materialize,
         }) => {
             // Bootstrap-then-resolve happens inside the handler — see init.rs.
             if adopt {
-                init::init_adopt(&project, &origin_dir)?;
+                init::init_adopt(
+                    &project,
+                    &origin_dir,
+                    activate::ActivateOptions { no_materialize },
+                )?;
             } else {
                 init::init(&project, provider.as_deref(), &origin_dir)?;
             }
@@ -875,21 +892,34 @@ pub fn run() -> anyhow::Result<()> {
             repo,
             role,
             project,
+            no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             refuse_symlinked_members_here(&ctx)?;
-            crate::role::run_role(&repo, role, &ctx)?;
+            crate::role::run_role(
+                &repo,
+                role,
+                &ctx,
+                activate::ActivateOptions { no_materialize },
+            )?;
         }
         Some(Commands::Remove {
             path,
             delete,
             delete_shared_clone,
             project,
+            no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
-            add_remove::run_remove(&path, delete, delete_shared_clone, &ctx)?;
+            add_remove::run_remove(
+                &path,
+                delete,
+                delete_shared_clone,
+                &ctx,
+                activate::ActivateOptions { no_materialize },
+            )?;
         }
         Some(Commands::Workweave {
             project,
@@ -934,6 +964,7 @@ pub fn run() -> anyhow::Result<()> {
                         from,
                         capture_dirty,
                         dir,
+                        no_materialize,
                     }) => {
                         let source_root = match from.as_deref() {
                             None => ctx.active_path().to_path_buf(),
@@ -963,6 +994,7 @@ pub fn run() -> anyhow::Result<()> {
                             replace_existing,
                             capture_dirty,
                             dir_override,
+                            activate::ActivateOptions { no_materialize },
                         )?;
                         if hook_mode {
                             println!("{}", workweave_path.display());
@@ -1221,6 +1253,7 @@ pub fn run() -> anyhow::Result<()> {
             repos,
             jobs,
             json,
+            no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
@@ -1237,7 +1270,16 @@ pub fn run() -> anyhow::Result<()> {
             let jobs = crate::parallel::resolve_jobs(jobs);
             refuse_symlinked_members_here(&ctx)?;
             let commit = commit.then(|| lock::CommitMessage::from_flag(message));
-            update::run_update(&ctx, dirty, commit, json, &filter, jobs, detach_checkouts)?;
+            update::run_update(
+                &ctx,
+                dirty,
+                commit,
+                json,
+                &filter,
+                jobs,
+                detach_checkouts,
+                activate::ActivateOptions { no_materialize },
+            )?;
         }
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();

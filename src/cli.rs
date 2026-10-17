@@ -125,6 +125,9 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
     /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references).
     Fetch {
@@ -160,6 +163,9 @@ pub enum Commands {
         /// Without SOURCE, operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Skip the integration install hooks (e.g., `npm install`, `uv sync`) of the activation a fetch performs when it activates a project (a SOURCE fetch's first one, or an in-place fetch selecting the weave's only project); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
     /// Initialize a new project
     Init {
@@ -171,6 +177,9 @@ pub enum Commands {
         /// Adopt an existing repo: clone from URL or shorthand instead of git init
         #[arg(long)]
         adopt: bool,
+        /// With `--adopt`, skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long, requires = "adopt")]
+        no_materialize: bool,
     },
     /// Change a repo's role in the active project, and settle its files for it
     Role {
@@ -182,6 +191,9 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
     /// Remove a repo from the active project
     Remove {
@@ -196,6 +208,9 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
 
     // ── Workweaves ────────────────────────────────────────────────────────────
@@ -461,6 +476,9 @@ pub enum Commands {
         /// Emit per-repo outcomes as JSON (envelope under -j 1, NDJSON under -j > 1). See `rwv explain update`.
         #[arg(long)]
         json: bool,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
 
     // ── Tooling ───────────────────────────────────────────────────────────────
@@ -520,10 +538,12 @@ pub enum WorkweaveAction {
         #[arg(long)]
         from: Option<String>,
         /// Allow creation even when the source project directory has
-        /// uncommitted changes. The dirty state is captured into the new
-        /// workweave's project worktree. Without this flag, `create` refuses
-        /// and names the dirty files so you can commit, stash, or opt in
-        /// explicitly.
+        /// uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock`
+        /// are moved into the new workweave's project worktree: copied there,
+        /// then discarded from the source once the workweave exists. Other
+        /// uncommitted files stay in the source. Without this flag, `create`
+        /// refuses and names the dirty files so you can commit, stash, or opt
+        /// in explicitly.
         #[arg(long)]
         capture_dirty: bool,
         /// Explicit per-workweave placement override.
@@ -535,6 +555,9 @@ pub enum WorkweaveAction {
         /// as-is; relative paths resolve against the primary root.
         #[arg(long)]
         dir: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`) in the new workweave; `rwv materialize` inside it runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
     /// Delete a workweave
     Delete {

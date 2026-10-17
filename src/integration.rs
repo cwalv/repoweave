@@ -393,6 +393,15 @@ pub struct Issue {
     pub safe_to_fix: bool,
 }
 
+/// What an [`Integration::activate_hook`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookOutcome {
+    /// Ran to completion, or had nothing to run.
+    Done,
+    /// The named CLI the hook drives is not on `PATH`, so nothing ran.
+    ToolMissing(&'static str),
+}
+
 // ---------------------------------------------------------------------------
 // Member incompatibility
 // ---------------------------------------------------------------------------
@@ -611,7 +620,7 @@ pub trait Integration {
     /// Integrations override this to run ecosystem install commands
     /// (e.g., `npm install`, `uv sync`, `cargo fetch`) that follow membership
     /// changes. Fires whenever the workspace's set of active repos may have
-    /// changed; users can suppress with `rwv activate --no-materialize`.
+    /// changed; `--no-materialize` suppresses it on every verb that runs it.
     ///
     /// **A hook materializes; it never moves a pin.** Its mandate is to make
     /// the ecosystem state implied by current membership and the pins already
@@ -623,16 +632,32 @@ pub trait Integration {
     /// update on (`rwv doctor --fix` among them), and firing frequency is
     /// only harmless because a materializing hook is idempotent.
     ///
-    /// Stays `Result<()>`, unlike `activate()`, and the settings-shaped finding
-    /// it therefore cannot return is kept away from it instead: the caller
-    /// refuses every hook while any enabled integration's
-    /// `[integrations.<name>]` block fails to deserialize, so an implementation
-    /// reading its own settings here is reached only once they parse. What is
+    /// Returns a [`HookOutcome`] rather than findings, unlike `activate()`, and
+    /// the settings-shaped finding it therefore cannot return is kept away from
+    /// it instead: the caller refuses every hook while any enabled
+    /// integration's `[integrations.<name>]` block fails to deserialize, so an
+    /// implementation reading its own settings here is reached only once they
+    /// parse. A tool absent from `PATH` is an outcome, not an error: the hook
+    /// ran nothing, and the runner reports it as [`IssueKind::ToolMissing`] at
+    /// warning severity while the other integrations' hooks still run. What is
     /// left to bail with is a hook that failed while running, which reaches the
     /// operator as [`IssueKind::IntegrationFailed`] — whose advised repair,
     /// re-running the generators and the hooks, is the right one for that cause
     /// and the wrong one for a block nothing can read.
-    fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
+        Ok(HookOutcome::Done)
+    }
+
+    /// Bring content whose right value is a fact about this host, not about
+    /// `rwv.toml`, to this host's answer.
+    ///
+    /// Runs at every materialization — wherever the install hooks are not
+    /// suppressed — ahead of surfacing, so a file this creates is linked in
+    /// the same pass. The authoring verbs reach the same content through
+    /// `activate()`, which owns everything the manifest decides; this owns
+    /// only what a machine decides, so a context verb may run it without
+    /// authoring anything the manifest asked for.
+    fn fit_to_host(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
         Ok(())
     }
 

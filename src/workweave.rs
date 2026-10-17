@@ -1618,8 +1618,12 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
 /// - `false` (default): refuse with a clear error if `projects/<project>/`
 ///   has uncommitted changes. The error names the dirty files and suggests
 ///   committing, stashing, or passing `--capture-dirty`.
-/// - `true`: capture the dirty state into the workweave (legacy behavior).
-///   The workweave's project worktree will reflect the uncommitted edits.
+/// - `true`: move uncommitted edits to `rwv.toml` and `rwv.lock` into the
+///   workweave's project worktree, discarding them from the source once the
+///   workweave is created; see [`release_captured_edits`].
+///
+/// `activation` is what the workweave's activation runs with; its
+/// `no_materialize` skips the install hooks.
 ///
 /// `dir_override` is the optional per-invocation placement override. When
 /// `Some(p)`, the workweave lands at `p` verbatim (canonicalized against the
@@ -1639,6 +1643,7 @@ pub fn create_workweave(
     replace_existing: bool,
     capture_dirty: bool,
     dir_override: Option<&Path>,
+    activation: crate::activate::ActivateOptions,
 ) -> anyhow::Result<PathBuf> {
     let project_vcs = project_vcs();
     let manifest = load_manifest(source_root, project)?;
@@ -2136,30 +2141,36 @@ pub fn create_workweave(
     // and an overlay driven by byte inequality writes the source's line
     // endings into a tree whose index expects the filtered ones — tracked
     // dirt in a workweave that started clean.
+    let mut captured = CapturedEdits::default();
     if project_dir.exists() && project_wt_dest.exists() && project_vcs.is_repo(&project_dir) {
         let dirty_names = project_vcs
             .dirty_file_names(&project_dir)
             .context("failed to read project repo status for the dirty-state overlay")?;
+        captured.uncovered = dirty_names
+            .iter()
+            .filter(|n| ![Manifest::FILE_NAME, LockFile::FILE_NAME].contains(&n.as_str()))
+            .cloned()
+            .collect();
         for fname in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
             let src = project_dir.join(fname);
             let dst = project_wt_dest.join(fname);
-            if !src.exists() {
+            if !src.exists() || !dirty_names.iter().any(|n| n == fname) {
                 continue;
             }
-            let src_bytes = std::fs::read(&src).ok();
-            if dirty_names.iter().any(|n| n == fname) {
-                eprintln!(
-                    "rwv workweave create: using working-tree projects/{}/{fname} \
-                     (uncommitted changes; workweave captures dirty state)",
-                    project.as_str(),
-                );
-                if let Some(bytes) = &src_bytes {
-                    if let Err(e) = std::fs::write(&dst, bytes) {
-                        eprintln!(
-                            "rwv workweave create: warning: failed to overlay {}: {e}",
-                            dst.display()
-                        );
-                    }
+            eprintln!(
+                "rwv workweave create: using working-tree projects/{}/{fname} \
+                 (uncommitted changes; workweave captures dirty state)",
+                project.as_str(),
+            );
+            match std::fs::read(&src).and_then(|bytes| std::fs::write(&dst, &bytes).map(|_| bytes))
+            {
+                Ok(bytes) => captured.files.push((fname, bytes)),
+                Err(e) => {
+                    captured.incomplete = true;
+                    eprintln!(
+                        "rwv workweave create: warning: failed to overlay {}: {e}",
+                        dst.display()
+                    );
                 }
             }
         }
@@ -2255,9 +2266,17 @@ pub fn create_workweave(
     // and nothing keeps in agreement with the marker.
     marker.write(&workweave_dir)?;
 
-    // Run activate in the workweave context. Surfacing only — the project
-    // SELECTION step is skipped for a workweave root (see `activate_at`).
-    crate::activate::activate_workweave(project.as_str(), &workweave_dir)?;
+    // Run activate in the workweave context. The project SELECTION step is
+    // skipped for a workweave root (see `activate_at`). A failure before the
+    // hooks leaves a seat nothing can use, so the guard rolls it back; one at
+    // the hooks leaves a usable seat whose install state is incomplete, which
+    // is kept, as `add` keeps a manifest change whose hooks failed.
+    let hooks_failed =
+        match crate::activate::activate_workweave(project.as_str(), &workweave_dir, activation) {
+            Ok(()) => None,
+            Err(crate::activate::ActivationFailure::BeforeHooks(e)) => return Err(e),
+            Err(crate::activate::ActivationFailure::AtHooks(e)) => Some(e),
+        };
 
     // Record the workweave in the primary-side registry so `list`, `delete`,
     // and doctor find it without re-scanning. Absolute path so per-workweave
@@ -2275,7 +2294,89 @@ pub fn create_workweave(
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
 
+    // Only now does the workweave certainly keep what was copied into it: a
+    // failure above rolled it back, and with it the only other copy.
+    if capture_dirty {
+        release_captured_edits(project_vcs.as_ref(), &project_dir, project, &captured);
+    }
+
+    if let Some(e) = hooks_failed {
+        return Err(e.context(format!(
+            "workweave created at {}; only its install hooks did not complete. Fix \
+             the cause, then run `rwv materialize` inside it",
+            crate::path_spelling::operator_path(&workweave_dir)
+        )));
+    }
+
     Ok(workweave_dir)
+}
+
+/// What `--capture-dirty` copied into a new workweave, held so the source
+/// gives up exactly what the copy took.
+#[derive(Default)]
+struct CapturedEdits {
+    /// Each copied file's name and the bytes the workweave received.
+    files: Vec<(&'static str, Vec<u8>)>,
+    /// A file the capture covers failed to copy.
+    incomplete: bool,
+    /// Uncommitted files in the source the capture does not cover.
+    uncovered: Vec<String>,
+}
+
+/// Discard from the source project directory the edits `captured` moved into
+/// the new workweave, so the source is not left carrying a second copy that
+/// would stop the workweave landing back on it.
+///
+/// Nothing is discarded unless every covered file copied; and a file is
+/// discarded only while it still holds the bytes copied, with nothing staged
+/// that those bytes do not show. Whatever is left is named, and none of it
+/// fails the create: the workweave already holds a copy.
+fn release_captured_edits(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    project: &ProjectName,
+    captured: &CapturedEdits,
+) {
+    if captured.incomplete {
+        eprintln!(
+            "rwv workweave create: warning: the uncommitted edits stay in projects/{project} \
+             as well: copying them into the workweave did not complete, so nothing was \
+             discarded from the source"
+        );
+        return;
+    }
+    for (fname, bytes) in &captured.files {
+        let left = match vcs.discard_captured_change(project_dir, Path::new(fname), bytes) {
+            Ok(crate::vcs::DiscardOutcome::Discarded) => {
+                eprintln!(
+                    "rwv workweave create: moved the uncommitted changes to \
+                     projects/{project}/{fname} into the workweave; the source holds its \
+                     committed version"
+                );
+                continue;
+            }
+            Ok(crate::vcs::DiscardOutcome::ChangedSinceCapture) => {
+                "it changed after it was copied".to_string()
+            }
+            Ok(crate::vcs::DiscardOutcome::HoldsUncapturedChange) => {
+                "it has staged changes its working file does not show, and only the \
+                 working file was copied"
+                    .to_string()
+            }
+            Err(e) => format!("discarding it failed: {e}"),
+        };
+        eprintln!(
+            "rwv workweave create: warning: projects/{project}/{fname} stays uncommitted in \
+             the source as well as in the workweave: {left}"
+        );
+    }
+    if !captured.uncovered.is_empty() {
+        eprintln!(
+            "rwv workweave create: these uncommitted files in projects/{project} are not \
+             captured and stay in the source only: {}",
+            captured.uncovered.join(", ")
+        );
+    }
 }
 
 /// Validate that an existing workweave directory matches `(primary_root, project, name)`
@@ -4008,6 +4109,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 false,
                 false,
                 None,
+                crate::activate::ActivateOptions::default(),
             )?;
             println!("{}", path.display());
         }

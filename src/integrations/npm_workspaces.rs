@@ -1,5 +1,6 @@
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -265,10 +266,10 @@ impl Integration for NpmWorkspaces {
         ))
     }
 
-    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         if paths.is_empty() {
-            return Ok(());
+            return Ok(HookOutcome::Done);
         }
 
         // Full `npm install` (not `--package-lock-only`): activation is
@@ -278,17 +279,17 @@ impl Integration for NpmWorkspaces {
         // Run from workspace_root: the symlink at the root points at the
         // canonical package.json in output_dir, and workspace member
         // paths are resolved relative to the symlink location.
-        let status = std::process::Command::new(super::node_tool("npm"))
-            .args(["install"])
-            .current_dir(super::subprocess_cwd(ctx.workspace_root))
-            .status()
-            .context("failed to run npm")?;
+        let Some(status) =
+            super::run_install_tool(&super::node_tool("npm"), &["install"], ctx.workspace_root)?
+        else {
+            return Ok(HookOutcome::ToolMissing("npm"));
+        };
 
         if !status.success() {
             anyhow::bail!("npm install failed (exit {})", status);
         }
 
-        Ok(())
+        Ok(HookOutcome::Done)
     }
 
     /// `package-lock.json` is fully-owned — gitignore-eligible, whole-deletable.

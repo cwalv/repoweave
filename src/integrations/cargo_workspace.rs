@@ -154,7 +154,8 @@
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, fully_owned_drift_issue, holds_owned_region, keypath, merge_activate,
@@ -828,10 +829,10 @@ impl Integration for CargoWorkspace {
         Ok(issues)
     }
 
-    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
         if !Self::has_active_cargo_work(ctx, &cfg) {
-            return Ok(());
+            return Ok(HookOutcome::Done);
         }
 
         // Precheck: `activate` is a context verb — it surfaces + verifies but
@@ -886,7 +887,7 @@ impl Integration for CargoWorkspace {
                 managed.display(),
                 unfetched.join(", "),
             );
-            return Ok(());
+            return Ok(HookOutcome::Done);
         }
 
         let lock_path = ctx.output_dir.join("Cargo.lock");
@@ -914,11 +915,10 @@ impl Integration for CargoWorkspace {
         // Before the generator runs, not after it returns: an input that moves
         // while cargo is resolving is exactly what the record must not absorb.
         let inputs = ObservedInputs::observe(ctx.output_dir, ctx.project, ctx.workspace_root);
-        let status = std::process::Command::new("cargo")
-            .arg(subcommand)
-            .current_dir(super::subprocess_cwd(ctx.workspace_root))
-            .status()
-            .context("failed to run cargo")?;
+        let Some(status) = super::run_install_tool("cargo", &[subcommand], ctx.workspace_root)?
+        else {
+            return Ok(HookOutcome::ToolMissing("cargo"));
+        };
 
         if !status.success() {
             anyhow::bail!(
@@ -948,7 +948,7 @@ impl Integration for CargoWorkspace {
                 crate::path_spelling::operator_path(&surfaced),
                 crate::path_spelling::operator_path(&lock_path)
             );
-            return Ok(());
+            return Ok(HookOutcome::Done);
         }
 
         let lock_bytes = std::fs::read(&lock_path).with_context(|| {
@@ -959,7 +959,21 @@ impl Integration for CargoWorkspace {
         })?;
         stamp_owned_generation(ctx.output_dir, "Cargo.lock", &lock_bytes, inputs)?;
 
-        Ok(())
+        Ok(HookOutcome::Done)
+    }
+
+    /// The `rustc-wrapper` key, which exists exactly where the wrapper binary
+    /// is on this host's `PATH`. Only when the knob is set: with it unset the
+    /// key's absence is the manifest's answer, which `activate()` gives.
+    /// Settings that do not parse are left to the refusal the hooks meet.
+    fn fit_to_host(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+            return Ok(());
+        };
+        if cfg.rustc_wrapper.is_none() || !Self::has_active_cargo_work(ctx, &cfg) {
+            return Ok(());
+        }
+        Self::apply_rustc_wrapper(ctx, &cfg)
     }
 
     /// `Cargo.lock` is fully-owned — gitignore-eligible, whole-deletable.

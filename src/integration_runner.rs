@@ -10,7 +10,9 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
-use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, IssueKind, Severity};
+use crate::integration::{
+    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, Severity,
+};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
 use crate::workspace::ContainerKind;
 
@@ -324,7 +326,8 @@ pub fn run_member_incompatibilities(
 /// generated config files. Each integration's `activate_hook()` runs
 /// ecosystem install commands (e.g., `npm install`, `uv sync`). If a hook
 /// returns an error, it is captured as an `Issue` and execution
-/// continues.
+/// continues. A hook whose tool is not on `PATH` contributes a warning,
+/// never an error: nothing ran, so nothing failed.
 ///
 /// This was previously named `run_lock_hooks` and fired from `rwv lock`,
 /// which is the wrong trigger — ecosystem-lockfile refresh follows
@@ -336,9 +339,37 @@ pub fn run_activate_hooks(
 ) -> Vec<Issue> {
     for_each_enabled(integrations, manifest, |integration, config| {
         let ctx = ctx_base.build_context(config, manifest);
-        integration
+        let outcome = integration
             .activate_hook(&ctx)
             .map_err(|e| anyhow::anyhow!("activate hook failed: {e}"))?;
+        Ok(match outcome {
+            HookOutcome::Done => Vec::new(),
+            HookOutcome::ToolMissing(tool) => vec![Issue {
+                integration: integration.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{tool} is not on PATH, so this integration's install hook did not \
+                     run; install {tool}, then run `rwv materialize`"
+                ),
+                kind: IssueKind::ToolMissing,
+                safe_to_fix: false,
+            }],
+        })
+    })
+}
+
+/// Run [`Integration::fit_to_host`] for each enabled integration, collecting a
+/// failure as an issue so the remaining integrations still run.
+pub fn run_host_fits(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> Vec<Issue> {
+    for_each_enabled(integrations, manifest, |integration, config| {
+        let ctx = ctx_base.build_context(config, manifest);
+        integration
+            .fit_to_host(&ctx)
+            .map_err(|e| anyhow::anyhow!("fitting to this host failed: {e}"))?;
         Ok(Vec::new())
     })
 }
@@ -384,6 +415,7 @@ mod tests {
         check_err: Option<String>,
         deactivate_err: Option<String>,
         lock_err: Option<String>,
+        hook_outcome: HookOutcome,
         call_log: Arc<Mutex<Vec<(String, String)>>>,
     }
 
@@ -397,6 +429,7 @@ mod tests {
                 check_err: None,
                 deactivate_err: None,
                 lock_err: None,
+                hook_outcome: HookOutcome::Done,
                 call_log: Arc::new(Mutex::new(Vec::new())),
             }
         }
@@ -418,6 +451,11 @@ mod tests {
 
         fn with_deactivate_err(mut self, msg: &str) -> Self {
             self.deactivate_err = Some(msg.to_string());
+            self
+        }
+
+        fn with_hook_outcome(mut self, outcome: HookOutcome) -> Self {
+            self.hook_outcome = outcome;
             self
         }
 
@@ -473,7 +511,7 @@ mod tests {
             Ok(self.check_issues.clone())
         }
 
-        fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
             self.call_log.lock().unwrap().push((
                 "activate_hook".into(),
                 format!("project={}", ctx.project.as_str()),
@@ -481,7 +519,7 @@ mod tests {
             if let Some(ref msg) = self.lock_err {
                 anyhow::bail!("{msg}");
             }
-            Ok(())
+            Ok(self.hook_outcome)
         }
     }
 
@@ -813,6 +851,33 @@ mod tests {
             .filter(|(m, _)| m == "activate_hook")
             .collect();
         assert_eq!(npm_hook_calls.len(), 1);
+    }
+
+    #[test]
+    fn activate_hooks_tool_missing_is_a_warning_and_others_still_run() {
+        let toolless =
+            MockIntegration::new("pnpm", true).with_hook_outcome(HookOutcome::ToolMissing("pnpm"));
+        let succeeding = MockIntegration::new("npm", true);
+        let integrations: Vec<&dyn Integration> = vec![&toolless, &succeeding];
+
+        let manifest = make_manifest(BTreeMap::new());
+        let project = ProjectName::new("test-project").unwrap();
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
+
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].integration, "pnpm");
+        assert_eq!(issues[0].kind, IssueKind::ToolMissing);
+        assert_eq!(issues[0].severity, Severity::Warning);
+        assert!(issues[0].message.contains("pnpm is not on PATH"));
+
+        let npm_hook_calls = succeeding
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "activate_hook")
+            .count();
+        assert_eq!(npm_hook_calls, 1);
     }
 
     #[test]

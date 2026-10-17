@@ -1,6 +1,7 @@
 //! `rwv role` — change a member's role in this workspace's manifest, and
 //! settle its files for the new role.
 
+use crate::activate::ActivateOptions;
 use crate::add_remove::{find_project, settle_manifest};
 use crate::manifest::{Manifest, RepoPath, Role};
 use crate::refusal::RefusalKind;
@@ -22,7 +23,12 @@ use anyhow::Context;
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
-pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+pub fn run_role(
+    repo: &str,
+    role: Role,
+    ctx: &WorkspaceContext,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let repo_path = RepoPath::new(repo)?;
@@ -56,7 +62,7 @@ pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Resul
     }
 
     if was == role {
-        settle_manifest(ctx, &project, None)?;
+        settle_manifest(ctx, &project, None, opts)?;
         let changed = if checked_out {
             crate::settle::settle(vcs.as_ref(), &member, role)
                 .with_context(|| format!("failed to settle the files of '{repo_path}'"))?
@@ -73,7 +79,7 @@ pub fn run_role(repo: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Resul
 
     entry.role = role;
     manifest.insert_repo(repo_path.clone(), entry);
-    let landed = settle_manifest(ctx, &project, Some(&manifest));
+    let landed = settle_manifest(ctx, &project, Some(&manifest), opts);
 
     let on_disk = Manifest::from_path(&manifest_path)
         .ok()

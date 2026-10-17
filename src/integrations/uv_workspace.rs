@@ -75,7 +75,8 @@
 //! gitignore-eligible.
 
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -559,27 +560,25 @@ impl Integration for UvWorkspace {
         ))
     }
 
-    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
         let paths = ctx.detect_repos_with_manifest("pyproject.toml");
         if paths.is_empty() {
-            return Ok(());
+            return Ok(HookOutcome::Done);
         }
 
         // `uv sync` installs into `.venv` and refreshes `uv.lock`.
         // Runs from workspace_root for the same reason as the other ecosystem
         // hooks (activation symlinks are in place there so uv sees the
         // workspace the user sees).
-        let status = std::process::Command::new("uv")
-            .arg("sync")
-            .current_dir(super::subprocess_cwd(ctx.workspace_root))
-            .status()
-            .context("failed to run uv")?;
+        let Some(status) = super::run_install_tool("uv", &["sync"], ctx.workspace_root)? else {
+            return Ok(HookOutcome::ToolMissing("uv"));
+        };
 
         if !status.success() {
             anyhow::bail!("uv sync failed (exit {})", status);
         }
 
-        Ok(())
+        Ok(HookOutcome::Done)
     }
 
     /// `uv.lock` is **fully-owned** — gitignore-eligible, whole-deletable.

@@ -428,6 +428,106 @@ fn pnpm_workspaces_activate_hook_noop_when_no_repos_detected() {
 }
 
 // -----------------------------------------------------------------------
+// A hook whose tool is not on PATH
+// -----------------------------------------------------------------------
+
+/// A hook whose tool is absent from `PATH` ran nothing, so it is a
+/// `tool-missing` warning rather than a failed verb, and the other
+/// integrations' hooks still run. Driven through both the repair verb
+/// (`doctor --fix`, which reaches the hooks only over drift) and selection.
+///
+/// Gated on the fixture: the `cargo` that proves the other hook ran is a
+/// shebang shim on `PATH`.
+#[cfg(unix)]
+#[test]
+fn hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    let bin = tmp.path().join("bin");
+    let witness = tmp.path().join("cargo-ran");
+    std::fs::create_dir_all(ws.join("projects/app")).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(which::which("git").unwrap(), bin.join("git")).unwrap();
+
+    write_file(
+        &ws,
+        "github/acme/web/package.json",
+        "{\"name\": \"web\", \"version\": \"0.1.0\"}\n",
+    );
+    write_file(
+        &ws,
+        "github/acme/server/Cargo.toml",
+        "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    git_init_with_commit(&ws.join("github/acme/web"));
+    git_init_with_commit(&ws.join("github/acme/server"));
+    write_file(
+        &ws,
+        "projects/app/rwv.toml",
+        "[repositories.\"github/acme/web\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/web.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         [repositories.\"github/acme/server\"]\ntype = \"git\"\n\
+         url = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         [integrations.pnpm-workspaces]\nenabled = true\n\
+         [integrations.npm-workspaces]\nenabled = false\n\
+         [integrations.vscode-workspace]\nenabled = false\n",
+    );
+    write_file(&ws, ".rwv-active", "app\n");
+
+    let cargo = bin.join("cargo");
+    std::fs::write(
+        &cargo,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\nprintf '# lock\\n' > Cargo.lock\nexit 0\n",
+            witness.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cargo, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = |args: &[&str]| {
+        let out = common::rwv()
+            .args(args)
+            .current_dir(&ws)
+            .env("PATH", bin.display().to_string())
+            .output()
+            .expect("rwv should run");
+        let report = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), report)
+    };
+    let skipped_hook = "[warning] pnpm-workspaces: pnpm is not on PATH, so this \
+                        integration's install hook did not run";
+
+    for args in [&["doctor", "--fix"][..], &["activate", "app"][..]] {
+        let _ = std::fs::remove_file(&witness);
+        let (ok, report) = run(args);
+        assert!(
+            ok,
+            "`rwv {}` must not fail over a tool that is not installed:\n{report}",
+            args.join(" ")
+        );
+        assert!(
+            report.contains(skipped_hook),
+            "`rwv {}` must report the skipped hook as a tool-missing warning:\n{report}",
+            args.join(" ")
+        );
+        assert!(
+            !std::fs::read_to_string(&witness)
+                .unwrap_or_default()
+                .is_empty(),
+            "`rwv {}` must still run the cargo hook:\n{report}",
+            args.join(" ")
+        );
+    }
+}
+
+// -----------------------------------------------------------------------
 // go-work: no activate hook (default no-op)
 // -----------------------------------------------------------------------
 

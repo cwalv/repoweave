@@ -228,7 +228,11 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 /// 4. Clones the repo to `projects/{name}/` (skips if already exists).
 /// 5. Writes an empty `rwv.toml` if the clone does not already contain one.
 /// 6. Activates the project.
-pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
+pub fn init_adopt(
+    source: &str,
+    origin_dir: &Path,
+    opts: crate::activate::ActivateOptions,
+) -> anyhow::Result<()> {
     // Resolve the source to a clone URL and project name, and validate the
     // name, before anything touches disk. `resolve_adopt_source` is a pure
     // string computation, so this is free; the clone below is not, and a
@@ -282,7 +286,7 @@ pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
     );
 
     // Activate the project
-    crate::activate::activate(&project_name, &ctx)?;
+    crate::activate::activate_with_options(&project_name, &ctx, opts)?;
 
     Ok(())
 }

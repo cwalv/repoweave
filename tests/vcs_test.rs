@@ -1,6 +1,7 @@
 use repoweave::git::git_vcs;
 use repoweave::vcs::{
-    ConflictOp, DerivedContentPolicy, RefName, ReplayExclusionState, ResolvedRevisionId, VcsError,
+    ConflictOp, DerivedContentPolicy, DiscardOutcome, RefName, ReplayExclusionState,
+    ResolvedRevisionId, VcsError,
 };
 use std::fs;
 use std::path::Path;
@@ -1638,4 +1639,98 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     // And the resolved non-lock content survived.
     let final_shared = fs::read_to_string(p.join("shared")).unwrap();
     assert_eq!(final_shared, "merged version\n");
+}
+
+// ============================================================================
+// discard_captured_change
+// ============================================================================
+
+fn status_of(repo: &Path) -> String {
+    String::from_utf8(
+        common::git()
+            .args(["status", "--porcelain"])
+            .current_dir(repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+}
+
+/// Each shape of uncommitted change the working file is the whole of goes back
+/// to the parent commit's version, or away where that commit has none.
+#[test]
+fn discard_captured_change_discards_a_change_the_working_file_is_all_of() {
+    let vcs = git_vcs();
+
+    let unstaged = init_repo();
+    fs::write(unstaged.path().join("README.md"), "edited").unwrap();
+    let staged = init_repo();
+    fs::write(staged.path().join("README.md"), "edited").unwrap();
+    common::git_in(staged.path(), &["add", "README.md"]);
+    for repo in [&unstaged, &staged] {
+        assert_eq!(
+            vcs.discard_captured_change(repo.path(), Path::new("README.md"), b"edited")
+                .unwrap(),
+            DiscardOutcome::Discarded
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("README.md")).unwrap(),
+            "init"
+        );
+        assert_eq!(status_of(repo.path()), "");
+    }
+
+    let untracked = init_repo();
+    fs::write(untracked.path().join("new.lock"), "fresh").unwrap();
+    let added = init_repo();
+    fs::write(added.path().join("new.lock"), "fresh").unwrap();
+    common::git_in(added.path(), &["add", "new.lock"]);
+    for repo in [&untracked, &added] {
+        assert_eq!(
+            vcs.discard_captured_change(repo.path(), Path::new("new.lock"), b"fresh")
+                .unwrap(),
+            DiscardOutcome::Discarded
+        );
+        assert!(!repo.path().join("new.lock").exists());
+        assert_eq!(status_of(repo.path()), "");
+    }
+}
+
+/// A byte the caller did not capture is never discarded: not one the working
+/// file gained since, and not a staged version the working file does not show.
+#[test]
+fn discard_captured_change_never_discards_what_was_not_captured() {
+    let vcs = git_vcs();
+
+    let moved_on = init_repo();
+    fs::write(moved_on.path().join("README.md"), "edited again").unwrap();
+    assert_eq!(
+        vcs.discard_captured_change(moved_on.path(), Path::new("README.md"), b"edited")
+            .unwrap(),
+        DiscardOutcome::ChangedSinceCapture
+    );
+    assert_eq!(
+        fs::read_to_string(moved_on.path().join("README.md")).unwrap(),
+        "edited again"
+    );
+
+    let staged_apart = init_repo();
+    fs::write(staged_apart.path().join("README.md"), "staged").unwrap();
+    common::git_in(staged_apart.path(), &["add", "README.md"]);
+    fs::write(staged_apart.path().join("README.md"), "edited").unwrap();
+    assert_eq!(
+        vcs.discard_captured_change(staged_apart.path(), Path::new("README.md"), b"edited")
+            .unwrap(),
+        DiscardOutcome::HoldsUncapturedChange
+    );
+    assert_eq!(
+        fs::read_to_string(staged_apart.path().join("README.md")).unwrap(),
+        "edited"
+    );
+    assert_eq!(
+        common::git_in(staged_apart.path(), &["show", ":README.md"]),
+        "staged",
+        "the staged version must survive"
+    );
 }
