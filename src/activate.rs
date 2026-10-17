@@ -37,13 +37,11 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::cli::consent::{DriftConsent, RemoveUndeclaredLinksConsent};
-use crate::integration::{
-    Integration, IssueKind, OwnedPath, Severity, SurfacedCopy, SurfacedSource,
-};
+use crate::integration::{Integration, OwnedPath, Severity, SurfacedCopy, SurfacedSource};
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
-    run_activate_hooks, run_activations, run_checks, run_deactivations, run_host_fits,
-    run_verifications, IntegrationContextBase,
+    malformed_settings, run_activate_hooks, run_activations, run_checks, run_deactivations,
+    run_host_fits, run_verifications, IntegrationContextBase,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
@@ -227,6 +225,8 @@ pub fn materialize(
         );
     };
 
+    refuse_materialize_over_malformed_settings(root, &project)?;
+
     if undeclared.is_some() {
         remove_undeclared_links(root, &project)?;
     }
@@ -237,6 +237,45 @@ pub fn materialize(
         None,
         ActivationMode::Materialize(consent),
     )
+}
+
+/// Refuse materialize, before anything is touched, while an enabled
+/// integration cannot read its settings.
+///
+/// Every step this verb takes reads the project's declarations: the disabled
+/// strip, the attestation sweep, surfacing, the drift settle, the undeclared-
+/// link removal, the hooks. An integration whose settings do not parse declares
+/// nothing, and the sweeps read that absence as "nothing generates this" — the
+/// attestation sweep forgets what the integration still owns. Holding the one
+/// integration out is not available either: what it declares is a function of
+/// the settings that failed to parse. So the verb refuses whole, the way an
+/// intent verb refuses in `activate()` before it writes.
+fn refuse_materialize_over_malformed_settings(
+    root: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<()> {
+    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest = Manifest::from_path(&manifest_path)?;
+    let malformed = malformed_settings_at(root, project, &manifest);
+    refuse_over_malformed_settings(
+        &malformed,
+        "materialize: nothing here was changed",
+        "what this project's integrations generate and surface cannot be read without them",
+    )
+}
+
+/// [`malformed_settings`] for `project` as checked out under `root`.
+fn malformed_settings_at(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> Vec<crate::integration::Issue> {
+    let session = WorkspaceSession::new(root);
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    malformed_settings(&integrations, manifest, &ctx_base)
 }
 
 /// Remove the weave-root links at names `project` no longer declares, naming
@@ -1015,10 +1054,18 @@ fn refuse_hooks_over_malformed_settings(
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
 ) -> anyhow::Result<()> {
-    let malformed: Vec<_> = run_checks(integrations, manifest, ctx_base)
-        .into_iter()
-        .filter(|issue| issue.kind == IssueKind::MalformedSettings)
-        .collect();
+    refuse_over_malformed_settings(
+        &malformed_settings(integrations, manifest, ctx_base),
+        "activate: the install hooks were not run",
+        "a hook that reads its own has nothing to act on",
+    )
+}
+
+fn refuse_over_malformed_settings(
+    malformed: &[crate::integration::Issue],
+    refused: &str,
+    because: &str,
+) -> anyhow::Result<()> {
     if malformed.is_empty() {
         return Ok(());
     }
@@ -1027,9 +1074,8 @@ fn refuse_hooks_over_malformed_settings(
         .map(|issue| format!("\n  {}: {}", issue.integration, issue.message))
         .collect::<String>();
     anyhow::bail!(
-        "activate: the install hooks were not run. {} `[integrations.<name>]` \
-         block(s) in rwv.toml yielded no settings, and a hook that reads its own \
-         has nothing to act on:{listed}\n\
+        "{refused}. {} `[integrations.<name>]` block(s) in rwv.toml yielded no \
+         settings, and {because}:{listed}\n\
          Edit rwv.toml at the field each line names, then re-run.",
         malformed.len()
     );
@@ -2272,6 +2318,12 @@ fn undeclared_project_links(
     manifest: &Manifest,
     declared: &BTreeSet<String>,
 ) -> Vec<UndeclaredLink> {
+    // An integration that cannot read its settings declares nothing, so no
+    // name is provably undeclared while one cannot; its malformed-settings
+    // finding is what gets reported.
+    if !malformed_settings_at(root, presented, manifest).is_empty() {
+        return Vec::new();
+    }
     let mut exempt = declared.clone();
     exempt.extend(disabled_integration_declarations(root, presented, manifest));
     let skip = sweep_descent_skip(root);

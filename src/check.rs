@@ -9500,7 +9500,13 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             &detection_cache,
             project.manifest.workweave.as_ref(),
         );
-        issues.extend(run_checks(&integrations, &project.manifest, &ctx_base));
+        let check_issues = run_checks(&integrations, &project.manifest, &ctx_base);
+        let malformed_per_check: std::collections::BTreeSet<String> = check_issues
+            .iter()
+            .filter(|issue| issue.kind == IssueKind::MalformedSettings)
+            .map(|issue| issue.integration.clone())
+            .collect();
+        issues.extend(check_issues);
         issues.extend(disabled_integration_issues(
             workspace_dir,
             &project.name,
@@ -9530,7 +9536,11 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
         // refusal that would catch it lives in activation's materialize mode,
         // and this is its intent mode.
         let user_held_content = !user_held_issues.is_empty();
-        issues.extend(user_held_issues);
+        // The block `check()` already reported is one finding, not two.
+        issues.extend(user_held_issues.into_iter().filter(|issue| {
+            !(issue.kind == IssueKind::MalformedSettings
+                && malformed_per_check.contains(&issue.integration))
+        }));
         if fix && !fixable_issues.is_empty() && !user_held_content {
             // The repair primitive must be pointed at the same weave the
             // detector scanned. `activate_intent` targets primary

@@ -276,6 +276,26 @@ pub fn run_checks(
     })
 }
 
+/// The `malformed-settings` findings `check()` raises for enabled integrations:
+/// those whose `[integrations.<name>]` block does not deserialize into the
+/// settings type they declare.
+///
+/// Such an integration cannot say what it generates or surfaces — its
+/// declaration hooks read the same settings and answer empty — so a caller
+/// concluding anything from the absence of its declarations is reading a parse
+/// failure as a fact. An integration whose `check()` does not deserialize its
+/// settings is not in this set.
+pub fn malformed_settings(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> Vec<Issue> {
+    run_checks(integrations, manifest, ctx_base)
+        .into_iter()
+        .filter(|issue| issue.kind == IssueKind::MalformedSettings)
+        .collect()
+}
+
 /// Run verify hooks for each enabled integration, collecting issues.
 ///
 /// Called from context verbs (`rwv activate`, `rwv fetch`, workweave-create):
