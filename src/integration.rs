@@ -397,7 +397,7 @@ pub struct Issue {
 // Member incompatibility
 // ---------------------------------------------------------------------------
 //
-// `Ownership::DefaultOnly` (rule 5, `crate::integrations::merge::Ownership`)
+// `Ownership::DefaultOnly` (`crate::integrations::merge::Ownership`)
 // conflates two predicates that only coincide at seed time:
 //
 // - PREFERENCE: divergence from *rwv's seeded default*. The user's business —
@@ -408,9 +408,9 @@ pub struct Issue {
 //   see the breach.
 //
 // This category carries the second fact and nothing else. It is **not drift**:
-// rule 5 is untouched, `verify()` still reports `DefaultOnly` divergence as
-// CLEAN, and the two coexist on the same file. Nothing gates on it — `doctor`
-// and `update` report; neither refuses.
+// the `DefaultOnly` contract is untouched, `verify()` still reports
+// `DefaultOnly` divergence as CLEAN, and the two coexist on the same file.
+// Nothing gates on it — `doctor` and `update` report; neither refuses.
 
 /// An on-disk `Ownership::DefaultOnly` value that is incompatible with what
 /// the workspace members require.
@@ -427,9 +427,10 @@ pub struct Issue {
 /// site to remember:
 ///
 /// 1. **`safe_to_fix` is always `false`.** There is no field for it. `--fix`
-///    re-runs `activate()`, which by rule-5 contract refuses to overwrite an
-///    existing `DefaultOnly` value, so an automated repair does not exist. A
-///    finding of this kind cannot be constructed claiming otherwise.
+///    re-runs `activate()`, which by the `DefaultOnly` contract refuses to
+///    overwrite an existing `DefaultOnly` value, so an automated repair does
+///    not exist. A finding of this kind cannot be constructed claiming
+///    otherwise.
 /// 2. **The message never advertises `--fix`.** It names the two remedies that
 ///    are actually available, both of which are the operator's: raise the
 ///    managed value, or lower the members' requirement.
@@ -738,8 +739,8 @@ pub trait Integration {
     /// different from the value rwv seeded.
     ///
     /// This is deliberately not `verify()`: `verify()` answers "does the
-    /// on-disk content match what `activate()` would write", and per rule 5 a
-    /// `DefaultOnly` divergence is CLEAN there — permanently, by contract. This
+    /// on-disk content match what `activate()` would write", and under the
+    /// `DefaultOnly` contract a divergence is CLEAN there — permanently. This
     /// hook answers a different question, "would the ecosystem tool accept this
     /// configuration", and the two coexist on the same file. See
     /// [`MemberIncompatibility`] for the category

@@ -1809,8 +1809,8 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // member-incompatibility: the go-line is below what the members require.
-    //   Distinct from drift — rule 5 keeps DefaultOnly divergence CLEAN, and
-    //   this coexists with that.
+    //   Distinct from drift — the DefaultOnly contract keeps divergence
+    //   CLEAN, and this coexists with that.
     // -----------------------------------------------------------------------
 
     /// Build a workspace whose go.work carries `go_work_version` (or no
@@ -2058,7 +2058,7 @@ mod tests {
         );
     }
 
-    /// Rule-5 coexistence: on ONE fixture, `verify()` reports CLEAN (the
+    /// DefaultOnly coexistence: on ONE fixture, `verify()` reports CLEAN (the
     /// DefaultOnly go-line is the operator's, permanently) while the
     /// member-incompatibility predicate reports the breach. The two facts are
     /// separate; neither reinterprets the other. `go_directive_default_only_
@@ -2078,7 +2078,7 @@ mod tests {
         let drift = GoWork.verify(&ctx).unwrap();
         assert!(
             drift.is_empty(),
-            "rule 5: DefaultOnly divergence stays CLEAN in verify() — got: {drift:?}"
+            "DefaultOnly divergence stays CLEAN in verify() — got: {drift:?}"
         );
 
         let found = GoWork.member_incompatibility(&ctx).unwrap();

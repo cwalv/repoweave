@@ -12,16 +12,14 @@
 //!   borrow from the caller's stack (no `Arc<Mutex<_>>` over shared
 //!   read-only data needed).
 //! - [`Reporter`] abstracts how per-repo progress lines reach the user.
-//!   `Reporter::Serial` calls `println!`/`eprintln!` directly (no prefix
-//!   — matches pre-`-j` output exactly). `Reporter::Parallel { prefix }`
-//!   prepends `[<prefix>] ` to each line and serialises writes through a
-//!   shared mutex so lines from different workers don't interleave
-//!   mid-line.
+//!   `Reporter::Serial` calls `println!`/`eprintln!` directly, with no
+//!   prefix. `Reporter::Parallel { prefix }` prepends `[<prefix>] ` to each
+//!   line and serialises writes through a shared mutex so lines from
+//!   different workers don't interleave mid-line.
 //! - [`run_subprocess_with_reporter`] spawns a `Command`, captures
-//!   stdout/stderr; under `Serial` it preserves the existing
-//!   capture-and-only-report-on-failure behaviour; under `Parallel` it
-//!   streams lines through the reporter so the user can watch per-repo
-//!   progress as it happens.
+//!   stdout/stderr; under `Serial` it captures both streams and reports
+//!   them only on failure; under `Parallel` it streams lines through the
+//!   reporter so the user can watch per-repo progress as it happens.
 //!
 //! Design notes:
 //!
@@ -97,9 +95,9 @@ impl OutputMode {
 
 /// Output channel for per-repo progress lines.
 ///
-/// Under `-j 1` ([`Reporter::serial`]) the wrappers delegate to the
-/// existing `println!`/`eprintln!` pattern with no prefix, so pre-`-j`
-/// behaviour is preserved bit-for-bit.
+/// Under `-j 1` ([`Reporter::serial`]) the wrappers write through
+/// `println!`/`eprintln!` with no prefix: each line reaches the stream
+/// exactly as the caller wrote it.
 ///
 /// Under `-j > 1` ([`Reporter::parallel`]) each emit prepends
 /// `[<prefix>] ` and takes a shared lock so concurrent workers don't
@@ -121,7 +119,7 @@ enum ReporterInner<'a> {
 }
 
 impl<'a> Reporter<'a> {
-    /// No-prefix reporter. Matches `-j 1` / pre-`-j` output exactly.
+    /// No-prefix reporter: each line is written exactly as given.
     pub fn serial() -> Self {
         Self {
             inner: ReporterInner::Serial,
@@ -274,9 +272,8 @@ pub struct SubprocessOutcome {
 ///
 /// Under `Reporter::Serial` the implementation mirrors `Command::output()`
 /// — both streams are captured and only surfaced via
-/// [`SubprocessOutcome::stderr_capture`] on failure. This preserves the
-/// pre-`-j` UX where successful `git fetch` invocations don't spam the
-/// terminal.
+/// [`SubprocessOutcome::stderr_capture`] on failure, so a successful
+/// `git fetch` prints nothing to the terminal.
 ///
 /// Under `Reporter::Parallel` each stream is read line-by-line and
 /// forwarded through `Reporter::out` / `Reporter::err` (which prepend
@@ -459,9 +456,9 @@ mod tests {
 
     // ---- additional thin-spot coverage ----------------------------------
 
-    /// `resolve_jobs(Some(1))` is exactly serial. The spec requires that
-    /// `-j 1` matches the pre-`-j` (no flag) output bit for bit; this
-    /// guarantees the `<= 1` branch in `run_in_parallel` is taken.
+    /// `resolve_jobs(Some(1))` is exactly serial: `-j 1` output is the
+    /// unprefixed form, which needs the `<= 1` branch in `run_in_parallel`
+    /// to be taken.
     #[test]
     fn resolve_jobs_one_is_serial() {
         // resolve_jobs is a pure mapping; pin the value `1` so callers

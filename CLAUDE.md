@@ -461,7 +461,7 @@ and register rules:
 - **Every example runs and parses.** Documented shell blocks must execute
   cleanly against a disposable weave, `toml` snippets must parse under
   `rwv.toml`'s schema (or mark elided fields with `# …`), generated-file
-  samples must match the exact headers/markers emitted by `src/integrate/`, and
+  samples must match the exact headers/markers emitted by `src/integrations/`, and
   prose referring to `rwv.toml` keys must use TOML syntax (`version = "main"`,
   not YAML `version: main`).
 

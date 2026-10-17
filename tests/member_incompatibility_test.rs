@@ -119,8 +119,9 @@ fn assert_finding_shape(line: &str, on_disk: &str, required: &str) {
         line.contains("lower the requirement"),
         "finding must offer lowering the member requirement; got:\n{line}"
     );
-    // `--fix` re-runs activate(), which by rule-5 contract refuses to overwrite
-    // an existing DefaultOnly value. There is no automated repair to advertise.
+    // `--fix` re-runs activate(), which by the DefaultOnly contract refuses to
+    // overwrite an existing DefaultOnly value. There is no automated repair to
+    // advertise.
     assert!(
         !line.contains("--fix"),
         "finding must never advertise --fix; got:\n{line}"
@@ -225,7 +226,7 @@ fn doctor_silent_when_pin_meets_members() {
     );
 }
 
-/// Rule-5 coexistence at the CLI: the same fixture that produces the
+/// DefaultOnly coexistence at the CLI: the same fixture that produces the
 /// member-incompatibility finding must NOT produce a go.work drift finding.
 /// The DefaultOnly go-line diverging from rwv's computed default is the
 /// operator's business and stays CLEAN — the new category coexists with that
