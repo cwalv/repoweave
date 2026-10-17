@@ -2414,7 +2414,34 @@ pub fn collect_dirty_paths(
         }
     }
 
+    let vcs = crate::vcs::probe_vcs();
+    for repo_path in checkouts_outside_manifest(workweave_dir, manifest) {
+        let label = format!("{repo_path} {OUTSIDE_MANIFEST}");
+        match vcs.has_uncommitted_changes(&workweave_dir.join(repo_path.as_path())) {
+            Ok(true) => dirty.push(label),
+            Ok(false) => {}
+            Err(e) => dirty.push(format!("{label}: status check failed: {e}")),
+        }
+    }
+
     dirty
+}
+
+/// How a report labels a checkout [`checkouts_outside_manifest`] found.
+const OUTSIDE_MANIFEST: &str = "(not a manifest member)";
+
+/// Checkouts at member depth under `workweave_dir` that `manifest` does not
+/// name: a member replay dropped but could not prune, or one this workweave
+/// added that the manifest has not taken. Removing the workweave directory
+/// takes them with it, so every check of what a removal would lose weighs
+/// them as it weighs members. A symlinked slot is not a checkout of this
+/// workweave and is left out.
+fn checkouts_outside_manifest(workweave_dir: &Path, manifest: &Manifest) -> Vec<RepoPath> {
+    crate::workspace::scan_member_depth_repos(workweave_dir, crate::vcs::probe_vcs().as_ref())
+        .into_iter()
+        .filter(|repo_path| !manifest.contains_repo(repo_path))
+        .filter(|repo_path| !is_symlinked_member(&workweave_dir.join(repo_path.as_path())))
+        .collect()
 }
 
 /// Merge baselines for a workweave: workspace roots whose lineage counts as
@@ -2443,8 +2470,9 @@ fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
 /// Deleting such a workweave destroys committed work: the ephemeral-branch
 /// cleanup force-deletes the only ref pointing at those commits. A worktree
 /// whose HEAD cannot be read is reported as diverged (conservative: "we
-/// couldn't confirm safe"); a repo present in no baseline at all is skipped,
-/// matching the dirty check's missing-repo behavior.
+/// couldn't confirm safe"); a member present in no baseline at all is
+/// skipped, matching the dirty check's missing-repo behavior, and a checkout
+/// outside the manifest is reported.
 fn collect_diverged_paths(
     project_vcs: &dyn Vcs,
     workweave_dir: &Path,
@@ -2454,7 +2482,7 @@ fn collect_diverged_paths(
 ) -> Vec<String> {
     let mut diverged = Vec::new();
 
-    let mut check = |vcs: &dyn Vcs, wt: &Path, rel: &Path, label: String| {
+    let mut check = |vcs: &dyn Vcs, wt: &Path, rel: &Path, label: String, vouch_required: bool| {
         if !wt.exists() {
             return;
         }
@@ -2521,7 +2549,7 @@ fn collect_diverged_paths(
                 }
             }
         }
-        if candidates > 0 {
+        if candidates > 0 || vouch_required {
             diverged.push(label);
         }
     };
@@ -2534,6 +2562,7 @@ fn collect_diverged_paths(
             &project_wt,
             &project_rel,
             project_rel_path(project.as_str()),
+            false,
         );
     }
 
@@ -2544,6 +2573,21 @@ fn collect_diverged_paths(
             &wt,
             repo_path.as_path(),
             repo_path.as_str().to_string(),
+            false,
+        );
+    }
+
+    // No manifest entry says where a checkout outside it came from, so a
+    // baseline lacking the repo is no reason to skip it: nothing else may
+    // hold its commits.
+    let vcs = crate::vcs::probe_vcs();
+    for repo_path in checkouts_outside_manifest(workweave_dir, manifest) {
+        check(
+            vcs.as_ref(),
+            &workweave_dir.join(repo_path.as_path()),
+            repo_path.as_path(),
+            format!("{repo_path} {OUTSIDE_MANIFEST}"),
+            true,
         );
     }
 

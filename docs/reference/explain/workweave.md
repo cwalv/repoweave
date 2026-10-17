@@ -46,8 +46,9 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   aliases the original's git state rather than duplicating it.
 - `--replace-existing` — if a workweave with this name already exists and is
   clean, destroy it and recreate from scratch. Refuses if the existing workweave
-  holds uncommitted changes or unmerged commits (work visible only in the
-  workweave and not yet reachable from the parent or primary). Use `rwv workweave
+  holds uncommitted changes or unmerged commits in any checkout under it, a
+  member or not (work visible only in the workweave and not yet reachable from
+  the parent or primary). Use `rwv workweave
   <project> delete <name> --discard-uncommitted --discard-unmerged-commits` to
   discard dirty workweaves explicitly.
 - `--capture-dirty` — allow creation even when the source project directory
@@ -122,8 +123,16 @@ Delete a workweave. Refuses if:
   or the primary weave** — i.e., unmerged work that would be permanently
   destroyed when the ephemeral branches are force-deleted.
 
-The refusal message lists the dirty or diverged paths so the operator can
-decide whether to commit, land with `rwv sync-to`, or discard explicitly.
+Both checks also cover every checkout under the workweave that no member of
+the project's manifest names: a member replay dropped but could not prune, or
+one the workweave added that has not landed. The directory removal takes such
+a checkout with it, so its uncommitted changes and its commits count the same
+way. A commit in one counts as unmerged unless the parent or the primary
+weave holds that repo and contains it.
+
+The refusal message lists the dirty or diverged paths, marking a checkout
+outside the manifest `(not a manifest member)`, so the operator can decide
+whether to commit, land with `rwv sync-to`, or discard explicitly.
 
 **`--discard-uncommitted`** waives the first refusal; **`--discard-unmerged-commits`**
 waives the second. Each names exactly what it destroys; passing both is the

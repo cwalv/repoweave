@@ -825,18 +825,36 @@ pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
 /// Empty while any project manifest fails to parse: that manifest may name
 /// the segment, so no directory can be called unnamed.
 pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
-    const ECOSYSTEM_TOOL_STATE_DIRS: &[&str] = &["target", "node_modules"];
-
     let (known, any_unparseable) = registry_segments_and_unparseable(root);
     if any_unparseable {
         return Vec::new();
     }
+    candidate_segments(root)
+        .into_iter()
+        .filter(|name| !known.contains(name))
+        .flat_map(|segment| repos_under_segment(root, &segment, vcs))
+        .collect()
+}
 
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return Vec::new(),
+/// Every VCS repo at member depth under `root`, whatever its segment and
+/// whether or not a manifest names it: [`scan_repos_on_disk`] and
+/// [`scan_unknown_segment_repos`] together, read without consulting any
+/// manifest, so one that fails to parse hides nothing.
+pub(crate) fn scan_member_depth_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
+    candidate_segments(root)
+        .into_iter()
+        .flat_map(|segment| repos_under_segment(root, &segment, vcs))
+        .collect()
+}
+
+/// The top-level directories of `root` a member checkout could occupy, under
+/// the exclusions [`scan_unknown_segment_repos`] states.
+fn candidate_segments(root: &Path) -> Vec<String> {
+    const ECOSYSTEM_TOOL_STATE_DIRS: &[&str] = &["target", "node_modules"];
+
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
     };
-
     entries
         .flatten()
         .filter(|entry| entry.path().is_dir())
@@ -844,10 +862,8 @@ pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
         .filter(|name| {
             !name.starts_with('.')
                 && name != PROJECTS_DIR
-                && !known.contains(name)
                 && !ECOSYSTEM_TOOL_STATE_DIRS.contains(&name.as_str())
         })
-        .flat_map(|segment| repos_under_segment(root, &segment, vcs))
         .collect()
 }
 
