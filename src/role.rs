@@ -62,7 +62,7 @@ pub fn run_role(
     }
 
     if was == role {
-        settle_manifest(ctx, &project, None, opts)?;
+        settle_manifest(ctx, &project, None, &[], opts)?;
         let changed = if checked_out {
             crate::settle::settle(vcs.as_ref(), &member, role)
                 .with_context(|| format!("failed to settle the files of '{repo_path}'"))?
@@ -79,7 +79,7 @@ pub fn run_role(
 
     entry.role = role;
     manifest.insert_repo(repo_path.clone(), entry);
-    let landed = settle_manifest(ctx, &project, Some(&manifest), opts);
+    let landed = settle_manifest(ctx, &project, Some(&manifest), &[], opts);
 
     let on_disk = Manifest::from_path(&manifest_path)
         .ok()

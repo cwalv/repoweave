@@ -1104,7 +1104,7 @@ pub(crate) fn materialize_member(
         crate::refuse!(
             RefusalKind::MissingCanonicalClone,
             "canonical clone for {repo_path} missing at {}; \
-             run `rwv sync` from primary first to materialize it there",
+             run `rwv fetch` with no source at primary first to materialize it there",
             canonical.display()
         );
     }
@@ -4280,6 +4280,32 @@ mod tests {
             CreateRollbackGuard::new(git_vcs(), primary.join("never-created"), primary, project);
         g.defuse(); // Drop must not re-run what the test drives explicitly.
         g
+    }
+
+    #[test]
+    fn missing_canonical_clone_names_in_place_fetch_at_primary() {
+        let (_tmp, primary, project, _store) = weave();
+        let err = materialize_member(
+            git_vcs().as_ref(),
+            &primary,
+            &primary.join("ww"),
+            &project,
+            &WorkweaveName::new("ww").unwrap(),
+            &RepoPath::new("github/org/absent").unwrap(),
+            Role::Owned,
+            "main",
+        )
+        .err()
+        .expect("a member with no canonical clone is refused");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("run `rwv fetch` with no source at primary first"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("rwv sync"),
+            "sync takes a source and is not the repair: {message}"
+        );
     }
 
     #[test]

@@ -2874,8 +2874,7 @@ impl Vcs for GitVcs {
         format!(
             "{GIT_DEFAULT_REMOTE_NAME}/HEAD is unset; run \
              `git fetch {GIT_DEFAULT_REMOTE_NAME} && git remote set-head \
-             {GIT_DEFAULT_REMOTE_NAME} -a` there (or push once with an \
-             explicit branch) to record its canonical branch"
+             {GIT_DEFAULT_REMOTE_NAME} -a` there to record its canonical branch"
         )
     }
 

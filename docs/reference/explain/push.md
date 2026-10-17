@@ -15,7 +15,10 @@ lock it publishes. Commit with `rwv lock --commit` or `rwv update --commit`
 after a relock, or with `git commit` in `projects/<name>/`. Untracked files
 other than those two do not refuse. Refuses if any member repo's HEAD disagrees
 with its lock entry (lock-precondition check). Use `rwv lock --commit` to
-snapshot local state before pushing, or `git checkout` to align with the lock.
+record each repo's HEAD in the lock, or move the repo's branch to its lock
+commit without detaching it: `git reset --keep <lock commit>` (after
+`git branch <name>` to keep the commits it moves off). A `git checkout` of the
+lock commit detaches HEAD, which push refuses.
 
 **Default scope:** bare `rwv push` (no `--role` / `--repo` selectors) pushes
 only `owned` and `fork` repos — the roles the operator controls. `dependency`

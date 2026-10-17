@@ -44,7 +44,7 @@ use crate::integration_runner::{
     run_host_fits, run_verifications, IntegrationContextBase,
 };
 use crate::integrations::builtin_integrations;
-use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
 use crate::owned_state::{
     attested_owned_files, drifted_attested_owned_files, forget_owned_digest, ledger_path,
     reset_unreadable_ledger, stamp_owned_digest,
@@ -659,7 +659,7 @@ fn activate_at(
     skip: Option<SkipReason>,
     mode: ActivationMode,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
-    activate_in_phases(root, project, skip, mode).map_err(ActivationFailure::into_error)
+    activate_in_phases(root, project, skip, mode, &[]).map_err(ActivationFailure::into_error)
 }
 
 /// How far an activation got before it failed, which is what decides whether
@@ -686,19 +686,22 @@ impl ActivationFailure {
 
 /// Intent-mode activation for the checkout `ctx` resolved —
 /// [`activate_workweave_intent`] inside a workweave, [`activate_intent`] at
-/// primary — reporting how far it got when it fails.
+/// primary — reporting how far it got when it fails. The files are authored
+/// as they stand once the `departing` checkouts are off disk.
 pub(crate) fn activate_intent_for(
     project: &str,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
+    departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     match &ctx.checkout {
-        Checkout::Workweave { dir, .. } => workweave_intent(project, dir),
+        Checkout::Workweave { dir, .. } => workweave_intent(project, dir, departing),
         Checkout::Primary { .. } => activate_in_phases(
             ctx.primary_path(),
             project,
             opts.skip_reason(),
             ActivationMode::Intent,
+            departing,
         ),
     }
 }
@@ -711,6 +714,7 @@ fn activate_in_phases(
     project: &str,
     skip: Option<SkipReason>,
     mode: ActivationMode,
+    departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     let project_name =
         ProjectName::new(project).map_err(|e| ActivationFailure::BeforeHooks(e.into()))?;
@@ -718,7 +722,7 @@ fn activate_in_phases(
     let manifest = Manifest::from_path(&manifest_path).map_err(ActivationFailure::BeforeHooks)?;
 
     // Discover repos on disk and project paths (needed by IntegrationContext).
-    let session = WorkspaceSession::new(root);
+    let session = WorkspaceSession::new(root).without(departing);
 
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
@@ -1377,6 +1381,7 @@ pub(crate) fn activate_workweave(
         project,
         opts.skip_reason(),
         ActivationMode::Context,
+        &[],
     )
 }
 
@@ -1395,18 +1400,20 @@ pub fn activate_workweave_intent(
     project: &str,
     workweave_dir: &Path,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
-    workweave_intent(project, workweave_dir).map_err(ActivationFailure::into_error)
+    workweave_intent(project, workweave_dir, &[]).map_err(ActivationFailure::into_error)
 }
 
 fn workweave_intent(
     project: &str,
     workweave_dir: &Path,
+    departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     activate_in_phases(
         workweave_dir,
         project,
         Some(SkipReason::InsideWorkweave),
         ActivationMode::Intent,
+        departing,
     )
 }
 

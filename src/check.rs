@@ -8758,7 +8758,8 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
                 Ok(rev) => rev,
                 Err(_) => {
                     println!(
-                        "{repo_path}: missing on disk (lock pins {}); run `rwv sync` to materialize",
+                        "{repo_path}: missing on disk (lock pins {}); run `rwv fetch` with no \
+                         source to materialize it",
                         raw_entry.version
                     );
                     any_drift = true;

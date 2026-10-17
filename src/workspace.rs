@@ -1090,6 +1090,12 @@ impl WorkspaceSession {
         }
     }
 
+    /// This session as it stands once the `departing` checkouts are off disk.
+    pub fn without(mut self, departing: &[RepoPath]) -> Self {
+        self.repos_on_disk.retain(|repo| !departing.contains(repo));
+        self
+    }
+
     /// The repos found on disk (relative paths from workspace root).
     pub fn repos_on_disk(&self) -> &[RepoPath] {
         &self.repos_on_disk

@@ -330,8 +330,10 @@ pub fn run_push(
             eprintln!("  - {msg}");
         }
         eprintln!(
-            "Hint: run `rwv lock --commit` to capture local state, \
-             or `git checkout` in each repo to align with the lock."
+            "Hint: run `rwv lock --commit` to record each listed repo's HEAD in the lock, or \
+             move the repo's branch to its lock commit without detaching it: `git reset \
+             --keep <lock commit>` in the repo (after `git branch <name>` to keep the commits \
+             it moves off)."
         );
         crate::refuse!(
             RefusalKind::LockStateMismatch,

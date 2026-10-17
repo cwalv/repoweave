@@ -152,6 +152,9 @@ fn place_member(
 /// `cargo generate-lockfile` did to the disk has no inverse, so a failure there
 /// leaves the change standing and says so.
 ///
+/// `departing` names the checkouts the caller deletes once this lands; the
+/// files are authored as they stand without them.
+///
 /// Regeneration is withheld when an active repo the manifest declares is not
 /// on disk: the managed files are authored from the repos the run can see, so
 /// over a partial member set they would be rewritten without the rest. The
@@ -161,6 +164,7 @@ pub(crate) fn settle_manifest(
     ctx: &WorkspaceContext,
     project: &ProjectName,
     edited: Option<&Manifest>,
+    departing: &[RepoPath],
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let root = ctx.active_path();
@@ -186,7 +190,7 @@ pub(crate) fn settle_manifest(
         return Ok(());
     }
 
-    match activate_intent_for(project.as_str(), ctx, opts) {
+    match activate_intent_for(project.as_str(), ctx, opts, departing) {
         Ok(_) => {
             // Report only: the manifest change has already landed.
             for issue in crate::activate::member_incompatibilities(root, project, manifest) {
@@ -312,7 +316,7 @@ pub fn run_add(
             clone_into(vcs.as_ref(), &existing.url, &dest)?;
         }
         place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
-        return settle_manifest(ctx, &project, None, opts);
+        return settle_manifest(ctx, &project, None, &[], opts);
     }
 
     if vcs.is_repo(&dest) {
@@ -366,7 +370,7 @@ pub fn run_add(
 
         // Per-workspace state: the workweave's own copy when CWD is in one,
         // primary's otherwise.
-        settle_manifest(ctx, &project, Some(&manifest), opts)
+        settle_manifest(ctx, &project, Some(&manifest), &[], opts)
     })();
     added.map_err(|e| left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}")))?;
 
@@ -461,6 +465,7 @@ pub fn run_add_adopt(
             ctx,
             &project,
             registration.as_ref().map(|(manifest, _)| manifest),
+            &[],
             opts,
         )
     })();
@@ -749,7 +754,17 @@ pub fn run_remove(
         None
     };
 
-    settle_manifest(ctx, &project, removed.is_some().then_some(&manifest), opts)?;
+    let departing: &[RepoPath] = match &removal {
+        Some(removal) if removal.removes_anything() => std::slice::from_ref(&repo_path),
+        _ => &[],
+    };
+    settle_manifest(
+        ctx,
+        &project,
+        removed.is_some().then_some(&manifest),
+        departing,
+        opts,
+    )?;
 
     if removed.is_some() {
         eprintln!("Removed '{}' from manifest", repo_path.as_str());
@@ -1145,7 +1160,7 @@ pub fn run_add_new(
         if existing.url == plan.url {
             announce_already_registered(&repo_path);
             place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
-            return settle_manifest(ctx, &project, None, opts);
+            return settle_manifest(ctx, &project, None, &[], opts);
         }
         crate::refuse!(
             RefusalKind::OccupiedPlacement,
@@ -1272,7 +1287,7 @@ pub fn run_add_new(
         // commit lands.
         place_member_noting(vcs.as_ref(), ctx, &dest, &repo_path, role, &mut left)?;
 
-        settle_manifest(ctx, &project, Some(&manifest), opts)
+        settle_manifest(ctx, &project, Some(&manifest), &[], opts)
     })();
     added.map_err(|e| {
         left.refused(
