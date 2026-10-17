@@ -66,7 +66,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 - **`rwv fetch`** checks a new clone out on the local counterpart of the branch `version` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
 - **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `version` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
 
-Manifests must use `role = "owned"`. The pre-rename `primary` spelling no longer parses. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
+The role for your own code is spelled `role = "owned"`; a manifest spelling it `primary` fails to parse. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
 
 The repo set is modeled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
 
