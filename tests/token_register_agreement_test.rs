@@ -872,7 +872,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (25, 97);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (27, 107);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than
@@ -891,7 +891,13 @@ const UNWALKED_KEBAB_CENSUS: (usize, usize) = (25, 97);
 /// them is a token any of the five hand-walked registers mints — a doctor
 /// sub-kind is not part of `ViolationOutput`'s own `kind`, so `registers()`
 /// never sees it, and only `RefusalKind` half of each pair does.
+///
+/// One pair mirrors an integration issue kind instead: `SkipReason`'s
+/// `tool-missing` is the reason an install hook was skipped, and that reason
+/// is the `tool-missing` finding — one condition, read off `rwv update --json`
+/// or `rwv fetch --json` as off `rwv doctor --json`.
 const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
+    ("tool-missing", "SkipReason"),
     ("unmigrated-ephemeral-branch", "BranchDisciplineKind"),
     ("standalone-in-workweave", "CloneTopologyKind"),
     ("dangling-primary", "MarkerDefect"),
@@ -903,7 +909,7 @@ const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
 
 /// Every kebab vocabulary reaching `--json` that is not one of
 /// [`ALREADY_WALKED`] is disjoint from the condition universe, except the
-/// seven recorded in [`INTENDED_SUBKIND_REUSE`] —
+/// pairs recorded in [`INTENDED_SUBKIND_REUSE`] —
 /// [`an_op_name_is_not_also_a_condition_name`]'s property, held for every
 /// such vocabulary at once rather than for `ConflictOp` alone.
 ///
