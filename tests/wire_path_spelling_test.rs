@@ -30,7 +30,7 @@ fn every_wire_path_field_is_minted_by_the_seam() {
     // manifest-relative except one, and a name-based rule cannot tell them
     // apart.
     //
-    // Nothing in this file reaches that one. Its mint is pinned behaviourally,
+    // Nothing in this file reaches that one. Its mint is pinned behaviorally,
     // by plugins_help_doctor_test.rs and the `discover_plugins` unit tests,
     // which run on Windows too; CI does not gate on that run, so a mint that
     // diverged there, marking each winner shadowed by itself and publishing

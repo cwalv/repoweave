@@ -526,3 +526,32 @@ canceled, labeled, catalog, artifact. The idiom is American too: while and
 among, not whilst and amongst. Private identifiers follow the same spelling;
 a wire token (a finding or refusal kind, a JSON key, a flag name) keeps the
 spelling it shipped with, because renaming one is a break.
+
+### What is mechanized, and what is not
+
+`check_vocabulary_and_spelling` in `src/bin/generate-explain.rs` holds both
+rules. `BANNED_SYNONYMS` is checked on what an operator reads: root
+`README.md` and `ARCHITECTURE.md`, every page `docs/SUMMARY.md` lists, the
+explain and prime templates and the pages generated from them, the generated
+schemas, `--help` for every command (rendered from the clap tree), and the
+code of `src/`'s production regions, which is where refusal, finding and
+message text lives. `BRITISH_SPELLINGS` is checked there and in every other
+file the tracker-ID gate reads, comments and `tests/` included.
+
+What it does not hold:
+
+- this file, which states both rules and so has to name what they ban, and
+  the gate's own test module, whose fixtures are seeded with those words;
+- the vocabulary rule in comments, `tests/` and `docs/internals/`;
+- a phrase split across string literals joined at run time, or wrapped
+  inside a multi-line literal without a `\` continuation;
+- a British spelling outside the families `BRITISH_SPELLINGS` lists — they
+  are closed lists of stems, because a suffix rule reports `otherwise` and
+  `hour`;
+- `manifest repository`, which the migration guide uses for `git-repo`'s own
+  composition repo, and `workspace root` after a word in
+  `ECOSYSTEM_ROOT_QUALIFIERS`, which names a Cargo or uv workspace's root
+  rather than a weave's;
+- identifiers: regex `\b` reads `_` as part of a word, so a stem inside a
+  snake_case or CamelCase name is not prose to the gate. A wire token keeps
+  its spelling; a private name is for review to catch.

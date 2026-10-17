@@ -3,7 +3,7 @@
 //! (surface + verify only, never author). Source anchor: `ActivationMode`
 //! in `src/activate.rs`.
 //!
-//! Doc claims pinned here, checked behaviourally against a content-derived
+//! Doc claims pinned here, checked behaviorally against a content-derived
 //! generated file rather than by grepping comments:
 //!   - `rwv add` / `rwv remove` author (intent mode)
 //!   - `rwv add` / `rwv remove` author only when every active repo the

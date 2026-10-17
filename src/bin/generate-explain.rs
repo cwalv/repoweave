@@ -49,6 +49,8 @@
 //! - `check_no_internals_on_operator_surfaces` — nothing on an assembled
 //!   page, a generated schema, or a page `docs/SUMMARY.md` lists points at
 //!   `docs/internals/`, which mdBook does not render.
+//! - `check_vocabulary_and_spelling` — operator surfaces and message text
+//!   use the canonical vocabulary, and all prose uses American spelling.
 //! - `check_explanation_joints_index_agreement` — `docs/SUMMARY.md` and
 //!   `docs/explanation/index.md` list the same joints pages.
 //!
@@ -3021,6 +3023,475 @@ fn collect_summary_listed_pages(root: &Path) -> Vec<PathBuf> {
     pages
 }
 
+/// A phrase a house prose rule bans, and what to write instead.
+struct BannedTerm {
+    /// A regex body, matched case-insensitively between word boundaries.
+    pattern: &'static str,
+    /// What the rule asks for in its place.
+    write: &'static str,
+    /// Words that, standing just before a match, make it another tool's own
+    /// term rather than a synonym of ours.
+    unless_after: &'static [&'static str],
+}
+
+/// Synonyms the canonical-vocabulary rule in `CLAUDE.md` replaces.
+///
+/// Whitespace inside a phrase matches any run of it, line breaks included,
+/// so a phrase wrapped across two lines of a page is still one phrase.
+///
+/// `manifest repository` is not banned: the migration guide names
+/// `git-repo`'s manifest repository, that tool's term for its own composition
+/// repo, and a matcher that reported it would report correct prose.
+const BANNED_SYNONYMS: &[BannedTerm] = &[
+    BannedTerm {
+        pattern: r"manifest(?:\s+|-)repos?",
+        write: "member repo",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"constituent\s+repos?",
+        write: "member repo",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"weave\s+director(?:y|ies)",
+        write: "weave root",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"workspace\s+roots?",
+        write: "weave root",
+        unless_after: ECOSYSTEM_ROOT_QUALIFIERS,
+    },
+];
+
+/// Words before `workspace root` that make it an ecosystem's workspace root —
+/// the top-level manifest of a Cargo or uv workspace — rather than a weave's.
+/// `multiple` is Cargo's own error text, which the cargo-workspace page quotes
+/// verbatim: `multiple workspace roots found in the same workspace`.
+const ECOSYSTEM_ROOT_QUALIFIERS: &[&str] = &[
+    "cargo", "uv", "npm", "pnpm", "nested", "virtual", "multiple",
+];
+
+/// Spellings the American-spelling rule in `CLAUDE.md` replaces, one word
+/// family per entry.
+///
+/// A family is a closed list of stems, not a suffix rule: a bare `-ise`
+/// matcher reports `otherwise`, `premise` and `exercise`, and a bare `-our`
+/// matcher reports `hour` and `detour`. The `-is-` stems carry their suffixes
+/// explicitly, so `organism`, `synthesis`, `mechanism` and `criticism` stay
+/// clear, and the `-ys-` family leaves out `-es`, which is also the plural of
+/// `analysis`.
+///
+/// Regex `\b` counts `_` as a word character, so a stem inside a snake_case
+/// identifier is not matched, and neither is one inside a CamelCase name,
+/// whose next letter continues the word. Renaming a public identifier is a
+/// break, so the gate holds prose and leaves names to review.
+///
+/// The spelling scan of this file blanks the table below; see
+/// `masked_self_text`.
+const BRITISH_SPELLINGS: &[BannedTerm] = &[
+    BannedTerm {
+        pattern: r"[a-z]*(?:behaviour|honour|neighbour|favour|flavour|labour|colour|armour|humour|rumour|vigour|harbour|odour|endeavour|savour|rigour|vapour)[a-z]*",
+        write: "-or, not -our",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"(?:un|re|de|non|pre|mis|over|under)?(?:agon|amort|apolog|author|canonical|capital|categor|central|character|colon|commercial|critic|custom|econom|emphas|equal|external|familiar|fantas|fertil|final|formal|general|global|harmon|hypothes|industrial|initial|internal|item|jeopard|legal|local|material|maxim|mechan|memo|minim|mobil|modern|monopol|national|natural|neutral|normal|novel|optim|organ|ostrac|parameter|parenthes|patron|penal|personal|polar|priorit|privat|public|random|rational|real|recogn|regular|sanit|scrutin|serial|special|stabil|standard|steril|subsid|summar|symbol|sympath|synchron|synthes|tantal|terror|theor|token|trivial|util|vandal|vector|visual)is(?:e|ed|es|ing|er|ers|ation|ations|able|ability)",
+        write: "-ize, not -ise",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"(?:anal|paral|catal|dial)ys(?:e|ed|ing|er|ers)",
+        write: "-yze, not -yse",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"(?:un|re|mis)?(?:model|label|cancel|signal|travel|level|fuel|channel|tunnel|marshal|dial|total|equal|counsel|funnel|quarrel|rival|pedal)l(?:ed|ing|er|ers)",
+        write: "one l before the suffix",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"judgements?",
+        write: "judgment",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"artefacts?",
+        write: "artifact",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"(?:catalogu|analogu)(?:e|es|ed|ing)",
+        write: "-og, not -ogue",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"(?:defen|offen|licen|preten)ces?",
+        write: "-se, not -ce",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"(?:centr|metr|litr|fibr|calibr)e[sd]?",
+        write: "-er, not -re",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"programmes?",
+        write: "program",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"grey(?:s|ed|er|est|ing|ish)?",
+        write: "gray",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"whilst",
+        write: "while",
+        unless_after: &[],
+    },
+    BannedTerm {
+        pattern: r"amongst",
+        write: "among",
+        unless_after: &[],
+    },
+];
+
+/// Which of the two house prose rules a scanned text answers to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProseRules {
+    VocabularyAndSpelling,
+    Vocabulary,
+    Spelling,
+}
+
+impl ProseRules {
+    fn vocabulary(self) -> bool {
+        self != Self::Spelling
+    }
+
+    fn spelling(self) -> bool {
+        self != Self::Vocabulary
+    }
+}
+
+/// One text the vocabulary-and-spelling gate reads, named the way a finding
+/// against it is reported.
+struct ProseText {
+    name: String,
+    text: String,
+    rules: ProseRules,
+}
+
+/// `--help` as the operator reads it, for the root command and every
+/// subcommand under it, keyed by the command line that prints it.
+///
+/// `cmd` is taken unbuilt. Building it would propagate the global options
+/// onto every page and add clap's `help` subcommand, whose children mirror
+/// the whole tree: the same text again under other names, none of it ours.
+fn rendered_help_pages(cmd: &clap::Command) -> Vec<(String, String)> {
+    let mut pages = Vec::new();
+    collect_help_pages(cmd, cmd.get_name(), &mut pages);
+    pages
+}
+
+fn collect_help_pages(cmd: &clap::Command, path: &str, out: &mut Vec<(String, String)>) {
+    out.push((
+        format!("{path} --help"),
+        cmd.clone().render_long_help().to_string(),
+    ));
+    for sc in cmd.get_subcommands() {
+        collect_help_pages(sc, &format!("{path} {}", sc.get_name()), out);
+    }
+}
+
+/// The code of `content`'s production region with comments removed, line for
+/// line, so a match maps back to the source line it sits on.
+///
+/// A line ending in a string continuation `\` runs on into the next, as the
+/// literal it continues does. Every other line end is fenced with a
+/// non-whitespace byte, so a phrase cannot form from the last word of one
+/// statement and the first word of the next.
+fn message_text(content: &str) -> String {
+    let mut out = String::new();
+    for line in before_test_module(content).lines() {
+        let code = code_on_line(line).trim_end();
+        match code.strip_suffix('\\') {
+            Some(continued) => {
+                out.push_str(continued);
+                out.push(' ');
+            }
+            None => {
+                out.push_str(code);
+                out.push('\u{1}');
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// This file, as the spelling scan reads it: its spelling table blanked and
+/// its test module cut, since the table names every spelling it bans and the
+/// test fixtures are seeded with the same words. Line numbers survive.
+fn masked_self_text(content: &str) -> String {
+    let mut out = String::new();
+    let mut in_table = false;
+    for line in before_test_module(content).lines() {
+        if line.starts_with("const BRITISH_SPELLINGS") {
+            in_table = true;
+        }
+        if !in_table {
+            out.push_str(line);
+        }
+        if in_table && line.trim() == "];" {
+            in_table = false;
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// The word just before byte `at` in `text`, lowercased, looking past
+/// whitespace and the markdown that wraps a word (backticks, quotes,
+/// emphasis).
+fn preceding_word(text: &str, at: usize) -> String {
+    let head = text[..at].trim_end_matches(|c: char| c.is_whitespace() || "`\"'*_".contains(c));
+    head.rsplit(|c: char| !c.is_alphanumeric())
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+}
+
+/// Read `paths` into `texts` under `rules`, returning how many were read. A
+/// path that does not exist is skipped: a listed page missing from disk is
+/// the link check's to report.
+fn push_prose_files(
+    root: &Path,
+    paths: impl IntoIterator<Item = PathBuf>,
+    rules: ProseRules,
+    texts: &mut Vec<ProseText>,
+) -> usize {
+    let mut read = 0;
+    for path in paths {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        texts.push(ProseText {
+            name: path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string(),
+            text,
+            rules,
+        });
+        read += 1;
+    }
+    read
+}
+
+/// Every text `check_vocabulary_and_spelling` reads, and how many it took
+/// from each surface class.
+///
+/// **Operator surfaces, both rules**: root `README.md` and `ARCHITECTURE.md`;
+/// every page `docs/SUMMARY.md` links to; the explain and prime templates and
+/// the pages generated from them; the generated schemas; `help_pages`. The
+/// templates are read as well as the pages, so a reintroduced term is caught
+/// before regeneration copies it.
+///
+/// **Message text, vocabulary**: the code of every production region in
+/// `src/` — comments removed, so what remains is string literals and names —
+/// where `bail!`, refusal, finding and `--help` strings live. This file is
+/// not shipped in `rwv` and is left out.
+///
+/// **Everything else, spelling**: every file `check_no_tracker_ids` reads that
+/// is not an operator surface above, comments included — `src/`, `tests/`,
+/// `docs/internals/`, root `CHANGELOG.md` and the shipped scripts. `CLAUDE.md`
+/// is left out because it states both rules, which means naming what they
+/// ban; this file is read through `masked_self_text`.
+fn vocabulary_and_spelling_texts(
+    root: &Path,
+    help_pages: &[(String, String)],
+) -> (Vec<ProseText>, Vec<(&'static str, usize)>) {
+    let mut texts = Vec::new();
+    let mut population = Vec::new();
+    let both = ProseRules::VocabularyAndSpelling;
+
+    let in_dir = |dir: PathBuf, ext: &'static str| {
+        collect_files_in_dir(&dir, move |p| {
+            p.extension().and_then(OsStr::to_str) == Some(ext)
+        })
+    };
+    let explain_dir = root.join("docs/reference/explain");
+    let prime_dir = root.join("docs/reference/prime");
+    let operator_classes: [(&'static str, Vec<PathBuf>); 5] = [
+        (
+            "README.md and ARCHITECTURE.md",
+            vec![root.join("README.md"), root.join("ARCHITECTURE.md")],
+        ),
+        ("summary-listed pages", collect_summary_listed_pages(root)),
+        (
+            "explain pages and templates",
+            [
+                in_dir(explain_dir.clone(), "md"),
+                in_dir(explain_dir.join("templates"), "tmpl"),
+            ]
+            .concat(),
+        ),
+        (
+            "prime overview and template",
+            [
+                in_dir(prime_dir.clone(), "md"),
+                in_dir(prime_dir.join("templates"), "tmpl"),
+            ]
+            .concat(),
+        ),
+        (
+            "generated schemas",
+            in_dir(root.join("docs/reference/schemas"), "json"),
+        ),
+    ];
+    let mut operator_paths: HashSet<PathBuf> = HashSet::new();
+    for (class, paths) in operator_classes {
+        operator_paths.extend(paths.iter().cloned());
+        population.push((class, push_prose_files(root, paths, both, &mut texts)));
+    }
+
+    for (name, text) in help_pages {
+        texts.push(ProseText {
+            name: name.clone(),
+            text: text.clone(),
+            rules: both,
+        });
+    }
+    population.push(("--help pages", help_pages.len()));
+
+    let self_path = root.join("src/bin/generate-explain.rs");
+    let mut messages = 0;
+    for path in collect_rs_files(&root.join("src")) {
+        if path == self_path {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        texts.push(ProseText {
+            name: path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string(),
+            text: message_text(&content),
+            rules: ProseRules::Vocabulary,
+        });
+        messages += 1;
+    }
+    population.push(("src message text", messages));
+
+    let mut rest = src_docs_and_tests_files(root);
+    rest.extend(root_level_md_files(root));
+    rest.extend(root_level_rs_files(root));
+    rest.extend(root_level_toml_files(root));
+    rest.extend(shipped_prose_auxiliary_files(root));
+    rest.retain(|p| !operator_paths.contains(p) && *p != root.join("CLAUDE.md"));
+    rest.sort();
+    rest.dedup();
+    let mut spelling_only = 0;
+    for path in rest {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let text = if path == self_path {
+            masked_self_text(&content)
+        } else {
+            content
+        };
+        texts.push(ProseText {
+            name: path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .display()
+                .to_string(),
+            text,
+            rules: ProseRules::Spelling,
+        });
+        spelling_only += 1;
+    }
+    population.push(("other prose, spelling only", spelling_only));
+
+    (texts, population)
+}
+
+/// Scan for the canonical-vocabulary and American-spelling rules in
+/// `CLAUDE.md`: `BANNED_SYNONYMS` on operator surfaces and in message text,
+/// `BRITISH_SPELLINGS` in all prose. `vocabulary_and_spelling_texts` defines
+/// the scope.
+///
+/// A surface class that yields nothing is itself a finding, so a broken
+/// collector cannot pass for a clean tree.
+///
+/// **What is not covered.** A phrase is matched within one text, so one split
+/// across two string literals joined by `concat!` or `format!` arguments is
+/// not seen, and in message text a phrase wrapped inside a multi-line literal
+/// without a `\` continuation is not either. Comments in `src/` and `tests/`,
+/// `docs/internals/` and `CHANGELOG.md` answer to the spelling rule only; the
+/// vocabulary rule covers what an operator reads. The spelling families are
+/// closed lists: a British spelling outside them passes.
+fn check_vocabulary_and_spelling(root: &Path, help_pages: &[(String, String)]) -> Vec<String> {
+    let compile = |terms: &'static [BannedTerm]| -> Vec<(Regex, &'static BannedTerm)> {
+        terms
+            .iter()
+            .map(|t| {
+                let re = Regex::new(&format!(r"(?i)\b(?:{})\b", t.pattern))
+                    .expect("banned-term pattern compiles");
+                (re, t)
+            })
+            .collect()
+    };
+    let synonyms = compile(BANNED_SYNONYMS);
+    let spellings = compile(BRITISH_SPELLINGS);
+
+    let (texts, population) = vocabulary_and_spelling_texts(root, help_pages);
+    let mut findings = Vec::new();
+    for (class, count) in &population {
+        if *count == 0 {
+            findings.push(format!(
+                "vocabulary-and-spelling scan: {class} yielded nothing — the scan \
+                 population must not be empty"
+            ));
+        }
+    }
+    for text in &texts {
+        let mut report = |terms: &[(Regex, &'static BannedTerm)], rule: &str| {
+            for (re, term) in terms {
+                for m in re.find_iter(&text.text) {
+                    if term
+                        .unless_after
+                        .contains(&preceding_word(&text.text, m.start()).as_str())
+                    {
+                        continue;
+                    }
+                    let line = text.text[..m.start()].matches('\n').count() + 1;
+                    let found = m.as_str().split_whitespace().collect::<Vec<_>>().join(" ");
+                    findings.push(format!(
+                        "{}:{line}: `{found}` — {rule}: {}",
+                        text.name, term.write
+                    ));
+                }
+            }
+        };
+        if text.rules.vocabulary() {
+            report(&synonyms, "canonical vocabulary");
+        }
+        if text.rules.spelling() {
+            report(&spellings, "American spelling");
+        }
+    }
+    findings
+}
+
 /// Check that `docs/SUMMARY.md` and `docs/explanation/index.md` list the same
 /// set of joints pages.
 ///
@@ -3540,6 +4011,21 @@ fn main() -> anyhow::Result<()> {
              Fix: state the rule inline, or point at a published page under \
              `docs/reference/` listed in `docs/SUMMARY.md`. `docs/internals/` \
              is not rendered."
+        );
+    }
+
+    // --- vocabulary-and-spelling gate ------------------------------------
+    // Operator surfaces and message text use the canonical vocabulary, and
+    // all prose uses American spelling. --help is rendered from the clap
+    // tree, so every verb's help is read the way an operator sees it.
+    let prose_errors = check_vocabulary_and_spelling(&root, &rendered_help_pages(&Cli::command()));
+    if !prose_errors.is_empty() {
+        let msg = prose_errors.join("\n");
+        anyhow::bail!(
+            "vocabulary-and-spelling check failed:\n{msg}\n\n\
+             Fix: write the term the finding names. The vocabulary and spelling \
+             rules are in CLAUDE.md, under \"Canonical vocabulary\" and \
+             \"American spelling\"."
         );
     }
 
@@ -6524,5 +7010,319 @@ mod tests {
             collect_joints_stems_from_index("").is_empty(),
             "empty index.md should yield no stems"
         );
+    }
+
+    // ── vocabulary-and-spelling check unit tests ────────────────────────────
+
+    /// One clean text in every surface class, so the non-vacuity floor stays
+    /// quiet and each test's assertion is about its own seed. Returns the help
+    /// pages to scan alongside the tree.
+    fn write_minimal_prose_tree(root: &Path) -> Vec<(String, String)> {
+        write_minimal_clean_summary(root);
+        for (rel, body) in [
+            (
+                "README.md",
+                "# repoweave\n\nA weave root holds member repos.\n",
+            ),
+            ("docs/reference/explain/sync.md", "# sync\n"),
+            ("docs/reference/explain/templates/sync.md.tmpl", "# sync\n"),
+            ("docs/reference/prime/overview.md", "# prime\n"),
+            ("docs/reference/schemas/sync.json", "{}\n"),
+            ("src/lib.rs", "pub fn f() {}\n"),
+            ("tests/t.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        vec![("rwv --help".to_owned(), "Usage: rwv\n".to_owned())]
+    }
+
+    fn write_at(root: &Path, rel: &str, body: &str) {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn clean_prose_tree_passes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let help = write_minimal_prose_tree(tmp.path());
+        let errors = check_vocabulary_and_spelling(tmp.path(), &help);
+        assert!(errors.is_empty(), "got:\n{}", errors.join("\n"));
+    }
+
+    /// The seeded-failure pin for the vocabulary half, on a page the sidebar
+    /// lists. Fixing the page clears the finding, so the finding tracks the
+    /// content rather than the file.
+    #[test]
+    fn banned_synonym_on_summary_listed_page_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "docs/intro.md",
+            "# intro\n\nEach manifest repo is cloned.\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert!(
+            errors.iter().any(|e| slashed(e).starts_with(
+                "docs/intro.md:3: `manifest repo` — canonical vocabulary: member repo"
+            )),
+            "got:\n{}",
+            errors.join("\n")
+        );
+        write_at(
+            root,
+            "docs/intro.md",
+            "# intro\n\nEach member repo is cloned.\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert!(errors.is_empty(), "got:\n{}", errors.join("\n"));
+    }
+
+    /// A phrase wrapped across lines is one phrase to a reader, and the
+    /// finding names the line it starts on — the line an author edits.
+    #[test]
+    fn wrapped_synonym_is_reported_at_the_line_it_starts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "docs/intro.md",
+            "# intro\n\nThe lock pins every manifest\n  repo to a SHA, at the workspace\nroot.\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        let combined = slashed(&errors.join("\n"));
+        assert!(
+            combined.contains("docs/intro.md:3: `manifest repo`")
+                && combined.contains("docs/intro.md:4: `workspace root`"),
+            "got:\n{combined}"
+        );
+    }
+
+    /// The seeded-failure pin for the spelling half, planted in a template:
+    /// the gate reads templates as well as what is generated from them.
+    #[test]
+    fn british_spelling_in_explain_template_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "docs/reference/explain/templates/sync.md.tmpl",
+            "# sync\n\nThe default behaviour is a fast-forward.\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert!(
+            errors.iter().any(|e| slashed(e).starts_with(
+                "docs/reference/explain/templates/sync.md.tmpl:3: `behaviour` — American spelling"
+            )),
+            "got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Generated schemas and rendered `--help` are scanned as they are
+    /// served, each reported under its own name.
+    #[test]
+    fn banned_terms_in_generated_schema_and_help_are_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let mut help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "docs/reference/schemas/sync.json",
+            "{\"description\": \"Primary workspace root, in the wire spelling.\"}\n",
+        );
+        help.push((
+            "rwv resolve --help".to_owned(),
+            "Print the path\n\nUsage: rwv resolve\n\nNormalises nothing.\n".to_owned(),
+        ));
+        let errors = check_vocabulary_and_spelling(root, &help);
+        let combined = slashed(&errors.join("\n"));
+        assert!(
+            combined.contains("docs/reference/schemas/sync.json:1: `workspace root`")
+                && combined.contains("rwv resolve --help:5: `Normalises`"),
+            "got:\n{combined}"
+        );
+    }
+
+    /// Message text is the code of a production region: a literal continued
+    /// with `\` is read as the one string it is, while a comment and a test
+    /// module answer to spelling only.
+    #[test]
+    fn src_message_text_is_held_to_the_vocabulary() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "src/lib.rs",
+            "pub fn f() -> anyhow::Result<()> {\n\
+             \x20   // A manifest repo that failed is named above.\n\
+             \x20   anyhow::bail!(\"push failed for one or more manifest \\\n\
+             \x20                  repos; see above\")\n\
+             }\n\
+             \n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+             \x20   const MSG: &str = \"manifest repo\";\n\
+             }\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert_eq!(
+            errors.iter().map(|e| slashed(e)).collect::<Vec<_>>(),
+            vec!["src/lib.rs:3: `manifest repos` — canonical vocabulary: member repo".to_owned()],
+        );
+    }
+
+    /// Spelling reaches what vocabulary does not: a `src/` comment, a test,
+    /// and a maintainer page under `docs/internals/`.
+    #[test]
+    fn spelling_reaches_comments_tests_and_internals() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "src/lib.rs",
+            "// The writer serialises access.\npub fn f() {}\n",
+        );
+        write_at(
+            root,
+            "tests/t.rs",
+            "#[test]\nfn t() {\n    // recognised\n}\n",
+        );
+        write_at(
+            root,
+            "docs/internals/notes.md",
+            "# notes\n\nA manifest repo with modelled behaviour.\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        let combined = slashed(&errors.join("\n"));
+        for want in [
+            "src/lib.rs:1: `serialises`",
+            "tests/t.rs:3: `recognised`",
+            "docs/internals/notes.md:3: `modelled`",
+            "docs/internals/notes.md:3: `behaviour`",
+        ] {
+            assert!(combined.contains(want), "missing {want}, got:\n{combined}");
+        }
+        assert!(
+            !combined.contains("canonical vocabulary"),
+            "docs/internals answers to spelling only, got:\n{combined}"
+        );
+    }
+
+    /// Words a looser matcher would report: the `-ise`, `-our`, `-ll` and
+    /// `-ys` look-alikes, the workweave's own directory, an ecosystem's
+    /// workspace root, `git-repo`'s manifest repository, and identifiers.
+    #[test]
+    fn look_alikes_are_not_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "docs/intro.md",
+            "# intro\n\nOtherwise the premise of the exercise: organism, synthesis,\n\
+             analyses, mechanism, criticism, emphasis, parenthesis, cancellation,\n\
+             an hour-long detour, totally equally. The workweave directory is\n\
+             removed. A nested workspace root, a virtual workspace root, a Cargo\n\
+             workspace root and `multiple workspace roots found in the same\n\
+             workspace` are each tool's own. A `git-repo` manifest repository is\n\
+             not ours either.\n",
+        );
+        write_at(
+            root,
+            "src/lib.rs",
+            "pub struct NormalisedPath;\npub fn serialised_form() -> &'static str { \"x\" }\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert!(errors.is_empty(), "got:\n{}", errors.join("\n"));
+    }
+
+    /// `CLAUDE.md` states both rules, so it names what they ban.
+    #[test]
+    fn claude_md_is_out_of_scope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(root, "CLAUDE.md", "Not \"manifest repo\"; not whilst.\n");
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert!(errors.is_empty(), "got:\n{}", errors.join("\n"));
+    }
+
+    /// Non-vacuity: every surface class that yields nothing is a finding.
+    #[test]
+    fn empty_surface_classes_are_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let errors = check_vocabulary_and_spelling(tmp.path(), &[]);
+        let (_, population) = vocabulary_and_spelling_texts(tmp.path(), &[]);
+        assert_eq!(
+            errors
+                .iter()
+                .filter(|e| e.contains("yielded nothing"))
+                .count(),
+            population.len(),
+            "got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// This file's spelling table and test module are masked from its own
+    /// scan; a spelling anywhere else in it is still reported.
+    #[test]
+    fn self_table_and_test_module_are_masked() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "src/bin/generate-explain.rs",
+            "const BRITISH_SPELLINGS: &[&str] = &[\n    \"behaviour\",\n];\n\
+             // honour this\n\
+             #[cfg(test)]\n\
+             mod tests {\n    // judgement\n}\n",
+        );
+        let errors = check_vocabulary_and_spelling(root, &help);
+        assert_eq!(
+            errors.iter().map(|e| slashed(e)).collect::<Vec<_>>(),
+            vec![
+                "src/bin/generate-explain.rs:4: `honour` — American spelling: -or, not -our"
+                    .to_owned()
+            ],
+        );
+    }
+
+    /// Every command's `--help` is read: one page for the root and one per
+    /// subcommand path in clap's tree, none of them empty.
+    #[test]
+    fn help_pages_cover_every_command() {
+        let cli = Cli::command();
+        let pages = rendered_help_pages(&cli);
+        assert_eq!(pages.len(), collect_subcommand_paths(&cli).len() + 1);
+        assert!(pages.iter().all(|(_, text)| !text.trim().is_empty()));
+        assert!(pages
+            .iter()
+            .any(|(name, _)| name == "rwv workweave create --help"));
+    }
+
+    /// The scan population of this repository, by surface class. Run with
+    /// `--nocapture` to read the counts.
+    #[test]
+    fn prose_scan_reads_every_surface_class_of_this_repository() {
+        let root = repo_root();
+        let help = rendered_help_pages(&Cli::command());
+        let (texts, population) = vocabulary_and_spelling_texts(&root, &help);
+        for (class, count) in &population {
+            println!("{class}: {count}");
+            assert!(*count > 0, "{class} yielded nothing");
+        }
+        let lines: usize = texts.iter().map(|t| t.text.lines().count()).sum();
+        println!("lines read: {lines}");
     }
 }
