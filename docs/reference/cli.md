@@ -181,6 +181,8 @@ Reconcile integration-managed workspace files, weave-root symlinks, and install 
 
 `rwv materialize` authors no integration workspace file: a missing or drifted `package.json`, `go.work` or `Cargo.toml` region is `rwv doctor --fix`'s to regenerate.
 
+Every step reads what the project's integrations declare, so an integration that cannot read its own `[integrations.<name>]` block can stop the verb before its first step. For example, an unknown key in a `cargo-workspace` `members` entry makes `rwv materialize` refuse, changing nothing (`materialize: nothing here was changed`), and list the block with the field to correct. Over the same block the intent verbs (`add`, `remove`, `role`, `update`) refuse and leave `rwv.toml` unchanged, and `rwv activate` withholds its install hooks.
+
 | Flag | Effect |
 |---|---|
 | `--regenerate-drifted` | Discard the drifted content and regenerate it from the current inputs |
