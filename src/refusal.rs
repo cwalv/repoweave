@@ -128,6 +128,8 @@ pub enum RefusalKind {
 
     /// No project is selected and none was supplied.
     NoActiveProject,
+    /// CWD is inside one project's directory while `.rwv-active` selects another.
+    CwdInInactiveProject,
     /// The containment walk found no weave above CWD.
     NoWeaveRoot,
     /// The bootstrap target is neither a workspace nor empty, without consent.
@@ -230,6 +232,8 @@ pub enum RefusalKind {
     SharedCloneReferenced,
     /// The local clone has no conventional remote to read a URL from.
     NoRemoteUrl,
+    /// `--adopt` names a path that holds no clone.
+    NoCloneToAdopt,
     /// The project directory name is taken.
     ProjectDirOccupied,
     /// The name would nest a project inside a project.

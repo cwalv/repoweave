@@ -300,11 +300,10 @@ fn remove_delete_does_not_check_other_projects() {
 }
 
 // ============================================================================
-// Test 3 — `rwv add <local-path>` infers the URL from the origin remote
+// Test 3 — `rwv add --adopt <path>` infers the URL from the origin remote
 //
-// `rwv add <local-path> --role reference` infers the URL from the clone's
-// origin remote when the argument has no URL scheme and the directory exists
-// under the workspace root.
+// `rwv add --adopt <path> --role reference` infers the URL from the clone's
+// origin remote for a clone that exists under the weave root.
 // ============================================================================
 
 #[test]
@@ -334,11 +333,10 @@ fn add_from_local_path_infers_url() {
         .expect("git clone failed");
     assert!(clone_status.success());
 
-    // Run `rwv add github/org/repo --role reference` from the workspace root.
-    // The directory exists, so rwv should detect it as a local path and infer
-    // the URL from the clone's origin remote.
+    // Run `rwv add --adopt github/org/repo --role reference` from the
+    // workspace root; rwv infers the URL from the clone's origin remote.
     rwv()
-        .args(["add", "github/org/repo", "--role", "reference"])
+        .args(["add", "--adopt", "github/org/repo", "--role", "reference"])
         .current_dir(&workspace)
         .assert()
         .success();

@@ -1,7 +1,8 @@
 //! `rwv fetch` — clone a project and its repos into the workspace.
 //!
 //! The source must be a URL (full URL or `owner/repo` shorthand resolved via
-//! the registry). Local paths are not accepted; use `rwv activate` instead.
+//! the registry). A plain path is refused: a local remote is spelled
+//! `file://`, and a project already in the weave is fetched without a source.
 
 use crate::cli::consent::DetachConsent;
 use crate::lock;
@@ -134,6 +135,16 @@ pub enum FetchMode {
 /// Returns `(url, owner)` where `owner` may be empty for unrecognized URLs.
 fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, String)> {
     let parsed: crate::manifest::RepoUrl = source.parse()?;
+    if parsed.is_plain_path() {
+        crate::refuse!(
+            RefusalKind::UnresolvableRepoSource,
+            "rwv fetch: '{source}' is a plain path, which names no remote to clone the \
+             project from. To clone from a local remote, spell it as a URL: \
+             `rwv fetch {file_url}`. To fetch the members of a project already in this \
+             weave at projects/<name>/, drop SOURCE: `rwv fetch --project <name>`.",
+            file_url = crate::path_spelling::file_url_suggestion(source),
+        );
+    }
     let info = registry::resolve_to_clone_info(&parsed)?;
     let owner = info.id.owner().to_owned();
     Ok((info.url, owner))
@@ -305,8 +316,10 @@ pub fn run_fetch(
 /// the worktree for each member the workweave's `rwv.lock` pins and the
 /// workweave lacks, as `rwv doctor --fix` would once the revision is local.
 ///
-/// The auto-activate step from the SOURCE-mode path is not repeated: in-place
-/// mode operates on an already-active project.
+/// When the primary has no project selected and the invocation named none,
+/// the weave's only project is fetched and then activated; with zero or
+/// several projects there is nothing to select and the run refuses, naming
+/// `--project`.
 ///
 /// Flag semantics: `--frozen`, `--no-reference`, `--role`/`--repo`, `-j`,
 /// `--json` all carry the same meaning as the SOURCE-mode path. Filtered
@@ -321,6 +334,16 @@ pub fn run_fetch_in_place(
     jobs: usize,
     json: bool,
 ) -> anyhow::Result<()> {
+    let invocation = ctx;
+    let sole = sole_unselected_project(invocation);
+    let bound;
+    let ctx = match &sole {
+        Some(project) => {
+            bound = WorkspaceContext::resolve_for_project(invocation.active_path(), project)?;
+            &bound
+        }
+        None => invocation,
+    };
     let name = ctx.require_active_project_on_disk()?.clone();
 
     // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
@@ -367,10 +390,34 @@ pub fn run_fetch_in_place(
         ),
         Checkout::Primary { .. } => Ok(()),
     };
+    if let Some(project) = &sole {
+        let msg = format!(
+            "rwv fetch: activating project '{project}', the only project in this weave \
+             (none was active)"
+        );
+        if output == OutputMode::Text {
+            println!("{msg}");
+        } else {
+            eprintln!("{msg}");
+        }
+        crate::activate::activate(project.as_str(), invocation)?;
+    }
     if output == OutputMode::JsonEnvelope {
         envelope.print()?;
     }
     created
+}
+
+/// The project an in-place fetch selects for itself: the weave's only one,
+/// when the primary has none selected and the invocation named none.
+fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::ProjectName> {
+    if !matches!(ctx.checkout, Checkout::Primary { project: None }) {
+        return None;
+    }
+    match crate::workspace::discover_projects(ctx.primary_path()).as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
 }
 
 /// Create the worktree for each member the workweave's `rwv.lock` pins and the

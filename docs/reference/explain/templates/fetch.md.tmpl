@@ -7,17 +7,26 @@ file. `fetch` is the lock-aligning, read-only counterpart to `rwv update`:
 it never advances pinned revisions. Its job is to reproduce a known state,
 not discover a new one.
 
-Given a `source` (full URL or `owner/repo` shorthand), `fetch` clones the
-project repo into `projects/<name>/`, reads its `rwv.lock`, and then clones
+Given a `source` (a URL — `file://` for a local remote — or `owner/repo`
+shorthand), `fetch` clones the project repo into `projects/<name>/`, reads its `rwv.lock`, and then clones
 or attaches every member repo at the revision the lock records. When the
 lock is absent (first-time bootstrap), `fetch` clones repos at branch HEAD
 and writes a new lock from those HEAD SHAs. When a manifest entry is missing
 from an existing lock, it is added additively at branch HEAD — already-pinned
 entries are never moved.
 
+A plain path is not a source: it names no remote, so `fetch` refuses
+(`unresolvable-repo-source`) and names the two spellings that are — `rwv fetch
+file://<absolute path>` to clone from a local remote, and `rwv fetch --project
+<name>` for a project already at `projects/<name>/`.
+
 With no `source` argument, `fetch` runs *in-place*: it resolves the workspace
-from CWD, iterates the active project's manifest, and clones any repo whose
-canonical clone directory is missing. This is the settled repair verb for a
+from CWD, iterates the manifest of the active project (or of `--project
+<name>`), and clones any repo whose canonical clone directory is missing.
+When no project is active, `--project` is not given, and the weave holds
+exactly one project, `fetch` fetches that project and then activates it, as
+`rwv activate` would; with zero or several projects it refuses
+(`no-active-project`) and names `--project`. This is the settled repair verb for a
 dangling reference (a manifest entry pointing at a missing clone — reported
 by `rwv doctor`, or surfaced by `rwv update` / `rwv push` when they hit the
 missing directory).
@@ -108,15 +117,19 @@ happens under a filter.
 ```
 rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
           [--detach-checkouts] [--role <role>...] [--repo <selector>...]
-          [-j <N>] [--json]
+          [-j <N>] [--json] [--project <name>]
 ```
 
-- `<source>` — optional. Full clone URL or `owner/repo` /
-  `registry/owner/repo` shorthand. When present, the project repo is
-  cloned from this URL (bootstrap mode). When absent, `fetch` runs
+- `<source>` — optional. Full clone URL (`file://` for a local remote) or
+  `owner/repo` / `registry/owner/repo` shorthand. When present, the project
+  repo is cloned from this URL (bootstrap mode). When absent, `fetch` runs
   in-place against the active project of the current workspace (repair
-  mode). In-place mode requires an active project — it errors if CWD is
-  not inside a workspace or no project is active.
+  mode). In-place mode errors if CWD is not inside a workspace, or if no
+  project is active, `--project` is not given, and the weave does not hold
+  exactly one project.
+- `--project <name>` — in-place mode only: operate on this project instead of
+  the active project. Does not change `.rwv-active`. Refused alongside
+  `<source>`, which names its own project (`inapplicable-flag`).
 - `--frozen` — CI mode: error if the lock is missing or does not cover all
   member repos. Never writes the lock.
 - `--allow-non-empty-dir` — bootstrap into a non-empty directory that is not
@@ -257,6 +270,12 @@ for `rwv doctor`'s `DanglingReference` finding — no `<source>`):
 rwv fetch
 ```
 
+The same for a named project, leaving `.rwv-active` as it is:
+
+```
+rwv fetch --frozen --project web-app
+```
+
 Realign every present clone to the lock even where that means detaching it
 from the branch it is on:
 
@@ -276,6 +295,14 @@ rwv fetch --detach-checkouts
 - *--allow-non-empty-dir has no effect without SOURCE* — the flag is only
   meaningful in bootstrap mode; drop it to re-materialize missing members in
   place.
+- *--project has no effect with SOURCE* — a source names the project it
+  clones; drop one of the two.
+- *is a plain path, which names no remote* — spell a local remote as
+  `file://<absolute path>`, or drop `<source>` and pass `--project <name>`
+  for a project already in the weave.
+- *no active project* (in-place mode) — the weave holds zero or several
+  projects and none is active; pass `--project <name>` or run `rwv activate
+  <name>`.
 - *lock file does not exist* (with `--frozen`) — the project has no
   `rwv.lock`; run without `--frozen` to bootstrap it.
 - *lock file is incomplete* (with `--frozen`) — the lock does not cover all

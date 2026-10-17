@@ -240,11 +240,9 @@ fn add_unrecognized_registry_url_writes_three_segment_manifest_path() {
 
 #[test]
 fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
-    // `github/acme/x` with no pre-existing `<primary>/github/acme/x`
-    // directory fails `is_url()` and falls through the local-path arm into
-    // the URL arm below it, so the clone must be driven by the URL the
-    // registry resolves the shorthand to, not by the three-segment string
-    // itself. `url.<base>.insteadOf` proves this offline and
+    // `github/acme/x` is registry shorthand, so the clone must be driven by
+    // the URL the registry resolves the shorthand to, not by the
+    // three-segment string itself. `url.<base>.insteadOf` proves this offline and
     // deterministically: only a URL matching the `https://github.com/`
     // prefix is rewritten, so the clone can succeed only if the resolved
     // form reached `git clone`. The raw shorthand argument is not a URL at
@@ -626,7 +624,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
     run(&["remote", "add", "origin", &bare.to_string_lossy()]);
 
     let result = rwv()
-        .args(["add", repo_path])
+        .args(["add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .failure();
@@ -656,7 +654,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
     run(&["fetch", "origin"]);
     run(&["remote", "set-head", "origin", "-a"]);
     rwv()
-        .args(["add", repo_path])
+        .args(["add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -667,7 +665,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
     );
 }
 
-/// The local-path arm reads `origin` back from a pre-existing clone and
+/// `--adopt` reads `origin` back from a pre-existing clone and
 /// mints a `file://` URL from whatever git reports — a bare filesystem path
 /// when the clone was made without a `file://` source. A space or `%` in
 /// that path must come out percent-encoded, or the manifest records a URL
@@ -700,7 +698,7 @@ fn add_local_path_percent_encodes_space_and_percent_in_the_origin_url() {
     run(&["remote", "set-head", "origin", "-a"]);
 
     rwv()
-        .args(["add", repo_path])
+        .args(["add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1598,8 +1596,8 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
 //
 // Covered arms:
 //   URL arm:        `rwv add <file://…>` from a workweave
-//   local-path arm: `rwv add <github/owner/repo>` (path-as-arg to an
-//                   existing clone) from a workweave
+//   adopt arm:      `rwv add --adopt <path>` (an existing clone) from a
+//                   workweave
 // ============================================================================
 
 /// Read `git rev-parse --git-common-dir` in `repo`, returning the
@@ -1754,8 +1752,8 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
 #[test]
 fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
-    // Acceptance criterion, local-path arm:
-    // `rwv add <github/owner/repo>` (path to an existing clone under primary)
+    // Acceptance criterion, adopt arm:
+    // `rwv add --adopt <path>` (an existing clone under primary)
     // from a workweave must produce the same placement guarantee as the URL
     // arm — canonical clone stays in primary, workweave gets a linked
     // worktree with git-common-dir pointing to the canonical clone.
@@ -1766,9 +1764,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
-    // Pre-clone the repo into primary at the canonical path so the
-    // local-path arm triggers (the condition is "!url.contains("://") &&
-    // ctx.primary_path().join(url) exists as a directory").
+    // Pre-clone the repo into primary for `--adopt` to register.
     // Use two-segment path so it lands under primary/bar/repo/.
     let canonical_rel = "bar/localpath-gcdir";
     let canonical = primary.join(canonical_rel);
@@ -1785,9 +1781,9 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         .expect("git clone failed");
     assert!(status.success(), "pre-clone of bare repo failed");
 
-    // Run `rwv add <canonical_rel>` from the workweave (local-path arm).
+    // Run `rwv add --adopt <canonical_rel>` from the workweave.
     rwv()
-        .args(["add", canonical_rel])
+        .args(["add", "--adopt", canonical_rel])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -1810,7 +1806,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     let dot_git = workweave_repo.join(".git");
     assert!(
         dot_git.is_file(),
-        ".git in workweave (local-path arm) must be a file (linked worktree), \
+        ".git in workweave (adopt arm) must be a file (linked worktree), \
          found a directory (independent clone) at {}",
         dot_git.display()
     );
@@ -1820,7 +1816,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     let canonical_git = canonical.join(".git").canonicalize().unwrap();
     assert!(
         common_dir.starts_with(&canonical_git),
-        "git-common-dir ({}) must be inside the canonical clone's .git ({}) [local-path arm]",
+        "git-common-dir ({}) must be inside the canonical clone's .git ({}) [adopt arm]",
         common_dir.display(),
         canonical_git.display()
     );
@@ -1829,7 +1825,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     let branch = current_branch(&workweave_repo).expect("worktree should have a branch");
     assert_eq!(
         branch, "test-project--feat",
-        "worktree (local-path arm) must be on ephemeral branch test-project--feat, got: {branch}"
+        "worktree (adopt arm) must be on ephemeral branch test-project--feat, got: {branch}"
     );
 
     // No independent clone materialized under .workweaves/ (the workweave

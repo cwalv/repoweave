@@ -97,16 +97,23 @@ pub enum Commands {
     // ── Setup & lifecycle ─────────────────────────────────────────────────────
     /// Add a repo to the active project
     Add {
-        /// Repository URL, or (with --new) a creation address: a bare
-        /// registry name, or `registry/owner/repo`
+        /// Repository URL (`file://` for a local remote) or registry
+        /// shorthand such as `github/owner/repo`; with --adopt, the path of an
+        /// existing clone; with --new, a creation address: a bare registry
+        /// name, or `registry/owner/repo`
         url: String,
         /// Role for the repo
         #[arg(long, default_value_t = manifest::Role::Owned, value_enum)]
         role: manifest::Role,
         /// Create a new repo instead of cloning: the argument is a creation
         /// address, not a URL or path
-        #[arg(long)]
+        #[arg(long, conflicts_with = "adopt")]
         new: bool,
+        /// Register an existing clone instead of cloning: the argument is its
+        /// path under the weave root, and the URL is read from its origin
+        /// remote
+        #[arg(long)]
+        adopt: bool,
         /// A creation parameter as NAME=VALUE (repeatable). See `rwv explain add`
         /// for what each registry declares.
         #[arg(long = "param", value_name = "NAME=VALUE")]
@@ -121,7 +128,7 @@ pub enum Commands {
     },
     /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references).
     Fetch {
-        /// Source to fetch from. Omit to re-materialize missing manifest members of the active project in the current workspace.
+        /// Source to fetch from: a URL (`file://` for a local remote) or `owner/repo` shorthand. Omit to re-materialize missing manifest members of the active project in the current workspace.
         source: Option<String>,
         /// Error if the lock file is missing or incomplete (CI mode)
         #[arg(long)]
@@ -150,6 +157,9 @@ pub enum Commands {
         /// finish). Without `-j` the count is min(nproc, 8). See `rwv explain fetch`.
         #[arg(long)]
         json: bool,
+        /// Without SOURCE, operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Initialize a new project
     Init {

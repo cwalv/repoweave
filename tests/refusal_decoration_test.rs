@@ -66,7 +66,7 @@ fn add_unrecognized_url_is_decorated_once() {
     let tmp = common::tempdir().unwrap();
     let workspace = workspace_with_project(&tmp);
     assert_one_decoration(
-        &["add", "not-a-valid-url-at-all"],
+        &["add", "https://example.com"],
         &workspace,
         "unrecognized URL",
     );

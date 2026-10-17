@@ -1575,29 +1575,52 @@ impl WorkspaceContext {
         }
     }
 
-    /// Returns `Ok(name)` for the active project, or an `Err` whose
-    /// message guides the user to either `rwv activate <X>` or
-    /// `--project <X>` when CWD is inside a non-active project directory.
-    ///
-    /// The CWD-vs-active divergence error is the user-facing successor
-    /// to the silent CWD override that used to live here. Calling this
-    /// from every action-verb entry point keeps the error in one place.
+    /// CWD's project and the active one, when `.rwv-active` selected a
+    /// project other than the one whose directory CWD is inside. A
+    /// `--project` flag or a workweave marker names its target outright, so
+    /// neither contradicts CWD.
+    fn cwd_project_contradicting_pointer(&self) -> Option<(&ProjectName, &ProjectName)> {
+        if self.project_provenance != Some(ProjectProvenance::ActiveFile) {
+            return None;
+        }
+        let cwd_project = self.cwd_project_hint()?;
+        let active = self.active_project()?;
+        (cwd_project != active).then_some((cwd_project, active))
+    }
+
+    /// Refuses when `.rwv-active` would send the verb to a project other than
+    /// the one whose directory CWD is inside. Every verb that writes into its
+    /// project calls this before acting; the verbs that only report warn
+    /// instead, from [`Self::require_active_project`].
+    pub fn refuse_cwd_in_inactive_project(&self) -> anyhow::Result<()> {
+        if let Some((cwd_project, active)) = self.cwd_project_contradicting_pointer() {
+            crate::refuse!(
+                RefusalKind::CwdInInactiveProject,
+                "CWD is inside projects/{cwd}/, but `.rwv-active` selects {active}, so this \
+                 would act on {active}. Pass `--project {cwd}` to act on {cwd}, or \
+                 `--project {active}` to act on {active} from here; `rwv activate {cwd}` \
+                 switches the active project.",
+                cwd = cwd_project.as_str(),
+                active = active.as_str(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Returns `Ok(name)` for the active project, or an `Err` naming
+    /// `rwv activate <X>` and `--project <X>` when none is selected.
     pub fn require_active_project(&self) -> anyhow::Result<&ProjectName> {
         if let Some(name) = self.active_project() {
-            // Active project is set; but if CWD hints at a different
-            // project, warn (stderr) so the user knows the divergence.
-            if let Some(hint) = self.cwd_project_hint() {
-                if hint != name {
-                    eprintln!(
-                        "warning: you are in projects/{}/, but the active project is {}; \
-                         pass `--project {}` to operate on the CWD project, or \
-                         `rwv activate {}` to switch.",
-                        hint.as_str(),
-                        name.as_str(),
-                        hint.as_str(),
-                        hint.as_str(),
-                    );
-                }
+            if let Some((cwd_project, active)) = self.cwd_project_contradicting_pointer() {
+                eprintln!(
+                    "warning: you are in projects/{}/, but the active project is {}; \
+                     pass `--project {}` to operate on the CWD project, or \
+                     `rwv activate {}` to switch.",
+                    cwd_project.as_str(),
+                    active.as_str(),
+                    cwd_project.as_str(),
+                    cwd_project.as_str(),
+                );
             }
             return Ok(name);
         }

@@ -575,7 +575,7 @@ fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
 }
 
 #[test]
-fn a_refused_local_path_add_in_a_workweave_names_only_the_worktree_it_made() {
+fn a_refused_adopt_in_a_workweave_names_only_the_worktree_it_made() {
     let weave = Weave::new();
     let workweave = weave.workweave("feat");
     let beta_url = weave.origin("beta");
@@ -588,7 +588,7 @@ fn a_refused_local_path_add_in_a_workweave_names_only_the_worktree_it_made() {
     );
     occupy_cargo_lock(&workweave);
 
-    let stderr = refused(&["add", &beta], &workweave);
+    let stderr = refused(&["add", "--adopt", &beta], &workweave);
 
     let worktree = workweave.join(&beta);
     assert!(

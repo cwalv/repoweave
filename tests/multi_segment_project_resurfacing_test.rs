@@ -91,8 +91,8 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
         "the symlink's target must actually exist"
     );
 
-    // A third surfacing pass, via the local-path add form: the sibling
-    // measurement (rwv-jodu) found both add forms failing identically.
+    // A third surfacing pass, via the adopt form: both add forms failed
+    // identically on the second pass.
     let bare2 = tmp.path().join("second.git");
     init_bare_repo_with_commit(&bare2);
     let canonical = ws.join("vendor/second");
@@ -107,7 +107,7 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
     );
 
     rwv()
-        .args(["add", "vendor/second"])
+        .args(["add", "--adopt", "vendor/second"])
         .current_dir(&ws)
         .assert()
         .success();

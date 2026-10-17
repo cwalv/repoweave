@@ -279,6 +279,10 @@ fn no_such_workweave(raw: &str, recorded: &[(ProjectName, WorkweaveName)]) -> an
 /// and the target line is suppressed (it only fires for `.rwv-active`
 /// fall-throughs, never for explicit addressing).
 ///
+/// Every verb resolved here writes into its project, so it also refuses when
+/// `.rwv-active` would send it somewhere other than the project whose
+/// directory CWD is inside.
+///
 /// Wrapping resolve + emit in one call keeps the per-verb dispatch site to
 /// a single line and makes it impossible to forget the surfacing on a new
 /// project-scoped verb.
@@ -287,10 +291,18 @@ fn resolve_project_scoped(
     project_override: Option<crate::manifest::ProjectName>,
     use_workweave_flag: bool,
 ) -> anyhow::Result<WorkspaceContext> {
-    Ok(with_target_surfaced(
+    bind_project_scoped(
         WorkspaceContext::resolve_invocation(origin_dir, project_override)?,
         use_workweave_flag,
-    ))
+    )
+}
+
+fn bind_project_scoped(
+    ctx: WorkspaceContext,
+    use_workweave_flag: bool,
+) -> anyhow::Result<WorkspaceContext> {
+    ctx.refuse_cwd_in_inactive_project()?;
+    Ok(with_target_surfaced(ctx, use_workweave_flag))
 }
 
 /// [`resolve_project_scoped`] for `doctor` and `status`, the two verbs that
@@ -744,6 +756,7 @@ pub fn run() -> anyhow::Result<()> {
             url,
             role,
             new,
+            adopt,
             params,
             params_json,
             project,
@@ -752,6 +765,8 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             if new {
                 add_remove::run_add_new(&url, role, &params, params_json.as_deref(), &ctx)?;
+            } else if adopt {
+                add_remove::run_add_adopt(&url, role, &ctx)?;
             } else {
                 add_remove::run_add(&url, role, &ctx)?;
             }
@@ -766,6 +781,7 @@ pub fn run() -> anyhow::Result<()> {
             repos,
             jobs,
             json,
+            project,
         }) => {
             let mode = if frozen {
                 fetch::FetchMode::Frozen
@@ -781,6 +797,14 @@ pub fn run() -> anyhow::Result<()> {
             let jobs = crate::parallel::resolve_jobs(jobs);
             match source {
                 Some(src) => {
+                    if project.is_some() {
+                        crate::refuse!(
+                            RefusalKind::InapplicableFlag,
+                            "rwv fetch: --project has no effect with SOURCE, which names the \
+                             project it clones; drop --project, or drop SOURCE to fetch the \
+                             members of a project already in this weave"
+                        );
+                    }
                     // SOURCE-mode: bootstrap a project into the workspace (or
                     // an empty directory, or a non-empty one under
                     // --allow-non-empty-dir). The origin dir is the bootstrap
@@ -813,16 +837,16 @@ pub fn run() -> anyhow::Result<()> {
                              in place"
                         );
                     }
-                    let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)
+                    let project_override =
+                        project.map(crate::manifest::ProjectName::new).transpose()?;
+                    let ctx = WorkspaceContext::resolve_invocation(&origin_dir, project_override)
                         .with_context(|| {
-                            format!(
-                                "rwv fetch: no SOURCE and no repoweave workspace found above {}",
-                                origin_dir.display(),
-                            )
-                        })?;
-                    // In-place fetch operates on the active project — surface
-                    // the pointer-decided target before acting.
-                    ctx.emit_target_line();
+                        format!(
+                            "rwv fetch: no SOURCE and no repoweave workspace found above {}",
+                            origin_dir.display(),
+                        )
+                    })?;
+                    let ctx = bind_project_scoped(ctx, use_workweave_flag)?;
                     fetch::run_fetch_in_place(
                         &ctx,
                         mode,
@@ -997,6 +1021,9 @@ pub fn run() -> anyhow::Result<()> {
             } else {
                 Some(check::KindFilter::new(&kind)?)
             };
+            if fix {
+                ctx.refuse_cwd_in_inactive_project()?;
+            }
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
                 if has_drift {

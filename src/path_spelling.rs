@@ -129,6 +129,17 @@ fn starts_with_drive_letter(path: &str) -> bool {
         && matches!(bytes.get(2), None | Some(b'/') | Some(b'\\'))
 }
 
+/// The `file://` URL an operator would write for `path`: exact for an
+/// absolute path, a placeholder for a relative one, whose base differs between
+/// a shell and the weave root.
+pub fn file_url_suggestion(path: &str) -> String {
+    if is_absolute_spelling(path) {
+        mint_file_url(path)
+    } else {
+        "file://<absolute path>".to_owned()
+    }
+}
+
 /// Whether `path` is absolute in any platform's spelling — `/`-rooted, a
 /// drive letter, or a UNC `\\` prefix — judged from the string alone, like
 /// [`mint_file_url`].

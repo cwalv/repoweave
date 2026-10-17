@@ -922,3 +922,95 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
         "the worktree is born at the revision the workweave's lock pins"
     );
 }
+
+// ============================================================================
+// Project selection: --project, and the weave's only project
+// ============================================================================
+
+/// Add a second project, `other`, whose one member is `github/acme/b`.
+fn add_second_project(s: &Setup) -> std::path::PathBuf {
+    let bare = s._tmp.path().join("github_acme_b.git");
+    let (first, _) = init_bare_repo_with_two_commits(&bare);
+    let url = common::file_url(&bare);
+    let project_dir = s.workspace.join("projects/other");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        format!(
+            "[repositories]\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::fixture_lock(&project_dir, &[("github/acme/b", &url, &first)]);
+    s.workspace.join("github/acme/b")
+}
+
+#[test]
+fn in_place_fetch_activates_the_only_project_when_none_is_active() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    std::fs::remove_file(s.workspace.join(".rwv-active")).unwrap();
+
+    rwv()
+        .args(["fetch", "--frozen"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "activating project 'my-app', the only project in this weave",
+        ));
+
+    assert!(s.workspace.join("github/acme/a/.git").exists());
+    assert_eq!(
+        std::fs::read_to_string(s.workspace.join(".rwv-active"))
+            .unwrap()
+            .trim(),
+        "my-app",
+        "the weave's only project must be active after the fetch"
+    );
+}
+
+#[test]
+fn in_place_fetch_project_flag_targets_that_project_without_selecting_it() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let other_member = add_second_project(&s);
+
+    rwv()
+        .args(["fetch", "--project", "other"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(
+        other_member.join(".git").exists(),
+        "--project names the manifest fetched"
+    );
+    assert!(
+        !s.workspace.join("github/acme/a").exists(),
+        "the active project's members are not fetched"
+    );
+    assert_eq!(
+        std::fs::read_to_string(s.workspace.join(".rwv-active"))
+            .unwrap()
+            .trim(),
+        "my-app",
+        "--project does not change .rwv-active"
+    );
+}
+
+#[test]
+fn in_place_fetch_project_flag_does_not_activate_the_only_project() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    std::fs::remove_file(s.workspace.join(".rwv-active")).unwrap();
+
+    rwv()
+        .args(["fetch", "--project", "my-app"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(s.workspace.join("github/acme/a/.git").exists());
+    assert!(
+        !s.workspace.join(".rwv-active").exists(),
+        "--project does not change .rwv-active, even with one project"
+    );
+}

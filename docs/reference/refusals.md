@@ -101,6 +101,20 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 
 **Where this sits.** [Weave root](../explanation/joints/weave-root.md).
 
+### `cwd-in-inactive-project`
+
+**Condition.** A verb that writes into its project was run from inside
+`projects/<name>/`, and `.rwv-active` selects a different project.
+
+**Why.** Changing into a project's directory does not select it, so the verb
+would write into the active project while the directory says the other one was
+meant.
+
+**Exits.** Pass `--project <name>` to act on either project from where you
+are, or `rwv activate <name>` to make the directory's project the active one.
+
+**Where this sits.** [Weave root](../explanation/joints/weave-root.md).
+
 ### `dangling-primary`
 
 **Condition.** A workweave marker records a `primary:` path that no longer
@@ -382,6 +396,17 @@ rwv would have to pick, and picking wrongly acts on the wrong tree.
 a single invocation.
 
 **Where this sits.** [Weave root](../explanation/joints/weave-root.md).
+
+### `no-clone-to-adopt`
+
+**Condition.** `rwv add --adopt` names a path that holds no clone.
+
+**Why.** `--adopt` registers a clone already on disk and reads its URL from
+that clone. With nothing there, there is no URL to record and nothing to
+register.
+
+**Exits.** Name the clone by its path under the weave root, or drop `--adopt`
+and give the URL to clone from (`file://` for a local remote).
 
 ### `no-explain-entry`
 

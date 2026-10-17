@@ -245,6 +245,12 @@ impl RepoUrl {
         }
     }
 
+    /// Neither a URL nor registry shorthand: the spelling of a filesystem
+    /// path, which names no remote.
+    pub fn is_plain_path(&self) -> bool {
+        matches!(self, Self::Unknown(_)) && !self.is_url()
+    }
+
     /// Canonical local path `{registry}/{owner}/{repo}` for variants where the
     /// registry is known. Returns `None` for [`Self::Shorthand`] without a
     /// registry and for [`Self::Unknown`]. The value is the `RepoPath`

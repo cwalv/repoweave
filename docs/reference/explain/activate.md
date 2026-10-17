@@ -16,7 +16,9 @@ generated from; see [file-ownership](../../explanation/joints/file-ownership.md)
 
 `.rwv-active` is the single source of truth for the active project. It is a
 plain text file at the weave root containing the project name. CWD does not
-override it. Every verb that operates "on the active project" reads this file.
+override it. Every verb that operates "on the active project" reads this file;
+one that writes into its project refuses (`cwd-in-inactive-project`) when run
+from inside a different project's `projects/<name>/`, naming `--project`.
 
 `activate` writes `.rwv-active` as its last step, after all symlinks and
 integration hooks have succeeded. If any integration hook fails (severity

@@ -5,7 +5,7 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType,
 };
-use crate::path_spelling::mint_file_url;
+use crate::path_spelling::{file_url_suggestion, mint_file_url};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
 use crate::vcs::{vcs_for, HeadAttachment, RefName, Vcs};
@@ -231,71 +231,21 @@ pub(crate) fn settle_manifest(
 /// `ctx` is the already-resolved invocation context (with `--project`
 /// baked in when passed). Handlers must not re-resolve.
 pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
-    // `rwv add` mints the manifest entry, so the backend is an input to the
-    // verb rather than a lookup: one value feeds both the handle this verb
-    // operates through and the `vcs_type` it records.
-    let vcs_type = VcsType::Git;
-    let vcs = vcs_for(vcs_type);
-    let (project, project_dir) = find_project(ctx)?;
-    let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let parsed_url: RepoUrl = url.parse()?;
-
-    // A non-URL argument may name a clone already on disk. Local-path
-    // resolution scans primary for it — that is the canonical layout
-    // regardless of CWD.
-    if !parsed_url.is_url() {
-        let candidate = ctx.primary_path().join(url);
-        if candidate.is_dir() {
-            // Warn when this clone path is already registered by another project
-            // before adding it here (local-path arm). Same shared-clone detection
-            // as the URL arm.
-            let repo_path = RepoPath::new(url)?;
-            warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
-            let registration = run_add_from_local_path(
-                vcs.as_ref(),
-                vcs_type,
-                url,
-                &candidate,
-                role,
-                &manifest_path,
-            )?;
-            // Local-path add doesn't clone, but the clone still has to hold
-            // the permissions of the role the manifest gives it, and a
-            // workweave still needs its worktree, as on the URL path.
-            let canonical = ctx.primary_path().join(repo_path.as_path());
-            let role = match &registration {
-                Some((manifest, _)) => manifest.get_entry(&repo_path).map(|e| e.role),
-                None => Manifest::from_path(&manifest_path)?
-                    .get_entry(&repo_path)
-                    .map(|e| e.role),
-            }
-            .unwrap_or(role);
-            let mut left = AddLeftovers::default();
-            let added = (|| -> anyhow::Result<()> {
-                place_member_noting(vcs.as_ref(), ctx, &canonical, &repo_path, role, &mut left)?;
-                settle_manifest(
-                    ctx,
-                    &project,
-                    registration.as_ref().map(|(manifest, _)| manifest),
-                )
-            })();
-            added.map_err(|e| {
-                left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}"))
-            })?;
-            if let Some((_, origin_url)) = registration {
-                eprintln!(
-                    "Added '{}' to manifest (url: {})",
-                    repo_path.as_str(),
-                    origin_url
-                );
-            }
-            return Ok(());
-        }
-    }
-
     let repo_path = match crate::registry::placement_result(&parsed_url) {
         Ok(repo_path) => repo_path,
         Err(crate::registry::PlacementError::Invalid(e)) => return Err(e.into()),
+        Err(crate::registry::PlacementError::NoMatch) if !parsed_url.is_url() => {
+            crate::refuse!(
+                RefusalKind::UnresolvableRepoSource,
+                "rwv add: '{url}' is not a URL and no registry reads it as shorthand, so it \
+                 reads as a path, which could name a remote to clone from or a clone to \
+                 register. To clone from a local remote, spell it as a URL: \
+                 `rwv add {file_url}`. To register the clone already at that path under the \
+                 weave root: `rwv add --adopt {url}`.",
+                file_url = file_url_suggestion(url),
+            );
+        }
         Err(crate::registry::PlacementError::NoMatch) => {
             let registries = builtin_registries();
             let names = registries
@@ -312,6 +262,13 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             ));
         }
     };
+    // `rwv add` mints the manifest entry, so the backend is an input to the
+    // verb rather than a lookup: one value feeds both the handle this verb
+    // operates through and the `vcs_type` it records.
+    let vcs_type = VcsType::Git;
+    let vcs = vcs_for(vcs_type);
+    let (project, project_dir) = find_project(ctx)?;
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
@@ -404,6 +361,72 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     added.map_err(|e| left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}")))?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
+    Ok(())
+}
+
+/// `rwv add --adopt <path>`: register the clone already at `path` under the
+/// primary weave root — the canonical layout regardless of CWD — recording
+/// the URL its origin remote names.
+pub fn run_add_adopt(path: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let vcs_type = VcsType::Git;
+    let vcs = vcs_for(vcs_type);
+    let (project, project_dir) = find_project(ctx)?;
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
+    let candidate = ctx.primary_path().join(path);
+    if !vcs.is_repo(&candidate) {
+        crate::refuse!(
+            RefusalKind::NoCloneToAdopt,
+            "rwv add --adopt: no clone at '{}'. --adopt registers a clone already under \
+             the weave root, named by its path there; to clone from a remote instead, drop \
+             --adopt and give its URL (`file://` for a local one).",
+            candidate.display()
+        );
+    }
+    let repo_path = RepoPath::new(path)?;
+    warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
+    let registration = run_add_from_local_path(
+        vcs.as_ref(),
+        vcs_type,
+        path,
+        &candidate,
+        role,
+        &manifest_path,
+    )?;
+    // Adopting doesn't clone, but the clone still has to hold the permissions
+    // of the role the manifest gives it, and a workweave still needs its
+    // worktree, as on the URL path.
+    let canonical = ctx.primary_path().join(repo_path.as_path());
+    let role = match &registration {
+        Some((manifest, _)) => manifest.get_entry(&repo_path).map(|e| e.role),
+        None => Manifest::from_path(&manifest_path)?
+            .get_entry(&repo_path)
+            .map(|e| e.role),
+    }
+    .unwrap_or(role);
+    let mut left = AddLeftovers::default();
+    let added = (|| -> anyhow::Result<()> {
+        place_member_noting(vcs.as_ref(), ctx, &canonical, &repo_path, role, &mut left)?;
+        settle_manifest(
+            ctx,
+            &project,
+            registration.as_ref().map(|(manifest, _)| manifest),
+        )
+    })();
+    added.map_err(|e| {
+        left.refused(
+            e,
+            &manifest_path,
+            &repo_path,
+            &format!("rwv add --adopt {path}"),
+        )
+    })?;
+    if let Some((_, origin_url)) = registration {
+        eprintln!(
+            "Added '{}' to manifest (url: {})",
+            repo_path.as_str(),
+            origin_url
+        );
+    }
     Ok(())
 }
 
@@ -533,9 +556,8 @@ fn announce_already_registered(repo_path: &RepoPath) {
     );
 }
 
-/// Handle `rwv add <local-path>` where the argument is a relative path to an
-/// existing directory under the workspace root.  Infers the URL by reading the
-/// clone's `origin` remote.
+/// Register the clone at `clone_dir` under `path_arg`, inferring the URL by
+/// reading the clone's `origin` remote.
 ///
 /// Returns the manifest with the member added and the URL it was recorded
 /// under, unwritten, or `None` when the manifest already names it.

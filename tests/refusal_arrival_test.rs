@@ -645,8 +645,13 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
 fn each_argument_refusal_routes_to_its_own_token() {
     let tmp = common::tempdir().unwrap();
 
-    let cases: [(&[&str], &str); 14] = [
-        (&["add", "foo"], "no-matching-registry"),
+    let cases: [(&[&str], &str); 16] = [
+        (&["add", "https://example.com"], "no-matching-registry"),
+        (&["add", "foo"], "unresolvable-repo-source"),
+        (
+            &["fetch", "/srv/repos/web-app.git"],
+            "unresolvable-repo-source",
+        ),
         (&["add", "--new", "github/owner"], "malformed-repo-path"),
         (
             &["init", "elsewhere", "--provider", "nosuch/owner"],

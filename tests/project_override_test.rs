@@ -1,12 +1,10 @@
 //! End-to-end tests for the `--project` flag and CWD-vs-active
 //! divergence handling.
 //!
-//! Previously `rwv lock`, `rwv add`, etc. silently substituted the
-//! CWD-inferred project for `.rwv-active`, letting symlinks and manifest
-//! diverge. Now `.rwv-active` is the single source of truth;
-//! `--project <name>` is the one-shot escape hatch; a divergence emits a
-//! helpful error or warning depending on whether the divergent project
-//! is active at all.
+//! `.rwv-active` is the single source of truth and `--project <name>` the
+//! one-shot override; CWD inside `projects/<name>/` selects nothing. When CWD
+//! sits in a project other than the active one, a verb that writes refuses and
+//! a verb that only reports warns.
 
 use std::path::{Path, PathBuf};
 
@@ -304,35 +302,74 @@ fn update_with_project_override_regenerates_without_selecting() {
 }
 
 // ---------------------------------------------------------------------------
-// Divergence warning when CWD project != active project
+// CWD project != active project
 // ---------------------------------------------------------------------------
 
 #[test]
-fn divergence_warning_when_cwd_project_differs_from_active() {
+fn lock_from_another_projects_directory_refuses_and_writes_neither_lock() {
     let tmp = common::tempdir().unwrap();
     let (ws, _proj_a, proj_b, _sha) = make_two_project_workspace(tmp.path());
-
-    // proj-a is active; CWD is proj-b — divergence.
     std::fs::write(ws.join(".rwv-active"), "proj-a\n").unwrap();
 
-    let out = rwv().args(["lock"]).current_dir(&proj_b).assert().success();
+    let out = rwv().args(["lock"]).current_dir(&proj_b).assert().code(1);
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
 
     assert!(
         stderr.contains("projects/proj-b/")
             && stderr.contains("proj-a")
-            && stderr.contains("--project proj-b"),
-        "warning should mention CWD project, active project, and recommend --project; got: {stderr}"
+            && stderr.contains("--project proj-b")
+            && stderr
+                .trim_end()
+                .ends_with("rwv explain cwd-in-inactive-project"),
+        "the refusal should name both projects and `--project`; got: {stderr}"
     );
-
-    // The lock should be in proj-a (the active project), NOT proj-b — the
-    // CWD does not override anymore.
     assert!(
-        ws.join("projects/proj-a/rwv.lock").exists(),
-        "lock should be written for the ACTIVE project"
+        !ws.join("projects/proj-a/rwv.lock").exists(),
+        "the active project's lock must not be written from another project's directory"
     );
     assert!(
         !ws.join("projects/proj-b/rwv.lock").exists(),
-        "lock must not be written for the CWD-project when CWD is not active"
+        "CWD does not select the project"
+    );
+}
+
+#[test]
+fn project_flag_acts_from_another_projects_directory_without_a_warning() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _proj_a, proj_b, _sha) = make_two_project_workspace(tmp.path());
+    std::fs::write(ws.join(".rwv-active"), "proj-a\n").unwrap();
+
+    let out = rwv()
+        .args(["lock", "--project", "proj-a"])
+        .current_dir(&proj_b)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+
+    assert!(ws.join("projects/proj-a/rwv.lock").exists());
+    assert!(!ws.join("projects/proj-b/rwv.lock").exists());
+    assert!(
+        !stderr.contains("warning: you are in"),
+        "an explicit --project contradicts nothing; got: {stderr}"
+    );
+}
+
+#[test]
+fn status_from_another_projects_directory_warns_and_reports() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _proj_a, proj_b, _sha) = make_two_project_workspace(tmp.path());
+    std::fs::write(ws.join(".rwv-active"), "proj-a\n").unwrap();
+
+    let out = rwv()
+        .args(["status"])
+        .current_dir(&proj_b)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("warning: you are in projects/proj-b/")
+            && stderr.contains("--project proj-b"),
+        "a report warns instead of refusing; got: {stderr}"
     );
 }

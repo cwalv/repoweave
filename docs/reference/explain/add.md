@@ -32,11 +32,22 @@ derived from the source branch. `add` records an ownership receipt for it, so
 refs. If the canonical clone has no commits yet (from `--new`), the worktree
 creation is skipped; run `rwv sync` after the first commit to materialize it.
 
-### Local-path form
+### Adopting an existing clone (`--adopt`)
 
-If the argument is a relative path (no URL scheme) and the path already exists
-under the primary weave root, `add` infers the URL from the clone's `origin`
-remote and registers it without a network clone.
+With `--adopt`, the argument is the path of a clone already under the primary
+weave root, and that path is the one recorded. `add` reads the URL from the
+clone's `origin` remote and registers it without a network clone. A path that
+holds no clone refuses (`no-clone-to-adopt`).
+
+### Spelling the argument
+
+The argument's meaning comes from how it is spelled. A URL — `https://`,
+`git@`, or `file://` for a local remote — or registry shorthand such as
+`github/owner/repo` is cloned from. An existing clone is registered only under `--adopt`.
+Anything else reads as a path, which could mean either, so `add` refuses
+(`unresolvable-repo-source`) and names both spellings: `rwv add
+file://<absolute path>` to clone from a local remote, and `rwv add --adopt
+<path>` to register the clone at that path.
 
 ### Creation (`--new`)
 
@@ -87,22 +98,19 @@ The placement path is always derived from the minted URL, the same way a
 plain `rwv add <url>` derives it — the creation address only selects a
 registry and supplies parameters, never a layout.
 
-### Local-path form
-
-If the argument is a relative path (no URL scheme) and the path already exists
-under the primary weave root, `add` infers the URL from the clone's `origin`
-remote and registers it without a network clone.
-
 ## Invocation
 
 ```
 rwv add <url> [--role <role>] [--project <name>]
+rwv add <path> --adopt [--role <role>] [--project <name>]
 rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <json>] [--role <role>] [--project <name>]
 ```
 
-- `<url>` — repository URL. Parsed through the registry topology to derive
-  the canonical local path. Accepts `https://`, `git@`, or a relative path
-  to an existing directory under the primary weave root.
+- `<url>` — repository URL or shorthand. Parsed through the registry
+  topology to derive the canonical local path. Accepts `https://`, `git@`,
+  `file://`, or registry shorthand such as `github/owner/repo`.
+- `--adopt` — the argument is the path of an existing clone under the primary
+  weave root, registered without cloning (see "Adopting an existing clone").
 - `--role <role>` — role for the repo in the manifest (`owned`, `fork`,
   `dependency`, `reference`). Defaults to `owned`.
 - `--new` — create a new repo instead of cloning. The positional argument
@@ -176,7 +184,13 @@ rwv add https://github.com/third-party/lib --role dependency
 Register a repo that's already cloned:
 
 ```
-rwv add github/myorg/existing-repo
+rwv add --adopt github/myorg/existing-repo
+```
+
+Clone from a local bare repository:
+
+```
+rwv add file:///srv/repos/myorg/lib.git
 ```
 
 Create a repo at a registry that hosts it (member `git init`'d locally,
@@ -203,6 +217,11 @@ rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "rep
 
 - *unrecognized URL* — the URL does not parse through any built-in registry
   and has no derivable local path. Check the URL format.
+- *not a URL and no registry reads it as shorthand*
+  (`unresolvable-repo-source`) — the argument reads as a path. Spell a local remote as `file://<absolute path>`, or pass
+  `--adopt` to register the clone at that path.
+- *no clone to adopt* (`no-clone-to-adopt`) — `--adopt` names a path with no
+  clone.
 - *clone failed* — network error or authentication problem; inspect git output.
 - *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
   is valid TOML.
