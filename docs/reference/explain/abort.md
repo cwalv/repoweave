@@ -22,8 +22,12 @@ For each member repo and the project repo in every involved workspace, abort
 applies a two-rail verified-restore:
 
 **Rail 1 — pre-abort reference.** Before restoring any repo, a durable
-reference at the repo's current tip is written at `refs/rwv/pre-abort/<op-id>`
-(first-write-wins-along-divergence — an existing capture from a prior abort
+reference at the repo's current tip is written at `refs/rwv/pre-abort/<op-id>`,
+or at `refs/rwv/pre-abort/<op-id>-target` for a repo in the target workspace of
+a `sync-to`, whose savepoints likewise sit at `refs/rwv/pre-op/<op-id>-target`:
+a workweave's checkouts share their ref store with the canonical clones, and
+the suffix keeps the two sides' refs apart. Abort's output names the reference
+it wrote for each refused repo (first-write-wins-along-divergence — an existing capture from a prior abort
 attempt is preserved, EXCEPT under `--abandon-foreign-tip` where an ancestor
 capture is advanced to the current tip; the earlier captured commits stay
 reachable through the advanced ref, so nothing is orphaned). This reference is
@@ -101,8 +105,9 @@ for repos the operator never looked at. `abort` with no flag still refuses.
 The flag is named for the consequence it permits, and the name is accurate
 because rail 1 runs first: the pre-abort reference already holds the tip being
 left behind, so the commits remain reachable at `refs/rwv/pre-abort/<op-id>`
-after the branch moves off them. Recovering them is `git reset --hard` onto
-that ref.
+(`<op-id>-target` on the target side of a `sync-to`) after the branch moves
+off them. Abort prints which. Recovering them is `git reset --hard` onto that
+ref.
 
 Spell `<repo>` as abort's own per-repo output does — the workspace-relative
 path (`github/foo/bar`) or `(project)` for the project repo. A `sync-to` op
@@ -233,7 +238,8 @@ rwv abort
 # ... foreign-tip violation for github/foo/bar ...
 rwv abort --abandon-foreign-tip=github/foo/bar   # op-state was retained
 # ... github/foo/bar: restored (abandoned foreign tip) ...
-# the abandoned commits remain at refs/rwv/pre-abort/<op-id>
+# the abandoned commits remain at the pre-abort ref abort printed:
+# refs/rwv/pre-abort/<op-id>, or <op-id>-target for a sync-to target's repo
 ```
 
 When they ARE wanted, put the branch back on them yourself and re-run with no
