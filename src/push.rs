@@ -5,7 +5,9 @@
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
 
-use crate::manifest::{LockFile, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
+use crate::manifest::{
+    LockFile, Manifest, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType,
+};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
@@ -230,6 +232,8 @@ pub fn run_push(
     let project_publish_ref = PublishRef::from_attached(&project_attached);
     let project_current = project_attached.to_string();
 
+    refuse_uncommitted_project_state(project_vcs.as_ref(), &project_dir, &project_name)?;
+
     // Snapshot manifest repos into a Vec so we can iterate twice (precondition
     // checks + push loop) without re-walking the BTreeMap.
     let manifest_repos: Vec<(RepoPath, RepoEntry)> = project
@@ -287,7 +291,7 @@ pub fn run_push(
         };
         let Some(lock_raw) = lock_entries.get(repo_path) else {
             lock_mismatches.push(format!(
-                "{}: missing from {} — run `rwv lock` to record local state",
+                "{}: missing from {} — run `rwv lock --commit` to record local state",
                 repo_path.as_str(),
                 lock_path.display()
             ));
@@ -326,7 +330,7 @@ pub fn run_push(
             eprintln!("  - {msg}");
         }
         eprintln!(
-            "Hint: run `rwv lock` to capture local state, \
+            "Hint: run `rwv lock --commit` to capture local state, \
              or `git checkout` in each repo to align with the lock."
         );
         crate::refuse!(
@@ -710,6 +714,35 @@ pub fn run_push(
     }
 
     Ok(())
+}
+
+/// Push publishes the project repo's last commit but plans from `rwv.toml`
+/// and `rwv.lock` as they stand on disk. The two agree only while nothing
+/// tracked is dirty and neither of those files is untracked.
+fn refuse_uncommitted_project_state(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    project_name: &ProjectName,
+) -> anyhow::Result<()> {
+    let mut uncommitted = vcs
+        .tracked_dirty_file_names(project_dir)
+        .with_context(|| format!("failed to read project repo status for {project_name}"))?;
+    for name in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
+        if project_dir.join(name).exists() && !vcs.is_tracked(project_dir, Path::new(name))? {
+            uncommitted.push(name.to_owned());
+        }
+    }
+    if uncommitted.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::DirtyCheckout,
+        "rwv push: project repo at projects/{project_name}/ has uncommitted changes: {}. \
+         Push publishes the project repo's last commit, so they would not reach the remote. \
+         Commit them first with `rwv lock --commit` or `rwv update --commit` (for a relock), \
+         or `git -C projects/{project_name} commit`, then re-run `rwv push`",
+        uncommitted.join(", ")
+    );
 }
 
 /// Emit one NDJSON record to stdout, serialized and mutex-guarded so

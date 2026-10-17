@@ -294,6 +294,118 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
 }
 
 // ============================================================================
+// Negative: uncommitted project state — push publishes the last commit, so
+// what the precondition reads on disk must be what that commit holds
+// ============================================================================
+
+/// Run `rwv push`, require the uncommitted-project-state refusal naming
+/// `files`, and require that no remote moved.
+fn assert_push_refuses_uncommitted(ws: &common::PushWorkspace, files: &str) {
+    let manifest_before: Vec<Option<String>> = ws
+        .manifest_bares
+        .iter()
+        .map(|(_, bare)| bare_main_sha(bare))
+        .collect();
+    let project_before = bare_main_sha(&ws.project_bare);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "push must refuse uncommitted project state; stderr: {stderr}"
+    );
+    let project = &ws.project_name;
+    for needle in [
+        format!("project repo at projects/{project}/ has uncommitted changes: {files}."),
+        "`rwv lock --commit`".to_string(),
+        "`rwv update --commit`".to_string(),
+        format!("`git -C projects/{project} commit`"),
+        "\n\nrwv explain dirty-checkout\n".to_string(),
+    ] {
+        assert!(
+            stderr.contains(&needle),
+            "expected {needle:?} in stderr: {stderr}"
+        );
+    }
+
+    let manifest_after: Vec<Option<String>> = ws
+        .manifest_bares
+        .iter()
+        .map(|(_, bare)| bare_main_sha(bare))
+        .collect();
+    assert_eq!(
+        manifest_after, manifest_before,
+        "the refusal must come before any member push"
+    );
+    assert_eq!(bare_main_sha(&ws.project_bare), project_before);
+}
+
+/// `rwv lock` (or `rwv update`) without `--commit`, then `rwv push`: the lock
+/// on disk matches every member HEAD, but the commit push would publish
+/// still carries the old one.
+#[test]
+fn push_refuses_an_uncommitted_relock() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("advance.txt"), "advance").unwrap();
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "advance past lock"]);
+
+    rwv()
+        .args(["lock"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_push_refuses_uncommitted(&ws, "rwv.lock");
+}
+
+/// A manifest or lock that was never committed is read by the precondition
+/// and never published by the push.
+#[test]
+fn push_refuses_an_untracked_manifest_or_lock() {
+    for file in ["rwv.toml", "rwv.lock"] {
+        let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+        let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+        common::git_in(&project_dir, &["rm", "--cached", "--quiet", file]);
+        common::git_in(&project_dir, &["commit", "-m", &format!("untrack {file}")]);
+
+        assert_push_refuses_uncommitted(&ws, file);
+    }
+}
+
+#[test]
+fn push_refuses_any_tracked_dirt_in_the_project_repo() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("notes.md"), "draft\n").unwrap();
+    common::git_in(&project_dir, &["add", "notes.md"]);
+    common::git_in(&project_dir, &["commit", "-m", "notes"]);
+    std::fs::write(project_dir.join("notes.md"), "draft, edited\n").unwrap();
+
+    assert_push_refuses_uncommitted(&ws, "notes.md");
+}
+
+/// Untracked scratch is not part of anything push reads or publishes.
+#[test]
+fn push_proceeds_past_untracked_scratch_in_the_project_repo() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("scratch.txt"), "scratch\n").unwrap();
+
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+}
+
+// ============================================================================
 // Negative: detached HEAD refused
 // ============================================================================
 

@@ -8,9 +8,14 @@ pins manifest SHAs, so collaborators' `rwv fetch` must never see a committed
 lock referencing unpushed manifest commits.
 
 Refuses if invoked from a workweave (workweave branches shouldn't leak to
-shared remotes). Refuses if any member repo's HEAD disagrees with its lock
-entry (lock-precondition check). Use `rwv lock` to snapshot local state before
-pushing, or `git checkout` to align with the lock.
+shared remotes). Refuses if the project repo has uncommitted changes to any
+tracked file, or holds a `rwv.toml` or `rwv.lock` it has never committed: push
+publishes the project repo's last commit, so the lock it checks has to be the
+lock it publishes. Commit with `rwv lock --commit` or `rwv update --commit`
+after a relock, or with `git commit` in `projects/<name>/`. Untracked files
+other than those two do not refuse. Refuses if any member repo's HEAD disagrees
+with its lock entry (lock-precondition check). Use `rwv lock --commit` to
+snapshot local state before pushing, or `git checkout` to align with the lock.
 
 **Default scope:** bare `rwv push` (no `--role` / `--repo` selectors) pushes
 only `owned` and `fork` repos — the roles the operator controls. `dependency`
@@ -117,9 +122,13 @@ rwv push --json -j 4 | jq -c 'select(.kind == "failed" or .kind == "project-repo
 
 ## Common errors
 
+- *project repo has uncommitted changes* — the files named would not reach
+  the remote, since push publishes the project repo's last commit. Commit them
+  (`rwv lock --commit` or `rwv update --commit` after a relock, `git -C
+  projects/<name> commit` otherwise) and re-run.
 - *lock-state mismatch* — one or more member repos' HEAD differs from the
-  recorded lock SHA. Run `rwv lock` to snapshot current state, or check out
-  the locked SHA in each repo.
+  recorded lock SHA. Run `rwv lock --commit` to snapshot current state, or
+  check out the locked SHA in each repo.
 - *refusing to push from workweave* — run `rwv sync-to primary` (or
   `rwv sync-to`) to land changes on primary, then push from there.
 - *project repo not on canonical branch* — check out the canonical branch

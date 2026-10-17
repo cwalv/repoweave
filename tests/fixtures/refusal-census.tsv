@@ -64,6 +64,7 @@ src/owned_state.rs	state-claim-held	-	1
 src/plugins.rs	(untokened:environment-passthrough)	-	1
 src/plugins.rs	unknown-verb	-	1
 src/push.rs	(untokened:environment-passthrough)	-	1
+src/push.rs	dirty-checkout	tests/refusal_arrival_test.rs	1
 src/push.rs	head-not-on-branch	-	2
 src/push.rs	lock-state-mismatch	-	1
 src/push.rs	no-remote-default-branch	-	1
