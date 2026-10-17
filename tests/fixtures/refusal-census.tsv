@@ -81,7 +81,7 @@ src/role.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	3
 src/sync.rs	(untokened:internal-invariant)	-	12
-src/sync.rs	(untokened:tally)	-	1
+src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	clone-topology	-	1
 src/sync.rs	dangling-parent	-	1
 src/sync.rs	dirty-checkout	tests/refusal_arrival_test.rs	6

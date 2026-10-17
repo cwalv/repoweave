@@ -574,9 +574,12 @@ fn a_refused_prune_fails_sync_to_once_it_completes() {
     assert!(!names_extra(&s1) && !names_extra(&weave.root));
 }
 
-/// Replay refuses the prune, then the op `args` starts parks on a relock
-/// commit the project repo refuses. Returns the seat and the refusing hook.
-fn park_in_relock_after_a_refused_prune(weave: &Weave, args: &[&str]) -> (PathBuf, PathBuf) {
+/// Replay refuses the prune, then the op `args` starts reaches a relock commit
+/// the project repo's hook refuses. Returns the seat, the hook, and the run.
+fn park_in_relock_after_a_refused_prune(
+    weave: &Weave,
+    args: &[&str],
+) -> (PathBuf, PathBuf, Output) {
     let s1 = seat_behind_a_drop(weave);
     for (workspace, file) in [(&weave.root, "primary.txt"), (&s1, "seat.txt")] {
         let lib = lib_dir(workspace);
@@ -601,16 +604,19 @@ fn park_in_relock_after_a_refused_prune(weave: &Weave, args: &[&str]) -> (PathBu
     );
 
     let parked = run(&s1, args);
-    let parked_stderr = String::from_utf8_lossy(&parked.stderr);
+    (s1, hook, parked)
+}
+
+fn assert_parked_after_the_refused_prune(parked: &Output, s1: &Path) {
+    let stderr = String::from_utf8_lossy(&parked.stderr);
     assert!(
-        !parked.status.success() && s1.join(".rwv-op").exists(),
-        "the refused relock commit must park the op:\n{parked_stderr}"
+        s1.join(".rwv-op").exists(),
+        "the refused relock commit must park the op:\n{stderr}"
     );
     assert!(
-        parked_stderr.contains(&format!("{EXTRA}: prune skipped")),
-        "replay must have refused the prune before the park:\n{parked_stderr}"
+        stderr.contains(&format!("{EXTRA}: prune skipped")),
+        "replay must have refused the prune before the park:\n{stderr}"
     );
-    (s1, hook)
 }
 
 /// The resume re-enters at relock, past replay, and still finds the checkout
@@ -618,8 +624,10 @@ fn park_in_relock_after_a_refused_prune(weave: &Weave, args: &[&str]) -> (PathBu
 #[test]
 fn a_resume_past_replay_still_fails_on_the_checkout_replay_left() {
     let weave = weave();
-    let (s1, hook) =
+    let (s1, hook, parked) =
         park_in_relock_after_a_refused_prune(&weave, &["sync", "primary", "--strategy", "rebase"]);
+    assert!(!parked.status.success(), "the hook must have refused");
+    assert_parked_after_the_refused_prune(&parked, &s1);
 
     std::fs::remove_file(&hook).unwrap();
     let out = run(&s1, &["sync", "--continue"]);
@@ -635,7 +643,9 @@ fn a_resume_past_replay_still_fails_on_the_checkout_replay_left() {
 #[test]
 fn json_a_complete_sync_to_resumed_past_replay_prints_its_envelope() {
     let weave = weave();
-    let (s1, hook) = park_in_relock_after_a_refused_prune(&weave, &["sync-to"]);
+    let (s1, hook, parked) = park_in_relock_after_a_refused_prune(&weave, &["sync-to"]);
+    assert!(!parked.status.success(), "the hook must have refused");
+    assert_parked_after_the_refused_prune(&parked, &s1);
 
     std::fs::remove_file(&hook).unwrap();
     let out = run(&s1, &["sync-to", "--continue", "--json"]);
