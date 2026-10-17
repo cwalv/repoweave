@@ -42,6 +42,7 @@ cannot say which of those it is, and only one of them is rwv's to move.
 ```
 rwv update [--dirty] [--commit [-m <MSG>]] [--detach-checkouts] [--project <name>]
            [--json] [--role <role>]... [--repo <selector>]... [-j <n>]
+           [--no-materialize]
 ```
 
 - `--commit` — commit the new `rwv.lock` in the project repo, together with the
@@ -58,6 +59,10 @@ rwv update [--dirty] [--commit [-m <MSG>]] [--detach-checkouts] [--project <name
 - `--json` emits machine-readable output (see Output below).
 - `-j N` runs per-repo advances in parallel. Under `--json -j N` with `N > 1`,
   output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+- `--no-materialize` — skip the integration install hooks (`npm install`,
+  `uv sync`, `cargo fetch`, …) of the regeneration this runs at primary;
+  `rwv materialize` runs them later. Inside a workweave the hooks are skipped
+  either way.
 
 Run `rwv --help update` for the full clap surface.
 
