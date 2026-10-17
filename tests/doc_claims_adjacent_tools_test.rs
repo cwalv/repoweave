@@ -4,12 +4,11 @@
 //!
 //! Both recipes land the *project* repo (the one carrying `rwv.toml`) under
 //! `projects/<name>/` — via `actions/checkout@v4`'s `path:` in CI, via
-//! `workspaceMount`/`workspaceFolder` in a devcontainer — then, from the
-//! parent directory:
-//!   1. `rwv activate <name> --no-materialize` — sets `.rwv-active`; no manifest
-//!      repos need to be on disk yet.
-//!   2. `rwv fetch --frozen` (in-place, no SOURCE) — materializes the
-//!      manifest's repos at the revisions `rwv.lock` pins.
+//! `workspaceMount`/`workspaceFolder` in a devcontainer — then run
+//! `rwv fetch --frozen` (in-place, no SOURCE) from the parent directory. With
+//! that project the weave's only one and none active, the fetch materializes
+//! the manifest's repos at the revisions `rwv.lock` pins and then activates
+//! the project.
 //!
 //! The shape that originally shipped skipped the nesting and ran SOURCE-mode
 //! `rwv fetch <source>` afterward; `shipped_recipe_without_nesting_fails`
@@ -97,28 +96,15 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
 
 // ============================================================================
 // Doc claim — docs/adjacent-tools.md "CI multi-repo checkout": checkout with
-// `path: projects/web-app`, then `rwv activate web-app --no-materialize` and
-// `rwv fetch --frozen` run from the parent both succeed, and the manifest's
-// repo is materialized at the revision the lock pins.
+// `path: projects/web-app`, then `rwv fetch --frozen` from the parent
+// materializes the manifest's repo at the locked revision and activates the
+// project.
 // ============================================================================
 
 #[test]
-fn ci_recipe_activate_then_frozen_fetch_succeeds() {
+fn ci_recipe_frozen_fetch_materializes_and_activates() {
     let tmp = common::tempdir().unwrap();
     let (workspace, dep_sha) = setup_ci_shaped_workspace(tmp.path());
-
-    rwv()
-        .args(["activate", "web-app", "--no-materialize"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert_eq!(
-        std::fs::read_to_string(workspace.join(".rwv-active"))
-            .expect(".rwv-active should exist after activate")
-            .trim(),
-        "web-app",
-    );
 
     rwv()
         .args(["fetch", "--frozen"])
@@ -136,13 +122,19 @@ fn ci_recipe_activate_then_frozen_fetch_succeeds() {
         dep_sha,
         "in-place fetch should check out the locked revision"
     );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join(".rwv-active"))
+            .expect("the fetch should activate the weave's only project")
+            .trim(),
+        "web-app",
+    );
 }
 
 // ============================================================================
 // Doc claim — docs/adjacent-tools.md "Devcontainers / Codespaces": the
-// `postCreateCommand` chains `rwv activate` and `rwv fetch --frozen` in one
-// shell command from the parent directory. Exercise the literal chained
-// form (not just the two `rwv` invocations run separately).
+// `postCreateCommand` runs from `workspaceFolder` (the project repo) and
+// chains `cd` to the weave root with `rwv fetch --frozen`. Exercise the
+// literal chained form.
 // ============================================================================
 
 #[test]
@@ -154,9 +146,10 @@ fn devcontainer_recipe_chained_shell_command_succeeds() {
     let status = process::Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "'{rwv_bin}' activate web-app --no-materialize && '{rwv_bin}' fetch --frozen"
+            "cd '{}' && '{rwv_bin}' fetch --frozen",
+            workspace.display()
         ))
-        .current_dir(&workspace)
+        .current_dir(workspace.join("projects/web-app"))
         .status()
         .expect("shell should run");
 
@@ -167,6 +160,12 @@ fn devcontainer_recipe_chained_shell_command_succeeds() {
 
     let dep_dir = workspace.join("local/org/dep");
     assert_eq!(common::git_in(&dep_dir, &["rev-parse", "HEAD"]), dep_sha);
+    assert_eq!(
+        std::fs::read_to_string(workspace.join(".rwv-active"))
+            .expect("the fetch should activate the weave's only project")
+            .trim(),
+        "web-app",
+    );
 }
 
 // ============================================================================

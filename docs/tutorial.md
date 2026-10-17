@@ -28,11 +28,10 @@ done
 git -C projects/web-app add -A && git -C projects/web-app commit -m "initial project"
 rwv lock --commit
 git -C projects/web-app push -u origin main
-git -C projects/web-app remote set-head origin main
 rm -rf /tmp/chatly-seed
 ```
 
-When running Step 1 locally against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `chatly/web-app`) in `rwv fetch`, and `local/chatly-remotes/server` for `github/chatly/server` in the commands below.
+When running the steps below against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `chatly/web-app`) in `rwv fetch`, and `local/chatly-remotes/server` for `github/chatly/server`. The bootstrap repos hold no build files, so skip the build command in Step 3.
 
 </details>
 
@@ -95,7 +94,8 @@ You can edit any repo right where it lives — `github/chatly/server/` is a regu
 ```bash
 cd github/chatly/server
 # ... edit code ...
-git commit -am "server: add welcome message"
+git add -A
+git commit -m "server: add welcome message"
 ```
 
 > **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`version` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave web-app create welcome-message`) and land it back with `rwv sync-to --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
@@ -118,7 +118,7 @@ cd ~/work
 rwv lock --commit
 ```
 
-`rwv lock` reads the current 40-character commit SHA from each member repo's `HEAD` and writes `projects/web-app/rwv.lock` (`--commit` stages and commits `rwv.lock` in `projects/web-app/` in one step, or you can run `rwv lock` followed by `git -C projects/web-app commit`). Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
+`rwv lock` reads the current 40-character commit SHA from each member repo's `HEAD` and writes `projects/web-app/rwv.lock`. `--commit` commits it in `projects/web-app/` in the same step, together with `rwv.toml` when that has uncommitted changes; without `--commit`, run `rwv lock` and then `git -C projects/web-app commit`. Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
 
 Now push the member repo commits and the updated project lock together:
 
@@ -126,9 +126,9 @@ Now push the member repo commits and the updated project lock together:
 rwv push
 ```
 
-`rwv push` pushes every ahead `owned` and `fork` member repo first, and only pushes `projects/web-app/` after all member pushes succeed — so no teammate ever pulls a `rwv.lock` referencing an unpushed member commit.
+`rwv push` pushes every `owned` and `fork` member repo first, and only pushes `projects/web-app/` after all member pushes succeed — so no teammate ever pulls a `rwv.lock` referencing an unpushed member commit. It refuses before contacting any remote while `projects/web-app/` has uncommitted changes, or while a member repo's `HEAD` differs from `rwv.lock`.
 
-`sha256sum projects/web-app/rwv.lock` is the project fingerprint — two machines with the same checksum have identical source commits for every repo in the project.
+`sha256sum projects/web-app/rwv.lock` is the project fingerprint: two machines with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv fetch` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
 
 Anyone else can now reproduce your exact state:
 

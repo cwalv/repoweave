@@ -44,14 +44,14 @@ Place `.mise.toml` in the project directory and use the `static-files` integrati
 ```bash
 # .envrc
 use mise                                      # activate toolchain versions
-export GITA_PROJECT_HOME="$PWD/gita"          # point gita at derived config
+export GITA_PROJECT_HOME="$PWD"               # gita reads $GITA_PROJECT_HOME/gita/
 ```
 
 Place `.envrc` in the project directory and use the `static-files` integration to symlink it to the weave root on activation. See [static-files — environment activation](reference/integrations/static-files.md#environment-activation-envrc).
 
 ## Devcontainers / Codespaces
 
-`rwv fetch` replaces a wall of `git clone` commands in `postCreateCommand`. Mounting the repo at its default location leaves the container's working directory as the project repo itself — not a workspace, and not empty — so `rwv fetch <source>` refuses it. Mount under `projects/<name>/` instead (`workspaceMount` + `workspaceFolder`), then `cd` up to the weave root, run `rwv activate web-app --no-materialize` (so `.rwv-active` is set before member repos exist on disk), `rwv fetch --frozen` (which clones all member repos at their locked commits), and `rwv materialize` (to surface workspace symlinks and run install hooks once member repos are cloned):
+`rwv fetch` replaces a wall of `git clone` commands in `postCreateCommand`. Mounting the repo at its default location leaves the container's working directory as the project repo itself — not a workspace, and not empty — so `rwv fetch <source>` refuses it. Mount under `projects/<name>/` instead (`workspaceMount` + `workspaceFolder`), then `cd` up to the weave root and run `rwv fetch --frozen`. With exactly one project in the weave and none active, it clones every member repo at its locked commit and then activates that project: it writes `.rwv-active`, surfaces the weave-root symlinks, and runs install hooks.
 
 ```jsonc
 // .devcontainer/devcontainer.json
@@ -63,23 +63,20 @@ Place `.envrc` in the project directory and use the `static-files` integration t
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/ws/projects/web-app,type=bind,consistency=cached",
   "workspaceFolder": "/workspaces/ws/projects/web-app",
-  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv activate web-app --no-materialize && rwv fetch --frozen && rwv materialize",
+  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv fetch --frozen",
   "forwardPorts": [5432]
 }
 ```
 
 ## CI multi-repo checkout
 
-`rwv.toml` can drive a reusable checkout action — same pattern as `rwv fetch` but in CI. A checkout with no `path:` has the same problem as the devcontainer's default mount: the runner directory ends up non-empty and not a workspace. Nest the checkout under `projects/<name>/`, then run `rwv activate web-app --no-materialize`, `rwv fetch --frozen` (to clone every member repo at its locked revision), and `rwv materialize` (to surface workspace symlinks and run install hooks once member repos are cloned) before running your test suite:
+`rwv.toml` can drive a reusable checkout action — same pattern as `rwv fetch` but in CI. A checkout with no `path:` has the same problem as the devcontainer's default mount: the runner directory ends up non-empty and not a workspace. Nest the checkout under `projects/<name>/`, then run `rwv fetch --frozen` before your test suite. As in the devcontainer, it clones every member repo at its locked revision and activates the weave's only project; it exits non-zero if `rwv.lock` has no entry for some member repo.
 
 ```yaml
 # .github/workflows/ci.yml
 - uses: actions/checkout@v4
   with:
     path: projects/web-app
-- run: |
-    rwv activate web-app --no-materialize
-    rwv fetch --frozen
-    rwv materialize
+- run: rwv fetch --frozen
 - run: npm test --workspaces
 ```
