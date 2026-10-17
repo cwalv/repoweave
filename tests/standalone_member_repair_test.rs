@@ -293,7 +293,8 @@ fn doctor_fix_replaces_the_clone_with_a_worktree_at_the_commit_it_had_checked_ou
 
 /// Run `doctor --fix` over a clone that holds something, and assert it
 /// refused for that member naming `reason` and `item`, and changed nothing.
-fn assert_refused_and_untouched(weave: &Weave, reason: &str, item: &str) {
+/// Returns doctor's output.
+fn assert_refused_and_untouched(weave: &Weave, reason: &str, item: &str) -> String {
     settle_index(&weave.clone);
     let clone_before = repo_state(&weave.clone);
     let bytes_before = tree_bytes(&weave.clone);
@@ -324,6 +325,7 @@ fn assert_refused_and_untouched(weave: &Weave, reason: &str, item: &str) {
     );
     assert!(!aside(weave).exists(), "nothing moved aside");
     assert_eq!(standalone_findings(&weave.seat), 1, "still reported");
+    out
 }
 
 #[test]
@@ -399,15 +401,41 @@ fn refuses_while_the_clone_holds_untracked_files() {
 fn refuses_while_the_clone_holds_ignored_files() {
     let tmp = common::tempdir().unwrap();
     let weave = weave_with_standalone_member(tmp.path());
-    std::fs::write(weave.clone.join(".git/info/exclude"), "*.env\n").unwrap();
+    std::fs::write(
+        weave.clone.join(".git/info/exclude"),
+        "*.env\nnode_modules/\n",
+    )
+    .unwrap();
     std::fs::write(weave.clone.join("local.env"), "TOKEN=only-here\n").unwrap();
+    let installed = weave.clone.join("node_modules/left-pad/lib");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(installed.join("index.js"), "module.exports = 1;\n").unwrap();
+    std::fs::write(installed.join("package.json"), "{}\n").unwrap();
     assert_eq!(
         common::git_in(&weave.clone, &["status", "--porcelain"]),
         "",
         "fixture: plain status reads clean"
     );
 
-    assert_refused_and_untouched(&weave, "it holds ignored files", "local.env");
+    let out = assert_refused_and_untouched(&weave, "it holds ignored files", "local.env");
+    assert_eq!(
+        listed_under(&out, "it holds ignored files"),
+        vec!["local.env", "node_modules/"],
+        "ignored files are listed under their own heading, an ignored directory as \
+         one line:\n{out}"
+    );
+    assert!(
+        listed_under(&out, "it holds uncommitted or untracked files").is_empty(),
+        "nothing ignored is listed with the uncommitted or untracked files:\n{out}"
+    );
+    let heading = out
+        .lines()
+        .find(|l| l.contains("it holds ignored files"))
+        .unwrap();
+    assert!(
+        heading.contains("widget clean -X -n`") && heading.contains("widget clean -X -f`"),
+        "the ignored files' heading must name the preview and the removal: {heading}"
+    );
 }
 
 #[test]
