@@ -636,10 +636,15 @@ in language that survives a refactor — live in `docs/`, and are the published
 surface:
 
 - [`docs/explanation/joints/`](docs/explanation/joints/) — the normative
-  contracts, one per seam. `sync-semantics.md` owns the phase machine, record
-  schema, and abort's verified-restore rules (§5); `vcs-as-seam.md` owns the
-  VCS boundary (§6.1); `file-ownership.md` owns the two ownership axes, the
-  hybrid-merge contract, and the regeneration trigger model (§6.2);
+  contracts, one per seam. `sync-semantics.md` owns the direction pair, the
+  phases as an operator sees them, and abort's verified-restore rules (§5),
+  with the per-phase contract in
+  [`docs/internals/sync-phase-machine.md`](docs/internals/sync-phase-machine.md)
+  and the record schema in
+  [`docs/internals/op-state.md`](docs/internals/op-state.md);
+  `vcs-as-seam.md` owns the VCS boundary (§6.1); `file-ownership.md` owns the
+  two ownership axes, the hybrid-merge contract, and the regeneration trigger
+  model (§6.2);
   `plugin-boundary.md` owns the plugin contract (§6.4); `clone-topology.md`,
   `workweave-hierarchy.md` and `workweave-lifecycle.md` own the on-disk model
   (§4).

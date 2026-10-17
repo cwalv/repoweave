@@ -47,6 +47,9 @@ backstop unnecessary.
 - [op-state](./op-state.md) — field-level schemas of the `.rwv-op` owner record
   and the `.rwv-op-lease` pointer, for someone changing sync's resume logic.
   Consumers call back into `rwv` instead of parsing them.
+- [sync-phase-machine](./sync-phase-machine.md) — the per-phase contract
+  behind `rwv sync` and `rwv sync-to`: what each phase persists, its re-entry
+  rule, abort's tip attribution, and the git realization of each mechanism.
 - [concurrency](./concurrency.md) — the budget for judging interference
   concerns: git's correctness effort as goal and ceiling, the two tiers of
   state, and the attestation invariant.
