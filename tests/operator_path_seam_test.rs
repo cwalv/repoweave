@@ -237,7 +237,14 @@ const ROUTED: &[Routed] = &[
         scope: "",
         needle: r#""{name} generated file has drift: {} ({detail}); \"#,
         renders: 1,
-        prints: "doctor: a fully-owned generated file that no longer parses",
+        prints: "doctor: a fully-owned generated file that is unreadable, unparseable, or not what rwv would author",
+    },
+    Routed {
+        file: "integrations/merge.rs",
+        scope: "",
+        needle: r#""refusing to write {}: the content generated for it does not parse ({e:#}); \"#,
+        renders: 1,
+        prints: "an authoring pass refusing to write a managed file that would not parse",
     },
     Routed {
         file: "op_state.rs",

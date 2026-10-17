@@ -49,7 +49,7 @@ src/init.rs	unknown-registry	-	1
 src/integration_runner.rs	(untokened:integration-channel)	-	7
 src/integrations/cargo_workspace.rs	(untokened:integration-channel)	-	6
 src/integrations/go_work.rs	(untokened:integration-channel)	-	3
-src/integrations/merge.rs	(untokened:integration-channel)	-	1
+src/integrations/merge.rs	(untokened:integration-channel)	-	2
 src/integrations/npm_workspaces.rs	(untokened:integration-channel)	-	1
 src/integrations/pnpm_workspaces.rs	(untokened:integration-channel)	-	1
 src/integrations/static_files.rs	(untokened:integration-channel)	-	1
