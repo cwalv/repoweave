@@ -82,7 +82,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
 | [`stale-worktree-registration`](#stale-worktree-registration) | Warning | Auto-fixable |
-| [`clone-topology`](#clone-topology) (`standalone-in-workweave`, `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree`) | Error | Report-only |
+| [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
+| [`clone-topology`](#clone-topology) / `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree` | Error | Report-only |
 | [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
 | [`uninitialized-submodule`](#uninitialized-submodule) | Warning | Report-only |
 | [`provenance`](#provenance) / `origin-url-mismatch`, `placement-disagreement` | Warning | Report-only |
@@ -103,6 +104,26 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
+
+The kinds on the `issues` array carry their severity and their `--fix`
+authority on each finding (`severity`, `safe_to_fix`) rather than per kind, as
+[The integration channel](#the-integration-channel) explains. Where the entry
+states one answer for the whole kind, the table gives it:
+
+| `kind` | `--fix` |
+|---|---|
+| [`tool-missing`](#tool-missing) | Per finding |
+| [`managed-file-missing`](#managed-file-missing) | Per finding |
+| [`managed-file-drift`](#managed-file-drift) | Per finding |
+| [`managed-file-user-held`](#managed-file-user-held) | Never |
+| [`surfacing`](#surfacing) | Per finding |
+| [`config-rejected`](#config-rejected) | Never |
+| [`malformed-settings`](#malformed-settings) | Never |
+| [`member-incompatibility`](#member-incompatibility) | Never |
+| [`derived-state-stale`](#derived-state-stale) | Per finding |
+| [`disabled-integration-artifact`](#disabled-integration-artifact) | Never |
+| [`integration-failed`](#integration-failed) | Per finding |
+| [`core-finding`](#core-finding) | Per finding |
 
 ## Vocabulary used throughout
 
@@ -209,7 +230,10 @@ clean project with zero findings.
 
 **What to do:** the message names which of the two files failed, and carries
 that file's remedy — the manifest is yours to edit, at the line the parser
-names; the lock is generated, so `rwv lock` rewrites it. Note that the
+names; the lock is generated, so `rwv lock` rewrites it. A repository entry
+with no `role`, an unknown top-level key, an unknown `[integrations.<name>]`
+table, and an unknown key in one are all parse failures of this kind, each
+naming the line and what was expected. Note that the
 `manifest_path` field always names the manifest, because it locates the
 project rather than the failure.
 
@@ -339,8 +363,7 @@ name through the validator first, so `rwv activate`, `rwv workweave` and
 `--project` all refuse it. Reported whatever `--project` narrows the run to,
 since a name the validator refuses can never equal the scope.
 
-The character policy behind the refusal — and the alternative that was
-measured and left closed on purpose — is documented in
+The character policy behind the refusal is documented in
 [formats.md — Names, and the characters they exclude](formats.md#names-and-the-characters-they-exclude).
 
 **What to do:** rename the directory to a name that validates. Nothing inside
@@ -687,12 +710,11 @@ rwv's to perform, and in the unrecoverable case the target is not derivable.
 #### `nested-workweave-dir`
 
 **Warning. Report-only.** A recorded workweave whose directory sits *below* a
-workweave container instead of directly in it. A multi-segment project name
-used to render its `/` straight through into the directory name, so
-`chatly/web-app` plus `wtest` placed the workweave at
-`<container>/chatly/web-app--wtest` and left `chatly` behind as a directory the
-container scan reads as a stray. rwv now writes that `/` as `+`, so a workweave
-created today is `<container>/chatly+web-app--wtest` and this finding names the
+workweave container instead of directly in it: a multi-segment project name
+rendered with its `/` intact, as `chatly/web-app` plus `wtest` at
+`<container>/chatly/web-app--wtest`, which leaves `chatly` behind as a
+directory the container scan reads as a stray. rwv writes that `/` as `+`
+(`<container>/chatly+web-app--wtest`), and this finding names the
 single-segment directory the records spell.
 
 The container scan reads a container's immediate children, so nothing else in
@@ -707,17 +729,17 @@ migrate a live one in place.
 
 ### `workweave-drift`
 
-A workweave has no worktree for a member its `rwv.lock` pins, or a checkout
-remains for a member the manifest no longer lists. Every member of a workweave, whatever its
-`role`, is a worktree of the canonical clone on the workweave's ephemeral
-branch. Doctor checks the workweave it runs in; from the primary, every
-workweave of the projects in scope.
+A workspace's checkouts disagree with its member list: a workweave has no
+worktree for a member its `rwv.lock` pins, or a checkout remains, in a
+workweave or in the primary, for a member the manifest no longer lists. Every
+member of a workweave, whatever its `role`, is a worktree of the canonical
+clone on the workweave's ephemeral branch. Doctor checks the workspace it runs
+in; from the primary, also every workweave of the projects in scope.
 
-A symlink at a member's slot, dangling or not, counts as no worktree. Older
-releases materialized `reference` members that way; rwv no longer operates on
-one, so the verbs that walk a workweave's members refuse with this token until
-it is replaced. Replacing it unlinks the symlink and never touches what it
-pointed at.
+A symlink at a member's slot, dangling or not, counts as no worktree. rwv does
+not operate on one, so the verbs that walk a workweave's members refuse with
+this token until it is replaced. Replacing it unlinks the symlink and never
+touches what it pointed at.
 
 #### `missing`
 
@@ -790,7 +812,7 @@ files can still be created in a `reference` member.
 
 Every verb that writes or moves a member's files settles them for its role,
 so this finding appears after a hand edit of `role` in `rwv.toml`, a chmod by
-hand, or once in every weave that predates read-only `reference` members.
+hand, or in a weave whose `reference` members were checked out writable.
 
 **What to do:** `rwv doctor --fix` settles the member: it removes the write
 bits of a `reference` member's tracked files, and restores the owner's write
@@ -834,50 +856,94 @@ a directory that already is not there.
 
 ### `clone-topology`
 
-**Error. Report-only.** One of the manifest's repos is on disk in a shape that
-breaks the bottom tier of the stability stack: the slot at
-`<weave>/<repo_path>` must be a canonical store — a full clone — and every
-workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose
-object store resolves to that canonical store.
+**Error.** One of the manifest's repos is on disk in a shape that breaks the
+bottom tier of the stability stack: the slot at `<weave>/<repo_path>` must be a
+canonical store — a full clone — and every workweave checkout
+`<workweave>/<repo_path>` must be a linked workspace whose object store
+resolves to that canonical store.
 
 All four sub-kinds are invisible to every higher-tier check, which operate on
 revisions and content rather than on physical object-store topology — so this
-finding is the only thing that reports them. All four are report-only: the
-repair is an object-store migration, which is out of `--fix` scope.
+finding is the only thing that reports them. `standalone-in-workweave` is the
+one `--fix` repairs: the canonical store is already where it belongs, so the
+repair replaces one checkout. The other three move an object store, which is
+out of `--fix` scope.
 
 The invariants and the reasoning are in
 [Clone topology](../explanation/joints/clone-topology.md).
 
 #### `standalone-in-workweave`
 
-**Auto-fixable.** A full clone is hosted under `.workweaves/` instead of at the manifest's
-canonical slot — the inverted-primary case, where the canonical store has
-migrated into one workweave and other workweaves link into *it*.
+**Auto-fixable.** A workweave's checkout of a member is a full clone instead
+of a worktree of the canonical clone at `<weave>/<repo_path>`. Commits made
+there land in an object store nothing else reads, and when other workweaves
+link into it, the canonical store has in effect migrated into this workweave.
+The canonical clone usually reports `disconnected-weave-clone` alongside it,
+which clears once this is repaired.
 
 A member slot holding a symlink is not scanned: read through the link it is
 the canonical store itself. It is reported as `workweave-drift`.
 
-**What to do:** move the full `.git` clone to the canonical slot at
-`<weave>/<repo_path>` and replace the workweave checkout at
-`<workweave>/<repo_path>` with a linked git worktree (`git worktree add`).
+**What to do:** `rwv doctor --fix`, in text mode, replaces the full clone with
+a worktree of the canonical clone on the workweave's `<project>--<workweave>`
+branch, born at the commit the clone had checked out, and records an ownership
+receipt for that branch. Run inside a workweave it repairs that workweave; run
+from the primary, every registered workweave of the projects in scope. It
+prints:
+
+```
+[fixed] core: replaced the full clone of <repo> in workweave <name> with a worktree of the canonical clone at <sha>
+```
+
+The repair removes the full clone, so it refuses, changing nothing, while the
+clone holds anything the canonical clone lacks: refs whose commits no ref of
+the canonical clone reaches, uncommitted or untracked files, ignored files
+(build output and installed dependencies included), or other worktrees linking
+into its store. It also refuses when there is no canonical clone to link into,
+when the canonical slot is itself a worktree, when the clone's HEAD names no
+commit, and when a `.<repo>.rwv-replaced` directory left by an interrupted
+repair stands beside the clone. The refusal is one error line, so `--fix` exits
+1, followed by every reason that applies, each with what it holds:
+
+```
+[error] core: clone-topology fix left <workweave>/<repo> standing: not replacing the full clone at <path> with a worktree of the canonical clone:
+  - it holds ignored files, which no commit records either. Move out any you need; if the rest are regenerable, such as build output or installed dependencies, `git -C <path> clean -X -n` lists what would go, and `git -C <path> clean -X -f` deletes it:
+      node_modules/
+
+Nothing was changed. Re-run `rwv doctor --fix` once each of these is resolved.
+```
+
+Land the commits in the canonical clone or delete the refs, commit, move or
+delete the files, then re-run `rwv doctor --fix`. rwv never runs the `git
+clean` it names. Do not repair by hand with `git worktree add`: a worktree rwv
+did not create carries no ownership receipt.
+
+**As a refusal.** `rwv workweave delete` refuses with this token when a
+checkout in the workweave is itself a canonical store that other worktrees
+link into, since deleting it would orphan them; neither discard flag waives
+it. The `--fix` refusal above carries the token too. In both cases `rwv doctor`
+reports the finding, and this entry is the one `rwv explain
+standalone-in-workweave` serves.
 
 #### `disconnected-weave-clone`
 
-The workspace at `<weave>/<repo_path>` is a full clone, but one or more of
-this weave's workweave checkouts of the same repo resolve to a *different*
-canonical store. The weave-path clone publishes a separate object graph
-nobody syncs to; push and pull become asymmetric and silent.
+**Report-only.** The workspace at `<weave>/<repo_path>` is a full clone, but
+one or more of this weave's workweave checkouts of the same repo resolve to a
+*different* canonical store. The weave-path clone publishes a separate object
+graph nobody syncs to; push and pull become asymmetric and silent.
 
-**What to do:** fetch any unique commits from the disconnected store into the
-canonical clone at `<weave>/<repo_path>`, then recreate or re-link the affected
-workweave worktrees so they resolve to `<weave>/<repo_path>`.
+**What to do:** where the other store is a workweave's full clone, reported as
+`standalone-in-workweave` beside this, `rwv doctor --fix` repairs that and this
+clears with it. Otherwise fetch any unique commits from the disconnected store
+into the canonical clone at `<weave>/<repo_path>`, then recreate or re-link the
+affected workweave worktrees so they resolve to `<weave>/<repo_path>`.
 
 #### `wrong-parent-worktree`
 
-A linked worktree under `.workweaves/<workweave>/<repo_path>` whose canonical
-store is not the weave canonical. Commits made there land in a different
-object store than the canonical, and merged-checks across the two answer "no"
-silently.
+**Report-only.** A linked worktree under `.workweaves/<workweave>/<repo_path>`
+whose canonical store is not the weave canonical. Commits made there land in a
+different object store than the canonical, and merged-checks across the two
+answer "no" silently.
 
 **What to do:** fetch any unique commits from that worktree into
 `<weave>/<repo_path>`, remove the mislinked worktree directory, and run
@@ -886,8 +952,9 @@ against the weave canonical store.
 
 #### `weave-clone-is-worktree`
 
-The weave path itself is a linked worktree of some other clone — full
-inversion. There is no canonical store at the manifest slot at all.
+**Report-only.** The weave path itself is a linked worktree of some other
+clone — full inversion. There is no canonical store at the manifest slot at
+all.
 
 **What to do:** replace `<weave>/<repo_path>` with a full standalone clone (or
 move the parent clone's `.git` directory into `<weave>/<repo_path>`) and re-link
@@ -1210,8 +1277,10 @@ never deletes.
 
 ### `index-drift`
 
-A repo's index does not match its HEAD tree — the silent stale-index left by a
-shared-ref advance in a sibling worktree.
+A repo's index does not match its HEAD tree — the silent stale index left
+when the branch a checkout is on is moved from outside it (by `git update-ref`
+run in another worktree of the same store, for one). See
+[Shared-refs drift](../explanation/joints/shared-refs-drift.md).
 
 #### `safe-to-fix`
 
@@ -1229,8 +1298,8 @@ live staged content, and `--fix` must not touch it.
 
 ### `working-tree-drift`
 
-A repo's working-tree files do not match its HEAD tree, after a shared-ref
-advance in a sibling worktree.
+A repo's working-tree files do not match its HEAD tree, after the branch the
+checkout is on was moved from outside it, as for `index-drift`.
 
 #### `safe-to-fix`
 
@@ -1367,12 +1436,14 @@ file, so its absence is a state a fresh generation reaches rather than a
 decision you made.
 
 **What to do:** `rwv doctor --fix`, which re-runs the generation that writes
-it. `rwv materialize` and authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) run the same step.
+it. The authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) run
+the same generation; `rwv activate`, `rwv materialize` and `rwv workweave
+create` author nothing and report the file missing.
 
 ### `managed-file-drift`
 
-Owned content on disk differs from what `rwv doctor --fix`, `rwv materialize`, or authoring verbs would write, or the
-owning tool can no longer read it.
+Owned content on disk differs from what `rwv doctor --fix` or an authoring verb
+would write, or the owning tool can no longer read it.
 
 Two shapes with two answers, and `safe_to_fix` is what tells them apart. Drift
 in a file rwv regenerates from present inputs is repaired by regenerating it.
@@ -1495,10 +1566,10 @@ lock file still follows from this checkout is answerable at any later moment
 from present state alone: nothing is regenerated to compare against, no other
 workspace is consulted, and no history is kept. A workweave answers for itself.
 
-An entry written before inputs were attested reads as stale: rwv accepted those
-bytes without recording what produced them, so it cannot verify they still
-follow from current inputs, and the next generation rewrites the entry in the
-attested shape. Expect to see it once per project after upgrading.
+An entry that records no inputs reads as stale: rwv accepted those bytes
+without recording what produced them, so it cannot verify they still follow
+from current inputs, and the next generation rewrites the entry in the attested
+shape.
 
 On `--json` this finding also appears in the `advisories` array, in the same
 `{kind, remedy, inputs}` shape `rwv sync --json` emits, so an agent branches on
