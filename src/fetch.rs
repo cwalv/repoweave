@@ -12,8 +12,8 @@ use crate::refusal::{refusal, RefusalKind};
 use crate::registry;
 use crate::selector::RepoFilter;
 use crate::vcs::{
-    project_vcs, vcs_for, HeadAttachment, RawRefName, ResolvedRevisionId, TrackingRef, Vcs,
-    VcsError,
+    project_vcs, vcs_for, HeadAttachment, RawRefName, ReplayExclusionState, ResolvedRevisionId,
+    TrackingRef, Vcs, VcsError,
 };
 use crate::workspace::{project_dir, projects_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
@@ -240,6 +240,25 @@ pub fn run_fetch(
         project_vcs
             .clone_repo(&url_str, &project_dir)
             .with_context(|| format!("failed to clone project source '{}'", url))?;
+
+        // Unlike `init`/`init_adopt`, fetch never calls `set_replay_exclusion`
+        // — it clones a project that already exists, and whether `rwv.lock`
+        // is declared derived is that project's own prior choice. Complete
+        // the config only when the clone already carries the declaration;
+        // otherwise there is no `rwv-ours` assignment for the driver to serve.
+        let declares_rwv_ours = matches!(
+            project_vcs
+                .replay_exclusion_state(&project_dir, Path::new(LockFile::FILE_NAME))
+                .with_context(|| format!(
+                    "failed to read .gitattributes in {}",
+                    project_dir.display()
+                ))?,
+            ReplayExclusionState::Current | ReplayExclusionState::LegacyAlongsideCurrent
+        );
+        if declares_rwv_ours {
+            crate::git::plant_rwv_merge_driver_config(&project_dir)
+                .context("failed to plant merge.rwv-ours config")?;
+        }
     }
 
     let envelope = fetch_project_repos(
