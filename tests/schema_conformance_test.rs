@@ -103,6 +103,14 @@ use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 
+// The bundled rwv-each plugin's wire types: a binary's items are not linkable
+// from here, so its source is compiled in.
+#[path = "../src/bin/rwv-each/schema_url.rs"]
+mod each_schema_url;
+#[allow(dead_code)]
+#[path = "../src/bin/rwv-each/wire.rs"]
+mod each_wire;
+
 // ---------------------------------------------------------------------------
 // The registry
 // ---------------------------------------------------------------------------
@@ -192,6 +200,16 @@ fn cases() -> Vec<VerbCase> {
             verb: "advance-record",
             schema_url: ADVANCE_RECORD_SCHEMA_URL,
             corpus: advance_record_corpus,
+        },
+        VerbCase {
+            verb: "each",
+            schema_url: each_schema_url::EACH_SCHEMA_URL,
+            corpus: each_corpus,
+        },
+        VerbCase {
+            verb: "each-record",
+            schema_url: each_schema_url::EACH_RECORD_SCHEMA_URL,
+            corpus: each_record_corpus,
         },
     ]
 }
@@ -1111,6 +1129,69 @@ fn placement_record_corpus() -> Vec<(&'static str, Value)> {
             let v = value(PlacementNdjsonRecord {
                 schema: PLACEMENT_RECORD_SCHEMA_URL,
                 placement,
+            });
+            (label, v)
+        })
+        .collect()
+}
+
+fn each_outcomes() -> Vec<(&'static str, each_wire::Outcome)> {
+    use each_wire::EachOutcomeStatus as S;
+    [
+        ("ok", S::Ok, Some(0), None, Some(12)),
+        ("failed-exit", S::Failed, Some(3), None, Some(40)),
+        ("failed-signal", S::Failed, None, Some(9), Some(40)),
+        ("failed-to-start", S::Failed, None, None, Some(1)),
+        ("timed-out", S::TimedOut, None, Some(9), Some(1000)),
+        ("not-run", S::NotRun, None, None, None),
+        ("not-present", S::NotPresent, None, None, None),
+    ]
+    .into_iter()
+    .map(|(label, status, exit_code, signal, duration_ms)| {
+        (
+            label,
+            each_wire::Outcome {
+                path: "github/org/app".into(),
+                role: "owned".into(),
+                status,
+                exit_code,
+                signal,
+                duration_ms,
+                stdout: "out\n".into(),
+                stderr: String::new(),
+            },
+        )
+    })
+    .collect()
+}
+
+fn each_corpus() -> Vec<(&'static str, Value)> {
+    let outcomes: Vec<each_wire::Outcome> = each_outcomes().into_iter().map(|(_, o)| o).collect();
+    vec![
+        (
+            "every-status",
+            value(each_wire::EachJsonOutput {
+                schema: each_schema_url::EACH_SCHEMA_URL.to_owned(),
+                outcomes,
+            }),
+        ),
+        (
+            "empty",
+            value(each_wire::EachJsonOutput {
+                schema: each_schema_url::EACH_SCHEMA_URL.to_owned(),
+                outcomes: Vec::new(),
+            }),
+        ),
+    ]
+}
+
+fn each_record_corpus() -> Vec<(&'static str, Value)> {
+    each_outcomes()
+        .into_iter()
+        .map(|(label, outcome)| {
+            let v = value(each_wire::EachNdjsonRecord {
+                schema: each_schema_url::EACH_RECORD_SCHEMA_URL,
+                outcome: &outcome,
             });
             (label, v)
         })

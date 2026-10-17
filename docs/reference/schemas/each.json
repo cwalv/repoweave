@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EachJsonOutput",
+  "description": "The envelope `rwv each --json -j 1` prints once every repo is done: `{ \"$schema\": \"<url>\", \"outcomes\": [<Outcome>, ...] }`, in manifest order.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "outcomes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Outcome"
+      }
+    }
+  },
+  "definitions": {
+    "EachOutcomeStatus": {
+      "oneOf": [
+        {
+          "description": "The command exited 0.",
+          "type": "string",
+          "enum": [
+            "ok"
+          ]
+        },
+        {
+          "description": "The command exited non-zero, was ended by a signal, or could not be started.",
+          "type": "string",
+          "enum": [
+            "failed"
+          ]
+        },
+        {
+          "description": "`--timeout` elapsed and the command's process tree was killed.",
+          "type": "string",
+          "enum": [
+            "timed-out"
+          ]
+        },
+        {
+          "description": "Never started: `--fail-fast` or an interrupt stopped new repos first.",
+          "type": "string",
+          "enum": [
+            "not-run"
+          ]
+        },
+        {
+          "description": "The repo's checkout is absent from disk; `rwv fetch` restores it.",
+          "type": "string",
+          "enum": [
+            "not-present"
+          ]
+        }
+      ]
+    },
+    "Outcome": {
+      "description": "What happened in one repo.",
+      "type": "object",
+      "required": [
+        "path",
+        "role",
+        "status",
+        "stderr",
+        "stdout"
+      ],
+      "properties": {
+        "duration_ms": {
+          "description": "Wall-clock run time. Absent when the command did not run.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "exit_code": {
+          "description": "The command's exit code. Absent when it did not run, could not be started, or was ended by a signal.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "path": {
+          "description": "The repo's manifest path.",
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "signal": {
+          "description": "The signal that ended the command (Unix only).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "status": {
+          "$ref": "#/definitions/EachOutcomeStatus"
+        },
+        "stderr": {
+          "description": "The command's standard error, decoded lossily as UTF-8. Holds the reason when the command could not be started.",
+          "type": "string"
+        },
+        "stdout": {
+          "description": "The command's standard output, decoded lossily as UTF-8.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -119,7 +119,7 @@ See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
 ## Roles in `rwv status --json`
 
-Roles surface in `rwv status --json` output so agent harnesses and shell scripts can filter on them. See [run a command across repos](../how-to/run-a-command-across-repos.md) for filtering recipes (`jq '.repos[] | select(.role == "owned")'`).
+Roles surface in `rwv status --json` output so agent harnesses and shell scripts can filter on them. `rwv each --role <role>` runs a command in the repos with that role; see [run a command across repos](../how-to/run-a-command-across-repos.md).
 
 ## Migrating from `role: primary`
 

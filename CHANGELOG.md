@@ -106,6 +106,25 @@ Nothing raised it: an entry with no `role` fails to parse and is reported as
 `unparseable-project`. `rwv doctor --kind missing-role` refuses with
 `unknown-finding-kind`, and the kind is gone from `doctor.json`.
 
+### `rwv each` ships with rwv
+
+`rwv each` runs a command in every repo of the checkout you are in, in
+parallel: `rwv each --role fork -- git checkout -b feat/x`. It is a plugin,
+`rwv-each`, installed beside `rwv`. With no `--role` or `--repo` it runs in
+every repo except reference repos; output lines are prefixed with their repo
+(`--group` holds each repo's output until it finishes); every repo runs even
+after one fails, and a summary names the failures; the exit status is 0 only if
+every repo succeeded. `--json`, `--fail-fast`, `--dry-run`, `--shell`,
+`--timeout`, `--joblog`, `--results` and `--progress` are described in the
+`rwv each` reference. Ctrl-C and `--timeout` end a command's whole process tree.
+
+### rwv waits for a plugin through Ctrl-C
+
+A Ctrl-C while a plugin runs no longer ends `rwv` ahead of the plugin. `rwv`
+waits for the plugin to exit and reports the plugin's own exit status, so a
+plugin that winds down on an interrupt is not cut off from the terminal and
+its status is the one the shell sees.
+
 ### Breaking: the `[lock]` table is gone from `rwv.toml`
 
 `[lock]` and its `forgo-tag-names` key are removed; `rwv.lock` always records

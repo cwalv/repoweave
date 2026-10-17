@@ -114,6 +114,30 @@ use repoweave::update::{
 };
 use repoweave::workspace::Resolution;
 
+// The bundled plugin's wire types and schema URLs, compiled into this binary
+// so their schemas are generated and their URLs checked like a core verb's.
+// Only the types are used here, never constructed.
+#[path = "rwv-each/schema_url.rs"]
+mod each_schema_url;
+#[allow(dead_code)]
+#[path = "rwv-each/wire.rs"]
+mod each_wire;
+
+/// The bundled plugins' source trees, which must never name the library.
+const PLUGIN_SOURCE_DIRS: &[&str] = &["src/bin/rwv-each"];
+
+/// True if `verb` is a bundled plugin's, which every release channel installs
+/// beside `rwv`.
+fn is_bundled_plugin(verb: &str) -> bool {
+    PLUGIN_SOURCE_DIRS.iter().any(|dir| {
+        Path::new(dir)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("rwv-"))
+            == Some(verb)
+    })
+}
+
 /// One explainable verb.
 struct Verb {
     /// Verb name (file stem, used in markdown filename and dispatch).
@@ -1768,6 +1792,61 @@ fn run_envelope_output_check(root: &Path) -> anyhow::Result<Vec<String>> {
         )
     })?;
     Ok(check_envelope_output_documented(&protocol_md_content))
+}
+
+/// The library crate's name as source spells it.
+const LIBRARY_CRATE: &str = "repoweave";
+
+/// Check that no file under `plugin_dir` reaches the library: no path through
+/// `library_crate` (`library_crate::…`, `use library_crate`, `extern crate
+/// library_crate`), and no `#[path]` or `include!`-family macro, the two ways
+/// a binary compiles another file's source into itself without naming its
+/// crate. The crate's name in prose or in a URL is not a reference and is not
+/// reported. A missing `plugin_dir` is an error, not a pass.
+///
+/// Returns error messages (one per offending line); empty means clean.
+fn check_plugin_library_boundary(plugin_dir: &Path, library_crate: &str) -> Vec<String> {
+    if !plugin_dir.is_dir() {
+        return vec![format!(
+            "plugin-boundary: {} is not a directory; the check has nothing to read",
+            plugin_dir.display()
+        )];
+    }
+    let name = regex::escape(library_crate);
+    let crate_token = Regex::new(&format!(
+        r"\b{name}\s*::|\buse\s+(?:::\s*)?{name}\b|\bextern\s+crate\s+{name}\b"
+    ))
+    .unwrap();
+    let source_inclusion = Regex::new(r"#\s*\[\s*path\b|\binclude(?:_str|_bytes)?!").unwrap();
+    let mut errors = Vec::new();
+    for path in collect_rs_files(plugin_dir) {
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!(
+                    "plugin-boundary: could not read {}: {e:#}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        for (n, line) in content.lines().enumerate() {
+            let what = if crate_token.is_match(line) {
+                format!("names the `{library_crate}` library")
+            } else if source_inclusion.is_match(line) {
+                "compiles in source from another file".to_owned()
+            } else {
+                continue;
+            };
+            errors.push(format!(
+                "plugin-boundary: {}:{}: {what}: {}",
+                path.display(),
+                n + 1,
+                line.trim()
+            ));
+        }
+    }
+    errors
 }
 
 /// Every retired-scheme ID spelling this gate matches: the literal prefix, the
@@ -3557,9 +3636,9 @@ const ABSENT_VERBS: &[&str] = &["branch", "commit", "exec", "publish", "pull", "
 ///
 /// The condition registers are kept apart because each is a population the
 /// scan must go on reaching. `code_words` is every other kebab-cased word the
-/// code spells: in the production regions of `src/` outside `src/bin/`, what
-/// string literals spell and the names serde derives; and clap's command,
-/// alias, flag and value names.
+/// shipped code spells: in the production regions of `src/` outside `src/bin/`
+/// and of the bundled plugins, what string literals spell and the names serde
+/// derives; and clap's command, alias, flag and value names.
 struct TokenVocabulary {
     finding_kinds: HashSet<String>,
     sub_kinds: HashMap<String, HashSet<String>>,
@@ -3704,19 +3783,20 @@ fn kebab_word_re() -> Regex {
     Regex::new(r"\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b").expect("kebab pattern compiles")
 }
 
-/// Kebab-cased words in the production code of `src/`, outside `src/bin/`:
-/// what its string literals spell, and the names serde derives for every item
-/// declared `rename_all = "kebab-case"`.
+/// Kebab-cased words in the shipped production code of `src/` — outside
+/// `src/bin/`, plus the bundled plugins: what its string literals spell, and
+/// the names serde derives for every item declared `rename_all = "kebab-case"`.
 ///
 /// Comments are not code and a test module is not production, so neither can
-/// vouch for a word a page cites; `src/bin/` is not shipped in `rwv`, and
+/// vouch for a word a page cites; the rest of `src/bin/` is not shipped, and
 /// holds this gate's own tables.
 fn src_code_kebab_words(root: &Path) -> HashSet<String> {
     let re = kebab_word_re();
     let bin = root.join("src/bin");
+    let plugins: Vec<PathBuf> = PLUGIN_SOURCE_DIRS.iter().map(|d| root.join(d)).collect();
     let mut words = HashSet::new();
     for path in collect_rs_files(&root.join("src")) {
-        if path.starts_with(&bin) {
+        if path.starts_with(&bin) && !plugins.iter().any(|p| path.starts_with(p)) {
             continue;
         }
         let Ok(content) = fs::read_to_string(&path) else {
@@ -4042,8 +4122,8 @@ enum Invocation<'c> {
 /// A word in a command's subcommand position must name one of its
 /// subcommands — unless the command also takes a positional and a subcommand
 /// follows, as in `rwv workweave web-app create`. At the root, a word that
-/// names no subcommand may be a plugin the same page names as an `rwv-<verb>`
-/// executable, or a verb in `ABSENT_VERBS`. A placeholder stands for a value,
+/// names no subcommand may be a bundled plugin, a plugin the same page names
+/// as an `rwv-<verb>` executable, or a verb in `ABSENT_VERBS`. A placeholder stands for a value,
 /// and a leaf command's arguments are not read.
 fn locate_invocation<'c>(
     cli: &'c clap::Command,
@@ -4076,7 +4156,7 @@ fn locate_invocation<'c>(
             continue;
         }
         if path.is_empty() {
-            if names_plugin(page, word) || ABSENT_VERBS.contains(&word) {
+            if is_bundled_plugin(word) || names_plugin(page, word) || ABSENT_VERBS.contains(&word) {
                 return Ok(Invocation::PluginOrAbsentVerb);
             }
             return Err(format!(
@@ -4623,6 +4703,18 @@ fn main() -> anyhow::Result<()> {
         write_if_changed(&schemas_dir.join(format!("{name}.json")), &content)?;
     }
 
+    for (name, schema) in [
+        ("each", schema_for!(each_wire::EachJsonOutput)),
+        (
+            "each-record",
+            schema_for!(each_wire::EachNdjsonRecord<'static>),
+        ),
+    ] {
+        let mut content = serde_json::to_string_pretty(&schema).expect("each schema serializes");
+        content.push('\n');
+        write_if_changed(&schemas_dir.join(format!("{name}.json")), &content)?;
+    }
+
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
@@ -4685,6 +4777,19 @@ fn main() -> anyhow::Result<()> {
     assert!(
         ADVANCE_RECORD_SCHEMA_URL.ends_with("/docs/reference/schemas/advance-record.json"),
         "ADVANCE_RECORD_SCHEMA_URL no longer points at the committed artifact"
+    );
+    let schema_base = repoweave::fetch::FETCH_SCHEMA_URL
+        .strip_suffix("fetch.json")
+        .expect("FETCH_SCHEMA_URL ends with fetch.json");
+    assert_eq!(
+        each_schema_url::EACH_SCHEMA_URL,
+        format!("{schema_base}each.json"),
+        "rwv-each's EACH_SCHEMA_URL no longer follows the schema-URL template"
+    );
+    assert_eq!(
+        each_schema_url::EACH_RECORD_SCHEMA_URL,
+        format!("{schema_base}each-record.json"),
+        "rwv-each's EACH_RECORD_SCHEMA_URL no longer follows the schema-URL template"
     );
 
     let index = render_index(&verbs);
@@ -4812,6 +4917,23 @@ fn main() -> anyhow::Result<()> {
             "envelope-output documentation check failed:\n{msg}\n\n\
              Fix: add a row for the variable to the Context envelope table in \
              docs/reference/plugin-protocol.md."
+        );
+    }
+
+    // --- plugin-boundary gate ------------------------------------------------
+    // The bundled plugin shares this package, so nothing but this check stops
+    // its source from linking the library a third-party plugin cannot.
+    let boundary_errors = PLUGIN_SOURCE_DIRS
+        .iter()
+        .flat_map(|dir| check_plugin_library_boundary(&root.join(dir), LIBRARY_CRATE))
+        .collect::<Vec<_>>();
+    if !boundary_errors.is_empty() {
+        let msg = boundary_errors.join("\n");
+        anyhow::bail!(
+            "plugin-boundary check failed:\n{msg}\n\n\
+             Fix: a bundled plugin reaches rwv the way any plugin does — the \
+             `RWV_*` envelope, argv, and `--json` output — never through the \
+             library."
         );
     }
 
@@ -8454,7 +8576,7 @@ mod tests {
 
     /// What a looser scan would report: real tokens of every class, a
     /// positional before its subcommand, global options, a plugin the page
-    /// names, an absent verb, placeholders, output lines, a list that stops at
+    /// names, a bundled plugin, an absent verb, placeholders, output lines, a list that stops at
     /// a span not shaped like a token, words the code derives through clap and
     /// serde, and the exemptions.
     #[test]
@@ -8474,6 +8596,8 @@ mod tests {
             "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n",
             "`sync-to`, `set-container`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
             "`rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n",
+            // rwv-advice: not-an-invocation
+            "`rwv each --role fork -- git status` marks a repo `not-present`.\n",
             "\n",
             "```text\n",
             "rwv push: 1 repo(s) disagree with rwv.lock:\n",
@@ -8488,7 +8612,7 @@ mod tests {
         assert!(findings.is_empty(), "got:\n{}", findings.join("\n"));
         assert_eq!(population.positional_before_subcommand, 1);
         assert_eq!(population.qualified_sub_kinds, 3);
-        assert_eq!(population.plugin_or_absent_verbs, 4);
+        assert_eq!(population.plugin_or_absent_verbs, 5);
     }
 
     /// A span closes at the next run of exactly as many backticks, may wrap
@@ -8657,6 +8781,104 @@ mod tests {
                 cited.contains(*verb),
                 "no page cites `rwv {verb}`; drop the exemption"
             );
+        }
+    }
+
+    fn plugin_tree(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for (name, body) in files {
+            let path = tmp.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, body).unwrap();
+        }
+        tmp
+    }
+
+    #[test]
+    fn plugin_boundary_passes_a_plugin_that_never_names_the_library() {
+        let tmp = plugin_tree(&[
+            ("main.rs", "mod run;\nfn main() { run::go(); }\n"),
+            ("run.rs", "pub fn go() { let _ = serde_json::json!({}); }\n"),
+        ]);
+        let errors = check_plugin_library_boundary(tmp.path(), LIBRARY_CRATE);
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+    }
+
+    #[test]
+    fn plugin_boundary_fails_on_a_use_of_the_library() {
+        let seeded = format!("use {LIBRARY_CRATE}::manifest::Role;\n");
+        let tmp = plugin_tree(&[("main.rs", "fn main() {}\n"), ("nested/sel.rs", &seeded)]);
+        let errors = check_plugin_library_boundary(tmp.path(), LIBRARY_CRATE);
+        assert_eq!(errors.len(), 1, "{}", errors.join("\n"));
+        assert!(
+            slashed(&errors[0]).contains("nested/sel.rs:1") && errors[0].contains("names the"),
+            "{}",
+            errors[0]
+        );
+    }
+
+    #[test]
+    fn plugin_boundary_fails_on_every_way_of_naming_the_library_crate() {
+        for seeded in [
+            format!("use {LIBRARY_CRATE};\n"),
+            format!("use {LIBRARY_CRATE} as lib;\n"),
+            format!("extern crate {LIBRARY_CRATE};\n"),
+            format!("use {{std::fs, {LIBRARY_CRATE}::status}};\n"),
+        ] {
+            let tmp = plugin_tree(&[("main.rs", &seeded)]);
+            let errors = check_plugin_library_boundary(tmp.path(), LIBRARY_CRATE);
+            assert_eq!(errors.len(), 1, "{seeded:?}: {}", errors.join("\n"));
+        }
+    }
+
+    #[test]
+    fn plugin_boundary_ignores_the_crate_name_in_a_url_or_prose() {
+        let body = format!(
+            "// see the {LIBRARY_CRATE} book\nconst U: &str = \"https://example.test/{LIBRARY_CRATE}/x.json\";\n"
+        );
+        let tmp = plugin_tree(&[("main.rs", &body)]);
+        let errors = check_plugin_library_boundary(tmp.path(), LIBRARY_CRATE);
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+    }
+
+    #[test]
+    fn plugin_boundary_fails_on_a_path_qualified_call_into_the_library() {
+        let seeded = format!("fn f() {{ ::{LIBRARY_CRATE}::status::run(); }}\n");
+        let tmp = plugin_tree(&[("main.rs", &seeded)]);
+        assert_eq!(
+            check_plugin_library_boundary(tmp.path(), LIBRARY_CRATE).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn plugin_boundary_fails_on_compiling_in_another_files_source() {
+        for seeded in [
+            "#[path = \"../../selector.rs\"]\nmod selector;\n",
+            "include!(\"../../selector.rs\");\n",
+            "const S: &str = include_str!(\"../../lib.rs\");\n",
+        ] {
+            let tmp = plugin_tree(&[("main.rs", seeded)]);
+            let errors = check_plugin_library_boundary(tmp.path(), LIBRARY_CRATE);
+            assert_eq!(errors.len(), 1, "{seeded:?}: {}", errors.join("\n"));
+            assert!(errors[0].contains("compiles in source"), "{}", errors[0]);
+        }
+    }
+
+    #[test]
+    fn plugin_boundary_refuses_a_missing_directory_rather_than_passing_it() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let errors = check_plugin_library_boundary(&tmp.path().join("absent"), LIBRARY_CRATE);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("not a directory"), "{}", errors[0]);
+    }
+
+    #[test]
+    fn plugin_boundary_holds_on_the_shipped_plugin_source() {
+        let root = repo_root();
+        for dir in PLUGIN_SOURCE_DIRS {
+            let errors = check_plugin_library_boundary(&root.join(dir), LIBRARY_CRATE);
+            assert!(errors.is_empty(), "{}", errors.join("\n"));
         }
     }
 }

@@ -86,4 +86,4 @@ If multiple `rwv-check-mid-op` executables exist on `$PATH`, the first one wins 
 
 - [Plugin protocol reference](../reference/plugin-protocol.md) — environment envelope variables, addressing rules, write prohibition, and schema compatibility
 - [Plugin boundary](../explanation/joints/plugin-boundary.md) — why `rwv` dispatches external subcommands without sandboxing
-- [Run a command across repos](./run-a-command-across-repos.md) — packaging an `rwv-each` plugin for running commands across repositories
+- [Run a command across repos](./run-a-command-across-repos.md) — `rwv each`, the plugin that ships with `rwv` for running a command across a project's repos

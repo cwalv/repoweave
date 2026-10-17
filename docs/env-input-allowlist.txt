@@ -20,3 +20,7 @@
 # or the condition, not a date).
 
 env-input:PATHEXT  # Windows' definition of executable, read as the `which` crate reads it for dispatch, so plugin discovery lists the verbs dispatch resolves; never a handoff surface
+env-input:RWV_WORKSPACE  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
+env-input:RWV_WORKWEAVE  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
+env-input:RWV_WORKWEAVE_UNREGISTERED  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
+env-input:RWV_PROJECT  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it

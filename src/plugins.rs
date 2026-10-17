@@ -76,7 +76,7 @@
 //! `rwv` never reads any of these variables back. They are outputs set at
 //! spawn for the child; a plugin that needs to address `rwv` explicitly
 //! uses them as arguments:
-//! `rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json`.
+//! `rwv -C "$RWV_WORKSPACE" status --json --project "$RWV_PROJECT"`.
 //!
 //! The seam for envelope injection is [`build_command`] — all spawn paths
 //! go through it. Do not construct the child command inline.
@@ -417,6 +417,7 @@ pub fn dispatch_external(
     let mut child = cmd
         .spawn()
         .map_err(|e| exec_failure_error(verb, &binary, e))?;
+    leave_interrupts_to_the_plugin();
 
     // Wait; propagate. `wait()` inherits the child's I/O, so stdout/stderr
     // stream directly through this process without buffering.
@@ -446,6 +447,32 @@ pub fn dispatch_external(
     // Emit a defensive 1 rather than looping forever.
     eprintln!("rwv-{verb} exited abnormally with no status");
     std::process::exit(1);
+}
+
+/// A terminal interrupt reaches the plugin and this process alike, the two
+/// being one foreground job. Left at its default this process would exit at
+/// once — handing the prompt back while the plugin is still winding down, and
+/// discarding the status the plugin then exits with. Called only once the
+/// plugin has started, so the plugin keeps the default disposition; this is
+/// what `system(3)` does while it waits, and for the same reason. Ignored, not
+/// blocked: a disposition holds for every thread of this process, a signal
+/// mask only for the thread that sets it.
+#[cfg(unix)]
+fn leave_interrupts_to_the_plugin() {
+    use nix::sys::signal::{signal, SigHandler, Signal};
+    for interrupt in [Signal::SIGINT, Signal::SIGQUIT] {
+        // SAFETY: `SigIgn` installs no handler, so no code runs on delivery.
+        let _ = unsafe { signal(interrupt, SigHandler::SigIgn) };
+    }
+}
+
+/// The Windows console delivers Ctrl-C to every process attached to it; a
+/// handler that returns without acting keeps this one alive until the plugin
+/// exits. A handler routine, unlike ignoring Ctrl-C outright, is not
+/// inherited by processes started later.
+#[cfg(windows)]
+fn leave_interrupts_to_the_plugin() {
+    let _ = ctrlc::set_handler(|| {});
 }
 
 #[cfg(test)]

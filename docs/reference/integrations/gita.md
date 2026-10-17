@@ -9,7 +9,7 @@
 | Generates | `gita/repos.csv`, `gita/groups.csv` |
 | Install hook | — |
 
-**Opt-in.** Repoweave's default recommendation for bulk multi-repo operations is [unix composition](../../how-to/run-a-command-across-repos.md) using `rwv status --json`, `jq`, and `xargs`. Gita is supported as an alternative for users who prefer a dedicated CLI with summary views.
+**Opt-in.** Repoweave's default recommendation for bulk multi-repo operations is [`rwv each`](../../how-to/run-a-command-across-repos.md), the plugin that ships with `rwv`. Gita is supported as an alternative for users who prefer a dedicated CLI with summary views.
 
 For build/test/lint across packages, prefer the ecosystem's own workspace commands (`npm run --workspaces test`, `pnpm -r run test`, `cargo test --workspace`) — they understand package dependency ordering. Gita's value is at the **git layer**: status, bulk fetch/pull, and seeing which repos have uncommitted work.
 
@@ -92,5 +92,5 @@ Reported by `rwv doctor`. Verify rows also print on the context verbs listed und
 
 ## Related
 
-- [run a command across repos](../../how-to/run-a-command-across-repos.md) — the default unix-composition recipe gita is an alternative to
+- [run a command across repos](../../how-to/run-a-command-across-repos.md) — `rwv each`, the default gita is an alternative to
 - [static-files](./static-files.md) — surfacing an `.envrc` that exports `GITA_PROJECT_HOME`

@@ -54,7 +54,7 @@ rwv -C "$RWV_WORKSPACE" status --project "$RWV_PROJECT" --json
 
 `$RWV_WORKSPACE` is always the **primary** weave root. This form is correct for reaching primary — and a plugin never needs a separate lookup to find it; it is already sitting in the envelope. `rwv resolve` has no flag for this; the envelope is the only lookup you need.
 
-**Reaching primary is not the same as reaching the checkout the plugin is running in.** If the plugin should operate on the *same* workweave it was dispatched from, add `-w` — `$RWV_WORKWEAVE` is already in the `<project>--<name>` shape `-w` expects, and it subsumes `--project` (the workweave name's own prefix resolves the project, so drop `--project` when you pass it):
+**Reaching primary is not the same as reaching the checkout the plugin is running in.** If the plugin should operate on the *same* workweave it was dispatched from, add `-w` — `$RWV_WORKWEAVE` is already in the `<project>--<name>` shape `-w` expects, and it subsumes `--project` (the workweave name's own prefix resolves the project, so drop `--project` when you pass it). `-C` and `-w` are global flags and go before the verb; `--project` belongs to the verb and goes after it:
 
 ```sh
 rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json
@@ -67,6 +67,7 @@ rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json
 - **Exit propagates verbatim.** A normal plugin exit passes its status code straight through as `rwv`'s own exit code.
 - **Signal death maps to `128 + N`** — Unix only; Windows has no POSIX signals, so this mapping never applies on a Windows build — reported on stderr as `rwv-<verb> terminated by signal N`.
 - **No wrapping.** The plugin inherits stdin, stdout, and stderr directly; `rwv` never buffers or translates them. JSON output, terminal-control sequences, and streaming progress all pass through unchanged.
+- **Interrupts belong to the plugin.** A Ctrl-C at the terminal reaches the plugin as it would any program; `rwv` itself waits it out, so the plugin can wind down and its exit status — `130`, say — is the one the shell sees.
 
 ## Write prohibition
 

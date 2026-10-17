@@ -47,7 +47,7 @@ Git submodules pin a commit SHA from one repo inside another. They solve the rep
 
 **gita wins when:** all you need is bulk `git status` / `git pull` across a collection of repos you happen to work in together. Zero setup cost, no new mental model.
 
-**repoweave wins when:** you need reproducibility (a committed lock that pins every repo), cross-repo workspace files (so `cargo test --workspace` spans all repos without a publish step), isolated parallel work (workweaves), or an agent sandbox with a transactional landing path. repoweave's `rwv status --json | jq ... | xargs git ...` covers the bulk-command case via Unix composition; see [adjacent tools](adjacent-tools.md) and [run a command across repos](how-to/run-a-command-across-repos.md). The gita integration is an opt-in alternative for users who prefer gita's summary sugar; see [reference/integrations/gita](reference/integrations/gita.md).
+**repoweave wins when:** you need reproducibility (a committed lock that pins every repo), cross-repo workspace files (so `cargo test --workspace` spans all repos without a publish step), isolated parallel work (workweaves), or an agent sandbox with a transactional landing path. repoweave's bundled `rwv each` plugin covers the bulk-command case; see [adjacent tools](adjacent-tools.md) and [run a command across repos](how-to/run-a-command-across-repos.md). The gita integration is an opt-in alternative for users who prefer gita's summary sugar; see [reference/integrations/gita](reference/integrations/gita.md).
 
 ## Monorepo migration
 

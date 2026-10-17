@@ -23,6 +23,7 @@ src/add_remove.rs	store-still-claimed	-	1
 src/add_remove.rs	unknown-registry	-	1
 src/add_remove.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
 src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	9
+src/bin/rwv-each/select.rs	(untokened:plugin)	-	5
 src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
@@ -138,8 +139,8 @@ src/workweave.rs	unmigrated-ephemeral-branch	-	1
 src/workweave.rs	unowned-branch-in-namespace	-	2
 src/workweave.rs	unreadable-status	-	1
 src/workweave.rs	unregistered-workweave	-	1
-src/workweave.rs	workweave-name-taken	-	1
 src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	1
+src/workweave.rs	workweave-name-taken	-	1
 src/workweave.rs	wrong-checkout-kind	-	1
 src/workweave_index.rs	legacy-workweave-index	-	1
 src/workweave_index.rs	project-dir-missing	-	2

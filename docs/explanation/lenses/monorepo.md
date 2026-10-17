@@ -111,7 +111,7 @@ repoweave is a coordination layer, not a VCS wrapper. Two things follow from tha
 
 But ordinary git commands stay first-class. `git commit`, `git branch`, `git push` work in each member repo exactly as they always do. repoweave doesn't try to wrap them with `rwv commit` or `rwv branch` — those wrappers would be all friction and no signal.
 
-For *coordinated* cross-repo operations where the value is in the coordination — role-aware push policy, lock-precondition checks, manifest-aware ordering — `rwv push` earns its keep. For ad-hoc bulk operations where the coordination is just "do this in each repo," unix composition (`rwv status --json | jq ... | xargs git ...`) is the right shape. See [verb-vs-composition](../joints/verb-vs-composition.md) for the design principle and [run a command across repos](../../how-to/run-a-command-across-repos.md) for canonical recipes.
+For *coordinated* cross-repo operations where the value is in the coordination — role-aware push policy, lock-precondition checks, manifest-aware ordering — `rwv push` earns its keep. For ad-hoc bulk operations where the coordination is just "do this in each repo," `rwv each` — a plugin, not a core verb — is the right shape. See [verb-vs-composition](../joints/verb-vs-composition.md) for the design principle and [run a command across repos](../../how-to/run-a-command-across-repos.md) for canonical recipes.
 
 The gita integration is an opt-in alternative for users who prefer a dedicated multi-repo CLI with "summary sugar"; see [reference/integrations/gita](../../reference/integrations/gita.md).
 

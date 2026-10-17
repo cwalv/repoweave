@@ -13,6 +13,13 @@ categories = ["development-tools", "command-line-utilities"]
 name = "rwv"
 path = "src/main.rs"
 
+# The bundled `rwv each` plugin. It shares this package so every release
+# channel ships it beside `rwv`, but it is a plugin like any other: its source
+# never names the library, and generate-explain's boundary check enforces that.
+[[bin]]
+name = "rwv-each"
+path = "src/bin/rwv-each/main.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
@@ -80,6 +87,23 @@ dunce = "1.0.5"
 # semantics exactly instead of re-deriving them by hand. No default
 # features: this crate only parses and compares, never touches a registry.
 semver = { version = "1", default-features = false }
+# rwv-each's children run in a process group (Unix) or job object (Windows)
+# so a timeout or Ctrl-C reaches every descendant. Default features pull in
+# `tracing` and the tokio API; neither is wanted.
+process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object"] }
+# rwv-each's Ctrl-C handler. `termination` widens it to SIGTERM and SIGHUP.
+ctrlc = { version = "3.5", features = ["termination"] }
+
+[target.'cfg(unix)'.dependencies]
+# rwv-each hands the terminal to a `-j 1` child's process group and takes it
+# back, as a job-control shell does, so interactive commands are not stopped
+# by SIGTTIN/SIGTTOU.
+nix = { version = "0.31", default-features = false, features = ["process", "signal", "term"] }
+
+[target.'cfg(windows)'.dependencies]
+# rwv-each joins a kill-on-close job object so its children die with it if it
+# is killed, and disarms that on a normal exit.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3"

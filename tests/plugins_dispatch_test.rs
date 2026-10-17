@@ -278,6 +278,50 @@ fn external_verb_signal_reported_as_128_plus_n() {
     );
 }
 
+/// A terminal Ctrl-C signals the whole foreground job — rwv and its plugin at
+/// once. rwv must outlive it and hand back the status the plugin then exits
+/// with, rather than die first and return the prompt over a plugin still
+/// winding down. The job is reproduced by starting rwv as the leader of its
+/// own process group and signaling that group.
+#[test]
+#[cfg(unix)]
+fn an_interrupt_to_the_whole_job_leaves_rwv_waiting_for_the_plugin_status() {
+    use std::os::unix::process::CommandExt;
+    let plugin_dir = common::tempdir().unwrap();
+    let ready = plugin_dir.path().join("ready");
+    write_script(
+        plugin_dir.path(),
+        "rwv-hold",
+        &format!(
+            "trap 'sleep 0.3; exit 7' INT\n: > '{}'\nwhile :; do sleep 0.05; done\n",
+            ready.display()
+        ),
+        "",
+    );
+    let mut child = common::rwv_std()
+        .arg("hold")
+        .current_dir(tmp_cwd())
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let start = std::time::Instant::now();
+    while !ready.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "plugin never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let sent = std::process::Command::new("kill")
+        .args(["-INT", &format!("-{}", child.id())])
+        .status()
+        .unwrap();
+    assert!(sent.success());
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(7), "rwv exited with {status:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Unknown-verb error
 // ---------------------------------------------------------------------------

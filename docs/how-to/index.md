@@ -8,7 +8,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 - [Switch projects](./switch-projects.md) — `rwv activate` and when to use a workweave instead
 - [Add a repo](./add-a-repo.md) — URL clones, brownfield adoption, `--new`, and `rwv remove`
 - [Migrate from submodules](./migrate-from-submodules.md) — replacing `.gitmodules` or `git-repo` `default.xml` with a repoweave project
-- [Run a command across repos](./run-a-command-across-repos.md) — `rwv status --json | jq | xargs` and `gita` recipes
+- [Run a command across repos](./run-a-command-across-repos.md) — `rwv each`, in parallel, by role or path
 
 ## Cross-repo features
 

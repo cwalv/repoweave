@@ -242,12 +242,14 @@ core.
 opt-in summary sugar.
 
 **The third answer.** Besides core verb and shell composition, the gate has a
-third outcome for this class of operation: a plugin. A `rwv-each` executable on
-`$PATH` is invoked as `rwv each <cmd>` and receives the resolved workspace
-context through the environment envelope — so the invocation is exactly as
-ergonomic as a core verb, without the maintenance cost of living in core. This
-is where packaged compositions have a home. "Run a command across repos" still
-firmly fails the gate; the refusal points somewhere: the plugin space, and the
+third outcome for this class of operation: a plugin. `rwv-each`, a plugin that
+ships with `rwv` in every release channel, is invoked as `rwv each <cmd>` and
+receives the resolved workspace context through the environment envelope like
+any other plugin — so the invocation is exactly as ergonomic as a core verb,
+without the maintenance cost of living in core. Shipping it with `rwv` changes
+how it is delivered, not where the operation lives. This is where packaged
+compositions have a home. "Run a command across repos" still firmly fails the
+gate; the refusal points somewhere: the plugin space, and the
 how-to at [run-a-command-across-repos](../../how-to/run-a-command-across-repos.md).
 
 ## Composition is not a downgrade
@@ -270,8 +272,9 @@ is intentionally designed for composition — every record carries
 enough metadata to identify the repo, and the schema is committed at
 `docs/reference/schemas/status.json` and embedded inside the
 `rwv explain status` bundle. This is rwv as a *data source*,
-not as a runner. The composition recipes that replace candidate verbs are
-in [run a command across repos](../../how-to/run-a-command-across-repos.md).
+not as a runner. `rwv each`, the plugin that answers "run this command across
+repos", is documented in
+[run a command across repos](../../how-to/run-a-command-across-repos.md).
 
 ## Reference for proposers
 

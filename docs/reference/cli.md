@@ -591,7 +591,7 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 
 ## Selector grammar
 
-`rwv fetch`, `rwv update`, `rwv push`, and `rwv status` share a selector surface for picking which repos to operate on or report.
+`rwv fetch`, `rwv update`, `rwv push`, and `rwv status` share a selector surface for picking which repos to operate on or report. The [`rwv each`](./rwv-each.md) plugin takes the same flags and hands them to `rwv status`.
 
 ### Flags
 
@@ -623,7 +623,7 @@ rwv fetch --role owned --role fork                  # owned ∪ fork
 rwv push --repo github/chatly/server --repo github/chatly/web   # server ∪ web
 ```
 
-There is no intersection syntax. To compose intersections, pipe `rwv status --json` through `jq` (see [run a command across repos](../how-to/run-a-command-across-repos.md)).
+There is no intersection syntax. To compose intersections, pipe `rwv status --json` through `jq`.
 
 `--role` and `--repo` together act as **union** as well: `--role owned --repo glob:'github/chatly/*'` matches owned repos *or* repos under `github/chatly/`. To filter both, use `--role` alone or `jq` post-filtering.
 
@@ -664,11 +664,14 @@ Exit semantics under `--json` are the same in both modes and match the text mode
 
 `rwv <verb>` where `<verb>` is not a core verb resolves to a `rwv-<verb>` executable on `$PATH` and execs it. This is the same convention `git` and `cargo` use for their external commands. Core verbs always win: clap matches them before external fallthrough runs, so a `rwv-status` on `$PATH` can never shadow the builtin, and naming a plugin after a future core verb makes it unreachable once that verb ships.
 
+`rwv each` is such a plugin, shipped with `rwv`; see [rwv each](./rwv-each.md).
+
 `rwv` projects the resolved workspace context into an environment envelope on every spawn — `RWV_VERSION`, `RWV_WORKSPACE`, `RWV_WORKWEAVE`, `RWV_WORKWEAVE_UNREGISTERED`, `RWV_PROJECT` — and propagates the child's exit status back verbatim. For the full contract — the envelope table (value and unset-condition for each variable), addressing back into `rwv`, exit-code semantics, discovery and naming, the write prohibition, and the `--json` compatibility guarantee — see the [plugin-protocol](./plugin-protocol.md) reference.
 
 ## Related
 
 - [reference/plugin-protocol](./plugin-protocol.md) — the external-command wire contract in full
+- [reference/rwv-each](./rwv-each.md) — the plugin that ships with `rwv`
 - [reference/formats](./formats.md) — `rwv.toml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`
 - [reference/roles](./roles.md) — role definitions and change-resistance semantics
 - [reference/glossary](./glossary.md) — terminology lookup

@@ -63,6 +63,7 @@
 - [Refusals](./reference/refusals.md)
 - [VCS errors](./reference/vcs-errors.md)
 - [Plugin protocol](./reference/plugin-protocol.md)
+- [rwv each](./reference/rwv-each.md)
 - [Formats](./reference/formats.md)
 - [Roles](./reference/roles.md)
 - [Glossary](./reference/glossary.md)

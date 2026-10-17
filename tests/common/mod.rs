@@ -851,6 +851,20 @@ pub fn strip_version_banner(stdout: &str) -> &str {
         .unwrap_or_else(|| panic!("expected stdout to open with {banner:?}; got:\n{stdout}"))
 }
 
+/// [`rwv`] as a `std::process::Command`, for a test that spawns the binary
+/// and acts on it while it runs, which `assert_cmd` cannot.
+#[allow(dead_code)]
+pub fn rwv_std() -> Command {
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin("rwv"));
+    for var in GIT_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    cmd.env("GIT_CONFIG_COUNT", "1");
+    cmd.env("GIT_CONFIG_KEY_0", "init.defaultBranch");
+    cmd.env("GIT_CONFIG_VALUE_0", "main");
+    cmd
+}
+
 /// The whole `PATH` for a child that must find `git` and a stand-in `cargo`
 /// and nothing else — so whether the child's cargo step completes is an input
 /// the caller sets rather than a property of the machine.

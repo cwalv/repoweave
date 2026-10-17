@@ -68,6 +68,6 @@ rwv explain lock-state-mismatch
 
 - [CLI reference — `rwv push`](../reference/cli.md#rwv-push-) — flags and `--json` / NDJSON output shapes
 - [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave commits into the primary weave before pushing
-- [Run a command across repos](./run-a-command-across-repos.md) — ad-hoc cross-repo commands via `rwv status --json`
+- [Run a command across repos](./run-a-command-across-repos.md) — ad-hoc cross-repo commands with `rwv each`
 - [Verb vs. composition](../explanation/joints/verb-vs-composition.md) — why coordinated publishing is a core verb
 - [VCS as seam](../explanation/joints/vcs-as-seam.md) — remote-push contract
