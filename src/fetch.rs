@@ -296,7 +296,8 @@ pub fn run_fetch(
         // Source-mode fetch runs before any WorkspaceContext is resolved; no
         // resolution block is available at this point.
         None,
-    )?;
+    )?
+    .envelope;
     if OutputMode::resolve(json, jobs) == OutputMode::JsonEnvelope {
         envelope.print()?;
     }
@@ -368,7 +369,10 @@ pub fn run_fetch_in_place(
     // workweave. See docs/explanation/joints/clone-topology.md.
     let workspace_root = ctx.primary_path();
 
-    let mut envelope = fetch_project_repos(
+    let FetchRun {
+        mut envelope,
+        moved_or_created,
+    } = fetch_project_repos(
         name.as_str(),
         &project_dir,
         workspace_root,
@@ -399,7 +403,13 @@ pub fn run_fetch_in_place(
             output,
             &mut envelope.placements,
         ),
-        Checkout::Primary { .. } => Ok(()),
+        Checkout::Primary { .. } => Ok(false),
+    };
+    // In a workweave the clones fetch moves are the primary's; only a worktree
+    // it created is a checkout of this workweave's.
+    let checkout_changed = match &ctx.checkout {
+        Checkout::Workweave { .. } => matches!(created, Ok(true)),
+        Checkout::Primary { .. } => moved_or_created,
     };
     if let Some(project) = &sole {
         let msg = format!(
@@ -418,7 +428,7 @@ pub fn run_fetch_in_place(
                 invocation,
                 activation,
             )?);
-    } else {
+    } else if checkout_changed {
         let presented = observe_root(ctx.active_path())
             .as_ref()
             .and_then(RootObservation::presented_project)
@@ -435,7 +445,7 @@ pub fn run_fetch_in_place(
     if output == OutputMode::JsonEnvelope {
         envelope.print()?;
     }
-    created
+    created.map(|_| ())
 }
 
 /// The project an in-place fetch selects for itself: the weave's only one,
@@ -452,9 +462,9 @@ fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::Pr
 
 /// Create the worktree for each member the workweave's `rwv.lock` pins and the
 /// workweave lacks — nothing at the slot, or a symlink — once the fetch above
-/// has put the pinned revisions in the canonical clones. How each one's files
-/// were placed is streamed under NDJSON, and added to `placements` for the
-/// envelope.
+/// has put the pinned revisions in the canonical clones, returning whether it
+/// created any. How each one's files were placed is streamed under NDJSON, and
+/// added to `placements` for the envelope.
 #[allow(clippy::too_many_arguments)]
 fn materialize_workweave_members(
     ctx: &WorkspaceContext,
@@ -465,14 +475,15 @@ fn materialize_workweave_members(
     filter: &RepoFilter,
     output: OutputMode,
     placements: &mut Vec<PlacementOutput>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
     let lock_path = project_dir.join(LockFile::FILE_NAME);
     if !lock_path.exists() {
-        return Ok(());
+        return Ok(false);
     }
     let lock = LockFile::from_path(&lock_path)?;
     let mut failures: Vec<String> = Vec::new();
+    let mut created = false;
     for (repo_path, entry) in manifest.iter_entries() {
         if !filter.matches(repo_path, entry.role) || (no_reference && entry.role == Role::Reference)
         {
@@ -496,6 +507,7 @@ fn materialize_workweave_members(
             pin.version.as_str(),
         ) {
             Ok(born) => {
+                created = true;
                 let line = format!(
                     "rwv fetch: created the worktree for {repo_path} in this workweave at {}{}",
                     &born.at.as_str()[..born.at.as_str().len().min(12)],
@@ -519,7 +531,7 @@ fn materialize_workweave_members(
         }
     }
     if failures.is_empty() {
-        return Ok(());
+        return Ok(created);
     }
     crate::refuse!(
         RefusalKind::PartialRunAborted,
@@ -545,8 +557,9 @@ fn materialize_workweave_members(
 /// SOURCE-mode bootstrap path runs before a context is resolved).
 ///
 /// Returns the `--json` envelope for the caller to print once it has placed
-/// anything else, so it is populated only in envelope mode. A run with
-/// failures prints it here, before refusing.
+/// anything else, so it is populated only in envelope mode, with whether any
+/// checkout moved or was created. A run with failures prints the envelope
+/// here, before refusing.
 #[allow(clippy::too_many_arguments)]
 fn fetch_project_repos(
     name: &str,
@@ -560,7 +573,7 @@ fn fetch_project_repos(
     json: bool,
     auto_activate: Option<ActivateOptions>,
     resolution: Option<Resolution>,
-) -> anyhow::Result<FetchJsonOutput> {
+) -> anyhow::Result<FetchRun> {
     // Read the manifest
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)
@@ -643,7 +656,7 @@ fn fetch_project_repos(
 
     let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
 
-    let outcomes: Vec<(FetchOutcome, Option<crate::share::FilePlacement>)> =
+    let outcomes: Vec<(FetchOutcome, Option<crate::share::FilePlacement>, bool)> =
         run_in_parallel(&work_items, jobs, |_idx, item| {
             let (repo_path, entry, vcs) = item;
             let reporter = if parallel && !json {
@@ -689,6 +702,8 @@ fn fetch_project_repos(
                 }
                 other => (other, None),
             };
+            let moved_or_created = matches!(outcome, FetchOutcome::Ok { .. })
+                && before != vcs.head_revision(&member).ok();
 
             // NDJSON mode: emit one line per repo as soon as it finishes.
             if ndjson {
@@ -729,7 +744,7 @@ fn fetch_project_repos(
                 }
             }
 
-            (outcome, files)
+            (outcome, files, moved_or_created)
         });
 
     // Aggregate outcomes serially in input order — preserves the existing
@@ -749,7 +764,8 @@ fn fetch_project_repos(
     };
     let envelope_records = &mut envelope.outcomes;
 
-    for ((outcome, files), (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
+    let moved_or_created = outcomes.iter().any(|(_, _, moved)| *moved);
+    for ((outcome, files, _), (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
         let member = workspace_root.join(repo_path.as_path());
         let abs_path = crate::path_spelling::wire_path(&member);
         match outcome {
@@ -929,7 +945,19 @@ fn fetch_project_repos(
         }
     }
 
-    Ok(envelope)
+    Ok(FetchRun {
+        envelope,
+        moved_or_created,
+    })
+}
+
+/// What [`fetch_project_repos`] did, beyond what its envelope reports.
+struct FetchRun {
+    envelope: FetchJsonOutput,
+    /// Some checkout's HEAD is not where it was before this fetch: a clone it
+    /// created, or one it moved. Read whatever the output mode, unlike the
+    /// envelope's `placements`, which also has no record for a fresh clone.
+    moved_or_created: bool,
 }
 
 /// Realign a clone that is already on disk to `target`.

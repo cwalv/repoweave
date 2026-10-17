@@ -205,11 +205,13 @@ hooks, says so in one line naming the command that does it:
   auto-activate (project '<active>' already active); `rwv activate <fetched>`
   selects it and runs its install hooks` (on stdout in text mode, stderr under
   `--json`);
-- an in-place fetch while its project is already active: `[skipped] core: the
-  install hooks did not run (project `<project>` was already active, so this
-  fetch activated nothing); `rwv materialize` runs them` — or, for a project the
-  weave root does not present, `(`<project>` is not the project this weave root
-  presents); `rwv activate <project>` runs them`;
+- an in-place fetch that activates nothing but created or moved a checkout
+  (at primary a member clone; in a workweave a member worktree it created):
+  `[skipped] core: the install hooks did not run (project `<project>` was
+  already active, so this fetch activated nothing); `rwv materialize` runs
+  them` — or, for a project the weave root does not present, `(`<project>` is
+  not the project this weave root presents); `rwv activate <project>` runs
+  them`. An in-place fetch that changed no checkout says nothing;
 - an activation run with `--no-materialize`: `[skipped] core: the install hooks
   did not run (--no-materialize); `rwv materialize` runs them`;
 - a hook whose tool is not on `PATH`: its `tool-missing` warning.

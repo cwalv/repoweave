@@ -463,15 +463,6 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
     assert_says_nothing_skipped(&run);
     assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
 
-    let run = weave.ok_in(&weave.ws, &["fetch"]);
-    assert!(
-        run.stderr.contains(
-            "[skipped] core: the install hooks did not run (project `app` was already active, \
-             so this fetch activated nothing); `rwv materialize` runs them"
-        ),
-        "an in-place fetch says it ran no hooks:\n{}",
-        run.report()
-    );
     std::fs::remove_file(weave.ws.join(".rwv-active")).unwrap();
     let run = weave.ok_in(&weave.ws, &["fetch"]);
     assert!(
@@ -479,4 +470,91 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
         "control: selecting the only project ran its hooks"
     );
     assert_says_nothing_skipped(&run);
+}
+
+/// An in-place fetch that activates nothing says the hooks did not run only
+/// when it moved or created a checkout: a no-op fetch leaves nothing for them
+/// to do and says nothing.
+#[test]
+fn an_in_place_fetch_names_materialize_only_when_it_moved_or_created_a_checkout() {
+    let weave = Weave::new();
+    let line = "[skipped] core: the install hooks did not run (project `app` was already active, \
+                so this fetch activated nothing); `rwv materialize` runs them";
+    let record = serde_json::json!({
+        "effect": "install-hooks",
+        "reason": {"project-already-active": {"project": "app"}},
+        "remedy": "rwv materialize",
+    });
+    let member = weave.ws.join("github/acme/web");
+
+    for args in [&["fetch"][..], &["fetch", "--json", "-j", "1"][..]] {
+        let run = weave.ok_in(&weave.ws, args);
+        assert_says_nothing_skipped(&run);
+        if args.contains(&"--json") {
+            assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
+        }
+    }
+
+    for args in [&["fetch"][..], &["fetch", "--json", "-j", "1"][..]] {
+        std::fs::remove_dir_all(&member).unwrap();
+        let run = weave.ok_in(&weave.ws, args);
+        assert!(
+            member.join(".git").exists(),
+            "fixture: fetch re-cloned the member"
+        );
+        assert!(
+            run.stderr.contains(line),
+            "`rwv {}` re-created a member, so it says the hooks did not run:\n{}",
+            args.join(" "),
+            run.report()
+        );
+        if args.contains(&"--json") {
+            assert_eq!(skipped(&run.json()), vec![record.clone()]);
+        }
+    }
+
+    std::fs::write(member.join("moved.txt"), "moved\n").unwrap();
+    common::git_in(&member, &["add", "-A"]);
+    common::git_in(&member, &["commit", "-q", "-m", "ahead of the lock"]);
+    common::git_in(&member, &["checkout", "-q", "--detach"]);
+    let run = weave.ok_in(&weave.ws, &["fetch", "--json", "-j", "1"]);
+    assert!(
+        !member.join("moved.txt").exists(),
+        "fixture: fetch moved the member back to its pin:\n{}",
+        run.report()
+    );
+    assert!(run.stderr.contains(line), "{}", run.report());
+    assert_eq!(skipped(&run.json()), vec![record]);
+}
+
+/// In a workweave the clones a fetch moves are the primary's, so only a member
+/// worktree it creates there makes it say the hooks did not run.
+#[test]
+fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_created() {
+    let weave = Weave::new();
+    let seat = weave.seat();
+
+    let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
+    assert_says_nothing_skipped(&run);
+    assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
+
+    let member = seat.join("github/acme/web");
+    common::git_in(
+        weave.ws.join("github/acme/web"),
+        &["worktree", "remove", "--force", &member.to_string_lossy()],
+    );
+    let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
+    assert!(
+        member.join(".git").exists(),
+        "fixture: fetch re-created the worktree"
+    );
+    assert!(
+        run.stderr.contains(
+            "[skipped] core: the install hooks did not run (project `app` was already active, \
+             so this fetch activated nothing); `rwv materialize` runs them"
+        ),
+        "{}",
+        run.report()
+    );
+    assert_eq!(skipped(&run.json()).len(), 1, "{}", run.report());
 }
