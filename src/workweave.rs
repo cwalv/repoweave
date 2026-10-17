@@ -1620,7 +1620,7 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
 ///   committing, stashing, or passing `--capture-dirty`.
 /// - `true`: move uncommitted edits to `rwv.toml` and `rwv.lock` into the
 ///   workweave's project worktree, discarding them from the source once the
-///   workweave is created; see [`release_captured_edits`].
+///   workweave is created, and only what the copy holds.
 ///
 /// `activation` is what the workweave's activation runs with; its
 /// `no_materialize` skips the install hooks.
