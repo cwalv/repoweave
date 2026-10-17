@@ -75,7 +75,7 @@ The file is deleted only when nothing user-authored remains after stripping: no 
 
 ## Verify (drift)
 
-`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) run the read-only verify pass on `projects/<project>/{project}.code-workspace`:
+`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave create`) run the read-only verify pass on `projects/<project>/{project}.code-workspace`:
 
 - **`malformed-settings`** (error): unknown keys or invalid values in `[integrations.vscode-workspace]`.
 - **`MISSING`** (`managed-file-missing`, warning, auto-fixable via `rwv doctor --fix`): file is absent in `projects/<project>/`.

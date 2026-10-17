@@ -12,7 +12,7 @@ that both answers imply. Two questions, one rule.
 
 Ecosystem tools resolve a workspace by location. Cargo walks up until it finds
 the workspace `Cargo.toml` and expects `Cargo.lock` beside it; Go reads
-`go.work` at the workspace root and writes `go.work.sum` next to it; an editor
+`go.work` at the weave root and writes `go.work.sum` next to it; an editor
 opens the `.code-workspace` where it sits. The weave root exists so those
 tools can see many repos as one workspace: it is the composition point, the
 place where the presented project's view of its members is laid out in the

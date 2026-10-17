@@ -6,7 +6,7 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 |---|---|
 | **Weave** | A repoweave workspace: any directory containing `projects/` (and typically cloned member repos, `.rwv-active`, and symlinked ecosystem workspace files). |
 | **Weave root** | The top-level directory of a weave (or workweave), where `.rwv-active` (or `.rwv-workweave`), `projects/`, `<registry>/<owner>/<repo>/`, and surfaced ecosystem symlinks live. Earlier docs sometimes called this the *weave directory* or *workspace root*. |
-| **Primary weave** | The main weave at the workspace root (as opposed to a workweave under `.workweaves/`). Target of `rwv sync primary`. |
+| **Primary weave** | The main weave at the weave root (as opposed to a workweave under `.workweaves/`). Target of `rwv sync primary`. |
 | **Workweave** | A worktree-based derivative of a weave, created on demand for isolation (agents, features, PR review). Lives at `<parent>/.workweaves/<project>--<name>/` by default. Created, duplicated, and destroyed with `rwv workweave <project> create` (`--from <source>` forks from an existing workweave) and `rwv workweave <project> delete`. |
 | **Project** | A directory under `projects/` containing `rwv.toml`, `rwv.lock`, and project-scoped docs. Itself a git repo with normal history. |
 | **Project repo** | The git repo at `projects/<name>/`. Carries the manifest, lock, and cross-cutting docs. Does not contain importable code. |

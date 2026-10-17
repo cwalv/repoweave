@@ -52,7 +52,7 @@ resolver = "2"
 ```
 
 The file lives in `projects/<project>/Cargo.toml` and is symlinked to the weave
-directory. Build artifacts (`target/`) are gitignored tool state;
+root. Build artifacts (`target/`) are gitignored tool state;
 `Cargo.lock` is produced by Cargo in `projects/<project>/Cargo.lock`, and its
 commit-vs-gitignore handling follows [Committed files and
 committability](./index.md#committed-files-and-committability).
@@ -217,7 +217,7 @@ is left alone.
 
 Cargo resolves relative patch paths in `.cargo/config.toml` against
 the **parent of `.cargo/`**.
-Since `.cargo/` sits directly under the project root, member paths
+Since `.cargo/` is surfaced directly at the weave root, member paths
 in the generated config stay **weave-root-relative**
 (`github/chatly/protocol`), the same shape the manifest surface writes. No
 `../` prefix and no canonicalization are used, preserving symlinked `.cargo/`
@@ -321,7 +321,7 @@ Strips only the `# managed by rwv`-marked keys (`[workspace].members` and its `#
 ## Verify (drift)
 
 `rwv doctor` and context verbs (`rwv activate`, `rwv fetch`,
-`rwv workweave add`) also run the read-only verify pass:
+`rwv workweave create`) also run the read-only verify pass:
 
 - **`Cargo.toml` and `.cargo/config.toml`** (hybrid): `MISSING` / `DRIFT` (both auto-fixable via `rwv doctor --fix`) / `USER-HELD` (surfaced, never auto-overwritten) / `CLEAN` — the shared four-state dispatch.
 - **`Cargo.lock`** (fully owned; see [Committed files and committability](./index.md#committed-files-and-committability)): `MISSING` and unparseable-content `DRIFT` are auto-fixable (`rwv doctor --fix` regenerates via `cargo generate-lockfile` — neither state holds a resolve to preserve). A lock that is present and parseable in `projects/<project>/Cargo.lock` whose bytes differ from the **last `rwv`-accepted generation** is reported as a warning (`fully-owned-digest-mismatch`, not auto-fixed): the install hook records a SHA-256 of each accepted generation and input set in `.rwv-owned-digests`, and verify compares against it. The operator either re-runs `rwv materialize` (accepting and re-stamping the new content) or restores `Cargo.lock`. Workspaces without prior digest state skip this comparison silently.

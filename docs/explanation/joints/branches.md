@@ -34,11 +34,11 @@ Canonical member clones stay attached to their declared tracking branch; isolate
 
 ## L3 — Workweave checkout: a branch is a disjoint commit target
 
-When `rwv workweave <project> create <name>` creates a workweave at `../.workweaves/<project>--<name>/`, each writable member checkout (`owned`, `fork`, `dependency`) is a linked git worktree attached to a flat **ephemeral branch** named `<project>--<name>` (while `role = "reference"` members are detached-HEAD worktrees with read-only tracked files).
+When `rwv workweave <project> create <name>` creates a workweave at `../.workweaves/<project>--<name>/`, every member checkout is a linked git worktree attached to a flat **ephemeral branch** named `<project>--<name>` (with `role = "reference"` tracked regular files set read-only).
 
 The ephemeral branch exists for two mechanical reasons:
 
-1. **Git requires a writable worktree to have its own branch.** By default, `git worktree add` refuses to check out a branch (such as `main`) that is already checked out in the canonical clone or another worktree.
+1. **Git requires a worktree on a branch to have its own branch.** By default, `git worktree add` refuses to check out a branch (such as `main`) that is already checked out in the canonical clone or another worktree.
 2. **Disjoint branch names make DAG queries sound ([clone-topology](./clone-topology.md) Invariant I3).** When every workspace owns a distinct branch ref in the shared canonical object store, "is this workweave's tip an ancestor of its parent's tip?" has an unambiguous answer, and `rwv sync-to` can fast-forward the parent's branch without ref collisions.
 
 Workweave branch names are creation-time commit targets, not lineage records. Parentage is recorded in `.rwv-workweave` (`parent`), not parsed out of the branch name. When a workweave is deleted (`rwv workweave <project> delete <name>`) or retired (`rwv sync-to --retire`), `rwv` deletes its `<project>--<name>` ephemeral branches after verifying that their commits are ancestor-merged into the parent workspace.
@@ -60,12 +60,11 @@ cd ../.workweaves/web-app--feat-auth
 git -C github/chatly/server commit -am "Add token verifier"
 git -C github/chatly/client commit -am "Send bearer token"
 
-# 3. Land into the primary weave (fast-forwards main, updates rwv.lock, retires workweave)
+# 3. Land into the primary weave (fast-forwards main, auto-relocks and commits rwv.lock, retires workweave)
 rwv sync-to --retire
 cd ../../weave
 
-# 4. Commit the updated rwv.lock and push owned/fork repos + project repo
-rwv lock --commit
+# 4. Push owned/fork repos + project repo
 rwv push
 ```
 

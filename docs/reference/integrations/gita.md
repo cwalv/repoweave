@@ -74,7 +74,7 @@ Removes `gita/repos.csv` and `gita/groups.csv`, and removes the `gita/` director
 
 ## Verify (drift)
 
-`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) verify `gita/repos.csv` and `gita/groups.csv`:
+`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave create`) verify `gita/repos.csv` and `gita/groups.csv`:
 
 - When enabled, missing (`managed-file-missing`) or drifted (`managed-file-drift`) CSVs are reported as warnings and are auto-fixable via `rwv doctor --fix`.
 - When disabled (`enabled = false`), leftover `gita/repos.csv` or `gita/groups.csv` files in `projects/<project>/gita/` are reported as `orphaned-owned-region` (`DRIFT` if their bytes match `rwv`'s output, or `USER-HELD` if modified by hand).

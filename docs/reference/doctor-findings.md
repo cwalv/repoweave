@@ -1379,11 +1379,11 @@ file, so its absence is a state a fresh generation reaches rather than a
 decision you made.
 
 **What to do:** `rwv doctor --fix`, which re-runs the generation that writes
-it. `rwv activate` and `rwv materialize` run the same step.
+it. `rwv materialize` and authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) run the same step.
 
 ### `managed-file-drift`
 
-Owned content on disk differs from what `rwv activate` would write, or the
+Owned content on disk differs from what `rwv doctor --fix`, `rwv materialize`, or authoring verbs would write, or the
 owning tool can no longer read it.
 
 Two shapes with two answers, and `safe_to_fix` is what tells them apart. Drift

@@ -16,7 +16,7 @@ For `rwv sync-to`, the initiating workweave holds the owner record and the targe
 
 ## Resume with `--continue`
 
-If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv sync-to --continue` from the workspace root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
+If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv sync-to --continue` from the weave root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
 
 `--continue` loads all parameters (source or target, `--strategy`, `--retire`, `--allow-stale-lock`, `--discard-local-commits`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
 

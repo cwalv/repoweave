@@ -4,12 +4,12 @@ Test a pull request in an isolated workweave without disturbing your primary wea
 
 ```bash
 rwv workweave web-app create pr-42
-cd ../.workweaves/web-app--pr-42/github/chatly/server
-git fetch origin pull/42/head
-git checkout --detach FETCH_HEAD
+cd ../.workweaves/web-app--pr-42
+git -C github/chatly/server fetch origin pull/42/head
+git -C github/chatly/server reset --hard FETCH_HEAD
 ```
 
-Checking out `FETCH_HEAD` detached keeps the worktree's ephemeral branch ref intact (avoiding `rwv doctor` branch-drift warnings while you inspect the PR). For a multi-repo PR, fetch and detach `FETCH_HEAD` in each affected member worktree; untouched repositories remain at the parent workspace's locked revisions.
+Resetting the worktree to `FETCH_HEAD` moves its `<project>--pr-42` ephemeral branch to the PR tip while keeping `HEAD` attached to the ephemeral branch (avoiding `rwv doctor` `branch-discipline` `detached` warnings while you inspect the PR). For a multi-repo PR, fetch and `reset --hard FETCH_HEAD` in each affected member worktree; untouched repositories remain at the parent workspace's locked revisions.
 
 ## Preview what the PR introduces
 
@@ -27,7 +27,6 @@ Add `--json` for machine-readable output.
 Run your ecosystem's build and test commands from the workweave root:
 
 ```bash
-cd ../../..   # back to ../.workweaves/web-app--pr-42
 cargo test --workspace
 # or: npm test --workspaces, go test ./...
 ```
@@ -36,10 +35,10 @@ Because `target/`, `node_modules/`, and `.venv/` are isolated per workweave, dep
 
 ## Clean up
 
-Return to the weave root and delete the review workweave, passing `--discard-unmerged-commits` because the fetched PR commits are not merged into the parent workspace (add `--discard-uncommitted` if the build or review also left uncommitted edits):
+Return to the primary weave root (`cd ../../<weave>` from `../.workweaves/web-app--pr-42`) and delete the review workweave, passing `--discard-unmerged-commits` because the fetched PR commits are not merged into the parent workspace (add `--discard-uncommitted` if the build or review also left uncommitted edits):
 
 ```bash
-cd ../..
+cd ../../<weave>
 rwv workweave web-app delete pr-42 --discard-unmerged-commits
 ```
 

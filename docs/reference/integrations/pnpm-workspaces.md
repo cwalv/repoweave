@@ -62,7 +62,7 @@ Member repos without a `pnpm-workspace.yaml`, or whose `pnpm-workspace.yaml` has
 
 ## Install hook
 
-Runs `pnpm install` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, `rwv workweave create`, and authoring verbs (unless `--no-materialize` is passed) to update `node_modules/` and `pnpm-lock.yaml` ([commit policy](./index.md#committed-files-and-committability)).
+Runs `pnpm install` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, and authoring verbs (unless `--no-materialize` is passed) to update `node_modules/` and `pnpm-lock.yaml` ([commit policy](./index.md#committed-files-and-committability)).
 
 ## Deactivation
 

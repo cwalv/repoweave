@@ -23,14 +23,16 @@ for repo in protocol server web; do
   git clone "/tmp/chatly-remotes/${repo}.git" "/tmp/chatly-remotes/work-${repo}"
   git -C "/tmp/chatly-remotes/work-${repo}" commit --allow-empty -m "initial ${repo}"
   git -C "/tmp/chatly-remotes/work-${repo}" push -u origin main
-  rwv add "/tmp/chatly-remotes/${repo}.git"
+  rwv add "file:///tmp/chatly-remotes/${repo}.git"
 done
-rwv lock --commit -m "initial lock"
+git -C projects/web-app add -A && git -C projects/web-app commit -m "initial project"
+rwv lock --commit
 git -C projects/web-app push -u origin main
+git -C projects/web-app remote set-head origin main
 rm -rf /tmp/chatly-seed
 ```
 
-With `/tmp/chatly-remotes/web-app.git` seeded, substitute `/tmp/chatly-remotes/web-app.git` for `chatly/web-app` (and `local/chatly-remotes/server` for `github/chatly/server`) in the commands below.
+When running Step 1 locally against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `chatly/web-app`) in `rwv fetch`, and `local/chatly-remotes/server` for `github/chatly/server` in the commands below.
 
 </details>
 
@@ -58,12 +60,12 @@ The result:
 ├── github/chatly/web/                # regular clone
 ├── github/chatly/protocol/           # regular clone
 ├── projects/web-app/                 # project repo (clone)
+│   ├── .gitattributes
 │   ├── rwv.toml
 │   ├── rwv.lock
-│   └── Cargo.toml                    # generated workspace file
-├── Cargo.toml -> projects/web-app/Cargo.toml   # symlink
-├── .rwv-active                       # "web-app"
-└── .gitignore
+│   └── web-app.code-workspace        # generated workspace file
+├── web-app.code-workspace -> projects/web-app/web-app.code-workspace   # symlink
+└── .rwv-active                       # "web-app"
 ```
 
 `rwv fetch` reads `rwv.lock` and aligns clones to the pinned commits — it never advances existing pins to upstream branch tips (if a manifest repo is missing from `rwv.lock` altogether and `--frozen` is not set, `rwv fetch` records its initial entry). To advance existing repos to their remote branch tips: `rwv update`.
@@ -113,7 +115,7 @@ To checkpoint the cross-repo git state into `projects/web-app/rwv.lock`:
 
 ```bash
 cd ~/work
-rwv lock --commit -m "lock: welcome-message feature"
+rwv lock --commit
 ```
 
 `rwv lock` reads the current 40-character commit SHA from each manifest repo's `HEAD` and writes `projects/web-app/rwv.lock` (`--commit` stages and commits `rwv.lock` in `projects/web-app/` in one step, or you can run `rwv lock` followed by `git -C projects/web-app commit`). Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.

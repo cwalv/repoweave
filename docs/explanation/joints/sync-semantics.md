@@ -39,7 +39,7 @@ guard → mark → savepoint → replay → relock → advance-target → retire
 
 ### Reference repos sync like any other repo
 
-A `role: reference` repo is a worktree on the workweave's ephemeral branch,
+A `role = "reference"` repo is a worktree on the workweave's ephemeral branch,
 like every other repo, and every phase above treats it the same way. When
 the phases are done, each workspace the op touched settles
 every repo for the role its project's manifest gives it, so a `reference`

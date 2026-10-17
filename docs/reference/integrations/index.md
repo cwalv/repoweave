@@ -23,7 +23,7 @@ Integration work is split across authoring, surfacing, materialization, and insp
 
 - **Authoring hooks** (run during `rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix`) — merge managed keys into hybrid config files or write fully-owned config files in `projects/<project>/`. This is the *write path*.
 - **Surfacing & materialization** (`rwv activate` and `rwv materialize`) — `rwv activate <project>` (primary only) switches `.rwv-active`, verifies Axis-2 content drift without re-authoring managed files, creates Axis-1 weave-root symlinks (`<file> -> projects/<project>/<file>`), and runs install hooks. `rwv materialize` (primary or workweave) strips disabled-integration artifacts, settles attested-file drift (`--regenerate-drifted` / `--adopt-drifted`), repairs missing symlinks, and runs install hooks.
-- **Install hooks** (run during `rwv activate`, `rwv materialize`, `rwv fetch`, `rwv workweave create`, and authoring verbs unless `--no-materialize` is passed) — run ecosystem install commands (`npm install`, `pnpm install`, `uv sync`, `cargo fetch`) to materialize the state implied by current membership and already-recorded pins. A lock file gains what new membership requires; an existing pinned version does not move. Advancing a dependency is done with the ecosystem's own update command, never by activation.
+- **Install hooks** (run during `rwv activate`, `rwv materialize`, `rwv fetch`, and authoring verbs unless `--no-materialize` is passed) — run ecosystem install commands (`npm install`, `pnpm install`, `uv sync`, `cargo fetch`) to materialize the state implied by current membership and already-recorded pins. A lock file gains what new membership requires; an existing pinned version does not move. Advancing a dependency is done with the ecosystem's own update command, never by activation.
 - **Check & verify hooks** (run during `rwv doctor` and context verbs) — read-only inspection. Per-integration `check()` and `verify()` cover tool availability, member compatibility, and Axis-2 content drift. Axis-1 surfacing-symlink integrity at the weave root is verified framework-wide by `rwv doctor`.
 
 | Lifecycle event | Trigger | Axis-1 (weave-root symlinks) | Axis-2 (project-dir config) | Ecosystem lockfiles |
@@ -84,7 +84,7 @@ Build orchestration tools (Nx, Turborepo) add three capabilities on top of ecosy
 | Caching | Skips re-running tasks when inputs haven't changed | Slow builds, CI optimization |
 | Affected analysis | Runs only packages changed since a base ref | Large workspaces |
 
-These tools consume the same workspace structure that activation hooks generate. Adding `nx.json` or `turbo.json` requires zero restructuring — they discover packages from `package.json` workspaces, `go.work`, etc. Use the [`static-files`](./static-files.md) integration to place `turbo.json` or `nx.json` at the weave directory.
+These tools consume the same workspace structure that rwv integrations generate and surface. Adding `nx.json` or `turbo.json` requires zero restructuring — they discover packages from `package.json` workspaces, `go.work`, etc. Use the [`static-files`](./static-files.md) integration to place `turbo.json` or `nx.json` at the weave root.
 
 For most projects, ecosystem workspace commands are sufficient without an orchestrator:
 

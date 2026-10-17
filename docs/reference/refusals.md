@@ -1063,13 +1063,13 @@ it; for a name given twice, supply it in only one spelling.
 
 ### `version-is-a-pin`
 
-**Condition.** `version:` names a revision where it must name a branch.
+**Condition.** `version` names a revision where it must name a branch.
 
-**Why.** `version:` declares what to *track*; the lock records where you *are*.
+**Why.** `version` declares what to *track*; the lock records where you *are*.
 A SHA or tag there collapses the two, leaving nothing to track and a lock that
 can never move.
 
-**Exits.** Put a branch name in `version:`. To hold a repo at a fixed revision,
+**Exits.** Put a branch name in `version`. To hold a repo at a fixed revision,
 commit the lock rather than overloading the tracking field.
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).

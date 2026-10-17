@@ -90,7 +90,7 @@ Per-integration config keys vary; see [reference/integrations](./integrations/in
 
 ### `workweave` block
 
-Optional. Declares gitignored paths (relative to the workspace root) that `rwv workweave <project> create` should carry from the source workspace into each new workweave:
+Optional. Declares gitignored paths (relative to the weave root) that `rwv workweave <project> create` should carry from the source workspace into each new workweave:
 
 ```toml
 [workweave]

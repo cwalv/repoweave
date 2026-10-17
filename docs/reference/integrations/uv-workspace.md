@@ -43,7 +43,7 @@ Written in `projects/<project>/pyproject.toml` and surfaced at the weave root vi
 
 ## Install hook
 
-Runs `uv sync` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, `rwv workweave create`, and authoring verbs (unless `--no-materialize` is passed) to update `.venv/` and `uv.lock` ([commit policy](./index.md#committed-files-and-committability)).
+Runs `uv sync` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, and authoring verbs (unless `--no-materialize` is passed) to update `.venv/` and `uv.lock` ([commit policy](./index.md#committed-files-and-committability)).
 
 ## Deactivation
 

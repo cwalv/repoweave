@@ -37,7 +37,7 @@ Consequences:
   mis-resolved. This catches divergence the per-integration `verify()` (Axis-2 content drift)
   cannot see — a manual `rm`, an interrupted create, a manifest that gained a file after a
   workweave was created, or an integration enabled in an existing workweave. The repair is a pure
-  re-surface (symlink (re)creation bound to the current weave directory); it never writes
+  re-surface (symlink (re)creation bound to the current weave root); it never writes
   `.rwv-active`, so it is valid inside a workweave where `rwv activate` is refused.
 - **Surfaced names come in two classes, and only one may cross projects.** A *per-project name* —
   `<project>.code-workspace` — cannot collide with another project's, so two projects' can sit at

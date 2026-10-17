@@ -1,7 +1,7 @@
 # Workweave hierarchy
 
 A workweave is a worktree-derived copy of a workspace: its own
-constituent-repo branches (for worktree-materialized repos), its own
+member-repo branches, its own
 ecosystem files, its own tool state.
 Workweaves are how repoweave gives operators (and agents) parallel,
 isolated cross-repo work without disturbing the primary weave.

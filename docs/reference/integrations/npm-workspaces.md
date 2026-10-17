@@ -59,7 +59,7 @@ Member repos whose root `package.json` does **not** declare a `workspaces` key k
 
 ## Install hook
 
-Runs `npm install` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, `rwv workweave create`, and authoring verbs (unless `--no-materialize` is passed) to update `node_modules/` and `package-lock.json` ([commit policy](./index.md#committed-files-and-committability)).
+Runs `npm install` at the weave root during `rwv activate`, `rwv materialize`, `rwv fetch`, and authoring verbs (unless `--no-materialize` is passed) to update `node_modules/` and `package-lock.json` ([commit policy](./index.md#committed-files-and-committability)).
 
 ## Deactivation
 

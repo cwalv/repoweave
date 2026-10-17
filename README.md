@@ -119,6 +119,8 @@ cd ../.workweaves/web-app--payments
 | `rwv setup claude` | Register Claude Code hooks (`SessionStart` + `PreCompact` for `rwv prime`, `WorktreeCreate` + `WorktreeRemove` for multi-repo workweaves) |
 | `rwv completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
+Any `rwv-<verb>` executable on `$PATH` is dispatched as `rwv <verb>` with the resolved workspace environment — see [write a plugin](docs/how-to/write-a-plugin.md) and the [plugin protocol reference](docs/reference/plugin-protocol.md).
+
 ### Shell completions
 
 Generate completions for your shell and source them:

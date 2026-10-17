@@ -1,7 +1,7 @@
 # Symlinks as structure
 
 rwv creates symbolic links in two places: a `[workweave]` `link = [...]` entry, and the
-surfacing of a project's owned files at a workspace root. Neither is a
+surfacing of a project's owned files at a weave root. Neither is a
 space-saving convenience. In each, the link *is* the fact some other part of
 rwv later reads off the disk, and a link that failed to appear is not a
 degraded workspace — it is a workspace that lies about what it contains.

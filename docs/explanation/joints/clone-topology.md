@@ -49,7 +49,7 @@ maps each to its git realization.
 Each manifest repo named in any project's `rwv.toml` has exactly one
 **canonical store** in the weave: a fully-materialized clone at
 `<weave>/<repo_path>`. That clone holds the object DAG and the refs for
-the repo. Nothing under `<weave>/.workweaves/` is a standalone clone of
+the repo. Nothing under `<parent>/.workweaves/` is a standalone clone of
 any manifest repo.
 
 `repo_path` here is a given, not a choice this joint makes: it is derived
@@ -179,7 +179,7 @@ directory:
   `<weave>/<repo_path>/.git` — the *same* path as the canonical store's.
   Both workspaces share one object DAG.
 - **Disconnected clone (violation of I1).** `git-common-dir` resolves to
-  some other path — typically `<weave>/.workweaves/<workweave>/<repo_path>/.git`.
+  some other path — typically `<parent>/.workweaves/<workweave>/<repo_path>/.git`.
   The workspace at `<weave>/<repo_path>` and the canonical store referenced
   by the workweave point at different directories. Two object DAGs exist.
 

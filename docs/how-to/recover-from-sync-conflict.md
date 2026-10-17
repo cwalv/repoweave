@@ -1,6 +1,6 @@
 # Recover from a sync conflict
 
-When `rwv sync` or `rwv sync-to` pauses on a merge or rebase conflict, resolve the conflicted files in the named repository, stage them, and resume from the workspace root with `--continue` (or roll back with `rwv abort`):
+When `rwv sync` or `rwv sync-to` pauses on a merge or rebase conflict, resolve the conflicted files in the named repository, stage them, and resume from the weave root with `--continue` (or roll back with `rwv abort`):
 
 ```bash
 # 1. Edit conflicted files and stage them in the named repository
@@ -8,7 +8,7 @@ cd github/chatly/server
 # edit conflicted files ...
 git add <files>
 
-# 2. Resume from the workspace root where the sync started
+# 2. Resume from the weave root where the sync started
 cd ../..
 rwv sync --continue      # or: rwv sync-to --continue
 ```
@@ -24,7 +24,7 @@ rwv abort
 When a project-repo replay or member-repo rebase hits a textual conflict, `rwv` prints a per-repo line naming the conflicted checkout followed by a summary with resolution instructions:
 
 ```text
-  github/chatly/server: Rebase in <workspace-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
+  github/chatly/server: Rebase in <weave-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
 Error: sync hit conflicts in one or more manifest repos (see per-repo lines above).
 
 To resolve each conflicted repo:

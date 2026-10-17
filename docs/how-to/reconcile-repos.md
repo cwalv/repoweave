@@ -39,7 +39,7 @@ When a repository is `ahead` or `diverged`, pick the action that matches your in
 
 ## Step 3 — repair `missing`, `behind`, or `unreachable` repos
 
-When `rwv status` shows `missing` or `behind`, run in-place `rwv fetch` (with no source argument) from the workspace root:
+When `rwv status` shows `missing` or `behind`, run in-place `rwv fetch` (with no source argument) from the weave root:
 
 ```bash
 rwv fetch
