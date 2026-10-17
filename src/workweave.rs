@@ -3818,10 +3818,9 @@ pub struct WorkweaveLogOutput {
 /// per manifest repo.
 ///
 /// Semantics:
-///   - Parent identity comes from the `.rwv-workweave` marker, NOT the branch
-///     name (stacked branches like `lab--wwb/lab--wwa/main` make a constructed
-///     `basename(parent)/main` wrong, and it is also wrong after
-///     adoption-to-primary).
+///   - Parent identity comes from the `.rwv-workweave` marker, never the branch
+///     name: the flat `<project>--<name>` branch names no parent, and adoption
+///     can re-point the parent to primary.
 ///   - `unique` commits are those in the workweave's history but not the
 ///     parent's, resolving the parent tip from the parent's checkout of the
 ///     same repo. This stays correct when the parent ADVANCED since the fork:

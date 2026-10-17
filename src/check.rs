@@ -1188,11 +1188,11 @@ pub enum WorkweaveTreeIntegrityKind {
         detail: String,
     },
     /// A recorded workweave whose directory lies *below* a workweave
-    /// container rather than directly in it. A multi-segment project name
-    /// used to render its `/` through into the directory name, so
-    /// `chatly/web-app` + `wtest` placed the workweave at
-    /// `<container>/chatly/web-app--wtest` and left `chatly` behind as a
-    /// directory the container scan reads as a stray.
+    /// container rather than directly in it: a multi-segment project name
+    /// rendered with its `/` intact, as `chatly/web-app` + `wtest` at
+    /// `<container>/chatly/web-app--wtest`, which leaves `chatly` behind as a
+    /// directory the container scan reads as a stray. rwv renders that `/` as
+    /// `+`, so the records spell `<container>/chatly+web-app--wtest`.
     ///
     /// The scan enumerates a container's immediate children, so nothing else
     /// in this check sees such a directory at all; this finding is emitted
@@ -1202,7 +1202,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// rename: the move crosses a directory boundary, which invalidates the
     /// worktree back-pointers of every checkout inside and the recorded path
     /// that found it. Workweaves are ephemeral by design; rwv does not
-    /// migrate a live seat in place.
+    /// migrate one in place.
     NestedWorkweaveDir {
         /// Project the entry belongs to.
         project: String,

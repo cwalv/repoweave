@@ -128,11 +128,9 @@ impl std::fmt::Display for LockRelation {
 /// Recorded-parent exposure for a per-repo status entry.
 ///
 /// Parent identity comes from the workweave's `.rwv-workweave` marker
-/// (`parent:`), NOT from the branch name: workweave branches are stacked
-/// (`lab--wwb/lab--wwa/main`), so a constructed `basename(parent)/main` name
-/// silently breaks for a workweave whose parent is itself a workweave, and is
-/// also wrong after adoption re-points the parent to primary. Consumers that
-/// need the parent must read this field, never reconstruct it from `branch`.
+/// (`parent:`), never from the branch name: a workweave's branch is the flat
+/// `<project>--<name>`, which names no parent, and adoption can re-point the
+/// parent to primary. Consumers that need the parent must read this field.
 ///
 /// `path` is the recorded parent workspace path (identical for every repo in
 /// the workweave). `tip` is this specific repo's parent tip — the SHA that

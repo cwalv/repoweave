@@ -77,9 +77,9 @@ question the classes answer is whether the weave you invoked doctor from
 determines what gets repaired.
 
 **Weave-scoped arms — the invoking weave sets the scope.** Integration
-content regeneration, surfacing symlinks, the `role: primary` manifest
-rewrite, the `rwv.lock` replay-exclusion and its paired merge-driver config,
-and the index / working-tree / state-hygiene drift arms all repair state that
+content regeneration, surfacing symlinks, the `rwv.lock` replay-exclusion and
+its paired merge-driver config, and the index / working-tree / state-hygiene
+drift arms all repair state that
 exists once *per weave*. Run inside a workweave, they repair that workweave
 and nothing else: primary's copy of the same file is left alone, including
 primary's own drift, and the drift scan does not enumerate sibling weaves at
@@ -201,8 +201,6 @@ discriminated by the `kind` tag — {{MSG:doctor_kinds}}.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 ({{MSG:doctor_subkind_variants}}) carry an additional `sub_kind` field.
-`legacy-role-primary` carries `project` and
-`manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 ({{MSG:doctor_workweave_tree_integrity_subkinds}}).
 
@@ -258,8 +256,8 @@ Find every stale lock and the paths involved (weave-wide):
 rwv doctor --all --json | jq '.violations[] | select(.kind == "stale-lock")'
 ```
 
-Auto-fix safe drift (index trees that match a known ancestor) and
-migrate any manifests still using the legacy `role: primary` spelling:
+Repair every finding marked Auto-fixable, safe drift (index trees that match
+a known ancestor) included:
 
 ```
 rwv doctor --fix
