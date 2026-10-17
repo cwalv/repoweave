@@ -63,7 +63,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 
 - **`rwv add <url>`** populates `version` from the remote's default branch (`origin/HEAD`, or `main` when creating a repo with `--new`).
 - **`rwv update`** reads `version` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
-- **`rwv push`** and **`rwv doctor`** read `version` to verify that canonical checkouts are on their tracked branch rather than a stray feature branch or detached HEAD.
+- **`rwv fetch`** checks a new clone out on the local counterpart of the branch `version` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
 - **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `version` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
 
 Manifests must use `role = "owned"`. The pre-rename `primary` spelling no longer parses. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
@@ -87,6 +87,14 @@ files = ["turbo.json", ".eslintrc.json"]
 ```
 
 Per-integration config keys vary; see [reference/integrations](./integrations/index.md).
+
+The block is as strict as the rest of the file. An `[integrations.<name>]` table whose `<name>` is not a built-in integration, or that holds a key its integration does not read, fails to parse, naming the line, the accepted names and the nearest match:
+
+```
+unknown key `hide-dotfile` in `[integrations.vscode-workspace]`, expected one of `enabled`, `hide-dotfiles`; did you mean `hide-dotfiles`?
+```
+
+Like any manifest parse error, it stops every verb that loads the manifest: `rwv doctor` reports the project as [`unparseable-project`](./doctor-findings.md#unparseable-project), and `rwv status` skips it with a warning. A value of the wrong type for a key the integration does read, and an unknown key nested deeper (inside `[integrations.cargo-workspace.members."<repo>"]`), are reported by `rwv doctor` as [`malformed-settings`](./doctor-findings.md#malformed-settings) instead.
 
 ### `workweave` block
 
@@ -135,7 +143,7 @@ An older or hand-edited lock may still carry an entry pinned by a tag or branch 
 
 `rwv.lock` is derived state. Do not hand-edit; it is the *output* of `rwv lock` and the *output* of `rwv sync` Phase 3. See [lock-as-derived](../explanation/joints/lock-as-derived.md).
 
-`sha256sum rwv.lock` is the project fingerprint — two machines with the same checksum have identical source for every repo.
+`sha256sum rwv.lock` is the project fingerprint — two locks with the same checksum pin the same commit of every repo. They are pins, not a description of the checkouts: a working tree whose HEAD has moved past its lock reads the same checksum, and `rwv status` or `rwv doctor --locked` is what compares the two.
 
 Each workspace (primary weave or workweave) owns its own `rwv.lock`. A `rwv lock` from a workweave updates the workweave's lock, not primary's.
 
@@ -149,7 +157,7 @@ web-app
 
 `.rwv-active` is the **single source of truth** for the active project within a workspace. There is no CWD-based override; `cd projects/<name>/` does not switch projects.
 
-Updated by `rwv activate <project>`. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file.
+Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv fetch` that activates a project when none is. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
 
 ## `.rwv-workweave` — workweave marker
 
@@ -182,19 +190,15 @@ See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-
 
 ## `.rwv-workweave-index` — workweave registry and ref receipts
 
-Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git via `.git/info/exclude`), written and updated by `rwv workweave <project> create`, `delete`, `set-container`, and `rwv doctor --fix`.
+Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git through the project repo's `.git/info/exclude`), written and updated by `rwv workweave <project> create`, `delete`, `set-container`, and `rwv doctor --fix`.
 
-Records:
-
-- **`container`**: optional absolute path override for where new workweaves for this project are created (`<parent-of-primary>/.workweaves` when omitted).
-- **`workweaves`**: map of workweave name to its absolute directory path on disk, used by `-w <project>--<name>` and `rwv workweave <project> list`.
-- **`receipts`**: ownership receipts (`store`, `name`, `created_at` SHA) for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` only delete branches `rwv` itself minted.
+It records the project's workweave container (`<parent-of-primary>/.workweaves` unless `set-container` recorded another), the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave <project> list` resolve through, and an ownership receipt for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` delete only branches `rwv` itself minted. Its field-level schema is an implementation detail; read it through `rwv workweave <project> list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
 
 ## `.rwv-owned-digests` — attested generated-file ledger
 
 Lives at `<workspace>/projects/<project>/.rwv-owned-digests` (with a transient `.rwv-owned-digests.lock` sibling while a write is in flight). Machine-local JSON state (excluded via `.git/info/exclude`) that records SHA-256 digests of ecosystem files produced by integration install hooks (such as `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`) alongside the digests of the manifest inputs that produced them.
 
-Used by integration `verify()` checks (`rwv doctor`) and `rwv materialize` (`--regenerate-drifted` / `--adopt-drifted`) to distinguish files last written by `rwv` from files modified out-of-band.
+Used by `rwv doctor` (`managed-file-drift`, `derived-state-stale`) and by `rwv materialize` (`--regenerate-drifted` / `--adopt-drifted`) to distinguish files last written by `rwv` from files modified out-of-band.
 
 ## `.rwv-op` — owner op-state record
 
@@ -239,10 +243,9 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
 │   ├── package-lock.json -> projects/web-app/package-lock.json
 │   ├── go.work -> projects/web-app/go.work
 │   ├── go.work.sum -> projects/web-app/go.work.sum
-│   ├── node_modules/                         # tool state — gitignored
-│   ├── .venv/                                # tool state — gitignored
-│   ├── .rwv-active                           # "web-app"
-│   └── .gitignore
+│   ├── node_modules/                         # tool state, in no repo
+│   ├── .venv/                                # tool state, in no repo
+│   └── .rwv-active                           # "web-app"
 │
 └── .workweaves/                              # sibling container for workweaves
     └── web-app--payments/                    # one workweave
@@ -264,7 +267,7 @@ The first path segment is a **registry** — a short name for where the repo liv
 - **Ecosystem files are symlinked** at the weave root to the active project's directory. Real files live in `projects/<name>/`.
 - **Ecosystem lock files are committable** alongside `rwv.toml` in the project directory.
 - **Project repos** have `rwv.toml` and `rwv.lock`. They don't contain importable code — build tools never look at `projects/`.
-- **Tool state directories** (`node_modules/`, `.venv/`, `target/`) are at the weave root, gitignored, regenerated by the ecosystem install commands.
+- **Tool state directories** (`node_modules/`, `.venv/`, `target/`) are at the weave root, outside every repo, regenerated by the ecosystem install commands.
 
 ### Project paths
 

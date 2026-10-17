@@ -142,9 +142,9 @@ workspace-scale form.
 ### `rebase-conflict`
 
 **Condition.** An in-flight replay stopped on a conflict that needs a person.
-The `op` field names which replay it was. Its type admits `rebase`, `merge` and
-`cherry-pick`; every raise today is a rebase, so `rebase` is the only value a
-consumer will actually receive.
+The `op` field names which replay it was. The schema admits `rebase`, `merge`
+and `cherry-pick`; rwv raises this kind only during a rebase, so `rebase` is
+the value a consumer receives.
 
 **What it means.** The repository is left in the VCS-native in-flight state, on
 purpose: conflict markers in the working tree and the replay's own state
@@ -183,10 +183,12 @@ repository.
 fetched, or one that was rewritten or garbage-collected upstream after the lock
 was written.
 
-**Exits.** `rwv fetch` first: an unfetched-but-existing revision is the common
-case and fetching resolves it. If it still does not resolve, the revision is
-gone rather than absent, and the lock has to move — `rwv lock` re-snapshots
-from the tips the manifest tracks.
+**Exits.** Fetch the revision into the clone first, with `git -C <repo> fetch`:
+an unfetched-but-existing revision is the common case. In-place `rwv fetch`
+does not contact the remote for a clone already on disk, so it does not
+resolve this; it re-clones only a checkout that is missing. If the revision
+still does not resolve, it is gone rather than absent, and the lock has to
+move — `rwv lock` re-snapshots from the working tips.
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md)
 covers why the lock is re-snapshotted rather than repaired.

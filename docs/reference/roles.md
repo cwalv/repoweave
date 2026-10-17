@@ -123,13 +123,13 @@ Roles surface in `rwv status --json` output so agent harnesses and shell scripts
 
 ## Migrating from `role: primary`
 
-The `owned` role was previously spelled `primary`. The rename to `owned` resolved an overload — "primary" is also the name for the *workspace* (the non-workweave weave root, as in `rwv sync primary`). Using one word for two distinct concepts caused enough confusion to justify the rename.
+The role is spelled `owned`, not `primary`: "primary" names the *workspace* (the non-workweave weave root, as in `rwv sync primary`), and one word for two concepts is what the spelling avoids.
 
-**The parser does not accept the legacy spelling, and nothing rewrites it for you.** A manifest carrying `role = "primary"` fails to load, and the error names the spelling that replaced it at the line holding it:
+**The parser does not accept `primary` as a role, and nothing rewrites it for you.** A manifest carrying `role = "primary"` fails to load, and the error names the spelling to use at the line holding it:
 
 ```
 $ rwv doctor
-error: alpha: failed to parse rwv.toml at projects/alpha/rwv.toml: rwv.toml is yours to edit; rwv will not rewrite a file it could not parse: TOML parse error at line 5, column 8
+[error] core: alpha: failed to parse rwv.toml at projects/alpha/rwv.toml: rwv.toml is yours to edit; rwv will not rewrite a file it could not parse: TOML parse error at line 5, column 8
   |
 5 | role = "primary"
   |        ^^^^^^^^^
@@ -138,9 +138,9 @@ the `primary` role spelling is no longer accepted; the role is spelled `owned`
 
 Change the value to `owned`. Editing the manifest is yours because the manifest is yours — see [formats](./formats.md).
 
-The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) rejects the legacy spelling through the same parser, so it answers with the same sentence.
+The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) reads its value through the same parser, so it refuses `primary` with the same sentence (`unknown-role`).
 
-`rwv status --json` and other machine-readable outputs always emit the canonical `"owned"` spelling; that contract was unchanged by this revision.
+`rwv status --json` and other machine-readable outputs emit the role as `"owned"`.
 
 ## Related
 
