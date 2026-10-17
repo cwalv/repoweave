@@ -309,6 +309,10 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
         return settle_manifest(ctx, &project, None);
     }
 
+    if vcs.is_repo(&dest) {
+        refuse_foreign_clone_at_placement(vcs.as_ref(), &parsed_url, &dest, &repo_path)?;
+    }
+
     // Warn when this clone path is already registered by another project.
     // The physical clone is shared; the operator should know. This is not a
     // refusal — sharing is legitimate and supported.
@@ -362,6 +366,42 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
     Ok(())
+}
+
+/// A clone already at the placement stands in for the one this add would make
+/// only when its origin names the same repo. Any other clone is registered
+/// through `--adopt`, under its own origin.
+fn refuse_foreign_clone_at_placement(
+    vcs: &dyn Vcs,
+    url: &RepoUrl,
+    dest: &Path,
+    repo_path: &RepoPath,
+) -> anyhow::Result<()> {
+    let clone_url = crate::registry::resolve_to_clone_info(url)?.url.to_string();
+    let recorded = vcs.remote_url(dest).with_context(|| {
+        format!(
+            "could not determine the {} URL for '{}'",
+            vcs.conventional_remote_name(),
+            dest.display()
+        )
+    })?;
+    if recorded
+        .as_deref()
+        .is_some_and(|r| crate::manifest::clone_urls_equivalent(r, &clone_url))
+    {
+        return Ok(());
+    }
+    let found = match &recorded {
+        Some(r) => format!("a clone of '{r}'"),
+        None => format!("a clone with no {} remote", vcs.conventional_remote_name()),
+    };
+    crate::refuse!(
+        RefusalKind::ForeignCloneAtPlacement,
+        "rwv add: '{path}' already holds {found}, not '{clone_url}'. To register that \
+         clone under the URL it records: `rwv add --adopt {path}`. To add '{clone_url}', \
+         move the existing clone aside first.",
+        path = repo_path.as_str(),
+    )
 }
 
 /// `rwv add --adopt <path>`: register the clone already at `path` under the

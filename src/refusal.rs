@@ -288,6 +288,8 @@ pub enum RefusalKind {
     UnusableCreationParam,
     /// A creation address's placement already holds a different URL.
     OccupiedPlacement,
+    /// The placement already holds a clone whose origin names another repo.
+    ForeignCloneAtPlacement,
     /// `--provider` names a registry that cannot mint a clone URL from an
     /// owner and a project name alone.
     ProviderCannotMintUrl,

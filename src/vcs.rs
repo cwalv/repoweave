@@ -2678,11 +2678,9 @@ pub trait Vcs: Send + Sync {
     /// Other errors (I/O failures, non-UTF-8 output) propagate as
     /// [`VcsError`].
     ///
-    /// Used by `rwv doctor`'s provenance checks to compare the clone's
-    /// recorded URL against the manifest URL, and by `rwv add`'s
-    /// local-path adoption to read back the URL to record — both compare
-    /// against or write into `rwv.toml`, which holds the URL the operator
-    /// configured, not one a local `insteadOf` rule happens to resolve it to.
+    /// Every caller compares the result against, or writes it into,
+    /// `rwv.toml`, which holds the URL the operator configured, not one a
+    /// local `insteadOf` rule happens to resolve it to.
     fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError>;
 
     /// Return `true` when `sha` names a commit object that exists in

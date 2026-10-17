@@ -215,8 +215,8 @@ fn add_with_project_override_regenerates_without_selecting() {
     let (ws, _proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
     select_proj_a(&ws);
 
-    // A second on-disk repo, added by local path so no clone is needed.
-    // Local-path add reads the repo's `origin` to record a URL — the
+    // A second on-disk repo, adopted so no clone is needed. `--adopt`
+    // reads the repo's `origin` to record a URL — the
     // origin is unreachable on purpose, so origin/HEAD is planted by hand
     // rather than fetched, the same local-only state `rwv add` reads.
     let client = ws.join("github/acme/client");
@@ -235,7 +235,13 @@ fn add_with_project_override_regenerates_without_selecting() {
     );
 
     rwv()
-        .args(["add", "github/acme/client", "--project", "proj-b"])
+        .args([
+            "add",
+            "--adopt",
+            "github/acme/client",
+            "--project",
+            "proj-b",
+        ])
         .current_dir(&ws)
         .assert()
         .success();

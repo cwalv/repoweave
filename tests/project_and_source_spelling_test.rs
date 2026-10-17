@@ -242,3 +242,71 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
         "nothing may have been cloned"
     );
 }
+
+/// Two bare remotes whose URLs place at the same path, `local/remotes/lib`.
+fn two_remotes_one_placement(root: &Path) -> (PathBuf, PathBuf) {
+    let ours = root.join("ours/remotes/lib.git");
+    let theirs = root.join("theirs/remotes/lib.git");
+    for bare in [&ours, &theirs] {
+        std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+        common::init_bare_repo_with_commit(bare);
+    }
+    (ours, theirs)
+}
+
+#[test]
+fn add_refuses_a_clone_of_another_remote_already_at_the_placement() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    let (ours, theirs) = two_remotes_one_placement(tmp.path());
+    let placed = ws.join("local/remotes/lib");
+    std::fs::create_dir_all(placed.parent().unwrap()).unwrap();
+    common::git_in(
+        tmp.path(),
+        &["clone", theirs.to_str().unwrap(), placed.to_str().unwrap()],
+    );
+    let before = project_files(&ws);
+
+    let stderr = refusal_stderr(&["add", &common::file_url(&ours)], &ws);
+    assert_routes_to(&stderr, "foreign-clone-at-placement");
+    assert!(
+        stderr.contains("`rwv add --adopt local/remotes/lib`"),
+        "the refusal must name --adopt as the way to keep the clone:\n{stderr}"
+    );
+    assert_eq!(
+        project_files(&ws),
+        before,
+        "a clone of another remote is not registered under this URL"
+    );
+    assert!(
+        placed.join(".git").exists(),
+        "the existing clone is untouched"
+    );
+}
+
+#[test]
+fn add_registers_a_clone_of_the_same_remote_already_at_the_placement() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    let (ours, _theirs) = two_remotes_one_placement(tmp.path());
+    let placed = ws.join("local/remotes/lib");
+    std::fs::create_dir_all(placed.parent().unwrap()).unwrap();
+    common::git_in(
+        tmp.path(),
+        &["clone", ours.to_str().unwrap(), placed.to_str().unwrap()],
+    );
+    let url = common::file_url(&ours);
+
+    let out = common::rwv()
+        .args(["add", &url])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
+    assert!(stderr.contains("skipping clone"), "{stderr}");
+    let manifest = std::fs::read_to_string(ws.join("projects/web-app/rwv.toml")).unwrap();
+    assert!(
+        manifest.contains("local/remotes/lib") && manifest.contains(&url),
+        "a clone whose origin is the same repo, spelled as a bare path, is registered:\n{manifest}"
+    );
+}

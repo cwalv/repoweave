@@ -200,6 +200,18 @@ destructive verb over the whole weave.
 **Exits.** Supply a pattern, or drop `--repo` entirely to mean all repos
 explicitly.
 
+### `foreign-clone-at-placement`
+
+**Condition.** `rwv add <url>` places at a path that already holds a clone
+whose origin names a different repository.
+
+**Why.** A clone already at the placement stands in for the one `add` would
+make only when it is a clone of that URL. Registering any other clone under
+the URL given would record a remote the checkout does not track.
+
+**Exits.** Register the existing clone under its own origin with `rwv add
+--adopt <path>`, or move it aside and re-run the add.
+
 ### `foreign-tip`
 
 **Condition.** `rwv abort` found a ref at a tip the recorded operation does not

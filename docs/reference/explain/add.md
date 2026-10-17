@@ -18,8 +18,10 @@ reflects the shared-clone topology: member repos are global infrastructure,
 with `git worktree` providing per-workweave isolation. (See
 `rwv explain workweave` for the workweave topology model.)
 
-If the clone already exists on disk at the canonical path, `add` skips the
-network clone and registers the existing directory.
+If a clone already exists on disk at the canonical path and its origin names
+the same repository, `add` skips the network clone and registers it. A clone
+of anything else refuses (`foreign-clone-at-placement`), naming `rwv add
+--adopt <path>` to register it under its own origin.
 
 ### Workweave-aware worktree materialization
 
@@ -222,6 +224,9 @@ rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "rep
   `--adopt` to register the clone at that path.
 - *no clone to adopt* (`no-clone-to-adopt`) — `--adopt` names a path with no
   clone.
+- *foreign clone at placement* (`foreign-clone-at-placement`) — the URL's
+  placement already holds a clone of a different repository; register it with
+  `--adopt`, or move it aside.
 - *clone failed* — network error or authentication problem; inspect git output.
 - *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
   is valid TOML.

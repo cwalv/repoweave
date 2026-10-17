@@ -377,7 +377,7 @@ fn a_verb_with_no_drift_in_its_way_still_runs_the_generator() {
         "fixture: the unnamed clone is not in the resolve yet"
     );
 
-    let run = f.rwv(&["add", "github/acme/extra"]);
+    let run = f.rwv(&["add", "--adopt", "github/acme/extra"]);
     assert!(run.ok, "`rwv add` should succeed:\n{}", run.all);
     assert!(
         !run.all.contains("[withheld]"),
@@ -407,7 +407,7 @@ fn add_withholds_the_generator_over_unsettled_drift() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let run = f.rwv(&["add", "github/acme/extra"]);
+    let run = f.rwv(&["add", "--adopt", "github/acme/extra"]);
     assert!(run.ok, "the manifest change still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),

@@ -429,7 +429,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     let new_repo_path = "github/org/extras";
     let new_repo_abs = main.root.join(new_repo_path);
     let new_repo_sha = init_repo(&new_repo_abs);
-    // Add an origin so `rwv add <path>` can infer the URL.
+    // Add an origin so `rwv add --adopt <path>` can infer the URL.
     common::git_in(
         &new_repo_abs,
         &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
@@ -440,7 +440,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     common::git_in(&new_repo_abs, &["remote", "set-head", "origin", "-a"]);
 
     rwv()
-        .args(["add", new_repo_path])
+        .args(["add", "--adopt", new_repo_path])
         .current_dir(&main.root)
         .assert()
         .success();
@@ -550,7 +550,7 @@ fn sync_phase3_materialize_failure_is_fatal() {
     common::git_in(&new_repo_abs, &["fetch", "origin"]);
     common::git_in(&new_repo_abs, &["remote", "set-head", "origin", "-a"]);
     rwv()
-        .args(["add", new_repo_path])
+        .args(["add", "--adopt", new_repo_path])
         .current_dir(&main.root)
         .assert()
         .success();
