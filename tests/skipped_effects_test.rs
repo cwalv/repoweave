@@ -538,6 +538,20 @@ fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_cre
     assert_says_nothing_skipped(&run);
     assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
 
+    let canonical = weave.ws.join("github/acme/web");
+    std::fs::write(canonical.join("moved.txt"), "moved\n").unwrap();
+    common::git_in(&canonical, &["add", "-A"]);
+    common::git_in(&canonical, &["commit", "-q", "-m", "ahead of the lock"]);
+    common::git_in(&canonical, &["checkout", "-q", "--detach"]);
+    let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
+    assert!(
+        !canonical.join("moved.txt").exists(),
+        "fixture: the fetch moved the primary's clone back to the pin:\n{}",
+        run.report()
+    );
+    assert_says_nothing_skipped(&run);
+    assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
+
     let member = seat.join("github/acme/web");
     common::git_in(
         weave.ws.join("github/acme/web"),
