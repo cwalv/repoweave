@@ -95,6 +95,7 @@ src/sync.rs	not-fast-forwardable	-	2
 src/sync.rs	op-parked	-	7
 src/sync.rs	resume-contradicts-record	-	2
 src/sync.rs	retire-not-converged	-	1
+src/sync.rs	retire-unpruned-checkout	tests/sync_prune_direction_test.rs	1
 src/sync.rs	stale-lock	tests/refusal_arrival_test.rs	4
 src/sync.rs	store-claims-unreadable	-	2
 src/sync.rs	store-still-claimed	-	2

@@ -6007,6 +6007,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         Checkout::Workweave {
             dir, name, project, ..
         } => {
+            refuse_retiring_unpruned_checkouts(&stranded_checkouts(ctx)?)?;
             let retired = retire_workweave_after_sync_to(
                 ctx.project_vcs.as_ref(),
                 &ctx.cwd_ctx,
@@ -6027,6 +6028,39 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+/// Deleting the workweave would destroy a checkout replay refused to prune for
+/// what it holds. The set is the one the op's completion reports, so a
+/// `--continue` at retire weighs the same checkouts the first run did.
+fn refuse_retiring_unpruned_checkouts(stranded: &[RepoPath]) -> anyhow::Result<()> {
+    if stranded.is_empty() {
+        return Ok(());
+    }
+    let n = stranded.len();
+    let (s, it, holds) = if n == 1 {
+        ("", "it", "holds")
+    } else {
+        ("s", "them", "hold")
+    };
+    crate::refuse!(
+        RefusalKind::RetireUnprunedCheckout,
+        "--retire: replay could not prune {n} member checkout{s} the manifest no longer \
+         names, and deleting the workweave would destroy what {it} {holds}; refusing to \
+         delete:\n  {list}\n\
+         \n\
+         Save what you need from {it} (commit and push it, or copy it out) or discard it, \
+         then remove {it} by hand and run:\n\
+           {resume}   # re-runs the retire check\n\
+         \n\
+         To roll back the entire op: `rwv abort`.",
+        list = stranded
+            .iter()
+            .map(RepoPath::as_str)
+            .collect::<Vec<_>>()
+            .join("\n  "),
+        resume = op_state::resume_command(op_state::OpVerb::SyncTo),
+    )
 }
 
 // ---------------------------------------------------------------------------

@@ -42,7 +42,7 @@ Commands:
   doctor       Convention enforcement and lock-freshness checking
   lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv activate` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
-  abort        Restore CWD workspace to its pre-sync state using savepoint refs
+  abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
   sync         Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
   sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
   push         Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding

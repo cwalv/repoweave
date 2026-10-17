@@ -770,6 +770,22 @@ first — then retire. Or inspect and discard them with `rwv workweave <project>
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
+### `retire-unpruned-checkout`
+
+**Condition.** `--retire` found a member checkout in the workweave that replay
+could not prune: the manifest no longer names it, and it is still on disk.
+
+**Why.** Replay refuses to prune a checkout whose removal would lose
+something: uncommitted changes, commits nothing else reaches, or an object
+store the weave has nowhere else. Retiring deletes the whole workweave, and
+that checkout with it.
+
+**Exits.** Save what you need from the checkout, or discard it, then remove it
+by hand and run `rwv sync-to --continue`, which re-runs the retire check. Or
+run `rwv abort` to roll the whole op back.
+
+**Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
+
 ### `shared-clone-referenced`
 
 **Condition.** `--delete`'s clone is referenced by other projects, and

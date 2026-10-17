@@ -660,6 +660,92 @@ fn json_a_complete_sync_to_resumed_past_replay_prints_its_envelope() {
     assert_eq!(envelope["outcomes"], serde_json::json!([]), "{envelope:#}");
 }
 
+/// The route line a refusal ends with, and the only one in `stderr`.
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routed: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routed, vec![token], "stderr was:\n{stderr}");
+    assert!(
+        stderr.ends_with(&format!("\n\nrwv explain {token}\n")),
+        "the route line must be the last line, stderr was:\n{stderr}"
+    );
+}
+
+/// Retire refused over the checkout replay could not prune: the workweave,
+/// the checkout and the work in it are intact, and the op is parked at retire
+/// in both workspaces.
+fn assert_retire_refused_with_the_work_intact(out: &Output, weave: &Weave, s1: &Path) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        std::fs::read_to_string(common::under(s1, EXTRA).join("scratch.txt")).ok(),
+        Some("untracked\n".to_owned()),
+        "the uncommitted work must survive the refused retire:\n{stderr}"
+    );
+    assert!(s1.join("projects").join(PROJECT).join("rwv.toml").is_file());
+    assert!(!out.status.success(), "retire must refuse:\n{stderr}");
+    assert_routes_to(&stderr, "retire-unpruned-checkout");
+    for expected in [
+        "--retire: replay could not prune 1 member checkout the manifest no longer names"
+            .to_owned(),
+        format!(":\n  {EXTRA}\n"),
+        "rwv sync-to --continue".to_owned(),
+        "`rwv abort`".to_owned(),
+    ] {
+        assert!(
+            stderr.contains(&expected),
+            "expected {expected:?}:\n{stderr}"
+        );
+    }
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(s1.join(".rwv-op")).unwrap()).unwrap();
+    assert_eq!(record["phase"], "retire", "{record:#}");
+    assert!(weave.root.join(".rwv-op-lease").exists());
+}
+
+#[test]
+fn a_retire_refuses_while_a_checkout_replay_could_not_prune_is_on_disk() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+
+    let out = run(&s1, &["sync-to", "--retire"]);
+    assert_retire_refused_with_the_work_intact(&out, &weave, &s1);
+    assert!(
+        !names_extra(&weave.root),
+        "the landing itself completed before retire"
+    );
+}
+
+#[test]
+fn a_continued_retire_refuses_until_the_checkout_is_gone_then_retires() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+    let parked = run(&s1, &["sync-to", "--retire"]);
+    assert!(!parked.status.success());
+
+    let still = run(&s1, &["sync-to", "--continue"]);
+    assert_retire_refused_with_the_work_intact(&still, &weave, &s1);
+
+    let checkout = common::under(&s1, EXTRA);
+    std::fs::rename(
+        checkout.join("scratch.txt"),
+        weave.root.parent().unwrap().join("saved.txt"),
+    )
+    .unwrap();
+    common::git_in(
+        common::under(&weave.root, EXTRA),
+        &["worktree", "remove", &checkout.to_string_lossy()],
+    );
+
+    let out = run(&s1, &["sync-to", "--continue"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("retired workweave s1"), "{stderr}");
+    assert!(!s1.exists(), "the resolved retire must delete the seat");
+    assert!(!weave.root.join(".rwv-op-lease").exists());
+}
+
 #[test]
 fn json_records_a_refused_prune_with_its_token() {
     let weave = weave();
@@ -725,7 +811,7 @@ fn json_a_parked_sync_is_not_complete() {
     succeed(&weave.root, &["lock", "--commit"]);
 
     let out = run(&s1, &["sync", "primary", "--strategy", "rebase", "--json"]);
-    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(1));
     assert!(s1.join(".rwv-op").exists(), "the conflict must park the op");
     let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
         panic!(
@@ -734,6 +820,29 @@ fn json_a_parked_sync_is_not_complete() {
         )
     });
     assert_eq!(envelope["complete"], false, "{envelope:#}");
+}
+
+/// The case `complete` exists for: a `prune-refused` member AND exit 1, from
+/// an op parked after replay (here at retire) rather than a complete one.
+#[test]
+fn json_a_sync_to_parked_at_retire_after_a_refused_prune_is_not_complete() {
+    let weave = weave();
+    let s1 = seat_with_an_unprunable_drop(&weave);
+
+    let out = run(&s1, &["sync-to", "--retire", "--json"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        s1.join(".rwv-op").exists(),
+        "retire must park the op:\n{stderr}"
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(envelope["complete"], false, "{envelope:#}");
+    assert_one_member(
+        envelope["members"].as_array().unwrap(),
+        "prune-refused",
+        &s1,
+    );
 }
 
 #[test]

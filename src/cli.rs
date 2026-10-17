@@ -277,7 +277,7 @@ pub enum Commands {
     },
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
-    /// Restore CWD workspace to its pre-sync state using savepoint refs
+    /// Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
     Abort {
         /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `(project)`); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits stay reachable through the pre-abort ref, which abort writes before it moves anything; where that ref does not already hold the tip, abort refuses even with this flag rather than destroy it.
         #[arg(long = "abandon-foreign-tip", value_name = "REPO")]

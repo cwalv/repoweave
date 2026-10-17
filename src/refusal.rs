@@ -86,6 +86,9 @@ pub enum RefusalKind {
     ResumeContradictsRecord,
     /// `--retire`'s merged-check found divergence from the target.
     RetireNotConverged,
+    /// `--retire` found a checkout in the workweave that replay could not
+    /// prune.
+    RetireUnprunedCheckout,
     /// Abort found a tip the op does not account for.
     ForeignTip,
     /// At advance time the target carries commits CWD's tip does not.

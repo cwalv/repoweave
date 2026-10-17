@@ -163,7 +163,10 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   consent.
 - `--retire` deletes the current workweave on success (after all three steps
   complete). Requires a workweave context; emits a warning and is a no-op in
-  a primary weave. Use to close out a workweave in one step.
+  a primary weave. Use to close out a workweave in one step. Retire refuses,
+  parking the op at `retire`, while a member checkout replay could not prune
+  is still in the workweave (`retire-unpruned-checkout`): deleting the
+  workweave would destroy what replay refused to.
 - `-j <N>` runs up to `N` per-repo manifest syncs in parallel during step 1.
   Default is `1` (serial).
 - `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
