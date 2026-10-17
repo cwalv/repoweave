@@ -1,5 +1,4 @@
-//! Shared `--role` / `--repo` selector grammar for `rwv fetch`, `rwv update`,
-//! `rwv push`, and `rwv status`.
+//! Shared `--role` / `--repo` selector grammar for verbs that act per repo.
 //!
 //! A [`RepoFilter`] narrows a verb's per-repo loop to a subset of the manifest.
 //! Construction is once-per-invocation via [`RepoFilter::parse`]; the caller
