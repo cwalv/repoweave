@@ -310,3 +310,34 @@ fn add_registers_a_clone_of_the_same_remote_already_at_the_placement() {
         "a clone whose origin is the same repo, spelled as a bare path, is registered:\n{manifest}"
     );
 }
+
+/// A directory at the placement that is not a clone has no remote to compare,
+/// so it takes the path it always took: the clone is skipped and reading the
+/// default branch fails on a directory that is not a repository.
+#[test]
+fn add_over_a_plain_directory_at_the_placement_keeps_its_old_path() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    let (ours, _theirs) = two_remotes_one_placement(tmp.path());
+    let placed = ws.join("local/remotes/lib");
+    std::fs::create_dir_all(&placed).unwrap();
+    std::fs::write(placed.join("notes.txt"), "not a clone\n").unwrap();
+    let before = project_files(&ws);
+
+    let output = common::rwv()
+        .args(["add", &common::file_url(&ours)])
+        .current_dir(&ws)
+        .output()
+        .expect("rwv should run");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("skipping clone") && stderr.contains("is not a vcs repository"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("rwv explain "),
+        "no refusal judges a directory with no remote to compare:\n{stderr}"
+    );
+    assert_eq!(project_files(&ws), before);
+}
