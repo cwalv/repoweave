@@ -40,9 +40,17 @@ cannot say which of those it is, and only one of them is rwv's to move.
 ## Invocation
 
 ```
-rwv update [--dirty] [--commit] [--detach-checkouts] [--project <name>]
+rwv update [--dirty] [--commit [-m <MSG>]] [--detach-checkouts] [--project <name>]
            [--json] [--role <role>]... [--repo <selector>]... [-j <n>]
 ```
+
+- `--commit` — commit the new `rwv.lock` in the project repo, together with the
+  integration files regenerated against the new tips and with `rwv.toml` when it
+  has uncommitted changes, under an auto-generated message listing which repos
+  advanced. Refuses if the project repo has uncommitted changes outside that
+  set.
+- `-m, --message <MSG>` — the commit message for `--commit`, in place of the
+  generated one. Without `--commit` it is a usage error (exit 2).
 
 - `--detach-checkouts` — advance a repo even where that changes what HEAD is
   attached to: materialize the tip on a detached HEAD instead of refusing.

@@ -125,7 +125,7 @@ pub struct UpdateNdjsonRecord<'a> {
 /// step is skipped when `filter` is non-empty — see the guard at the call
 /// site.
 ///
-/// When `commit` is true, the lock and the content authored against the
+/// When `commit` is set, the lock and the content authored against the
 /// tips it records are staged and committed together in the project repo —
 /// the derived change is never separated from the change that caused it.
 /// When `project_override` is `Some`, that project is updated instead of
@@ -140,7 +140,7 @@ pub struct UpdateNdjsonRecord<'a> {
 pub fn run_update(
     ctx: &WorkspaceContext,
     dirty: bool,
-    commit: bool,
+    commit: Option<lock::CommitMessage>,
     json: bool,
     filter: &RepoFilter,
     jobs: usize,
@@ -204,7 +204,7 @@ fn update_for_project(
     project_name: &ProjectName,
     workweave_dir: Option<&Path>,
     dirty: bool,
-    commit: bool,
+    commit: Option<lock::CommitMessage>,
     json: bool,
     filter: &RepoFilter,
     jobs: usize,

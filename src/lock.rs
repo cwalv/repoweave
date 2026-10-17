@@ -222,13 +222,27 @@ fn stage_and_commit(
     Ok(true)
 }
 
-/// Commit `rwv.lock` from `project_dir` with a multi-repo summary message,
-/// together with whatever of `authored` the run actually rewrote.
+/// What a lock commit is recorded under.
+pub enum CommitMessage {
+    /// A summary of which repos' lock entries changed.
+    Generated,
+    Given(String),
+}
+
+impl CommitMessage {
+    pub fn from_flag(message: Option<String>) -> Self {
+        message.map_or(Self::Generated, Self::Given)
+    }
+}
+
+/// Commit `rwv.lock` from `project_dir`, together with a dirty `rwv.toml`
+/// and whatever of `authored` the run actually rewrote.
 ///
-/// `authored` is the owned path set of an intent verb that regenerated
-/// managed content against the same tips this lock records; the two changes
-/// are one change and belong in one commit. It is empty for a verb that
-/// authors nothing, which reduces this to a lock-only commit.
+/// The lock is derived from the manifest and the member tips, so a manifest
+/// edit it reflects belongs in the same commit. `authored` is the owned path
+/// set of an intent verb that regenerated managed content against the same
+/// tips this lock records; the two changes are one change and belong in one
+/// commit. It is empty for a verb that authors nothing.
 ///
 /// Refuses if the project repo has uncommitted changes outside that set —
 /// the auto-commit must not bundle unrelated work-in-progress.
@@ -238,9 +252,10 @@ fn commit_lock_file(
     new_lock: &ResolvedLockFile,
     old_lock: Option<&ResolvedLockFile>,
     authored: &BTreeSet<String>,
+    message: &CommitMessage,
 ) -> anyhow::Result<()> {
     // Two questions, two answers, one predicate between them: everything
-    // dirty says which owned paths to stage, and everything dirty *and
+    // dirty says which carried paths to stage, and everything dirty *and
     // tracked* says whether anything unrelated is in the way. Files omitted
     // from the dirty set — absent, or ignored by operator policy — are
     // omitted from the commit for the same reason.
@@ -251,30 +266,29 @@ fn commit_lock_file(
         .tracked_dirty_file_names(project_dir)
         .context("failed to read project repo status")?;
 
-    let mut authored_paths: Vec<&str> = Vec::new();
-    for path in &dirty {
-        if path == LockFile::FILE_NAME {
-            continue;
-        }
-        if let Some(owned) = authored.get(path.as_str()) {
-            authored_paths.push(owned.as_str());
-        }
-    }
-    let has_other_changes = tracked_dirty
-        .iter()
-        .any(|path| path != LockFile::FILE_NAME && !authored.contains(path.as_str()));
-    if has_other_changes {
+    let carried = |path: &str| {
+        path == LockFile::FILE_NAME || path == Manifest::FILE_NAME || authored.contains(path)
+    };
+    if tracked_dirty.iter().any(|path| !carried(path)) {
         crate::refuse!(
             RefusalKind::DirtyCheckout,
-            "project repo has uncommitted changes outside rwv.lock; \
+            "project repo has uncommitted changes outside rwv.lock and rwv.toml; \
              commit or stash them before using --commit"
         );
     }
 
     let mut paths = vec![LockFile::FILE_NAME];
-    paths.extend(authored_paths);
+    paths.extend(
+        dirty
+            .iter()
+            .map(String::as_str)
+            .filter(|path| *path != LockFile::FILE_NAME && carried(path)),
+    );
 
-    let message = build_commit_message(new_lock, old_lock);
+    let message = match message {
+        CommitMessage::Generated => build_commit_message(new_lock, old_lock),
+        CommitMessage::Given(message) => message.clone(),
+    };
     if stage_and_commit(vcs, project_dir, &paths, &message)? {
         eprintln!("Committed {}", paths.join(", "));
     } else {
@@ -286,7 +300,7 @@ fn commit_lock_file(
 /// Execute `rwv lock` for the current workspace context.
 ///
 /// When `dirty` is true, the uncommitted-changes check is skipped.
-/// When `commit` is true, the lock file is staged and committed after writing.
+/// When `commit` is set, the lock file is staged and committed after writing.
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
 ///
@@ -294,7 +308,11 @@ fn commit_lock_file(
 /// hooks are part of activation (`rwv activate`), since the trigger for
 /// ecosystem-lockfile refresh is workspace membership change, not
 /// cross-repo snapshot.
-pub fn lock(ctx: &WorkspaceContext, dirty: bool, commit: bool) -> anyhow::Result<()> {
+pub fn lock(
+    ctx: &WorkspaceContext,
+    dirty: bool,
+    commit: Option<CommitMessage>,
+) -> anyhow::Result<()> {
     match write_project_lock(ctx, dirty, commit)? {
         Some(pending) => commit_project_lock(&pending, &BTreeSet::new()),
         None => Ok(()),
@@ -310,6 +328,7 @@ pub(crate) struct PendingLockCommit {
     project_dir: PathBuf,
     new_lock: ResolvedLockFile,
     old_lock: Option<ResolvedLockFile>,
+    message: CommitMessage,
 }
 
 /// Regenerate and write `rwv.lock` for the current workspace context.
@@ -319,7 +338,7 @@ pub(crate) struct PendingLockCommit {
 pub(crate) fn write_project_lock(
     ctx: &WorkspaceContext,
     dirty: bool,
-    commit: bool,
+    commit: Option<CommitMessage>,
 ) -> anyhow::Result<Option<PendingLockCommit>> {
     // Cross-verb advisory refusal (Correction 1, COVERAGE), scoped to
     // `--commit`. Writing
@@ -328,7 +347,7 @@ pub(crate) fn write_project_lock(
     // `rwv.lock` as non-dirt. But `--commit` writes a NEW lock commit into the
     // project repo, mutating the same history a mid-op replay is reconciling;
     // refuse while an op involves this workspace, via the shared op-state guard.
-    if commit {
+    if commit.is_some() {
         crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     }
 
@@ -365,7 +384,7 @@ pub(crate) fn write_project_lock(
     // changed. Resolve the raw lock against on-disk repos so the diff
     // computed by `commit_lock_file` is a canonical-SHA comparison rather
     // than a string comparison of possibly-tag-form values.
-    let old_lock = if commit {
+    let old_lock = if commit.is_some() {
         LockFile::from_path(&lock_path)
             .ok()
             .map(|raw| raw.resolve_versions(ctx.primary_path()).0)
@@ -376,10 +395,11 @@ pub(crate) fn write_project_lock(
 
     eprintln!("Wrote {}", lock_path.display());
 
-    Ok(commit.then_some(PendingLockCommit {
+    Ok(commit.map(|message| PendingLockCommit {
         project_dir,
         new_lock: lock,
         old_lock,
+        message,
     }))
 }
 
@@ -395,5 +415,6 @@ pub(crate) fn commit_project_lock(
         &pending.new_lock,
         pending.old_lock.as_ref(),
         authored,
+        &pending.message,
     )
 }

@@ -1024,11 +1024,13 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Lock {
             dirty,
             commit,
+            message,
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             refuse_symlinked_members_here(&ctx)?;
+            let commit = commit.then(|| lock::CommitMessage::from_flag(message));
             lock::lock(&ctx, dirty, commit)?;
         }
         Some(Commands::Status { json, project }) => {
@@ -1185,6 +1187,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Update {
             dirty,
             commit,
+            message,
             detach_checkouts,
             project,
             roles,
@@ -1206,6 +1209,7 @@ pub fn run() -> anyhow::Result<()> {
             // envelope must pass `-j 1` explicitly alongside --json.
             let jobs = crate::parallel::resolve_jobs(jobs);
             refuse_symlinked_members_here(&ctx)?;
+            let commit = commit.then(|| lock::CommitMessage::from_flag(message));
             update::run_update(&ctx, dirty, commit, json, &filter, jobs, detach_checkouts)?;
         }
         Some(Commands::Completions { shell }) => {

@@ -1640,3 +1640,127 @@ fn lock_unborn_head_does_not_write_lock_file() {
         "rwv.lock must not be written when a member has an unborn HEAD"
     );
 }
+
+// ============================================================================
+// --commit carries the manifest; -m names the commit
+// ============================================================================
+
+/// Paths touched by the tip commit of the repo at `dir`.
+fn files_in_head_commit(dir: &Path) -> Vec<String> {
+    common::git_in(
+        dir,
+        &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect()
+}
+
+/// A new project's manifest has never been committed and it has no lock yet.
+/// The lock pins the repos the manifest lists, so the two land together
+/// rather than publishing a lock no committed manifest accounts for.
+#[test]
+fn lock_commit_carries_an_untracked_manifest() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    common::git_in(&project_dir, &["rm", "--cached", "--quiet", "rwv.toml"]);
+    common::git_in(&project_dir, &["rm", "--quiet", "rwv.lock"]);
+    common::git_in(&project_dir, &["commit", "-m", "back to a new project"]);
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Committed rwv.lock, rwv.toml"));
+
+    assert_eq!(
+        files_in_head_commit(&project_dir),
+        vec!["rwv.lock".to_string(), "rwv.toml".to_string()]
+    );
+    assert_eq!(common::git_in(&project_dir, &["status", "--porcelain"]), "");
+}
+
+/// A membership edit to a committed manifest and the relock it calls for are
+/// one change.
+#[test]
+fn lock_commit_carries_a_modified_manifest() {
+    let ws = common::build_workspace(
+        "alpha",
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let manifest_path = project_dir.join("rwv.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let dropped_b = manifest
+        .split("[repositories.\"local/org/b\"]")
+        .next()
+        .unwrap()
+        .to_string();
+    std::fs::write(&manifest_path, dropped_b).unwrap();
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        files_in_head_commit(&project_dir),
+        vec!["rwv.lock".to_string(), "rwv.toml".to_string()]
+    );
+    assert!(
+        !common::git_in(&project_dir, &["show", "HEAD:rwv.lock"]).contains("local/org/b"),
+        "the committed lock must follow the committed manifest"
+    );
+}
+
+#[test]
+fn lock_commit_message_flag_replaces_the_generated_summary() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("advance.txt"), "advance").unwrap();
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "advance"]);
+
+    rwv_cmd()
+        .args(["lock", "--commit", "-m", "pin alpha for the demo"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%B"]),
+        "pin alpha for the demo"
+    );
+    assert_eq!(
+        files_in_head_commit(&project_dir),
+        vec!["rwv.lock".to_string()]
+    );
+}
+
+#[test]
+fn lock_message_without_commit_is_a_usage_error() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let lock_before = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("advance.txt"), "advance").unwrap();
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "advance"]);
+
+    for message_flag in ["-m", "--message"] {
+        rwv_cmd()
+            .args(["lock", message_flag, "orphaned message"])
+            .current_dir(&ws.workspace)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("--commit"));
+    }
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap(),
+        lock_before,
+        "a rejected invocation writes nothing"
+    );
+}

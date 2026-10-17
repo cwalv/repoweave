@@ -64,7 +64,7 @@ every repo tip matches the lock.
 ## Invocation
 
 ```
-rwv lock [--dirty] [--commit] [--project <name>]
+rwv lock [--dirty] [--commit [-m <MSG>]] [--project <name>]
 ```
 
 - `--dirty` — skip the uncommitted-changes check. By default, `lock` refuses
@@ -73,9 +73,14 @@ rwv lock [--dirty] [--commit] [--project <name>]
   this check; use only when you deliberately want to snapshot an in-flight state
   (e.g., a workweave that hasn't been cleaned up yet).
 - `--commit` — after writing `rwv.lock`, stage and commit it from the project
-  directory with an auto-generated message listing which repos advanced. Refuses
-  if the project repo has uncommitted changes outside `rwv.lock` — the
-  auto-commit must not bundle unrelated work-in-progress.
+  directory, with an auto-generated message listing which repos advanced. A
+  `rwv.toml` with uncommitted changes, or one never committed, goes into the
+  same commit: the lock is derived from the manifest, so a membership edit and
+  the relock it calls for are one change. Refuses if the project repo has
+  uncommitted changes outside `rwv.lock` and `rwv.toml` — the auto-commit must
+  not bundle unrelated work-in-progress.
+- `-m, --message <MSG>` — the commit message for `--commit`, in place of the
+  generated one. Without `--commit` it is a usage error (exit 2).
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 
@@ -85,8 +90,9 @@ Run `rwv --help lock` for the full clap surface.
 
 `Wrote <path>` to stderr on success (one line naming the lock file written).
 
-When `--commit` is set, also prints `Committed rwv.lock` (or `Lock unchanged,
-nothing to commit.` if no repos advanced).
+When `--commit` is set, also prints `Committed rwv.lock`, or `Committed rwv.lock,
+rwv.toml` when the manifest went into the commit (or `Lock unchanged, nothing to
+commit.` if nothing changed).
 
 ## Exit codes
 
@@ -108,6 +114,12 @@ Snapshot and commit in one step:
 rwv lock --commit
 ```
 
+Commit under your own message:
+
+```
+rwv lock --commit -m "pin web-app for the 1.4 release"
+```
+
 Snapshot even when repos have uncommitted changes:
 
 ```
@@ -119,8 +131,9 @@ rwv lock --dirty
 - *repo has uncommitted changes; commit or use --dirty to override* — one or
   more repos have staged or unstaged edits. Commit the changes, or pass
   `--dirty` to snapshot the committed portion of HEAD anyway.
-- *project repo has uncommitted changes outside rwv.lock* — `--commit` was
-  passed but the project repo has work-in-progress beyond the lock file.
-  Commit or stash the other changes before using `--commit`.
+- *project repo has uncommitted changes outside rwv.lock and rwv.toml* —
+  `--commit` was passed but the project repo has work-in-progress beyond the
+  lock and the manifest. Commit or stash the other changes before using
+  `--commit`.
 - *workspace could not be resolved* — CWD is not inside a weave or workweave;
   run from within the workspace.

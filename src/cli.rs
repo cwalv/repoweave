@@ -246,9 +246,12 @@ pub enum Commands {
         /// Allow locking repos with uncommitted changes
         #[arg(long)]
         dirty: bool,
-        /// Commit rwv.lock after writing it
+        /// Commit rwv.lock after writing it, together with rwv.toml when it has uncommitted changes
         #[arg(long)]
         commit: bool,
+        /// Commit message for `--commit`, in place of the generated summary of which repos changed
+        #[arg(short = 'm', long = "message", value_name = "MSG", requires = "commit")]
+        message: Option<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -422,9 +425,12 @@ pub enum Commands {
         /// Allow update with uncommitted changes in repos when relocking
         #[arg(long)]
         dirty: bool,
-        /// Commit rwv.lock together with the integration files regenerated against the new tips
+        /// Commit rwv.lock together with the integration files regenerated against the new tips, and with rwv.toml when it has uncommitted changes
         #[arg(long)]
         commit: bool,
+        /// Commit message for `--commit`, in place of the generated summary of which repos changed
+        #[arg(short = 'm', long = "message", value_name = "MSG", requires = "commit")]
+        message: Option<String>,
         /// Align a repo even when that detaches a branch attached to
         /// something other than its tracking counterpart, or moves the
         /// counterpart in a way that is not a fast-forward

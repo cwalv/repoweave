@@ -17,6 +17,8 @@
 //!     unrelated work in progress still refuses, a filtered run (which
 //!     authors nothing) commits the lock alone, and a generated file the
 //!     operator gitignored stays out
+//!   - update --commit carries a pending rwv.toml edit in that commit, and
+//!     -m / --message names it; -m without --commit is a usage error
 //!
 //! Style note: this fixture is the bare-remote-plus-clone-plus-project
 //! shape from `update_test.rs`; we keep it local rather than forking
@@ -732,5 +734,83 @@ fn update_commit_skips_a_gitignored_generated_file() {
     assert!(
         !files_in_head_commit(&project_dir).contains(&"go.work".to_string()),
         "an ignored generated file must stay out of the commit"
+    );
+}
+
+/// The manifest the relock reads is part of the change the commit records,
+/// so a pending edit to it lands with the lock instead of refusing as
+/// unrelated work.
+#[test]
+fn update_commit_carries_a_modified_manifest() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let manifest_path = project_dir.join("rwv.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    std::fs::write(&manifest_path, format!("# members of alpha\n{manifest}")).unwrap();
+
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main(bare);
+
+    rwv()
+        .args(["update", "--dirty", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let committed = files_in_head_commit(&project_dir);
+    assert!(
+        committed.contains(&"rwv.lock".to_string()) && committed.contains(&"rwv.toml".to_string()),
+        "the lock and the manifest edit land in one commit; got {committed:?}"
+    );
+    assert_eq!(common::git_in(&project_dir, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn update_commit_message_flag_replaces_the_generated_summary() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main(bare);
+
+    rwv()
+        .args([
+            "update",
+            "--dirty",
+            "--commit",
+            "--message",
+            "bump alpha's members",
+        ])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%B"]),
+        "bump alpha's members"
+    );
+}
+
+#[test]
+fn update_message_without_commit_is_a_usage_error() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let (_, bare) = &ws.manifest_bares[0];
+    let advanced = advance_bare_main(bare);
+
+    for message_flag in ["-m", "--message"] {
+        rwv()
+            .args(["update", message_flag, "orphaned message"])
+            .current_dir(&ws.workspace)
+            .assert()
+            .code(2)
+            .stderr(predicates::str::contains("--commit"));
+    }
+    assert_ne!(
+        read_lock_sha(&ws.workspace, &ws.project_name, "local/org/a"),
+        advanced,
+        "a rejected invocation advances nothing"
     );
 }
