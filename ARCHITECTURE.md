@@ -450,7 +450,7 @@ outside `git.rs` spawns git or assembles its argv: `git_command` is private to
 the module, and the only `Command::new("git")` elsewhere in `src/` are two
 `#[cfg(test)]` fixtures in `sync.rs`. The remote name is held the same way — the
 constant is private and no trait method accepts one — so core can neither spell
-it nor be handed a parameter to spell it into. What is not mechanised is git
+it nor be handed a parameter to spell it into. What is not mechanized is git
 vocabulary in *operator text*: four message sites in core still write `origin`
 as a literal, three of them inside recovery advice that names a git command as
 well. The published contract for this seam, and that residue in full, is
@@ -616,7 +616,7 @@ Three tiers.
   closures, so every integration is held to the same four shapes.
 
 Two families are worth naming because they pin *documents* rather than code:
-`doc_claims_*_test.rs` asserts that published claims match behaviour, and
+`doc_claims_*_test.rs` asserts that published claims match behavior, and
 `branch_model_compile_fail_test.rs` pins the consent-token privacy by rustc
 error code — the type-level rules of §6.3 fail the suite if they are relaxed.
 

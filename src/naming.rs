@@ -80,7 +80,7 @@ pub fn decode_segment(s: &str) -> String {
 
 /// Would `s` be ambiguous against the separator [`join_flat`] writes?
 ///
-/// A leading or trailing `-` counts: joined to a neighbour it produces a
+/// A leading or trailing `-` counts: joined to a neighbor it produces a
 /// third `-` run that splits at a different offset than the one intended.
 ///
 /// [`ProjectName::new`] and [`WorkweaveName::new`] are the callers that turn

@@ -230,7 +230,7 @@ fn an_unborn_ref_cannot_be_moved_like_an_attached_one() {
 }
 
 // ---------------------------------------------------------------------------
-// §4.6 (3)(4) — deleting a ref you only recognised
+// §4.6 (3)(4) — deleting a ref you only recognized
 // ---------------------------------------------------------------------------
 
 #[test]

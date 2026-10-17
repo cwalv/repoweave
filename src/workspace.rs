@@ -633,7 +633,7 @@ fn home_ceiling_blocks(current: &Path, parent: &Path, home: Option<&Path>) -> bo
 /// read only to warn about — never to act on — a CWD ≠ active-project
 /// divergence.
 ///
-/// The previous behaviour — silently substituting this for the active
+/// The previous behavior — silently substituting this for the active
 /// project on `rwv lock`, `rwv add`, etc. — let symlinks and manifests
 /// disagree without any signal. Removing the override collapses the two
 /// notions of "active" into one (`.rwv-active`).
@@ -2702,7 +2702,7 @@ mod tests {
     /// workspace-shaped on its own, and the walk stops at the first ancestor
     /// that answers — the checkout, not the real weave root above it. The
     /// shape test is the contract rather than a heuristic, so this is the
-    /// accepted behaviour rather than a bug to chase; pinned so a later
+    /// accepted behavior rather than a bug to chase; pinned so a later
     /// "fix" of the asymmetry is a conversation with that ruling rather than
     /// silent drift. True before this narrowing too — `projects/` was
     /// already one of the two marker names it replaces.
@@ -2802,7 +2802,7 @@ mod tests {
     // Without the legacy fallback the {left}--{name} directory is not treated
     // as a workweave. If the directory is itself workspace-shaped (carries
     // `projects/`) it is recognized as a workspace root (Weave) instead — the
-    // same behaviour as any other directory of that shape. `rwv doctor` will
+    // same behavior as any other directory of that shape. `rwv doctor` will
     // flag such a directory as an unregistered workweave-shaped directory.
     // ========================================================================
 
@@ -3059,7 +3059,7 @@ mod tests {
     #[test]
     fn resolve_rwv_active_wins_over_cwd_location() {
         // `.rwv-active` is the single source of truth. The previous
-        // behaviour — silently substituting CWD's project directory for
+        // behavior — silently substituting CWD's project directory for
         // the active one — let symlinks and manifests diverge.
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
@@ -4017,7 +4017,7 @@ mod tests {
 
     /// `home_ceiling_blocks` must return `true` when `current` is inside the
     /// REAL (canonicalized) home but `parent` is not — even when the caller
-    /// passes in the symlink spelling of home (pre-fix behaviour would have
+    /// passes in the symlink spelling of home (pre-fix behavior would have
     /// returned `false` and let the walk escape).
     ///
     /// Layout built in /tmp:

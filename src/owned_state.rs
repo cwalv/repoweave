@@ -1259,7 +1259,7 @@ mod tests {
         );
     }
 
-    /// The decided behaviour for a claim whose holder died: later stamps
+    /// The decided behavior for a claim whose holder died: later stamps
     /// refuse, after a bounded wait, naming the file to remove. Waiting
     /// forever hangs the verb; treating an old claim as abandoned stamps over
     /// a holder that is merely slow; failing instantly makes ordinary

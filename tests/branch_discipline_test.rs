@@ -186,7 +186,7 @@ fn create_branch(repo: &Path, name: &str, start_point: &str) {
 /// branch is instead *adopted*, the same route the migration itself takes —
 /// `workweave` is split at the first `/` into the live workweave (`<a>`,
 /// whose own flat name is the namespace) and the pre-flat branch's remainder
-/// (`<b>`), and [`LegacyEphemeralRefName::claim`] recognises the branch as
+/// (`<b>`), and [`LegacyEphemeralRefName::claim`] recognizes the branch as
 /// sitting under that namespace.
 ///
 /// The receipt is recorded at the branch's current tip, and the branch must
@@ -1866,7 +1866,7 @@ fn worktree_reference_on_shared_branch_still_fires() {
 // `healthy_workweave_ephemeral_branch_is_clean` (flat) and
 // `unmigrated_ephemeral_branch_is_reported_and_renamed` (pre-flat) are the
 // two ends of that: the first fails if the scanner still wants a segment,
-// the second fails if it no longer recognises one.
+// the second fails if it no longer recognizes one.
 
 /// Read the `receipts` array's recorded tip for `ref_name`, if present.
 fn receipt_created_at(primary: &Path, project: &str, ref_name: &str) -> Option<String> {
@@ -1898,7 +1898,7 @@ fn make_index_legacy(primary: &Path, project: &str) {
 }
 
 /// Record the primary's index for `project` so a hand-built workweave is
-/// recognised as placed (what `rwv workweave create` writes alongside the
+/// recognized as placed (what `rwv workweave create` writes alongside the
 /// marker).
 fn record_placement(primary: &Path, project: &str, workweave: &str, dir: &Path) {
     make_project(primary, project);
@@ -3342,7 +3342,7 @@ fn a_blocked_namespace_is_reported_as_itself_not_as_a_rename_that_cannot_run() {
     );
 
     // Control: one ref out of the namespace, and the promise comes back —
-    // together with the repair that honours it.
+    // together with the repair that honors it.
     git_in(
         &canonical,
         &["branch", "-m", "myproj--feat-a/master", "feat-a-master"],

@@ -199,7 +199,7 @@ impl LookupNaming {
 /// marked `shadowed = true`.
 ///
 /// Non-existent, non-directory, and permission-denied path entries are silently
-/// skipped — this mirrors the OS PATH-walk behaviour and avoids spurious errors
+/// skipped — this mirrors the OS PATH-walk behavior and avoids spurious errors
 /// when a `PATH` entry refers to an absent mount or `sudo`-only directory.
 ///
 /// A file named `rwv-*` that the platform would not execute is never returned:

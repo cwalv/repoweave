@@ -15,7 +15,7 @@ inputs always yields the same lock.
 
 Useful frame for what this implies:
 
-| Question | Single-repo analogue | repoweave analogue |
+| Question | Single-repo analog | repoweave analog |
 |---|---|---|
 | Where does new state come from? | `git commit` on a working tree | `git commit` in each manifest repo |
 | What captures cross-repo state? | n/a — single repo | `rwv lock` snapshots the manifest repo tips |

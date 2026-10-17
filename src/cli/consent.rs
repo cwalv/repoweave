@@ -115,7 +115,7 @@ impl DiscardUnmergedConsent {
     /// Mint from the parsed `--discard-unmerged-commits` value: `Some`
     /// iff the operator passed it. `pub(in crate::cli)`: see
     /// [`DetachConsent::from_flag`]'s doc comment. Integration tests
-    /// that need the post-waiver behaviour of `workweave delete` enter
+    /// that need the post-waiver behavior of `workweave delete` enter
     /// through [`crate::cli::dispatch::workweave_delete`], which is this
     /// mint's only caller.
     pub(in crate::cli) fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
@@ -215,7 +215,7 @@ pub struct RemoveUndeclaredLinksConsent(());
 impl RemoveUndeclaredLinksConsent {
     // No `granted()`: nothing in-crate needs to mint one, and this module's
     // rule is that the unconditional mint exists only on tokens some fixture
-    // actually needs. The behaviour is driven end to end through the flag.
+    // actually needs. The behavior is driven end to end through the flag.
 
     /// Mint from the parsed `--remove-undeclared-links` value: `Some` iff the
     /// operator passed it. `pub(in crate::cli)`: see
@@ -248,7 +248,7 @@ pub enum DriftConsent {
 /// The one token in this module carrying data rather than being a
 /// zero-sized proof, and the module's opening house rule is why. The
 /// consequence being waived is per-repo: whether abandoning THIS repo's
-/// foreign commits is acceptable is a judgement about those commits, and
+/// foreign commits is acceptable is a judgment about those commits, and
 /// a blanket spelling would answer it for repos the operator never
 /// looked at. So the flag names a repo, there is no all-repos form to
 /// mint from, and the empty set — the operator passing nothing — covers

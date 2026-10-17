@@ -6,8 +6,8 @@
 //! invisible in the repository and visible only to a reader who followed the
 //! link and landed nowhere.
 //!
-//! Structural, under docs/internals/testing.md's licence 2 — a prohibition over an enumerable
-//! population. There is no behavioural surface here: an anchor is resolved by
+//! Structural, under docs/internals/testing.md's license 2 — a prohibition over an enumerable
+//! population. There is no behavioral surface here: an anchor is resolved by
 //! the reader's browser, not by anything this suite can drive.
 //!
 //! **Scope: every page under `docs/`, not just the two that carry refusal

@@ -16,7 +16,7 @@
 //!
 //! # Residue
 //!
-//!   - The corpus here samples the envelope's neighbours rather than every
+//!   - The corpus here samples the envelope's neighbors rather than every
 //!     `ViolationOutput` variant. Every-variant coverage is
 //!     `tests/schema_conformance_test.rs`, which drives the same envelope from
 //!     `tests/common/doctor_corpus.rs`; `tests/doctor_render_parity_test.rs`

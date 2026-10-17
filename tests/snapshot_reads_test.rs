@@ -101,7 +101,7 @@ fn sync_reads_committed_lock_not_working_tree() {
     common::git_in(&source_proj, &["add", "rwv.toml", ".gitattributes"]);
     common::git_in(&source_proj, &["commit", "-m", "chore: manifest + attrs"]);
 
-    // Materialise lib under source (clone) at sha_v1.
+    // Materialize lib under source (clone) at sha_v1.
     let source_lib = source_ws.join("lib");
     common::git_in(&source_ws, &["clone", lib_url.as_str(), "lib"]);
     common::git_in(&source_lib, &["checkout", &sha_v1]);
@@ -176,7 +176,7 @@ fn sync_reads_committed_lock_not_working_tree() {
 ///   2. Destination's lib is at sha_t0 (the T0 state)
 ///   3. Destination's post-sync lock pins sha_t0, not sha_t1
 ///
-/// Without snapshot reads (old behaviour), sync would read sha_t1 from
+/// Without snapshot reads (old behavior), sync would read sha_t1 from
 /// the working tree and converge there, making (2) and (3) fail.
 #[test]
 fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
@@ -205,7 +205,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     common::git_in(&source_proj, &["add", "rwv.toml", ".gitattributes"]);
     common::git_in(&source_proj, &["commit", "-m", "chore: manifest + attrs"]);
 
-    // Materialise lib in source at sha_t0.
+    // Materialize lib in source at sha_t0.
     let source_lib = source_ws.join("lib");
     common::git_in(&source_ws, &["clone", lib_url.as_str(), "lib"]);
     common::git_in(&source_lib, &["checkout", &sha_t0]);
@@ -234,7 +234,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     );
     let dest_proj = dest_projects.join("myproject");
 
-    // Materialise lib in dest at sha_t0.
+    // Materialize lib in dest at sha_t0.
     let dest_lib = dest_ws.join("lib");
     common::git_in(&dest_ws, &["clone", lib_url.as_str(), "lib"]);
     common::git_in(&dest_lib, &["checkout", &sha_t0]);

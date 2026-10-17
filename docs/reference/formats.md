@@ -68,7 +68,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 
 Manifests must use `role = "owned"`. The pre-rename `primary` spelling no longer parses. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
 
-The repo set is modelled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
+The repo set is modeled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
 
 ### `integrations` block
 

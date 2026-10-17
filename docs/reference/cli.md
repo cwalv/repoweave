@@ -206,7 +206,7 @@ Clone a repo (if not present), register it in the target project's `rwv.toml`, s
 
 `rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.
 
-**Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognise, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
+**Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognize, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
 
 **Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
 
@@ -501,7 +501,7 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 
 ### Which verbs are project-scoped
 
-| Category | Verbs | Resolution behaviour |
+| Category | Verbs | Resolution behavior |
 |---|---|---|
 | Project-scoped | `add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
 | Project named positionally | `activate <project>`, `workweave <project> …` | Explicit already; no chain consulted |

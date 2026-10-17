@@ -22,7 +22,7 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
     root
 }
 
-/// Initialise a git repo at `path` with a single commit so HEAD exists.
+/// Initialize a git repo at `path` with a single commit so HEAD exists.
 /// Returns the SHA of that commit.
 fn init_git_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
@@ -403,7 +403,7 @@ fn git_tag(repo: &std::path::Path, tag: &str) {
     );
 }
 
-/// Helper: make a second commit in an already-initialised repo. Returns new SHA.
+/// Helper: make a second commit in an already-initialized repo. Returns new SHA.
 fn make_commit(repo: &std::path::Path) -> String {
     let run = |args: &[&str], dir: &std::path::Path| -> String {
         let out = common::git()
@@ -1477,7 +1477,7 @@ mod doctor_json {
         // Each `kind` tag against `case_token`'s independent spelling, for
         // every variant `corpus()` carries — exhaustive because `case_token`
         // is. The tag is part of the public contract: if a serde rename
-        // strips, capitalises, or reorders it, downstream agents break
+        // strips, capitalizes, or reorders it, downstream agents break
         // silently.
         let ws = workspace_dir();
         let no_ww = empty_workweave_dirs();
@@ -1979,7 +1979,7 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
 
 /// A `.rwv-workweave` marker that fails to parse at all (not "legacy", just
 /// broken) is not reported as one — that failure mode belongs elsewhere.
-/// Pins the behaviour `scan_for_legacy_workweave_markers` had before it was
+/// Pins the behavior `scan_for_legacy_workweave_markers` had before it was
 /// routed through `observe_marker`, which classifies the same failure as
 /// `Unreadable` rather than `Legacy`.
 #[test]
@@ -2016,7 +2016,7 @@ fn doctor_does_not_report_an_unparseable_marker_as_legacy() {
 /// A legacy marker (missing `parent:`) that also has no `primary:` of its
 /// own is not reported — the finding exists to tell `--fix` what to
 /// backfill, and there is nothing to backfill from. Pins the same
-/// pre-observe_marker behaviour as the unparseable case above.
+/// pre-observe_marker behavior as the unparseable case above.
 #[test]
 fn doctor_does_not_report_a_legacy_marker_with_no_primary() {
     let tmp = common::tempdir().unwrap();

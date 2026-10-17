@@ -1,4 +1,4 @@
-//! Tier-0 topology behaviour for `workweave delete`.
+//! Tier-0 topology behavior for `workweave delete`.
 //!
 //! These tests pin the bug-fix: under the clone-topology
 //! joint, `workweave delete` (and the delete step of `sync-to --retire`)

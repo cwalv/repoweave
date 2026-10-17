@@ -236,7 +236,7 @@ fn doctor_json_on_tool_only_path(
 /// assertions read a lock file, which only a real tool produces — so the
 /// success half only ever ran where the tool happened to be installed. An
 /// argv pin says the thing the hook actually promises (it reaches the tool,
-/// with these arguments) and leaves the tool's own behaviour to `exit_code`.
+/// with these arguments) and leaves the tool's own behavior to `exit_code`.
 ///
 /// `produces` is the output the caller's hook reads back after the tool runs:
 /// cargo's records a digest of the lock it just generated, so a stand-in that

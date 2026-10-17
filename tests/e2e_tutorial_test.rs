@@ -59,7 +59,7 @@ fn init_bare_repo(path: &Path) {
 }
 
 /// Bare repo with a single Cargo.toml-bearing commit so the
-/// downstream cargo-workspace integration recognises the clone.
+/// downstream cargo-workspace integration recognizes the clone.
 fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
     init_bare_repo(path);
     let tmp = common::tempdir().expect("tempdir");
@@ -325,7 +325,7 @@ fn tutorial_step1_fetch_clones_project_and_repos() {
 /// Tutorial §1 (auto-activate): the first fetch sets `.rwv-active`
 /// to the project name and lays down ecosystem workspace files at
 /// the weave root via symlink. With Cargo manifests in both repos,
-/// the cargo-workspace integration synthesises a workspace
+/// the cargo-workspace integration synthesizes a workspace
 /// `Cargo.toml` in the project dir and symlinks it to the root.
 #[test]
 fn tutorial_step1_fetch_auto_activates() {
@@ -380,7 +380,7 @@ fn tutorial_step1_fetch_auto_activates() {
 /// Tutorial §2: `rwv update` advances each manifest repo to the
 /// branch HEAD on the remote AND re-snapshots `rwv.lock`. This is
 /// the verb the slim tutorial is loud about; the doc-side test pins
-/// the slogan-to-behaviour mapping ("the verb that gets the
+/// the slogan-to-behavior mapping ("the verb that gets the
 /// latest").
 #[test]
 fn tutorial_step2_update_advances_lock() {

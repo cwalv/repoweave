@@ -87,7 +87,7 @@ fn call_sites(needle: &str) -> Vec<(String, usize)> {
 /// otherwise corrupt.
 ///
 /// STRUCTURAL PIN, licensed as a prohibition over an enumerable population:
-/// "no verb acquires" is a claim about source, and the behavioural form —
+/// "no verb acquires" is a claim about source, and the behavioral form —
 /// driving every verb concurrently against every other — is a product of the
 /// verb surface with itself.
 ///
@@ -153,7 +153,7 @@ const ADVISORY_REFUSAL_SITES: [(&str, usize); 5] = [
 /// set that had grown to four. Each was a correct mechanism with prose that
 /// enumerated, and prose cannot redden.
 ///
-/// So the division of labour is: a docstring states the INVARIANT — this call
+/// So the division of labor is: a docstring states the INVARIANT — this call
 /// advises, `acquire_op` excludes — and this pin owns the MEMBERSHIP. A new
 /// caller of either lands here as a failure with the file named, which is the
 /// moment to ask which side of the boundary it belongs on.

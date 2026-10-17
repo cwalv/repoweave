@@ -51,7 +51,7 @@ fn git_command_is_private_to_the_seam() {
         "src/git.rs declares `git_command` as `{}`; it must stay private to \
          this module, because that privacy is what makes a git argv assembled \
          anywhere else a compile error instead of a convention. A caller that \
-         needs git behaviour takes a `&dyn Vcs`, or its command moves into \
+         needs git behavior takes a `&dyn Vcs`, or its command moves into \
          src/git.rs beside the others.",
         declarations[0]
     );

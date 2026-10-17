@@ -415,7 +415,7 @@ fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
         .assert()
         .success();
 
-    // 5. A second weave `rwv fetch`ing that manifest materialises the member
+    // 5. A second weave `rwv fetch`ing that manifest materializes the member
     // from that URL — the assertion that actually depends on the upstream
     // being real rather than merely named.
     let (workspace2, _project_dir2) =
@@ -428,7 +428,7 @@ fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
     let member2 = workspace2.join("local").join("acme").join("fresh");
     assert!(
         member2.join(".git").exists(),
-        "a second weave must be able to materialise the member from the recorded URL"
+        "a second weave must be able to materialize the member from the recorded URL"
     );
 }
 
@@ -1333,7 +1333,7 @@ fn setup_workweave_for_add_tests(
 #[test]
 fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
     // Regression: `rwv add` from primary's CWD still writes to primary's
-    // manifest (the unchanged baseline behaviour).
+    // manifest (the unchanged baseline behavior).
     let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("primary-add.git");

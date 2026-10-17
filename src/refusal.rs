@@ -209,7 +209,7 @@ pub enum RefusalKind {
     /// A checkout inside a workweave is a canonical store other worktrees link
     /// into. Shared with the finding.
     StandaloneInWorkweave,
-    /// No registry recognises the argument, in either direction.
+    /// No registry recognizes the argument, in either direction.
     NoMatchingRegistry,
     /// A repo path is not `registry/owner/repo`.
     MalformedRepoPath,

@@ -15,7 +15,7 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Initialise a normal (non-bare) git repo at `path` with one commit on `main`.
+/// Initialize a normal (non-bare) git repo at `path` with one commit on `main`.
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
     common::git_in(path, &["init", "--initial-branch=main"]);
@@ -93,14 +93,14 @@ role = "owned"
 // ============================================================================
 
 #[test]
-fn workweave_subcommand_is_recognised() {
+fn workweave_subcommand_is_recognized() {
     // `rwv workweave` with a project name should not produce "unrecognized subcommand".
     let assert = rwv().args(["workweave", "my-project", "list"]).assert();
     let output = assert.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("unrecognized subcommand"),
-        "workweave should be a recognised subcommand, got stderr: {stderr}"
+        "workweave should be a recognized subcommand, got stderr: {stderr}"
     );
 }
 
@@ -2000,7 +2000,7 @@ fn create_workweave_bails_on_project_worktree_failure() {
         .assert()
         .failure();
 
-    // And the partial workweave dir is cleaned up (B7 generalised).
+    // And the partial workweave dir is cleaned up (B7 generalized).
     assert!(
         !ww_dir.exists() || !project_dest.join(".git").exists(),
         "no silent static copy should land in place of a worktree"
@@ -2776,7 +2776,7 @@ fn workweave_create_records_primary_as_parent() {
         "marker must include a `parent` field, got:\n{content}"
     );
     // For a workweave forked from primary, parent should resolve to the
-    // canonicalised primary path.
+    // canonicalized primary path.
     let ws_canonical = ws.canonicalize().unwrap();
     let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
     assert_eq!(

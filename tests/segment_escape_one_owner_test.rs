@@ -18,7 +18,7 @@
 //! same owner, and that is the point: the flat address round-trips only
 //! because the renderer writes `+` for `/` and the validators refuse a name
 //! that already spells one. A module that invents its own handling of either
-//! breaks the bijection without breaking a behavioural test, because the
+//! breaks the bijection without breaking a behavioral test, because the
 //! corpus those tests range over is defined by the validators themselves.
 //!
 //! **The needles are three specific spellings, not the character.** A bare

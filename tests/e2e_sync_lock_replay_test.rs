@@ -780,7 +780,7 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
 /// When the CWD project repo's committed `.gitattributes` carries BOTH the
 /// current `rwv.lock merge=rwv-ours` line and the legacy `rwv.lock
 /// merge=ours` line, the invariant must still bail — the current spelling
-/// being present is not enough, because which line git honours is decided
+/// being present is not enough, because which line git honors is decided
 /// by attribute reading order and the legacy name stays live either way.
 /// The bail must name the both-lines state explicitly (not the generic
 /// "not configured" message), and `rwv doctor --fix` must actually resolve

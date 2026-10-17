@@ -7,7 +7,7 @@
 //! files treat an unparseable one as absent, which turns a torn write into a
 //! detector that reports nothing rather than one that reports a problem.
 //!
-//! **Structural pin, and why the behavioural form is unavailable.** The
+//! **Structural pin, and why the behavioral form is unavailable.** The
 //! difference between a truncating write and an atomic publish is observable
 //! only inside the window between `O_TRUNC` and the last byte landing. Nothing
 //! the suite can drive deterministically lands a reader or a crash inside that
@@ -98,7 +98,7 @@ struct Declared {
 /// only a `#[cfg(test)]` immediately followed by `mod <name> {` does. A file
 /// with no such module (every `#[cfg(test)]` gates a single item) has no
 /// boundary at all and is read to its end. A `mod <name> {` separated from
-/// its `#[cfg(test)]` by another attribute line is not recognised either —
+/// its `#[cfg(test)]` by another attribute line is not recognized either —
 /// unmeasured against this tree, which has none of that shape.
 fn test_module_line(text: &str) -> usize {
     let lines: Vec<&str> = text.lines().collect();
@@ -247,7 +247,7 @@ fn keyed_names<'a>(declared: &'a [Declared], target: &BTreeSet<&str>) -> Vec<(&'
 /// publishing that file the truncating way.
 ///
 /// **Measured coverage, not assumed.** This sees a site only where the name
-/// and the write sit in the same neighbourhood. Reverting `write_owned_digests`
+/// and the write sit in the same neighborhood. Reverting `write_owned_digests`
 /// or `select_project` to a bare write reddens it; reverting `write_lock` or
 /// `WorkweaveMarker::write` does not, because those reach their path through a
 /// parameter and through `path_in` respectively and never spell the name.

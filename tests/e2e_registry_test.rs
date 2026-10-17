@@ -100,7 +100,7 @@ func main() {
 
     // -----------------------------------------------------------------------
     // 2. `go get` the real published module from proxy.golang.org.
-    //    This is the registry analogue of `go get github.com/chatly/protocol@v1.5.0`
+    //    This is the registry analog of `go get github.com/chatly/protocol@v1.5.0`
     //    in the release recipe above.
     // -----------------------------------------------------------------------
     let get_output = Command::new("go")
@@ -194,7 +194,7 @@ fn npm_registry_release_workflow() {
 
     // -----------------------------------------------------------------------
     // 2. `npm install` — resolves @cwalv/rwv-test-types from the real npm registry.
-    //    This is the release-pin analogue of `npm install @chatly/shared-types@1.3.0`.
+    //    This is the release-pin analog of `npm install @chatly/shared-types@1.3.0`.
     // -----------------------------------------------------------------------
     let install_output = Command::new(common::node_tool("npm"))
         .args(["install"])
@@ -267,7 +267,7 @@ fn cargo_registry_release_workflow() {
     let dir = tmp.path();
 
     // -----------------------------------------------------------------------
-    // 1. Create src/ so Cargo recognises this as a valid lib crate.
+    // 1. Create src/ so Cargo recognizes this as a valid lib crate.
     // -----------------------------------------------------------------------
     std::fs::create_dir_all(dir.join("src")).unwrap();
 

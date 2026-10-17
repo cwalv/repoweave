@@ -359,7 +359,7 @@ fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
 // npm
 // ---------------------------------------------------------------------------
 
-/// npm's install already honours `package-lock.json`; this pins that it stays
+/// npm's install already honors `package-lock.json`; this pins that it stays
 /// the command rwv runs. `npm update` in its place would advance every
 /// dependency that a range allows.
 #[test]
@@ -483,7 +483,7 @@ fn locked_npm_version(lock_text: &str) -> Option<String> {
 // uv
 // ---------------------------------------------------------------------------
 
-/// `uv sync` already honours `uv.lock`; this pins that it stays the command
+/// `uv sync` already honors `uv.lock`; this pins that it stays the command
 /// rwv runs, rather than an upgrading resolve.
 #[test]
 fn uv_activation_leaves_a_non_newest_pin_byte_identical() {

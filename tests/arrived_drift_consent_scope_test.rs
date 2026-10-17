@@ -320,7 +320,7 @@ fn assert_the_operator_was_told(run: &Run, verb: &str) {
 /// The headline. `rwv activate`'s verify pass prints the finding that names
 /// both consents, and the hooks it runs afterwards then took one of them.
 ///
-/// Which one is not even determined: cargo honours a lock that satisfies its
+/// Which one is not even determined: cargo honors a lock that satisfies its
 /// constraints, so these bytes survive either way and the operator's resolve is
 /// still on disk afterwards. What moves is the attestation, and moving it is
 /// `--adopt-drifted` with nobody's consent — which is why the assertion under
@@ -502,7 +502,7 @@ fn materialize_with_a_consent_still_reaches_the_generator() {
     materialized_then_pinned_back(&f);
 
     let run = f.rwv(&["materialize", "--regenerate-drifted"]);
-    assert!(run.ok, "the consent must be honoured:\n{}", run.all);
+    assert!(run.ok, "the consent must be honored:\n{}", run.all);
     assert!(
         !run.all.contains("[withheld]"),
         "a verb that was told which way must not be withheld from:\n{}",

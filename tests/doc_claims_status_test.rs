@@ -178,7 +178,7 @@ fn status_json_per_repo_record_has_identifying_fields() {
         .as_str()
         .unwrap_or_else(|| panic!("record.absolute_path should be a string; got:\n{stdout}"));
     // absolute_path should be a real on-disk path. Compare via canonicalize
-    // to neutralise macOS /var vs /private/var symlinks.
+    // to neutralize macOS /var vs /private/var symlinks.
     let expected_abs = std::fs::canonicalize(&repo_dir).unwrap();
     let got_abs = std::fs::canonicalize(abs).unwrap();
     assert_eq!(

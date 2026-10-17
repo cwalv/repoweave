@@ -610,7 +610,7 @@ pub trait Integration {
     /// recorded real on disk — adding what membership requires, never
     /// re-resolving what a lockfile already fixes. Advancing a dependency is
     /// operator intent expressed through an operator verb, not a side effect
-    /// of activation. An implementation that cannot honour that must not run
+    /// of activation. An implementation that cannot honor that must not run
     /// here: a hook fires on paths the operator did not ask for a dependency
     /// update on (`rwv doctor --fix` among them), and firing frequency is
     /// only harmless because a materializing hook is idempotent.

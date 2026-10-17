@@ -216,7 +216,7 @@ mod tests {
 
     /// The Windows arm, which no run on this host exercises — the CI advisory
     /// suite is where it executes. Kept as a unit test over the two functions
-    /// rather than as an end-to-end fixture because the behaviour under test
+    /// rather than as an end-to-end fixture because the behavior under test
     /// is entirely in the spelling, and a Windows runner is the only thing
     /// that can produce the inputs.
     #[cfg(windows)]
@@ -240,7 +240,7 @@ mod tests {
     }
 
     /// A UNC share keeps its prefix — `dunce::simplified` drops it only where
-    /// Windows itself accepts the short form, and that judgement is the whole
+    /// Windows itself accepts the short form, and that judgment is the whole
     /// reason this seam calls a crate instead of stripping by hand.
     #[cfg(windows)]
     #[test]

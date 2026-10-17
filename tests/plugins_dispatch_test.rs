@@ -56,7 +56,7 @@ fn tmp_cwd() -> std::path::PathBuf {
 #[test]
 fn builtin_status_shadows_path_plugin() {
     let plugin_dir = common::tempdir().unwrap();
-    // A rwv-status that would exit 42 if invoked. If the builtin honours
+    // A rwv-status that would exit 42 if invoked. If the builtin honors
     // this, the outer process would exit 42 (which we require NOT to
     // happen).
     write_script(

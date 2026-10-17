@@ -198,7 +198,7 @@ pub enum CreationParamError {
 }
 
 /// What must exist upstream of a member this design creates, before the
-/// member itself is cloned or initialised from it.
+/// member itself is cloned or initialized from it.
 #[derive(Debug, Clone)]
 pub enum Upstream {
     /// rwv creates it, here, before the member is cloned from it.
@@ -220,7 +220,7 @@ pub struct CreationPlan {
 /// `params` declares every name in `specs` and nothing outside it.
 ///
 /// Shared by every [`Registry::plan_creation`] implementation so "a required
-/// parameter is missing" and "an unrecognised one was supplied" are checked
+/// parameter is missing" and "an unrecognized one was supplied" are checked
 /// identically everywhere, rather than each registry re-deriving the same
 /// two loops.
 fn check_creation_params(specs: &[ParamSpec], params: &ParamMap) -> Result<(), CreationParamError> {
@@ -252,9 +252,9 @@ pub trait Registry {
 
     /// If `raw` belongs to this registry, return the parsed [`RepoUrl`] variant.
     ///
-    /// Each registry publishes the patterns it recognises; `RepoUrl::from_str`
+    /// Each registry publishes the patterns it recognizes; `RepoUrl::from_str`
     /// walks the registry list and returns the first match. Implementations
-    /// return `None` for inputs they don't recognise.
+    /// return `None` for inputs they don't recognize.
     fn matches(&self, raw: &str) -> Option<RepoUrl>;
 
     /// Construct a clone URL from an owner/repo pair.
@@ -368,7 +368,7 @@ const DOMAIN_CREATION_PARAMS: &[ParamSpec] = &[
     ParamSpec {
         name: "owner",
         required: true,
-        help: "the account or organisation that owns the repo",
+        help: "the account or organization that owns the repo",
     },
     ParamSpec {
         name: "repo",
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn derive_path_unknown_host_gets_registry_segment() {
-        // The bug this pins: a host no built-in registry recognises must
+        // The bug this pins: a host no built-in registry recognizes must
         // still produce the three-segment shape, not bare `owner/repo` —
         // the shape that used to escape into the workspace-root level.
         let path = derive_local_path_from_url("https://git.corp.example/team/repo.git").unwrap();

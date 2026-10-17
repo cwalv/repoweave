@@ -7,7 +7,7 @@
 //! test. That test confirms the generator's *templates* match the
 //! committed Markdown; this one confirms the *runtime* `rwv explain`
 //! output matches the same Markdown — closing the loop where someone
-//! refactors the runtime dispatch path or adds whitespace/normalisation
+//! refactors the runtime dispatch path or adds whitespace/normalization
 //! between template and emit. Future refactors of the dispatch path
 //! cannot quietly diverge from the docs without this test failing.
 //!
@@ -64,7 +64,7 @@ fn assert_byte_identical(verb: &str) {
         .unwrap_or_else(|e| panic!("read {}: {e}", doc_path.display()));
     let expected = format!("{}{doc}", version_banner());
     if runtime != expected {
-        // Localise the first diverging byte to make the failure actionable.
+        // Localize the first diverging byte to make the failure actionable.
         let mut first_diff: Option<(usize, u8, u8)> = None;
         for (i, (a, b)) in runtime.bytes().zip(expected.bytes()).enumerate() {
             if a != b {
@@ -79,7 +79,7 @@ fn assert_byte_identical(verb: &str) {
                 expected.len()
             )
         } else if let Some((i, a, b)) = first_diff {
-            // Show ~40 bytes of context centred on the divergence.
+            // Show ~40 bytes of context centered on the divergence.
             let start = i.saturating_sub(20);
             let end = (i + 20).min(runtime.len().min(expected.len()));
             let runtime_ctx = &runtime[start..end];

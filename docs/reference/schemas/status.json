@@ -42,7 +42,7 @@
   },
   "definitions": {
     "LockRelation": {
-      "description": "Relation between the current branch tip and the lock SHA.\n\nThe two clone-health variants (`Missing` / `Unreachable`) address distinct failure modes that `NoLock` previously masked:\n\n- `Missing` — the clone directory is absent from disk entirely (out-of-band `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair verb is a re-clone / `rwv fetch`.\n\n- `Unreachable` — the clone directory exists but the SHA pinned in the lock is not present in the local object store (history rewritten, shallow clone, object pruned). The repair verb is a `git fetch` / `rwv fetch` to re-materialise the missing object.\n\nNeither state should be attributed to the lock file itself — surfacing them as `no-lock` misdirects operators at the wrong repair path.",
+      "description": "Relation between the current branch tip and the lock SHA.\n\nThe two clone-health variants (`Missing` / `Unreachable`) address distinct failure modes that `NoLock` previously masked:\n\n- `Missing` — the clone directory is absent from disk entirely (out-of-band `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair verb is a re-clone / `rwv fetch`.\n\n- `Unreachable` — the clone directory exists but the SHA pinned in the lock is not present in the local object store (history rewritten, shallow clone, object pruned). The repair verb is a `git fetch` / `rwv fetch` to re-materialize the missing object.\n\nNeither state should be attributed to the lock file itself — surfacing them as `no-lock` misdirects operators at the wrong repair path.",
       "oneOf": [
         {
           "type": "string",
@@ -63,7 +63,7 @@
           ]
         },
         {
-          "description": "Clone directory exists but the locked SHA is not in the local object store (history rewritten, shallow clone, object pruned). Repair: `git fetch` / `rwv fetch` to materialise the missing object.",
+          "description": "Clone directory exists but the locked SHA is not in the local object store (history rewritten, shallow clone, object pruned). Repair: `git fetch` / `rwv fetch` to materialize the missing object.",
           "type": "string",
           "enum": [
             "unreachable"
@@ -168,7 +168,7 @@
       ]
     },
     "Override": {
-      "description": "A named consent supplied at invocation and recorded on the owner record.\n\nEach variant is one CLI flag, and serialises to that flag's name without the leading dashes — the spelling already on disk in every `.rwv-op` written so far. `--continue` re-derives the op's consent from this list and `cleanup` reads it to decide whether the project savepoint survives as the only remaining pointer to discarded commits, so mint and read must be the same value rather than the same text.",
+      "description": "A named consent supplied at invocation and recorded on the owner record.\n\nEach variant is one CLI flag, and serializes to that flag's name without the leading dashes — the spelling already on disk in every `.rwv-op` written so far. `--continue` re-derives the op's consent from this list and `cleanup` reads it to decide whether the project savepoint survives as the only remaining pointer to discarded commits, so mint and read must be the same value rather than the same text.",
       "oneOf": [
         {
           "description": "The lock-freshness precondition was waived on both sides.",

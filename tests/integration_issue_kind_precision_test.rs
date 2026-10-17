@@ -18,7 +18,7 @@
 //! Asserted through the serialized `--json` payload rather than the `IssueKind`
 //! value, because the wire token is what an operator looks up and what a
 //! consumer routes on. The text renderer prints no kind at all — that is the
-//! published behaviour, stated on the findings page under "Finding your entry"
+//! published behavior, stated on the findings page under "Finding your entry"
 //! — so `--json` is the whole of the kind surface.
 
 use repoweave::check::build_doctor_json;

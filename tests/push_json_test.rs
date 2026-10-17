@@ -1,7 +1,7 @@
 //! Tests for `rwv push --json`.
 //!
 //! Two layers:
-//! 1. Library-level snapshot tests of `PushOutcomeOutput` serialisation,
+//! 1. Library-level snapshot tests of `PushOutcomeOutput` serialization,
 //!    so kind tags and field names are pinned independent of the live push path.
 //! 2. End-to-end: drive `rwv push --json` through the binary, parse stdout
 //!    as JSON, assert envelope + per-repo shape and the project-repo
@@ -18,7 +18,7 @@ fn rwv() -> AssertCommand {
 }
 
 // ---------------------------------------------------------------------------
-// Library-level snapshot tests: wire-output serialisation
+// Library-level snapshot tests: wire-output serialization
 // ---------------------------------------------------------------------------
 
 fn to_value(outcome: &PushOutcomeOutput) -> Value {

@@ -593,7 +593,7 @@ impl CargoWorkspace {
         ));
 
         if cfg.workspace_package {
-            // The intended behaviour is to surface `rwv.toml`
+            // The intended behavior is to surface `rwv.toml`
             // `project.{license, authors, description, repository, ...}` into
             // `[workspace.package]`. The Manifest type does not yet carry a
             // `project` section, so until that lands the opt-in writes an
@@ -887,7 +887,7 @@ impl Integration for CargoWorkspace {
 
         let lock_path = ctx.output_dir.join("Cargo.lock");
 
-        // `cargo fetch` honours the resolve the lock already records, adding
+        // `cargo fetch` honors the resolve the lock already records, adding
         // only what current membership requires and downloading what the result
         // names. `cargo generate-lockfile` computes a fresh resolve and
         // discards whatever the lock held, pinned versions included — cargo's
@@ -1214,7 +1214,7 @@ impl CargoWorkspace {
 
     /// Verify the hybrid `.cargo/config.toml` when the config-surface
     /// option is selected. See [`Self::verify`] for the four-state
-    /// semantics; this method is the config-surface analogue of
+    /// semantics; this method is the config-surface analog of
     /// [`Self::verify_cargo_toml`].
     ///
     /// The owned key set here is **dynamic** (one `[patch.<reg>].<crate>`

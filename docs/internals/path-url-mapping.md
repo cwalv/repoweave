@@ -337,7 +337,7 @@ practice; that is the trigger, not a specific verb.
   — the weave-root shape contract (a directory containing `projects/`) that
   a walker uses instead of enumerating registry segment names, and why the
   registry set below being open-ended (a host no built-in registry
-  recognises still derives a path under its own hostname) does not reopen
+  recognizes still derives a path under its own hostname) does not reopen
   that question.
 - [`docs/reference/formats.md`](../reference/formats.md) — the operator-facing
   statement of the directory layout and the built-in registry set.

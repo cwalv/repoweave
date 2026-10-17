@@ -215,7 +215,7 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// distance 2 of every string of length four or less, so without this guard
 /// it answers for inputs it has nothing to do with — and it answers *first*,
 /// because a spurious match here suppresses the external-command pointer that
-/// an unrecognised name is owed.
+/// an unrecognized name is owed.
 /// The nearest thing `rwv explain` could have served, over both the verbs and
 /// the documented tokens — the two vocabularies a reader types into it.
 fn suggest(input: &str) -> Option<&'static str> {

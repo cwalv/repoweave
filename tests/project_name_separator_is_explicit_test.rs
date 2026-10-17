@@ -12,7 +12,7 @@
 //!
 //! The pin is structural because the defect is invisible to a run here.
 //! `MAIN_SEPARATOR` is already `/` on this platform, so the two renderings are
-//! byte-identical and every behavioural assertion holds equally before and
+//! byte-identical and every behavioral assertion holds equally before and
 //! after the fix — measured, not assumed: reverting the second arm leaves the
 //! whole suite green, while poisoning that arm's separator reddens two tests,
 //! so the arm is reached and the green is equality rather than dead code. The

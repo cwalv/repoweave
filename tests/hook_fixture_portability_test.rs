@@ -204,7 +204,7 @@ fn the_scan_finds_the_hook_fixtures_it_claims_to_pin() {
 #[test]
 fn every_refusing_hook_site_asserts_the_operation_failed() {
     let all = items();
-    let unarmoured: Vec<String> = hook_refusal_sites(&all)
+    let unarmored: Vec<String> = hook_refusal_sites(&all)
         .iter()
         .filter(|it| it.has_attr("#[test]"))
         .filter(|it| !it.asserts_failure())
@@ -212,13 +212,13 @@ fn every_refusing_hook_site_asserts_the_operation_failed() {
         .collect();
 
     assert!(
-        unarmoured.is_empty(),
+        unarmored.is_empty(),
         "these tests plant a hook that refuses, then check what the refusal \
          left behind, without ever asserting that the operation failed: {}. \
          Every residue check in them holds just as well against an operation \
          that succeeded, so on a platform where the hook does not run they pass \
          while testing nothing, and they do it silently",
-        unarmoured.join(", ")
+        unarmored.join(", ")
     );
 }
 

@@ -87,7 +87,7 @@ impl From<op_state::ResolvedOwner> for OpStatus {
 /// - `Unreachable` — the clone directory exists but the SHA pinned in the lock
 ///   is not present in the local object store (history rewritten, shallow
 ///   clone, object pruned). The repair verb is a `git fetch` / `rwv fetch`
-///   to re-materialise the missing object.
+///   to re-materialize the missing object.
 ///
 /// Neither state should be attributed to the lock file itself — surfacing them
 /// as `no-lock` misdirects operators at the wrong repair path.
@@ -105,7 +105,7 @@ pub enum LockRelation {
     Missing,
     /// Clone directory exists but the locked SHA is not in the local object
     /// store (history rewritten, shallow clone, object pruned).
-    /// Repair: `git fetch` / `rwv fetch` to materialise the missing object.
+    /// Repair: `git fetch` / `rwv fetch` to materialize the missing object.
     Unreachable,
 }
 

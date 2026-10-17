@@ -1,4 +1,4 @@
-//! CLI-level e2e tests for DefaultOnly key behaviour across npm, uv, cargo,
+//! CLI-level e2e tests for DefaultOnly key behavior across npm, uv, cargo,
 //! and go-work integrations.
 //!
 //! Each port has three scenarios exercised via `rwv add --new` / `rwv doctor`:
@@ -44,7 +44,7 @@ fn rwv() -> Command {
 /// Create a minimal workspace at `parent/<name>` with `github/` + `projects/`
 /// markers and a project directory with an `rwv.toml` manifest.
 ///
-/// The workspace root is git-initialised so that git operations invoked by
+/// The workspace root is git-initialized so that git operations invoked by
 /// `rwv` subprocesses (e.g. `git init`, `git worktree`) are anchored to the
 /// sandbox and cannot walk up to the real repository enclosing the test
 /// binary.  Without this, git's upward discovery could reach the host
@@ -74,7 +74,7 @@ fn make_workspace_with_project(
     common::git_in(&ws, &["config", "user.email", "test@test.com"]);
     common::git_in(&ws, &["config", "user.name", "Test"]);
 
-    // Initialise project dir as a git repo so workspace resolution succeeds.
+    // Initialize project dir as a git repo so workspace resolution succeeds.
     // The project dir is a *nested* git repo (a git repo inside the ws git repo).
     // This mirrors the real-world layout where each project dir has its own
     // rwv.lock history, and is needed for rwv add / lock operations.
@@ -646,7 +646,7 @@ mod cargo {
         std::fs::write(&int_file, hand_authored).unwrap();
 
         // Surfacing links are relative, and the owner-scoped removal that
-        // precedes re-surfacing recognises only that spelling. An absolute
+        // precedes re-surfacing recognizes only that spelling. An absolute
         // target here models a shape rwv has never written and one that no
         // repair can replace.
         let symlink_path = ws.join("Cargo.toml");

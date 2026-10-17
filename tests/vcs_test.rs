@@ -1165,7 +1165,7 @@ fn has_rwv_merge_driver_config_reports_not_a_repo() {
 // Vcs::rebase
 // ============================================================================
 //
-// Native rebase consolidates sync's project-repo path. The three behaviours
+// Native rebase consolidates sync's project-repo path. The three behaviors
 // codified: clean rebase succeeds, a real conflict surfaces as
 // VcsError::RebaseConflict (repo left mid-rebase for `git rebase --continue`),
 // and an rwv.lock collision is silently auto-resolved when replay-exclusion

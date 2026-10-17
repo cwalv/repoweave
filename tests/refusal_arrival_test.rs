@@ -751,7 +751,7 @@ fn a_run_that_withheld_its_artifact_routes_to_a_token() {
 
 /// An error that is not a refusal gains nothing. Nothing was declined on
 /// purpose here: the manifest parser said no, and its answer reaches the
-/// operator relabelled rather than classified.
+/// operator relabeled rather than classified.
 #[test]
 fn an_error_with_no_kind_prints_no_route_line() {
     let tmp = common::tempdir().unwrap();

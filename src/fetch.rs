@@ -91,7 +91,7 @@ impl FetchJsonOutput {
 ///
 /// Each per-repo outcome becomes its own self-describing line. Every record
 /// carries its own `$schema` URL (pointing at `fetch-record.json`) so
-/// consumers can identify a line without out-of-band context. Serialised with
+/// consumers can identify a line without out-of-band context. Serialized with
 /// `#[serde(flatten)]` so the wire shape is a single flat object:
 /// `{"$schema": "...", "path": "...", ...}`.
 ///
@@ -131,7 +131,7 @@ pub enum FetchMode {
 /// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
 /// shorthand (resolved via the built-in registries to an HTTPS clone URL).
 ///
-/// Returns `(url, owner)` where `owner` may be empty for unrecognised URLs.
+/// Returns `(url, owner)` where `owner` may be empty for unrecognized URLs.
 fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, String)> {
     let parsed: crate::manifest::RepoUrl = source.parse()?;
     let info = registry::resolve_to_clone_info(&parsed)?;
@@ -531,7 +531,7 @@ fn fetch_project_repos(
 
     // Snapshot the work list. BTreeMap iteration is deterministic, so the
     // resulting Vec preserves the serial loop's ordering (acceptance: -j 1
-    // matches the previous behaviour exactly).
+    // matches the previous behavior exactly).
     //
     // Apply the `--role` / `--repo` filter here so the worker pool only sees
     // selected repos. Empty filter is a no-op (every repo passes). See

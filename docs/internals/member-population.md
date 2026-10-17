@@ -93,7 +93,7 @@ repository can be asked without naming git's mechanism.
    `core.eol` — so two contexts that would write different bytes never share
    an identity. The verbatim test (`checks_out_verbatim` in `src/git.rs`)
    mirrors git's own end-of-line decision and answers `false` for any value it
-   does not recognise; a matrix test runs git's own `checkout-index` over each
+   does not recognize; a matrix test runs git's own `checkout-index` over each
    conversion attribute under every `core.autocrlf` and `core.eol` setting and
    fails if a file carrying an identity came out changed. Where text checks out
    with CRLF (Windows with `core.autocrlf=true`), most text files carry no

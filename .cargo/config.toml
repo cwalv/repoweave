@@ -4,7 +4,7 @@
 # convention, and collapses a fixture that breaks it into one self-describing
 # error instead of a silent download on some runners and a proxy failure on
 # others. Cargo applies this only to processes it spawns, so an installed `rwv`
-# keeps the operator's own toolchain behaviour.
+# keeps the operator's own toolchain behavior.
 #
 # `force` is load-bearing: without it cargo defers to an inherited GOTOOLCHAIN,
 # so a shell that exports one would silently opt the whole suite back out — the

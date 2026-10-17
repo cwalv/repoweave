@@ -21,7 +21,7 @@ makes the standard day-0 flow work immediately:
 
 ```
 mkdir my-ws && cd my-ws
-rwv init my-project        # bootstraps projects/ and initialises the project
+rwv init my-project        # bootstraps projects/ and initializes the project
 rwv add <url>              # works — workspace context resolves
 ```
 

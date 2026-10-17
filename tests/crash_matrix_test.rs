@@ -6,7 +6,7 @@
 //! file pins two contracts:
 //!
 //! 1. **Continue-fidelity**: `rwv sync --continue` (or `rwv sync-to
-//!    --continue`) from the synthesised crash state drives the op to an end
+//!    --continue`) from the synthesized crash state drives the op to an end
 //!    state equal to an uninterrupted run's. We compare *real* end states
 //!    (repo tips, lock content, marker absence) — not implementation echoes.
 //! 2. **Abort-restore**: `rwv abort` from the same crash state restores every
@@ -627,7 +627,7 @@ fn cell_e_replay_sync_abort_restores_to_pre_op() {
 // --- M(replay), plain sync ---------------------------------------------------
 
 /// Cell `M(replay) / sync / owner-side`: record=replay; mid-mutation is
-/// modelled by a VCS-native rebase wreckage in one of the manifest repos.
+/// modeled by a VCS-native rebase wreckage in one of the manifest repos.
 /// `--continue` must abort the wreckage and re-run replay to convergence.
 ///
 /// We use the discard-local-commits override path implicitly avoided here
@@ -1126,7 +1126,7 @@ fn cell_m_relock_sync_to_owner_continue() {
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
-            // converged_tips empty — modelling "lock written, tips not yet recorded"
+            // converged_tips empty — modeling "lock written, tips not yet recorded"
             ..Default::default()
         },
     );
@@ -1273,7 +1273,7 @@ fn cell_m_advance_target_sync_to_owner_continue() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    // Manually ff primary's server (modelling partial advance-target).
+    // Manually ff primary's server (modeling partial advance-target).
     common::git_in(
         &primary.server_dir,
         &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
@@ -1340,7 +1340,7 @@ fn cell_j_advance_target_sync_to_owner_continue() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
-    // Pre-advance primary's server AND project to ww's tips (modelling
+    // Pre-advance primary's server AND project to ww's tips (modeling
     // advance-target complete but set_phase not yet committed).
     common::git_in(
         &primary.server_dir,
@@ -1522,7 +1522,7 @@ fn cell_m_advance_target_sync_to_lease_abort() {
 
 /// Cell `J(advance-target) / sync-to / owner-side`: target's server has been
 /// ff'd to the converged tip AND a post-crash foreign commit was added on
-/// top of that tip (modelling: "another agent built on the advanced target
+/// top of that tip (modeling: "another agent built on the advanced target
 /// after our crash"). Abort must REFUSE for that repo with `foreign-tip`,
 /// exit nonzero, leave the tip unchanged, and retain op-state.
 #[test]
@@ -1975,12 +1975,12 @@ fn cell_override_resume_fidelity_discard_local_commits() {
     );
     // The override-consent tell: project savepoint survives cleanup as a
     // tombstone (the only on-disk evidence that the resumed session
-    // honoured the recorded consent). Manifest savepoints are dropped as
+    // honored the recorded consent). Manifest savepoints are dropped as
     // normal.
     assert!(
         ref_exists(&ww.project_dir, &format!("refs/rwv/pre-op/{op_id}"),),
         "discard-local-commits tombstone savepoint must survive --continue's cleanup \
-         (consent honoured across resume)"
+         (consent honored across resume)"
     );
     assert!(
         !ref_exists(&ww.server_dir, &format!("refs/rwv/pre-op/{op_id}"),),
@@ -2141,7 +2141,7 @@ fn cell_continue_after_source_mutation_converges_to_new_pin() {
 //
 // Seven (phase × kill-point) cells for the `advanced_tips` journal field.
 // Each cell
-// synthesises the exact on-disk state a kill at that point would leave,
+// synthesizes the exact on-disk state a kill at that point would leave,
 // then asserts real end states (repo tips, marker/op-state presence, exit
 // code) — never implementation echoes.
 //
@@ -2190,7 +2190,7 @@ fn make_primary_ahead_sync(parent: &Path) -> (Workspace, Workspace, String, Stri
 // ---------------------------------------------------------------------------
 // Cell 1: entry advanced_tips write done, no repos advanced yet.
 //
-// Synthesises: crash AFTER write 1 (advanced_tips = {SERVER_PATH ->
+// Synthesizes: crash AFTER write 1 (advanced_tips = {SERVER_PATH ->
 // primary_server_tip}) but BEFORE any repo advances. All repos remain at
 // their savepoint tips.
 //
@@ -2254,7 +2254,7 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
 // ---------------------------------------------------------------------------
 // Cell 2: crash mid-fan-out — server advanced, project still at savepoint.
 //
-// Synthesises: write 1 populated advanced_tips = {SERVER_PATH ->
+// Synthesizes: write 1 populated advanced_tips = {SERVER_PATH ->
 // primary_server_tip}; the fan-out ran the server repo task first (now at
 // primary_server_tip) but was killed before the project task ran. Project repo
 // remains at savepoint.
@@ -2334,7 +2334,7 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
 // ---------------------------------------------------------------------------
 // Cell 3: rebase captured — project at T1, advanced_tips[(project)] = T1.
 //
-// Synthesises: Phase 1' rebased ww's project commits onto the source project
+// Synthesizes: Phase 1' rebased ww's project commits onto the source project
 // tip, landing at fresh SHA T1. Write 2 immediately overwrote
 // advanced_tips[(project)] with T1. Then crash.
 //
@@ -2426,7 +2426,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 // Cell 4: rebase one-write window — project at T1, advanced_tips[(project)]
 // ABSENT.
 //
-// Synthesises: Phase 1' completed, landing at T1. But write 2 (the capture)
+// Synthesizes: Phase 1' completed, landing at T1. But write 2 (the capture)
 // had not run before the crash — advanced_tips[(project)] is absent.
 // T1 is not in {savepoint, mid-op, advanced_tips, converged_tips} → foreign.
 //
@@ -2514,7 +2514,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
 // ---------------------------------------------------------------------------
 // Cell 5: crash after relock — project at T2, attributed via converged_tips.
 //
-// Synthesises: relock completed; converged_tips populated with T2 for the
+// Synthesizes: relock completed; converged_tips populated with T2 for the
 // project and the server tip; advanced_tips cleared (same persist). Project
 // is at T2.
 //
@@ -2524,7 +2524,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
 
 /// Cell 5 (§8.5): crash after relock with advanced_tips cleared and
 /// converged_tips populated. Project at T2. Abort attributes T2 via
-/// converged_tips (existing behaviour, no regression).
+/// converged_tips (existing behavior, no regression).
 #[test]
 fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
     let tmp = common::tempdir().unwrap();
@@ -2590,7 +2590,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 // ---------------------------------------------------------------------------
 // Cell 6: mixed — op-advanced repos auto-restore, foreign repo refuses.
 //
-// Synthesises the 2026-06-10 incident as a regression test. The server repo
+// Synthesizes the 2026-06-10 incident as a regression test. The server repo
 // was advanced to its advanced_tips target (op's own ff). An operator commit
 // was then added on top of the server tip after the crash, making the server's
 // current HEAD genuinely foreign.

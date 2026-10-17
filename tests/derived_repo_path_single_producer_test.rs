@@ -7,7 +7,7 @@
 //! layout. The compiler cannot enforce this: `RepoPath::new` is a plain
 //! constructor and takes whatever `String` a caller hands it, derived or not.
 //!
-//! **Why this is structural rather than behavioural.** The distinguishing
+//! **Why this is structural rather than behavioral.** The distinguishing
 //! fact is where an argument *came from*, which is a property of the call
 //! site's source text, not of any value the program computes at runtime. A
 //! second call site re-deriving a path the way `placement` does would in

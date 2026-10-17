@@ -37,14 +37,14 @@ fn make_empty_workspace(tmp: &Path) -> std::path::PathBuf {
 // ============================================================================
 
 #[test]
-fn init_subcommand_is_recognised() {
+fn init_subcommand_is_recognized() {
     // `rwv init` should not produce "unrecognized subcommand".
     let assert = rwv().arg("init").assert();
     let output = assert.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("unrecognized subcommand"),
-        "init should be a recognised subcommand, got stderr: {stderr}"
+        "init should be a recognized subcommand, got stderr: {stderr}"
     );
 }
 
@@ -143,7 +143,7 @@ fn init_rwv_yaml_parses_via_manifest_loader() {
     // 4. Empty repositories map — no repos have been added yet.
     assert!(
         manifest.is_empty(),
-        "repositories map should be empty in a freshly initialised project"
+        "repositories map should be empty in a freshly initialized project"
     );
 }
 
@@ -466,7 +466,7 @@ fn init_activates_project() {
     assert_eq!(
         active.trim(),
         "my-proj",
-        ".rwv-active should contain the newly initialised project name"
+        ".rwv-active should contain the newly initialized project name"
     );
 }
 
@@ -492,7 +492,7 @@ fn init_last_project_wins_activation() {
     assert_eq!(
         active.trim(),
         "second-proj",
-        ".rwv-active should reflect the last project initialised"
+        ".rwv-active should reflect the last project initialized"
     );
 }
 

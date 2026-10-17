@@ -39,7 +39,7 @@ fn go_workspace_wiring_resolves_cross_module_import() {
     let protocol_dir = root.join("github/chatly/protocol");
     std::fs::create_dir_all(&protocol_dir).unwrap();
 
-    // git init so scan_repos_on_disk recognises it as a repo
+    // git init so scan_repos_on_disk recognizes it as a repo
     common::git()
         .args(["init", "-q"])
         .current_dir(&protocol_dir)

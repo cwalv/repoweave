@@ -22,7 +22,7 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
     root
 }
 
-/// Initialise a git repo at `path` with a single commit so HEAD exists.
+/// Initialize a git repo at `path` with a single commit so HEAD exists.
 /// Returns the SHA of that commit.
 fn init_git_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
@@ -198,7 +198,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Write the .rwv-workweave marker so resolve() recognises this as a
+    // Write the .rwv-workweave marker so resolve() recognizes this as a
     // workweave. The marker alone does it, and is the workweave root's only
     // identity file — a `.rwv-active` beside it is the state doctor reports
     // as `weave-root-identity-conflict`.
@@ -1052,7 +1052,7 @@ fn check_locked_ok_when_lock_pins_tag_at_current_head() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_commit_message_summarises_repos() {
+fn lock_commit_message_summarizes_repos() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -1429,7 +1429,7 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
 // 17. Detached HEAD member: lock succeeds with a warning
 // ---------------------------------------------------------------------------
 
-/// Helper: initialise a git repo, detach HEAD at the tip, and return the SHA.
+/// Helper: initialize a git repo, detach HEAD at the tip, and return the SHA.
 fn init_git_repo_detached(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
 

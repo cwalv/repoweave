@@ -272,7 +272,7 @@ via `[merge-patterns]` in `.hgrc`; a jj impl might do something
 entirely different. Sync neither knows nor cares.
 
 The companion `replay_exclusion_state` query exists so `rwv doctor` can
-detect projects initialised before this path landed and offer to add
+detect projects initialized before this path landed and offer to add
 the missing entry. The detection logic in core stays VCS-agnostic. It
 answers with a state rather than a bool because doctor asks twice — once
 to report, once to repair — and a pair of bools let those two answers be
@@ -324,7 +324,7 @@ location instead of being distributed across the seam.
 
 ## What enforces this
 
-The parts of the principle that can be mechanised are mechanised, and a
+The parts of the principle that can be mechanized are mechanized, and a
 reviewer should read a green build as having already answered them.
 
 1. **Naming the backend.** The type is private to `src/git.rs`, so any
@@ -458,7 +458,7 @@ which is a different thing and carries a different cost.
 
 The moment a rename buys something is the change that adds a second
 backend, because that is when the token becomes genuinely ambiguous
-rather than merely git-flavoured — and that change can carry the break
+rather than merely git-flavored — and that change can carry the break
 with a reason a consumer can read. Paying it now buys a better name for
 a backend nobody has.
 

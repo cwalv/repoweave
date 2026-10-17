@@ -11,7 +11,7 @@
 //! computed against.
 //!
 //! The fix is structural, so the pin is too: the window between the two reads
-//! is microseconds with no seam to land a commit inside it, so a behavioural
+//! is microseconds with no seam to land a commit inside it, so a behavioral
 //! test would need a sleep, and a sleep-timed test pins the sleep.
 //!
 //! Residue: the block is found by two production-code string anchors, not by

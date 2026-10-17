@@ -353,7 +353,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 /// is unset, and the gate must refuse
 /// rather than fabricate "main". Proves the refusal by construction: the
 /// project repo here IS on `main` (the real canonical branch `git clone`
-/// would have recorded), so the old fallback-to-"main" behaviour would
+/// would have recorded), so the old fallback-to-"main" behavior would
 /// have let this push through silently — only the typed `None` path
 /// catches it.
 #[test]
@@ -634,7 +634,7 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     );
 
     // The manifest bare DID move (manifest repos pushed before the project
-    // attempt). This is the surface-clearly behaviour the spec requires.
+    // attempt). This is the surface-clearly behavior the spec requires.
     assert_eq!(
         bare_main_sha(manifest_bare),
         Some(manifest_sha),

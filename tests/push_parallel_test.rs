@@ -145,7 +145,7 @@ fn push_dash_j_emits_repo_prefix() {
     );
 }
 
-/// `-j 1` reproduces serial behaviour: output never contains a
+/// `-j 1` reproduces serial behavior: output never contains a
 /// `[<repo-path>]` prefix. The per-repo "rwv push: pushing X" lines must
 /// still be present, just unprefixed.
 #[test]

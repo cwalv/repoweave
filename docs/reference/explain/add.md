@@ -60,11 +60,11 @@ and plans what gets created from them.
 
 | Registry | Parameter | Required | Help |
 |---|---|---|---|
-| `github` | `owner` | yes | the account or organisation that owns the repo |
+| `github` | `owner` | yes | the account or organization that owns the repo |
 | `github` | `repo` | yes | the repo's name |
-| `gitlab` | `owner` | yes | the account or organisation that owns the repo |
+| `gitlab` | `owner` | yes | the account or organization that owns the repo |
 | `gitlab` | `repo` | yes | the repo's name |
-| `bitbucket` | `owner` | yes | the account or organisation that owns the repo |
+| `bitbucket` | `owner` | yes | the account or organization that owns the repo |
 | `bitbucket` | `repo` | yes | the repo's name |
 | `local` | `root` | yes | the directory the repository is created under |
 | `local` | `owner` | yes | the owner segment of the placement path |

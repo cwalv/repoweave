@@ -568,7 +568,7 @@ fn run_add_from_local_path(
             )
         })?;
 
-    // Normalise bare absolute paths to file:// URLs so manifests are
+    // Normalize bare absolute paths to file:// URLs so manifests are
     // consistent regardless of how the clone was created. The second
     // disjunct is the platform's other absolute spelling — a drive-letter
     // path git reports verbatim — and is reachable only on a Windows build,

@@ -354,7 +354,7 @@ impl PhaseTips {
 
 /// A named consent supplied at invocation and recorded on the owner record.
 ///
-/// Each variant is one CLI flag, and serialises to that flag's name without
+/// Each variant is one CLI flag, and serializes to that flag's name without
 /// the leading dashes — the spelling already on disk in every `.rwv-op`
 /// written so far. `--continue` re-derives the op's consent from this list
 /// and `cleanup` reads it to decide whether the project savepoint survives as
@@ -433,7 +433,7 @@ pub struct OwnerRecord {
 /// temporal invariant: a converged record (non-empty `converged_tips`) maps to
 /// [`PhaseTips::Converged`]; otherwise the record is still in the replay half
 /// and maps to [`PhaseTips::Replay`], carrying `advanced_tips`. A both-empty
-/// record canonicalises to the empty replay half and serialises identically.
+/// record canonicalizes to the empty replay half and serializes identically.
 ///
 /// Schema v2 carries no default for any field here: every write goes through
 /// the full struct, so a record missing a key is malformed, not old, and
@@ -484,7 +484,7 @@ impl From<WireOwnerRecord> for OwnerRecord {
 
 impl From<OwnerRecord> for WireOwnerRecord {
     fn from(r: OwnerRecord) -> Self {
-        // Flatten the ADT back to two maps; the inactive half serialises empty.
+        // Flatten the ADT back to two maps; the inactive half serializes empty.
         let (advanced_tips, converged_tips) = match r.tips {
             PhaseTips::Replay(m) => (m, BTreeMap::new()),
             PhaseTips::Converged(m) => (BTreeMap::new(), m),
@@ -1407,7 +1407,7 @@ mod tests {
     #[test]
     fn advanced_tips_populated_roundtrip() {
         // Write a record with advanced_tips populated, read it back, verify the
-        // map survives serialisation/deserialisation unchanged.
+        // map survives serialization/deserialization unchanged.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
@@ -1620,7 +1620,7 @@ mod tests {
 
     #[test]
     fn converged_tips_wire_roundtrip_and_clears_advanced() {
-        // A converged record serialises with a populated `converged_tips:` and
+        // A converged record serializes with a populated `converged_tips:` and
         // an empty `advanced_tips:` (the swap cleared it) — and reads back as
         // the Converged half. This mirrors the J(relock) crash-matrix state.
         let tmp = tempfile::tempdir().unwrap();
@@ -1669,12 +1669,12 @@ mod tests {
     }
 
     #[test]
-    fn both_empty_tip_maps_canonicalise_to_replay() {
+    fn both_empty_tip_maps_canonicalize_to_replay() {
         // Both maps empty is ambiguous on the wire: it's the common at-entry
         // state (a fresh op, still in replay), but it is *also* what
         // Converged(empty) — relock with zero repos — flattens to, since the
         // From<OwnerRecord> impl always empties the inactive half. The
-        // canonicalisation always resolves that ambiguity to the replay half,
+        // canonicalization always resolves that ambiguity to the replay half,
         // regardless of the recorded `phase`.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();

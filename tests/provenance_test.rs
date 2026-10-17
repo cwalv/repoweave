@@ -35,7 +35,7 @@ fn make_primary(root: &Path) -> PathBuf {
     ws
 }
 
-/// Initialise a bare-minimum git repo at `path` with one commit (so HEAD is
+/// Initialize a bare-minimum git repo at `path` with one commit (so HEAD is
 /// valid), configure the user identity inside the repo, and return the SHA
 /// of the initial commit.
 fn init_repo(path: &Path) -> String {

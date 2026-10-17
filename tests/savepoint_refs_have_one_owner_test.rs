@@ -14,7 +14,7 @@
 //! The needle is the namespace root, so it covers both the savepoint and the
 //! pre-abort halves. What it asserts is a module boundary rather than a single
 //! site: within `git.rs` the layout is spelled by the mints and by the
-//! recogniser that filters rwv's own refs out of foreign tag names, which
+//! recognizer that filters rwv's own refs out of foreign tag names, which
 //! matches the `refs/`-less spelling too and reads worse derived than written.
 //! The prohibition is on composing the namespace outside its owner.
 //!

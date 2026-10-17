@@ -489,7 +489,7 @@ fn update_for_project(
 /// `--json` so stdout carries only structured data.
 ///
 /// All user-facing text output is routed through `reporter`, which prefixes
-/// `[<repo>]` and serialises writes under `-j > 1`; under `-j 1` the
+/// `[<repo>]` and serializes writes under `-j > 1`; under `-j 1` the
 /// reporter is a no-prefix passthrough.
 #[allow(clippy::too_many_arguments)]
 fn advance_one(

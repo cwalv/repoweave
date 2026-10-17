@@ -398,7 +398,7 @@ plugin, its own `--help` is the documentation.
 
 ### `no-matching-registry`
 
-**Condition.** No registry recognises the argument, in either direction — a
+**Condition.** No registry recognizes the argument, in either direction — a
 URL that maps to no local path, or a path that infers no URL.
 
 **Why.** The registry set is what makes paths and URLs interconvertible. An
@@ -485,7 +485,7 @@ remove the existing entry first if replacing it is what's intended.
 requires.
 
 **Why.** `ff` is the strategy that promises to add nothing and rewrite
-nothing. Where a fast-forward is impossible, honouring that promise means
+nothing. Where a fast-forward is impossible, honoring that promise means
 stopping rather than quietly doing something else.
 
 **Exits.** Re-run with `--strategy rebase` to replay the divergent commits, or
@@ -554,7 +554,7 @@ a more specific entry than this one.
 
 **Condition.** A receipted ref is not at the tip its receipt records.
 
-**Why.** rwv retracts only refs it authored and still recognises. A ref that
+**Why.** rwv retracts only refs it authored and still recognizes. A ref that
 moved since the receipt was written may carry someone else's work, and
 retracting it would destroy commits rwv never accounted for.
 
@@ -935,12 +935,12 @@ registry lookup is needed.
 **Condition.** A role value names no known role, including the legacy
 spellings.
 
-**Why.** Roles decide what sync and push will do to a repo. An unrecognised
-role has no defined behaviour, and defaulting one would apply a policy the
+**Why.** Roles decide what sync and push will do to a repo. An unrecognized
+role has no defined behavior, and defaulting one would apply a policy the
 manifest did not ask for.
 
 **Exits.** Use one of the values in [Roles](./roles.md). Legacy spellings are
-recognised well enough to be rejected by name rather than silently accepted.
+recognized well enough to be rejected by name rather than silently accepted.
 
 ### `unknown-verb`
 
@@ -1052,7 +1052,7 @@ disagreement about intent rather than a precedence question a default could
 answer silently).
 
 **Why.** Each of these would silently create something other than what the
-operator asked for — a directory materialised from a typo, a parameter no
+operator asked for — a directory materialized from a typo, a parameter no
 registry reads, an upstream the weave itself would walk, delete, and report
 on as one of its own members, or a value picked by unstated precedence
 between two the operator gave.

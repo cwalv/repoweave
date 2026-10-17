@@ -179,7 +179,7 @@ fn regex_dot_star_crosses_slash() {
 
 /// Regex selectors are **unanchored by default** — the regex crate does
 /// substring matching unless the pattern uses `^` / `$`. This is the same
-/// behaviour as `grep -E`; pin it explicitly so docs that show `re:foo` can
+/// behavior as `grep -E`; pin it explicitly so docs that show `re:foo` can
 /// rely on substring semantics.
 #[test]
 fn regex_unanchored_by_default() {
@@ -200,7 +200,7 @@ fn exact_selector_does_not_interpret_special_characters() {
 }
 
 /// Whitespace and unicode in regex/glob patterns: the parsers don't trim
-/// or normalise; pin the verbatim-match contract.
+/// or normalize; pin the verbatim-match contract.
 #[test]
 fn glob_with_unicode_passes_through() {
     let filter = RepoFilter::parse(&[], &["glob:github/café/*".into()]).unwrap();

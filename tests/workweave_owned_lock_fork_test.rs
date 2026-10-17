@@ -22,7 +22,7 @@
 //! fixture's crates could produce. A real `cargo generate-lockfile` here
 //! would resolve two path-dependency crates deterministically, so its output
 //! would be byte-identical whether the fork copied it or regenerated it —
-//! a test built on that passes without the behaviour it means to pin.
+//! a test built on that passes without the behavior it means to pin.
 
 use std::path::{Path, PathBuf};
 

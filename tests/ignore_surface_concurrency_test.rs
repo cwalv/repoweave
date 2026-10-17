@@ -4,7 +4,7 @@
 //! ledger are both files of `projects/<p>/`, so their VCS-hygiene appends land
 //! on one ignore surface — `.git/info/exclude` when the project is a git
 //! checkout. Each writer runs under the claim of its own record; nothing
-//! serialises the two families against each other, and they contribute
+//! serializes the two families against each other, and they contribute
 //! different names. A surface republished whole-file from a read that predates
 //! the other family's append drops that family's names with both writers
 //! exiting zero.

@@ -89,17 +89,17 @@ A module that must move takes that scope with it: widen
 own seeded failure, and measure what those checks report once they can see
 it.
 
-## Behavioural pins and structural pins
+## Behavioral pins and structural pins
 
-A **behavioural pin** asserts an observable outcome through a supported
+A **behavioral pin** asserts an observable outcome through a supported
 surface: the shipped binary, published wire bytes, a rendered message. A
 **structural pin** asserts a property of the source itself: a scan, a
 count, a call-site arity, a compile-fail probe.
 
-Behavioural is the default. A structural pin is licensed in exactly two
+Behavioral is the default. A structural pin is licensed in exactly two
 situations, and the license is stated in the test's own doc comment:
 
-- **No behavioural assertion can distinguish** correct from broken on any
+- **No behavioral assertion can distinguish** correct from broken on any
   platform or fixture the suite reaches. Two shipped precedents: a spelling
   seam whose two spellings are byte-identical on the platform the suite
   runs on (`operator_path` vs `.display()` off Windows — dunce
@@ -110,7 +110,7 @@ situations, and the license is stated in the test's own doc comment:
   census, a destructive-call inventory
   (`tests/destructive_ops_audit_test.rs`).
 
-Expense is not a license: a behavioural drive that would merely be slow is
+Expense is not a license: a behavioral drive that would merely be slow is
 still the required form. Only impossibility on every reachable platform and
 fixture licenses the structural stand-in.
 
@@ -193,7 +193,7 @@ Complementarity claims carry the same burden again: when two instruments
 are described as complements ("variant width is that file's job;
 byte-level minting is this one's"), the claim must name a defect each
 alone would miss and show the other catches it. A claimed division of
-labour can have a hole in the middle that each half's own stated remit
+labor can have a hole in the middle that each half's own stated remit
 hides.
 
 ## Fixture discipline
@@ -283,7 +283,7 @@ Gates, scans, and summaries are tested like the code they guard:
 - Feed a known red through any new summary or filter before trusting its
   green — field-separator quirks and pattern edge cases drop lines
   silently.
-- Per-suite numbers require self-labelling output — invoke one suite at a
+- Per-suite numbers require self-labeling output — invoke one suite at a
   time, or pair each result block with the header naming its suite.
   Positional reading of multi-unit output fabricates attributions.
 - Prove the gate cannot print green on failure: a terminal "all passed"

@@ -545,7 +545,7 @@ fn doctor_fix_never_renames_a_legacy_nested_workweave() {
 
 /// `--fix` reports the disposition register as its own authority, so the
 /// prohibition above is also readable there. Both are asserted: the register
-/// entry is what a future change would edit, and the behaviour above is what
+/// entry is what a future change would edit, and the behavior above is what
 /// an operator would notice.
 #[test]
 fn the_nested_finding_is_declared_report_only() {

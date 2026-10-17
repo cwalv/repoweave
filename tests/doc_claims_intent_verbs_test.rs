@@ -528,7 +528,7 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 // disk-driven: its first arm looks for repos with a root `Cargo.toml` on
 // disk, and `init --adopt` clones only the project repo, so that arm is
 // always empty at adopt time. A fixture that relies on it produces a no-op in
-// BOTH activation modes — a test that passes whether or not the behaviour
+// BOTH activation modes — a test that passes whether or not the behavior
 // under test is correct.
 //
 // The gate's second arm is the way in: a repo named by
@@ -749,7 +749,7 @@ lto = true
 // path, which the same adopt runs and which is NOT subject to "never author"
 // — see docs/explanation/joints/file-ownership.md §"Install hooks at context
 // verbs: lockfiles may be rewritten". Without a test in this direction the
-// behaviour is unexercised both ways, which is the state most likely to
+// behavior is unexercised both ways, which is the state most likely to
 // change by accident: a future reader who takes "adopt never re-authors
 // committed content" as unscoped would suppress the hook and break nothing
 // visible.

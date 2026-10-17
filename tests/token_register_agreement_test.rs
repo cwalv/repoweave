@@ -15,7 +15,7 @@
 //! the reuse set is asserted here as a set rather than checked pair by pair
 //! inside one register's own tests.
 //!
-//! Structural, under docs/internals/testing.md's licence 2 — a prohibition over an enumerable
+//! Structural, under docs/internals/testing.md's license 2 — a prohibition over an enumerable
 //! population. The populations are read out of the source that declares them,
 //! never listed here; the one thing this file states is *intent*, which is the
 //! one thing source cannot tell you (see [`INTENDED_REUSE`]).
@@ -26,7 +26,7 @@
 //! each, so every arm is in range whatever it is spelled like. A token built by
 //! concatenation is still invisible; one written as a constant is resolved.
 //!
-//! **A field value is not a condition.** `ConflictOp` serialises `rebase` /
+//! **A field value is not a condition.** `ConflictOp` serializes `rebase` /
 //! `merge` / `cherry-pick` into `--json`, but as the `op` field *inside* the
 //! `rebase-conflict` condition rather than as a `kind` discriminant. It answers
 //! which operation was in flight; it never names what happened, so it earns no
@@ -269,7 +269,7 @@ fn arm_count(source: &str, signature: &str) -> usize {
 /// kebabbed, **except** where an explicit `#[serde(rename = "…")]` overrides
 /// one.
 ///
-/// Honouring the override is not a nicety. A variant attribute is how a token
+/// Honoring the override is not a nicety. A variant attribute is how a token
 /// is renamed without touching Rust code, so a parser that reads only variant
 /// names is blind to the exact edit this file exists to catch — three
 /// mutations proved it by slipping past an earlier version of this function.
@@ -314,7 +314,7 @@ fn refusal_tokens() -> BTreeSet<String> {
 }
 
 /// The op names `ConflictOp` puts on the wire, read from the declaration that
-/// serialises them rather than from the `Display` impl that spells them a
+/// serializes them rather than from the `Display` impl that spells them a
 /// second time.
 ///
 /// Reading `Display` would be reading the wrong producer: a `#[serde(rename)]`
@@ -356,7 +356,7 @@ fn kebab(name: &str) -> String {
 /// signature of the one function that mints its tokens.
 ///
 /// `sync` is the one whose minting function is not itself the wire producer:
-/// `rwv sync --json` serialises `SyncFailureOutput` and never calls
+/// `rwv sync --json` serializes `SyncFailureOutput` and never calls
 /// `SyncFailure::kind`. Reading the match arms is faithful only because
 /// `sync_failure_kind_matches_wire_tag` pins the two spellings against each
 /// other over every variant, so a rename on the wire side cannot pass while the
@@ -387,7 +387,7 @@ fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
 /// Every arm of a minting function yielded a token.
 ///
 /// The direction a floor cannot assert. `arm_tokens` recovers what it can
-/// recognise, so a register that changes how one arm is spelled loses that
+/// recognize, so a register that changes how one arm is spelled loses that
 /// token silently and every comparison downstream narrows by one — while the
 /// walk still returns plenty and the floor still passes. Comparing the count
 /// against the arms in range is what makes the walk total rather than merely
@@ -511,7 +511,7 @@ fn an_op_name_is_not_also_a_condition_name() {
     assert_eq!(
         ops.len(),
         arms,
-        "ConflictOp declares {} serialised op names against {arms} `Display` arms; one \
+        "ConflictOp declares {} serialized op names against {arms} `Display` arms; one \
          producer moved without the other, or the declaration walk has gone blind:\n{ops:#?}",
         ops.len()
     );
@@ -911,7 +911,7 @@ const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
 /// `docs/reference/schemas/`, not from source: these are outcome tags, drift
 /// classifications, and lock/containment relations minted across a dozen
 /// files with three different schemars shapes depending on whether a variant
-/// carries a doc comment or fields, and the artifacts already normalise that
+/// carries a doc comment or fields, and the artifacts already normalize that
 /// for every verb that publishes one. They are `generate-explain`'s own
 /// output and are drift-gated by `scripts/ci-local.sh`'s final stage, so a
 /// stale artifact here is a stale artifact everywhere else that reads one.

@@ -40,7 +40,7 @@ fn e2e_workweave_isolation_with_go_ecosystem() {
     // Workspace root is tmp/ws (mirrors the naming used in workweave_test.rs).
     let ws = root.join("ws");
 
-    // Registry marker so repoweave recognises it as a workspace root.
+    // Registry marker so repoweave recognizes it as a workspace root.
     std::fs::create_dir_all(ws.join("github")).unwrap();
     std::fs::create_dir_all(ws.join("projects")).unwrap();
 

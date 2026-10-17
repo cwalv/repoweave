@@ -64,7 +64,7 @@ fn make_minimal_workspace(tmp: &Path, project: &str) -> PathBuf {
     )
     .unwrap();
     fs::write(ws.join(".rwv-active"), format!("{project}\n")).unwrap();
-    // Initialise the git repo so doctor can do branch checks.
+    // Initialize the git repo so doctor can do branch checks.
     common::git()
         .args(["init", "-b", "main"])
         .current_dir(&ws)

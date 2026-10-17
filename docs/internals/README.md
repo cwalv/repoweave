@@ -28,7 +28,7 @@ material will actually be found. Location is filing, not a boundary. The banner
 is the boundary — it travels with the text to wherever it is read from.
 
 The failure it exists to prevent is specific: an accurate description of the
-on-disk shape of a workweave, read as a licence to manipulate that shape
+on-disk shape of a workweave, read as a license to manipulate that shape
 directly, followed by a file-level operation that leaves rwv's recorded state
 disagreeing with the tree. `rwv doctor`'s tree-integrity checks are the backstop
 that catches that class of damage; the banner is the part that tries to make the

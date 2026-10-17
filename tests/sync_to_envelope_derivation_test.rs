@@ -19,14 +19,14 @@
 //! fixture cannot distinguish them, and the read whose two candidates are
 //! separated only by timing — a repo's HEAD moving between two adjacent
 //! reads — is a race no fixture can arrange. The resumed-op path, where the
-//! candidates hold different values, has behavioural tests; see below.
+//! candidates hold different values, has behavioral tests; see below.
 //!
 //! Residue: these are token scans, and a token scan catches the recomputation
 //! only in the spelling it left in. Reading the checkout off some other
 //! context, re-resolving the target through a helper, taking the target's HEAD
 //! through a binding named something else — each passes both scans.
 //!
-//! The three identity fields have one path where behaviour separates the two
+//! The three identity fields have one path where behavior separates the two
 //! derivations, and the two `resumed_sync_to_json_run_*` tests in
 //! `tests/sync_to_json_test.rs` take it: a stranded op resumed through the
 //! library, from each of its two sides, where what the invocation carries and

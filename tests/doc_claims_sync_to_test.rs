@@ -247,7 +247,7 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
 
 /// `rwv explain sync-to` prints sync-to's bundle, not `rwv sync`'s.
 ///
-/// The two are neighbouring entries in one dispatch table, so a swapped
+/// The two are neighboring entries in one dispatch table, so a swapped
 /// mapping is the defect here — and containment on `"sync-to"` is blind to
 /// it: the sync bundle names `rwv sync-to` in its own prose eight times, and
 /// describes steps of its own. Two things are the sync-to bundle's alone: the

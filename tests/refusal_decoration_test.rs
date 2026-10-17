@@ -152,7 +152,7 @@ fn fetch_occupied_project_refuses_once() {
 /// that owns the decoration is the one that renders it.
 ///
 /// Structural because the population is a prohibition over every operator
-/// message the crate can mint, and the behavioural pins above reach only the
+/// message the crate can mint, and the behavioral pins above reach only the
 /// five refusals a fixture can drive: a sixth site added tomorrow in a verb
 /// nothing here invokes is invisible to them and visible to this.
 ///

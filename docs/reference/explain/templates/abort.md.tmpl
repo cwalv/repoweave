@@ -37,7 +37,7 @@ classification:
 | Equal to the savepoint | `untouched` — op never moved this repo; HEAD not touched |
 | Equal to the recorded intent tip (`advanced_tips[repo]`) | `restored (from recorded intent tip)` — op advanced this repo during replay before crashing; reset to savepoint |
 | Equal to the recorded converged tip (`converged_tips[repo]`) | `restored (from recorded converged tip)` — op converged repo before crash; reset to savepoint |
-| Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored (from mid-op state)` — mid-op cancelled; reset to savepoint |
+| Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored (from mid-op state)` — mid-op canceled; reset to savepoint |
 | Anything else | `foreign-tip violation` — restore refused; violation reported |
 | Anything else, in a repo named on `--abandon-foreign-tip` | `restored (abandoned foreign tip)` — reset to savepoint; the foreign tip stays reachable at the rail-1 reference |
 
@@ -94,7 +94,7 @@ commits are not wanted". It waives rail 2 for the repo it names — abort resets
 that repo to the savepoint even though the tip is unattributable — and waives
 nothing anywhere else. Repeat it per repo. **There is no all-repos form**, by
 design: whether abandoning a repo's foreign commits is acceptable is a
-judgement about those specific commits, and a blanket spelling would answer it
+judgment about those specific commits, and a blanket spelling would answer it
 for repos the operator never looked at. `abort` with no flag still refuses.
 
 The flag is named for the consequence it permits, and the name is accurate
@@ -248,7 +248,7 @@ flag, so the tip abort sees is one it can attribute to the op.
   with `--abandon-foreign-tip=<repo>` if the foreign commits are unwanted.
 - *foreign-tip violation on a repo named by `--abandon-foreign-tip`* — the
   pre-abort reference holds an earlier tip than the observed one, so the
-  consent could not be honoured without destroying the commits in between.
+  consent could not be honored without destroying the commits in between.
   The message names the captured tip. Re-point or copy off those commits,
   then re-run.
 - *create pre-abort ref failed* — abort could not write the pre-abort reference

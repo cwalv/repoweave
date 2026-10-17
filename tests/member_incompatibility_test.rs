@@ -75,7 +75,7 @@ fn go_is_installed() -> bool {
 }
 
 /// Surface `<ws>/<file>` the way rwv does: a symlink with a **relative**
-/// target. An absolute one is not recognised as owner-scoped by the surfacing
+/// target. An absolute one is not recognized as owner-scoped by the surfacing
 /// layer, which then refuses to replace it and warns.
 fn surface(ws: &Path, project_name: &str, file: &str) {
     repoweave::symlink::create(

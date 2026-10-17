@@ -410,7 +410,7 @@ pub fn run_and_report() -> std::process::ExitCode {
     }
 }
 
-/// Parse `argv` and run the requested verb. The whole of `rwv`'s behaviour
+/// Parse `argv` and run the requested verb. The whole of `rwv`'s behavior
 /// hangs off this call; `main.rs` does nothing but forward to it.
 pub fn run() -> anyhow::Result<()> {
     // Early-dispatch did-you-mean hints for removed/relocated flags.
@@ -1225,7 +1225,7 @@ pub fn run() -> anyhow::Result<()> {
             }
         },
         Some(Commands::External(argv)) => {
-            // clap routes any subcommand it does not recognise here. The
+            // clap routes any subcommand it does not recognize here. The
             // "builtin first" invariant is enforced by clap's match order:
             // a plugin named `rwv-status` cannot shadow the core `status`
             // verb because clap already matched `status` to `Commands::Status`

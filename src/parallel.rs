@@ -14,7 +14,7 @@
 //! - [`Reporter`] abstracts how per-repo progress lines reach the user.
 //!   `Reporter::Serial` calls `println!`/`eprintln!` directly, with no
 //!   prefix. `Reporter::Parallel { prefix }` prepends `[<prefix>] ` to each
-//!   line and serialises writes through a shared mutex so lines from
+//!   line and serializes writes through a shared mutex so lines from
 //!   different workers don't interleave mid-line.
 //! - [`run_subprocess_with_reporter`] spawns a `Command`, captures
 //!   stdout/stderr; under `Serial` it captures both streams and reports
@@ -136,14 +136,14 @@ impl<'a> Reporter<'a> {
 
     /// Prefixed reporter. `prefix` is the per-line tag (typically the
     /// manifest's `repo_path`); `write_lock` is the shared mutex
-    /// serialising writes to rwv's stdout/stderr across workers.
+    /// serializing writes to rwv's stdout/stderr across workers.
     pub fn parallel(prefix: String, write_lock: &'a Mutex<()>) -> Self {
         Self {
             inner: ReporterInner::Parallel { prefix, write_lock },
         }
     }
 
-    /// True iff this reporter prepends a prefix and serialises writes
+    /// True iff this reporter prepends a prefix and serializes writes
     /// (i.e., is being used from a worker thread under `-j > 1`).
     pub fn is_parallel(&self) -> bool {
         matches!(self.inner, ReporterInner::Parallel { .. })
@@ -258,7 +258,7 @@ where
 /// `status` is the child exit status. `stderr_capture` is the stderr
 /// content that the caller may want to surface in an error message —
 /// under `Reporter::Serial` this is the full captured stderr (matching
-/// `Command::output()` behaviour); under `Reporter::Parallel` it is
+/// `Command::output()` behavior); under `Reporter::Parallel` it is
 /// `String::new()` because stderr has already been streamed to the
 /// user, prefixed, and re-capturing would either duplicate output or
 /// require buffering an entire stream just for the error path.
@@ -277,14 +277,14 @@ pub struct SubprocessOutcome {
 ///
 /// Under `Reporter::Parallel` each stream is read line-by-line and
 /// forwarded through `Reporter::out` / `Reporter::err` (which prepend
-/// the per-repo prefix and serialise writes). The user sees per-repo
+/// the per-repo prefix and serialize writes). The user sees per-repo
 /// progress as it happens, even when other workers are mid-fetch.
 pub fn run_subprocess_with_reporter(
     cmd: &mut Command,
     reporter: &Reporter<'_>,
 ) -> std::io::Result<SubprocessOutcome> {
     if !reporter.is_parallel() {
-        // Capture-only: identical to Command::output() behaviour.
+        // Capture-only: identical to Command::output() behavior.
         // Silent mode and serial mode both capture rather than stream;
         // the distinction is in whether the caller surfaces the output.
         let output = cmd.output()?;
@@ -410,17 +410,17 @@ mod tests {
         assert_eq!(out, expected);
     }
 
-    /// Silent serialisation is invisible to `tests/parallel_test.rs`: with
+    /// Silent serialization is invisible to `tests/parallel_test.rs`: with
     /// the pool clamped to one worker every `-j` acceptance test there still
     /// passes, because the prefix, the lock and the aggregation depend on
     /// `jobs > 1`, not on the workers existing. Wall time is the only
     /// observable that separates them.
     #[test]
     fn run_in_parallel_actually_runs_in_parallel() {
-        // Run 4 tasks that each sleep 100ms with 4 workers. If serialised
+        // Run 4 tasks that each sleep 100ms with 4 workers. If serialized
         // wall time would be ~400ms; under real parallelism it should be
         // closer to ~100ms. Allow generous slack to avoid flakes on busy
-        // CI hosts but still catch "accidentally serialised" regressions.
+        // CI hosts but still catch "accidentally serialized" regressions.
         let items = vec![100u64, 100, 100, 100];
         let start = std::time::Instant::now();
         let _out: Vec<()> = run_in_parallel(&items, 4, |_i, ms| {
@@ -429,7 +429,7 @@ mod tests {
         let elapsed = start.elapsed();
         assert!(
             elapsed < std::time::Duration::from_millis(350),
-            "expected ~100ms under -j 4, got {:?} (looks serialised)",
+            "expected ~100ms under -j 4, got {:?} (looks serialized)",
             elapsed
         );
     }
@@ -479,7 +479,7 @@ mod tests {
 
     /// `-j 0` resolves to `usize::MAX` (the debug "unlimited" path) and
     /// `run_in_parallel` clamps the spawn count to `items.len()`. The
-    /// visible behaviour: no panic, results in input order, no work
+    /// visible behavior: no panic, results in input order, no work
     /// dropped. Without clamping, this would attempt to spawn
     /// `usize::MAX` worker threads and either OOM or panic.
     #[test]
@@ -652,7 +652,7 @@ mod tests {
 
     /// `forward_stream` reads UTF-8 line-by-line via `BufReader::lines()`,
     /// stops on EOF, and never panics on a broken stream. Pin the
-    /// stop-on-EOF behaviour directly via an in-memory cursor (no
+    /// stop-on-EOF behavior directly via an in-memory cursor (no
     /// subprocess needed). Output goes to the test process's stdout —
     /// we can't easily intercept it, but we can confirm the function
     /// returns cleanly.

@@ -9,7 +9,7 @@
 //! The `go` tool round-trips `replace`/`toolchain`/`godebug` and all comments
 //! via x/mod/modfile.
 //!
-//! Guarding rwv's own `-go=` call is not sufficient to honour DefaultOnly on
+//! Guarding rwv's own `-go=` call is not sufficient to honor DefaultOnly on
 //! this path: `go work use` raises the go directive to the strongest `go`
 //! requirement across the modules it adds, whatever the file said, and `go work
 //! init` stamps a fresh file with the version of whichever `go` ran it. So the
@@ -1328,7 +1328,7 @@ mod tests {
     /// it is not.
     ///
     /// The PRIMARY path *is* `go work`; there is nothing to exercise without
-    /// the tool, and a stub `go` on PATH would pin the stub's behaviour rather
+    /// the tool, and a stub `go` on PATH would pin the stub's behavior rather
     /// than the side effect these tests exist to catch. A machine without `go`
     /// takes the FALLBACK path, which the tests above pin in full — what goes
     /// unproven there is not rwv's logic but the premise that the tool clobbers
@@ -1550,7 +1550,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // The absence below is the behaviour, not an oversight. `go work init`
+    // The absence below is the behavior, not an oversight. `go work init`
     // stamps the running toolchain's version into a fresh go.work, which is a
     // property of the machine rather than of the workspace, and go.work is
     // committed — publishing it would hand whoever activated first a pin that

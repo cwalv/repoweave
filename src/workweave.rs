@@ -526,7 +526,7 @@ struct RefAttempt {
 /// before bailing so that cleanup failures can be appended to the returned
 /// error message rather than only being printed to stderr.
 ///
-/// **Design:** A single drop-based guard centralises rollback so future code
+/// **Design:** A single drop-based guard centralizes rollback so future code
 /// cannot accidentally bypass it. Adding a new failure point that returns early
 /// (via `?` or `bail!`) automatically triggers cleanup — no extra boilerplate
 /// required.
@@ -1558,10 +1558,10 @@ pub fn create_workweave(
                 // Both waivers on the internal delete: the at-risk scan
                 // above just confirmed there is nothing uncommitted or
                 // unmerged to lose, and the operator's --replace-existing
-                // already authorised replacing the (clean) workweave.
+                // already authorized replacing the (clean) workweave.
                 // `--discard-uncommitted` on the internal delete: the at-risk
                 // scan above just confirmed there is nothing uncommitted to
-                // lose, and --replace-existing authorised replacing the (clean)
+                // lose, and --replace-existing authorized replacing the (clean)
                 // workweave. No unmerged-commits consent is passed and none is
                 // constructible here — that token is minted only from
                 // `--discard-unmerged-commits` at CLI dispatch. The scan
@@ -4068,7 +4068,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn a_hook_rejection_is_recognised_through_the_anyhow_conversion() {
+    fn a_hook_rejection_is_recognized_through_the_anyhow_conversion() {
         let e = anyhow::Error::from(VcsError::HookRejected {
             repo: PathBuf::from("/store"),
             stderr: "denied by policy".to_owned(),
@@ -4115,7 +4115,7 @@ mod tests {
 
     #[test]
     fn claude_hook_unknown_event_errors() {
-        // Deserialise directly and call the dispatch logic via the public API.
+        // Deserialize directly and call the dispatch logic via the public API.
         // We simulate by constructing the input struct.
         let json = r#"{"hook_event_name":"UnknownEvent"}"#;
         let input: ClaudeHookInput = serde_json::from_str(json).unwrap();
@@ -4135,7 +4135,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_hook_input_deserialises_fully() {
+    fn claude_hook_input_deserializes_fully() {
         let wt_path = std::env::temp_dir().join("wt");
         let wt_str = wt_path.to_str().unwrap();
         let json = serde_json::json!({
@@ -4414,7 +4414,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_baselines_recognises_an_unresolved_spelling_of_the_parent() {
+    fn merge_baselines_recognizes_an_unresolved_spelling_of_the_parent() {
         let (_tmp, primary, workweave_dir) = forked_from_primary();
         let detoured = primary.join("..").join("ws");
         assert_eq!(

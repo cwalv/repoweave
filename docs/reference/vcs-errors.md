@@ -17,7 +17,7 @@ is built rather than anything about the failure.
 
 [Refusals](./refusals.md) names conditions rwv *could have acted on and
 declined*. The names here are the other half: a git call rwv was in the middle
-of came back with a failure it could recognise. rwv did not decline — it was
+of came back with a failure it could recognize. rwv did not decline — it was
 stopped. VCS and filesystem passthroughs are outside the refusal class on
 purpose: the absence of a refusal token is meant to be informative, so a
 passthrough must not borrow one.

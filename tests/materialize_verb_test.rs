@@ -281,7 +281,7 @@ fn materialize_takes_no_project_argument() {
 // dead end if the verb it names is refused where it prints.
 //
 // The discriminator is the resolve, not the bytes: `cargo fetch` re-serializes
-// a lock it honours, so a probe that watches for a hand-written line reports
+// a lock it honors, so a probe that watches for a hand-written line reports
 // destruction where the pin in fact survived.
 
 /// Materialize once so the lock exists and is attested, then pin it back to the
@@ -467,9 +467,9 @@ fn move_the_managed_members_list(f: &Fixture) -> (PathBuf, String) {
 ///
 /// A2's refusal does not reach here. It runs in activation's materialize mode,
 /// and `--fix` re-enters through the intent mode, which reports arrived drift
-/// and proceeds. The per-finding `safe_to_fix` is no defence either — it keeps
+/// and proceeds. The per-finding `safe_to_fix` is no defense either — it keeps
 /// `--fix` off the drift finding and says nothing about a repair entered for a
-/// neighbour.
+/// neighbor.
 ///
 /// The second half is the control. "The pin did not move" is equally true of a
 /// doctor that regenerates nothing, so the same fixture is shown moving it once
@@ -495,7 +495,7 @@ fn doctor_fix_withholds_regeneration_while_drift_is_unsettled() {
     assert_eq!(
         locked_pinnable_version(&std::fs::read_to_string(&lock).unwrap()).as_deref(),
         Some("0.1.0"),
-        "fixture premise, not the pin: cargo honours a lock that satisfies its \
+        "fixture premise, not the pin: cargo honors a lock that satisfies its \
          constraints, so these bytes survive a regeneration and cannot tell the \
          two exits apart. The attestation is what moves — the next assertion is \
          the one under test"
@@ -503,7 +503,7 @@ fn doctor_fix_withholds_regeneration_while_drift_is_unsettled() {
     let (_, still) = f.rwv(&["doctor"], &f.ww);
     assert!(
         still.contains("differs from the last rwv-accepted generation"),
-        "and the drift must still be UNACCEPTED afterwards. Cargo honours a \
+        "and the drift must still be UNACCEPTED afterwards. Cargo honors a \
          lock that satisfies its constraints, so the bytes survive a \
          regeneration either way — what a re-entered activation moves is the \
          attestation, and moving it is `--adopt-drifted` with nobody's \

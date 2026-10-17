@@ -39,7 +39,7 @@ which may move — so what you looked up once stays lookupable.
 - `rwv explain` also serves the VCS wire kinds and the sync failure kinds
   `ff-impossible` and `rebase-failed`. `rwv sync --json` published those and
   nothing explained them.
-- The suggestion hint for an unrecognised name now spans tokens as well as verbs.
+- The suggestion hint for an unrecognized name now spans tokens as well as verbs.
 
 ### Breaking: three tokens leave the `--json` VCS wire surface
 

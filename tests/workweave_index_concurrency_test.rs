@@ -23,7 +23,7 @@
 //! index's exclusion is a claim file created exclusively; a recorder that
 //! cannot create it waits out the claim budget and refuses with
 //! `state-claim-held`. The recorder drive creates that file itself, so while it
-//! holds the claim a recorder that honours the exclusion has exactly one
+//! holds the claim a recorder that honors the exclusion has exactly one
 //! possible outcome — refusal — and one that does not succeeds. Neither
 //! outcome depends on how the scheduler interleaves the children, because the
 //! holder is the test and releases only after every child has exited.

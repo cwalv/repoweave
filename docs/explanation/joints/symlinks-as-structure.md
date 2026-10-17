@@ -52,7 +52,7 @@ writing a file correctly.
 Second, hardlinks cannot name directories at all, so any directory-valued
 surfacing entry is out of reach by construction. A hardlink strategy could at
 best cover part of the sites, which means shipping two mechanisms and two
-behaviours to test.
+behaviors to test.
 
 (`durable_file::create_new` does call `hard_link`, and that is not an exception
 to this. It links a staged temp into place to get an atomic exclusive publish
@@ -80,7 +80,7 @@ The rule is refusal at the first failed link, carrying what to do about it.
 
 Windows gets full symlink parity: `rwv` creates real symbolic links there, with
 no fallback mechanism of any kind. One mechanism, one set of semantics, one
-behaviour to test.
+behavior to test.
 
 The cost is a precondition. `CreateSymbolicLinkW` succeeds for a process
 holding `SeCreateSymbolicLink` (an elevated process, in practice), or on a
@@ -142,7 +142,7 @@ it.
   owned-file digest ledger is not the structurally-invisible copy this joint
   closes: drift between the copy and its source becomes a `doctor` staleness
   finding, and `rwv materialize` re-derives it. The write-through direction is
-  still lost, which is a real behaviour change and would have to be stated to
+  still lost, which is a real behavior change and would have to be stated to
   the operator, not papered over.
 
 The revisit trigger is structural, not a date: **a real Windows adopter for

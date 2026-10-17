@@ -62,7 +62,7 @@ fn names_the_cargo_command(line: &str) -> bool {
 }
 
 /// Structural license: a prohibition over an enumerable population — the
-/// hook's own non-comment lines. The behavioural sibling below
+/// hook's own non-comment lines. The behavioral sibling below
 /// (`stub_cargo_count == gate runs * 7`) sees only invocations on a path the
 /// fixture drives whose output reaches the hook's stdout, and both of those
 /// are escapable: a `cargo` call in the CI-not-green refusal arm, which the
@@ -78,7 +78,7 @@ fn names_the_cargo_command(line: &str) -> bool {
 ///
 /// The complement runs the other way: the hook can delegate to
 /// `scripts/ci-local.sh --stages=check` — no bare cargo, still a subset gate —
-/// and only the behavioural count reddens.
+/// and only the behavioral count reddens.
 #[test]
 fn contains_no_bare_cargo_invocations() {
     let text = std::fs::read_to_string(pre_push_hook()).expect("pre-push hook should exist");

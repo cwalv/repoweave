@@ -60,9 +60,9 @@ fn the_three_mints_agree_and_round_trip() {
     for role in roles {
         let via_as_str = role.as_str();
 
-        let via_serde = match toml::Value::try_from(role).expect("Role serialises") {
+        let via_serde = match toml::Value::try_from(role).expect("Role serializes") {
             toml::Value::String(s) => s,
-            other => panic!("Role must serialise as a string scalar, got {other:?}"),
+            other => panic!("Role must serialize as a string scalar, got {other:?}"),
         };
         assert_eq!(
             via_serde, via_as_str,
@@ -92,7 +92,7 @@ fn the_three_mints_agree_and_round_trip() {
 }
 
 /// The legacy spelling must reach the migration hint, not a silent accept and
-/// not a bare "unrecognised" message.
+/// not a bare "unrecognized" message.
 ///
 /// Nothing rewrites a manifest carrying it, so the sentence is the whole
 /// remedy: it has to name both the spelling being refused and the one to

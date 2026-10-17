@@ -264,7 +264,7 @@ pub enum ConflictOp {
 }
 
 impl std::fmt::Display for ConflictOp {
-    /// The hyphen-spelled op name, matching what this enum serialises to.
+    /// The hyphen-spelled op name, matching what this enum serializes to.
     /// Callers compose `mid-{op}` messages from it rather than carrying a
     /// second copy of the VCS's vocabulary.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -384,7 +384,7 @@ pub enum VcsError {
     /// worktree and its registration are already written when the hook runs,
     /// so the destination is registered even though the command failed.
     /// `stderr` is the hook author's text, not the VCS's — git's own output
-    /// names no hook, which is why this cannot be recognised by reading it.
+    /// names no hook, which is why this cannot be recognized by reading it.
     ///
     /// **The evidence is weaker than the name.** What the producer observes is
     /// that the add registered the destination and then failed, which says the
@@ -396,7 +396,7 @@ pub enum VcsError {
     ///
     /// What is not excluded is a checkout that dies of its own accord after
     /// git writes the entry. Nothing here has reproduced one — it is an
-    /// unmeasured gap in the discriminator, not an observed behaviour — so
+    /// unmeasured gap in the discriminator, not an observed behavior — so
     /// widen the evidence before relying on this variant to mean a hook
     /// specifically.
     ///
@@ -666,7 +666,7 @@ pub enum VerifiedRestoreOutcome {
     /// to the savepoint. Exact-match only — no heuristic.
     RestoredFromIntent,
     /// The repo was in a VCS-native mid-op state (rebase/merge/cherry-
-    /// pick). The mid-op was cancelled and the repo was reset back to
+    /// pick). The mid-op was canceled and the repo was reset back to
     /// the savepoint.
     RestoredFromMidOp,
     /// The repo's tip is not attributable to the op — it is neither the
@@ -1012,7 +1012,7 @@ impl fmt::Display for EphemeralRefName {
 /// whether the observed name sits under it. The observed name is never split
 /// into parts and no part of it is handed on: the answer is this whole name
 /// or nothing. So the migration cannot reconstruct which workweave a stray
-/// `<a>--<b>/<c>` belonged to — it can only recognise a ref inside a
+/// `<a>--<b>/<c>` belonged to — it can only recognize a ref inside a
 /// namespace it is standing in.
 ///
 /// That is not "ownership by name shape". It authorizes exactly one thing: a
@@ -1407,7 +1407,7 @@ impl fmt::Display for RemoteDefaultBranch {
 /// constraint or a default, is **open** — and this type is where the
 /// deferral is visible: a deferred
 /// decision with a producer, rather than a placeholder without one. The
-/// gate calls `from_attached`, preserving today's behaviour; nothing here
+/// gate calls `from_attached`, preserving today's behavior; nothing here
 /// decides the policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishRef(RawRefName);
@@ -1830,7 +1830,7 @@ impl DerivedContentPolicy {
     /// Declared derived paths keep the **target-side** version.
     ///
     /// The policy rwv operations carry: a replayed edit to derived content
-    /// is dropped in favour of the version at the destination, so a
+    /// is dropped in favor of the version at the destination, so a
     /// derived-only commit lands as an empty patch instead of a conflict.
     /// What makes the result correct is not this resolution — it is the
     /// regeneration the repo's gates force afterwards. The resolution only
@@ -1845,7 +1845,7 @@ impl DerivedContentPolicy {
     /// The shape of an operation rwv did not make — a hand-run VCS command
     /// resolves declared paths textually, because the definition a
     /// declaration names does not travel with the repo. Available as a value
-    /// so a call site that wants that behaviour *states* it rather than
+    /// so a call site that wants that behavior *states* it rather than
     /// omitting an argument.
     ///
     /// Not a promise that no resolver is defined: a definition the repo
@@ -2075,7 +2075,7 @@ pub trait Vcs: Send + Sync {
     /// A path the VCS does not know — untracked, ignored, or outside the repo
     /// entirely — is `Ok(false)`. `Err` is reserved for the VCS itself being
     /// unreachable, so a caller that wants the historical
-    /// never-fabricate-a-finding behaviour writes `.unwrap_or(false)` and says
+    /// never-fabricate-a-finding behavior writes `.unwrap_or(false)` and says
     /// so at its own site.
     ///
     /// For git: runs
@@ -2409,7 +2409,7 @@ pub trait Vcs: Send + Sync {
     /// For git: runs
     /// `git rev-list --count <from>..<to>`. The bounded count is what
     /// callers like `rwv sync`'s `AlreadyAhead` reporting actually need —
-    /// no commit list is materialised.
+    /// no commit list is materialized.
     fn count_commits_in_range(
         &self,
         repo: &Path,
@@ -2505,7 +2505,7 @@ pub trait Vcs: Send + Sync {
     /// Classification (evaluated in order):
     /// - no savepoint exists for `op_id` → [`VerifiedRestoreOutcome::NoSavepoint`].
     /// - repo is in a VCS-native mid-op state (rebase/merge/cherry-pick)
-    ///   → mid-op is cancelled and restore proceeds, returning
+    ///   → mid-op is canceled and restore proceeds, returning
     ///   [`VerifiedRestoreOutcome::RestoredFromMidOp`].
     /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`],
     ///   restore is a no-op (HEAD is not touched).
@@ -2528,7 +2528,7 @@ pub trait Vcs: Send + Sync {
     /// the observed tip. Where it does not, the outcome is
     /// [`VerifiedRestoreOutcome::ForeignTip`] as if no consent had been
     /// given: moving off a tip nothing else names is destruction, which no
-    /// flag on this call can authorise.
+    /// flag on this call can authorize.
     ///
     /// `recorded_intent_tip` is the SHA the owner record's `advanced_tips`
     /// map holds for this repo (written at replay entry), or `None` when no
@@ -3185,7 +3185,7 @@ pub trait Vcs: Send + Sync {
     /// Destroy a ref rwv holds a receipt for.
     ///
     /// Receipt **and** warrant, and no overload takes a name: there is no
-    /// way to spell "delete this branch I recognised". The store comes from
+    /// way to spell "delete this branch I recognized". The store comes from
     /// the receipt, so a receipt cannot authorize a delete in a different
     /// store.
     fn delete_owned_ref(

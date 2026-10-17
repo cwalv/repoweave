@@ -33,7 +33,7 @@ than activating the primary. What switching at the primary retains is the
 ambient default: which project the root presents to a person or tool working
 at the weave itself.
 
-## How a root is recognised
+## How a root is recognized
 
 The containment walk that finds a weave root from some directory inside it
 tests one thing: **a weave root is a directory containing `projects/`.**

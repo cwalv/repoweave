@@ -24,8 +24,8 @@ use std::process;
 
 mod common;
 
-/// Initialise a bare-minimum git repo (no commit needed — just enough for
-/// `scan_repos_on_disk` to recognise the directory as a git repo).
+/// Initialize a bare-minimum git repo (no commit needed — just enough for
+/// `scan_repos_on_disk` to recognize the directory as a git repo).
 fn git_init(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
     common::git_in(path, &["init", "--initial-branch=main"]);

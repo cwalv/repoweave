@@ -92,7 +92,7 @@ fn kebab(variant: &str) -> String {
 /// longer ones.
 ///
 /// Residue: no variant carries two adjacent capitals, so the transform's
-/// behaviour on that shape is unexercised here and cannot be pinned without a
+/// behavior on that shape is unexercised here and cannot be pinned without a
 /// variant that has it. serde would split between them; so does this.
 #[test]
 fn the_case_transform_matches_serde() {

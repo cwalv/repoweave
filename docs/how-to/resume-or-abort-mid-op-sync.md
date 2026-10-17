@@ -28,7 +28,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 |---|---|
 | Equal to the savepoint | `untouched` — the operation never moved this repository |
 | Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
-| Mid-rebase / mid-merge / mid-cherry-pick | `restored` — VCS operation cancelled and reset to the savepoint |
+| Mid-rebase / mid-merge / mid-cherry-pick | `restored` — VCS operation canceled and reset to the savepoint |
 | Anything else | `foreign-tip violation` — restore refused; op-state retained |
 
 Before resetting any repository, `rwv abort` writes a durable reference at `refs/rwv/pre-abort/<op-id>` pointing to the pre-abort tip. That reference is kept after abort finishes, so commits discarded by `rwv abort` remain reachable in git (`git log refs/rwv/pre-abort/<op-id>`).

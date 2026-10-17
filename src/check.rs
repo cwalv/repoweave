@@ -1506,7 +1506,7 @@ pub enum BranchDisciplineKind {
     /// rather than beside it: that finding's message promises a rename this
     /// state cannot produce.
     ///
-    /// Report-only, and the repair is an operator's judgement rather than a
+    /// Report-only, and the repair is an operator's judgment rather than a
     /// missing arm — which of the refs is this workweave's branch, and where
     /// the others belong, is not derivable from the refs themselves.
     BlockedEphemeralNamespace {
@@ -2890,7 +2890,7 @@ pub(crate) enum CommitOutcome {
     /// The project repo had unrelated staged changes; the migration was
     /// left in the working tree unstaged (or with only `.gitattributes`
     /// staged) so the operator can review before committing. Skipping is
-    /// the safe behaviour: never bundle a user's WIP with an rwv-authored
+    /// the safe behavior: never bundle a user's WIP with an rwv-authored
     /// fix.
     SkippedUnrelatedStaged,
     /// The migration produced no diff (e.g. race — the file was already
@@ -4011,7 +4011,7 @@ fn phantom_merge_drivers_in(contents: &str) -> Vec<(String, String)> {
 }
 
 /// Split a `.gitattributes` line into its path pattern and the attribute
-/// tokens that follow, honouring the double-quoted form gitattributes(5)
+/// tokens that follow, honoring the double-quoted form gitattributes(5)
 /// allows for patterns containing spaces (`"a path/*" merge=rwv-ours`).
 ///
 /// Escapes inside a quoted pattern are not interpreted: the pattern is
@@ -4498,7 +4498,7 @@ impl RecordedRefs {
     /// Every receipt keyed to `store`, across projects.
     ///
     /// Goes through [`RefRegistry::list_for_store`] rather than matching
-    /// paths here, so the store-key normalisation the registry recorded
+    /// paths here, so the store-key normalization the registry recorded
     /// under is the one the query uses.
     ///
     /// **Re-reads the index on every call, deliberately.** That is one small
@@ -4781,7 +4781,7 @@ fn legacy_ref_at_tip(
 
 /// Where a canonical store's tracking declaration comes from.
 ///
-/// The two flavours mirror the two publish gates in `push.rs`: a manifest
+/// The two flavors mirror the two publish gates in `push.rs`: a manifest
 /// member's counterpart is the local projection of its declared `version:`,
 /// the project repo's is the local projection of the remote's declared
 /// default branch. The project repo *is* an instance of the branch model, so
@@ -6010,7 +6010,7 @@ pub fn scan_state_hygiene(
 /// - **Canonical clone** (sub-kinds b/c: `StaleEphemeralBranchSafe`,
 ///   `StaleEphemeralBranchLive`, `StaleEphemeralBranchUnowned`): `repo_path`
 ///   lives directly under `ws_root`.  The manifest-relative path is
-///   derived by stripping `ws_root`, normalised to forward slashes, and
+///   derived by stripping `ws_root`, normalized to forward slashes, and
 ///   looked up in `known_repos`.  When `known_repos` was built from only
 ///   the active project's manifest (the default when `!scope_all`), a hit
 ///   means the active project owns this repo.
@@ -6091,7 +6091,7 @@ fn branch_discipline_in_scope(
 /// [`Vcs::delete_owned_ref`](crate::vcs::Vcs::delete_owned_ref), which takes
 /// an [`OwnedRef`](crate::vcs::OwnedRef) plus a
 /// [`DeletionWarrant`](crate::vcs::DeletionWarrant) and has no overload that
-/// takes a name. That is the whole behavioural change: the shipped path
+/// takes a name. That is the whole behavioral change: the shipped path
 /// deleted whatever the scan had classified as safe, and the scan classified
 /// by name shape, so a hand-made `<a>--<b>/<c>` branch was deleted for
 /// looking like one of rwv's. Under R2 it is not rwv's and it survives.
@@ -9720,7 +9720,7 @@ impl KindFilter {
 /// checked: stale locks, dangling references, and integration hooks are
 /// scoped to that project, and orphan detection is skipped (a repo absent
 /// from the active project may belong to another project). Pass `scope_all =
-/// true` (via `--all`) to reproduce the weave-wide behaviour, including orphan
+/// true` (via `--all`) to reproduce the weave-wide behavior, including orphan
 /// detection across every project.
 ///
 /// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.

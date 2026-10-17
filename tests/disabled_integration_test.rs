@@ -440,7 +440,7 @@ fn a_hand_authored_whole_file_is_not_attributed_to_the_integration() {
 /// removed. Without this arm, an implementation that attributed nothing at all
 /// would pass the test above.
 ///
-/// The control for the link-removal behaviour too: here the file is rwv's, so
+/// The control for the link-removal behavior too: here the file is rwv's, so
 /// both it and the link that surfaced it go, unlike the hand-authored case
 /// where only the link does.
 #[test]

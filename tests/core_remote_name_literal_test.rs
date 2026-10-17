@@ -8,7 +8,7 @@
 //! close the sentences that *mention* one, because a string literal is not a
 //! path the type system can refuse.
 //!
-//! **Why this is structural rather than behavioural.** A message that spelled
+//! **Why this is structural rather than behavioral.** A message that spelled
 //! `origin` in core and one that got it from the backend render byte-identical
 //! against the git backend, which is the only backend that exists — so no
 //! assertion on output can tell them apart. The distinguishing input would be

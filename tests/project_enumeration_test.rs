@@ -93,7 +93,7 @@ fn descent_stops_at_the_first_manifest() {
     );
 }
 
-/// `.git` and its neighbours are host state, and the ref-name validator
+/// `.git` and its neighbors are host state, and the ref-name validator
 /// refuses a component starting with `.` anyway — so descending into one could
 /// only mint a name no project can carry.
 #[test]

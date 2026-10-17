@@ -101,13 +101,13 @@ fn make_project(
 // ============================================================================
 
 #[test]
-fn activate_subcommand_is_recognised() {
+fn activate_subcommand_is_recognized() {
     let assert = rwv().arg("activate").assert();
     let output = assert.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("unrecognized subcommand"),
-        "activate should be a recognised subcommand, got stderr: {stderr}"
+        "activate should be a recognized subcommand, got stderr: {stderr}"
     );
 }
 

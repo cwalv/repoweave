@@ -907,7 +907,7 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
 /// tip, abort still fails, and op-state is still retained.
 ///
 /// This is the pin for "no bare all-repos form" at the level that matters —
-/// not the absence of a spelling, but the absence of the behaviour.
+/// not the absence of a spelling, but the absence of the behavior.
 #[test]
 fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
     let tmp = common::tempdir().unwrap();

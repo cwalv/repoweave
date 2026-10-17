@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn prime_silent_outside_workspace() {
-        // Simulate the dispatch-time behaviour: origin dir has no workspace,
+        // Simulate the dispatch-time behavior: origin dir has no workspace,
         // so main passes None to prime; the handler stays quiet.
         prime(None, false).unwrap();
         // No panic, no error — just silent

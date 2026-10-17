@@ -28,7 +28,7 @@
 //! skip here is exactly the unmeasured state the linkage above exists to
 //! rule out, and nothing but the real tool lifts it — a PATH shim would
 //! only prove the shim ran. A tool that is present but predates the
-//! behaviour under test is the one case that returns without measuring, and
+//! behavior under test is the one case that returns without measuring, and
 //! it says so on stderr: no fixture turns npm 9 into npm 10's resolver, so
 //! failing there reddens a lane over which npm a machine installed. Being
 //! unable to run the tool at all is neither case — that is the loud one.

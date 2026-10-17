@@ -8,7 +8,7 @@ use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Build a commit message summarising which repos' lock entries changed.
+/// Build a commit message summarizing which repos' lock entries changed.
 ///
 /// When `old_lock` is `None` (fresh lock), all repos appear in the list.
 /// Otherwise, only repos whose version advanced are listed. Both sides

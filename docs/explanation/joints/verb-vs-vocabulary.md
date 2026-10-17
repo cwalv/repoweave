@@ -40,7 +40,7 @@ suggests `fetch`/`push` should sit next to `pull`/`publish`, or that
 everything that talks to a remote should share a vocabulary. Neither is
 the right gate. The audience's mental model on encountering the verb
 name is what matters, and that model is set by the closest single-tool
-analogue.
+analog.
 
 ## Worked examples
 
@@ -137,7 +137,7 @@ When proposing a new verb, after it has cleared the
 
 1. What is the *principal effect* of this verb — moving commits, or
    re-snapshotting the lock?
-2. Which single-tool analogue (git/hg/sl/jj vs. cargo/npm/uv) will the
+2. Which single-tool analog (git/hg/sl/jj vs. cargo/npm/uv) will the
    audience reach for first?
 
 Pick the name from that vocabulary. Do not reach for surface symmetry

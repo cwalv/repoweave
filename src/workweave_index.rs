@@ -75,7 +75,7 @@
 //!
 //! Two `workweave create` invocations from sibling workweaves race on the
 //! primary's shared index. `write` uses temp+rename so a concurrent writer
-//! never sees a half-written file. Read-modify-write is not lock-serialised
+//! never sees a half-written file. Read-modify-write is not lock-serialized
 //! (rwv has no daemon); the last writer wins for its whole snapshot. Callers
 //! that need read-modify-atomicity (e.g. registering a new workweave) use the
 //! `record_workweave` helper, which re-reads immediately before writing so a
@@ -992,7 +992,7 @@ pub fn ensure_ignore_entry(primary_root: &Path, project: &ProjectName) -> anyhow
 /// canonical file whose directory is either a checkout root or a plain
 /// directory, so the two branches below cover the real cases.
 ///
-/// Two candidate targets, prioritised for zero shared-repo footprint:
+/// Two candidate targets, prioritized for zero shared-repo footprint:
 ///
 /// 1. `.git/info/exclude` — per-clone, invisible, never touches the
 ///    working tree, so it does not perturb any dirty-tree check running
@@ -1142,7 +1142,7 @@ mod tests {
         );
     }
 
-    /// The decided behaviour for a claim whose holder died: later writes
+    /// The decided behavior for a claim whose holder died: later writes
     /// refuse, after a bounded wait, naming the file to remove. Waiting
     /// forever hangs the verb; treating an old claim as abandoned publishes
     /// over a holder that is merely slow, which is the receipt loss this

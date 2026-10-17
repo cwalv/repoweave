@@ -51,7 +51,7 @@ fn weave_with_a_local_member() -> (tempfile::TempDir, PathBuf) {
 ///
 /// The sweep runs on every activation (`remove_activation_symlinks` is step 2
 /// of `run_activations`, unconditionally), so a single `activate` after the
-/// scratch directory exists is enough to expose the pre-fix behaviour.
+/// scratch directory exists is enough to expose the pre-fix behavior.
 #[test]
 fn a_member_checkouts_empty_directory_survives_activation() {
     let (_tmp, ws) = weave_with_a_local_member();

@@ -54,7 +54,7 @@
 #   hook, permission and rename fixtures. The settled ones are pinned by
 #   tests/hook_fixture_portability_test.rs; the rest are gated on an ACL deny
 #   entry, a PATH shim Windows will not spawn, or an inode instrument NTFS may
-#   not honour.
+#   not honor.
 #
 #   an #[ignore]d static-files placeholder, which runs on no platform.
 #
@@ -140,7 +140,7 @@
 # The first eight runs of this workflow each printed one. Every failure count
 # quoted from this job before --no-fail-fast was added therefore described the
 # lib target alone while reading as the suite's — the integration tests had
-# never executed on this platform at all, which makes their behaviour here
+# never executed on this platform at all, which makes their behavior here
 # unknown rather than passing, and puts them in neither of the two categories
 # above.
 #

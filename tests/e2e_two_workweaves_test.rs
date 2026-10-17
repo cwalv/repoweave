@@ -527,7 +527,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
 /// repo doesn't exist on primary), `rwv sync` must exit non-zero. Previously
 /// the failure was an stderr line and the loop fell through to a
 /// `skipped (not on disk)` print that did NOT flip `any_failure`, so the
-/// lock advanced past a never-materialised repo and sync exited 0.
+/// lock advanced past a never-materialized repo and sync exited 0.
 #[test]
 fn sync_phase3_materialize_failure_is_fatal() {
     let tmp = common::tempdir().unwrap();
@@ -579,7 +579,7 @@ fn sync_phase3_materialize_failure_is_fatal() {
     let ww1_new_repo = ww1.root.join(new_repo_path);
     assert!(
         !ww1_new_repo.exists(),
-        "workweave should not have a partially-materialised repo on failure"
+        "workweave should not have a partially-materialized repo on failure"
     );
 }
 

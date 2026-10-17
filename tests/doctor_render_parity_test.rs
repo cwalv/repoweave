@@ -836,7 +836,7 @@ fn the_hook_walk_actually_reads_the_sources() {
     assert!(
         producers.len() >= 4,
         "only {} issue-producing hooks found: {producers:?} — the signature \
-         matcher has stopped recognising the shape, and emptiness elsewhere \
+         matcher has stopped recognizing the shape, and emptiness elsewhere \
          would prove nothing",
         producers.len()
     );

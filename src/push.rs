@@ -712,7 +712,7 @@ pub fn run_push(
     Ok(())
 }
 
-/// Emit one NDJSON record to stdout, serialised and mutex-guarded so
+/// Emit one NDJSON record to stdout, serialized and mutex-guarded so
 /// parallel workers cannot interleave bytes.
 fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
     let record = PushOutcomeNdjsonRecord {
@@ -759,7 +759,7 @@ enum PushOutcome {
 
 /// Per-repo worker: push one manifest entry on its current branch via the
 /// conventional remote. All user-facing output is routed through
-/// `reporter`, which prefixes `[<repo>]` and serialises writes under
+/// `reporter`, which prefixes `[<repo>]` and serializes writes under
 /// `-j > 1`; under `-j 1` the reporter is a no-prefix passthrough that
 /// matches the pre-`-j` serial output exactly.
 ///

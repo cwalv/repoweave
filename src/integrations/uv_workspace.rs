@@ -730,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn is_workspace_true_recognises_inline_table() {
+    fn is_workspace_true_recognizes_inline_table() {
         // { workspace = true } inline table
         let toml = "[tool.uv.sources]\nfoo = { workspace = true }\n";
         let doc: toml_edit::DocumentMut = toml.parse().unwrap();

@@ -224,7 +224,7 @@ fn the_finding_is_published_as_not_auto_fixable() {
 
 /// P6, half two — and the link really does survive `doctor --fix`.
 ///
-/// The behavioural half. Kept alongside the wire assertion above because they
+/// The behavioral half. Kept alongside the wire assertion above because they
 /// fail to different defects: this one catches a repair arm that grows a
 /// removal, that one catches a finding that starts claiming to be repairable.
 /// Neither implies the other — proven, not assumed: the mutation flipping

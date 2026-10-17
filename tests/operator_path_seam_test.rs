@@ -1,14 +1,14 @@
 //! Every message that prints an absolute path to a person renders it through
 //! `crate::path_spelling::operator_path`.
 //!
-//! **Why this is structural rather than behavioural.** On Unix `operator_path`
+//! **Why this is structural rather than behavioral.** On Unix `operator_path`
 //! is `dunce::simplified(path).to_string_lossy()`, and dunce's UNC test is a
 //! `const fn` returning false off Windows — so `simplified` is the identity
 //! and `operator_path(p)` is byte-for-byte `p.display()` on every platform the
 //! suite runs. That was measured, not assumed: a routed site was reverted and
 //! the full release suite ran green through doc-tests. No assertion on output
 //! can separate the two spellings here, however many are written, so a
-//! behavioural test over this seam would pass with or without the mint and
+//! behavioral test over this seam would pass with or without the mint and
 //! read as coverage while providing none. Reading the source is what is left.
 //!
 //! **Scope, and therefore the blind spots.** This reads non-comment lines of
@@ -27,7 +27,7 @@
 //!
 //! A construct is bounded at the render macro it opens on — balanced
 //! parentheses, string literals skipped — never at a line count. A fixed-size
-//! window is how a neighbouring correct call comes to vouch for a mutated one.
+//! window is how a neighboring correct call comes to vouch for a mutated one.
 //!
 //! The bounder has a blind spot of its own: [`paren_delta`] reads each line on
 //! its own, so a continuation line of a multi-line string literal is read as
@@ -472,7 +472,7 @@ fn call_end(lines: &[&SourceLine], start: usize, col: usize) -> usize {
 /// Found by walking back from a line inside the construct, never forward from
 /// one before it: backward from a point inside a call lands in that call or in
 /// one enclosing it, and the containment test below rejects anything else. A
-/// forward scan can walk into the next arm, which is how a neighbouring correct
+/// forward scan can walk into the next arm, which is how a neighboring correct
 /// call comes to vouch for a mutated one.
 fn enclosing_call(lines: &[&SourceLine], at: usize) -> Option<(usize, usize)> {
     for back in (0..=at).rev() {

@@ -48,7 +48,7 @@ pub enum RepoPathError {
     /// The path contains a backslash (`\`).
     ///
     /// `RepoPath` values must use forward-slash (`/`) separators. On Windows,
-    /// normalise with [`str::replace`] before calling `RepoPath::new`.
+    /// normalize with [`str::replace`] before calling `RepoPath::new`.
     Backslash(String),
 }
 
@@ -130,7 +130,7 @@ const PROJECT_REPO_KEY: &str = "(project)";
 
 /// The key standing for the project repo where a [`RepoPath`] would sit.
 ///
-/// The parenthesised spelling cannot collide with a `RepoPath`, which is a
+/// The parenthesized spelling cannot collide with a `RepoPath`, which is a
 /// relative directory path. Borrowed rather than owned: most sites are map
 /// lookups, which want a `&str`.
 pub(crate) fn project_repo_key() -> &'static str {
@@ -150,7 +150,7 @@ pub use crate::naming::{ProjectName, ProjectNameError, WorkweaveName, WorkweaveN
 /// code dispatches on the variant rather than re-parsing.
 ///
 /// `Display` reconstructs the canonical clone URL or shorthand form. For
-/// inputs the registry list does not recognise, [`RepoUrl::Unknown`]
+/// inputs the registry list does not recognize, [`RepoUrl::Unknown`]
 /// preserves the raw string verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RepoUrl {
@@ -213,7 +213,7 @@ fn parse_two_part_shorthand(s: &str) -> Option<RepoUrl> {
 }
 
 impl RepoUrl {
-    /// The registry that recognised this URL, when one did.
+    /// The registry that recognized this URL, when one did.
     pub fn registry(&self) -> Option<&RegistryName> {
         match self {
             Self::Https { registry, .. } | Self::Ssh { registry, .. } => Some(registry),
@@ -263,10 +263,10 @@ impl RepoUrl {
 /// Loose equivalence between two clone URL strings.
 ///
 /// Returns `true` when both strings resolve to the same logical repo after
-/// stripping trailing slashes, a `.git` suffix, and normalising `git@host:`
+/// stripping trailing slashes, a `.git` suffix, and normalizing `git@host:`
 /// SCP-style URLs to `https://host/`. A `file://` URL is percent-decoded, so
 /// it equals the bare absolute path it encodes. Used by the all-roles
-/// origin-url-mismatch check, which only needs to recognise "origin already
+/// origin-url-mismatch check, which only needs to recognize "origin already
 /// points at the source-of-record" — not a security-grade comparison.
 pub fn clone_urls_equivalent(a: &str, b: &str) -> bool {
     normalize_clone_url(a) == normalize_clone_url(b)
@@ -441,7 +441,7 @@ impl fmt::Display for RoleParseError {
         let accepted: Vec<&str> = Role::ALL.iter().map(|r| r.as_str()).collect();
         write!(
             f,
-            "'{}' is not a recognised role (expected {})",
+            "'{}' is not a recognized role (expected {})",
             self.0,
             accepted.join(", ")
         )
@@ -1510,7 +1510,7 @@ impl LockFile {
     /// against its on-disk repo, producing a [`ResolvedLockFile`] whose
     /// entries carry canonical commit SHAs.
     ///
-    /// Semantics (matches pre-split behaviour):
+    /// Semantics (matches pre-split behavior):
     /// - Repos missing on disk are silently skipped; their entries are
     ///   not present in the returned [`ResolvedLockFile`]. Callers that
     ///   need an "all entries" view should iterate the raw [`LockFile`]
@@ -1538,7 +1538,7 @@ impl LockFile {
                 version,
             } = entry;
             if !repo_abs.exists() {
-                // Missing on disk: silently skip (pre-split behaviour).
+                // Missing on disk: silently skip (pre-split behavior).
                 continue;
             }
             let vcs = crate::vcs::vcs_for(vcs_type);
@@ -2188,7 +2188,7 @@ role = "primary"
     }
 
     #[test]
-    fn an_unrecognised_table_is_not_called_retired() {
+    fn an_unrecognized_table_is_not_called_retired() {
         let err = Manifest::from_toml_str("[lok]\n").unwrap_err();
         assert!(!format!("{err:#}").contains("retired"));
     }
@@ -2724,7 +2724,7 @@ role = "owned"
     /// basename: while the name was re-derived from the path, this assertion
     /// could not have held at all.
     ///
-    /// **This is a structural pin, and deliberately not a behavioural one.**
+    /// **This is a structural pin, and deliberately not a behavioral one.**
     /// Taking the name as a parameter changed no output on any reachable
     /// input — that was measured, not assumed. Every caller already held the
     /// name and rendered the directory from it, so for a name the derivation

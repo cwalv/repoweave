@@ -19,7 +19,7 @@
 //! share the corpus walk and the scope definitions with generation, and
 //! because running them here means regenerating the artifacts cannot skip
 //! them. Someone looking for where a house rule about comments, vocabulary
-//! or documentation coverage is mechanised looks in this file.
+//! or documentation coverage is mechanized looks in this file.
 //!
 //! Each is a `// --- <name> gate ---` block in `main`, in this order:
 //!
@@ -2012,7 +2012,7 @@ const POINTER_FILLER: &[&str] = &[
 
 /// Byte offset of the `//` that opens a comment on `line`.
 ///
-/// The scan tracks `"` (honouring backslash escapes) so the `//` inside a URL
+/// The scan tracks `"` (honoring backslash escapes) so the `//` inside a URL
 /// string literal is not read as a comment start. Shared by the two gates that
 /// split a line into code and comment, so neither can drift from the other on
 /// where that boundary sits.
@@ -2257,7 +2257,7 @@ fn is_bare_pointer(block_text: &str, tokens: &[&str]) -> bool {
 ///   attribute from a prose mention, which is written inline.
 ///
 /// The module's *name* is not part of the boundary: `mod branch_model_tests`
-/// ends the region exactly as `mod tests` does. A boundary that recognised one
+/// ends the region exactly as `mod tests` does. A boundary that recognized one
 /// name decided scope by what someone called a module, which is the defect
 /// these gates exist to catch, one level up.
 fn before_test_module(content: &str) -> &str {
@@ -2457,7 +2457,7 @@ fn tests_file_doc_filenames(path: &Path) -> HashSet<String> {
 /// `CLAUDE.md` bans three shapes in comments. The tracker-ID shape is
 /// `check_no_tracker_ids`. The third — a **section pointer** into a design
 /// document, a document name followed by a section token — is still not
-/// mechanised *as such*. What changed is the size of the gap, not its
+/// mechanized *as such*. What changed is the size of the gap, not its
 /// existence: a section pointer written against a bare filename is now caught,
 /// because the filename does not resolve. A section pointer written against a
 /// path that *does* resolve is not caught, and neither is one against a
@@ -2472,7 +2472,7 @@ fn tests_file_doc_filenames(path: &Path) -> HashSet<String> {
 /// `src/vcs.rs`, three of them naming a document this repository has never
 /// contained.
 ///
-/// This file keeps the exclusion, and the reason does not generalise to any
+/// This file keeps the exclusion, and the reason does not generalize to any
 /// other: its fixtures *are* comment text, held in string literals that
 /// `comment_blocks` cannot tell from comments. A seeded-failure test for a
 /// comment gate has to contain a comment this gate reports, so scanning them
@@ -2852,7 +2852,7 @@ fn check_no_consumer_vocabulary(root: &Path) -> Vec<String> {
 /// Vocabulary belonging to a particular deployment of rwv rather than to rwv.
 ///
 /// Every entry is matched via `contains_word`, bounded on ascii-alphanumeric
-/// neighbours — not just `rig`, where `origin`, `right` and `trigger` all
+/// neighbors — not just `rig`, where `origin`, `right` and `trigger` all
 /// contain the letters. The multi-word entries need the same bound: ordinary
 /// prose can straddle a phrase the way "biogas cityscape" contains the raw
 /// substring "gas city" without either word of the entry appearing on its
@@ -3523,7 +3523,7 @@ fn main() -> anyhow::Result<()> {
         let msg = vocab_errors.join("\n");
         anyhow::bail!(
             "foreign-vocabulary check failed:\n{msg}\n\n\
-             Fix: describe the behaviour in rwv's own terms."
+             Fix: describe the behavior in rwv's own terms."
         );
     }
 
@@ -5880,12 +5880,12 @@ mod tests {
     }
 
     /// **The residual gap, pinned deliberately.** CLAUDE.md's section-pointer
-    /// clause is still not mechanised *as such*: when the document is named by
+    /// clause is still not mechanized *as such*: when the document is named by
     /// a path that resolves, the section pointer hanging off it is invisible
     /// here. The clause above narrowed this gap; it did not close it, and a
     /// green gate must not be read as "this tree has no section pointers".
     #[test]
-    fn a_section_pointer_against_a_resolving_path_is_not_mechanised() {
+    fn a_section_pointer_against_a_resolving_path_is_not_mechanized() {
         let errors = citation_errors(
             "// The refusal is the one the ownership-receipt arm describes\n\
              // (docs/explanation/joints/clone-topology.md §3.3 arm 2).\n\
@@ -6373,7 +6373,7 @@ mod tests {
     /// read green as "no stale symbol references". `current_ref` here is named
     /// exactly as the comment that prompted the work named it.
     #[test]
-    fn bare_identifiers_are_not_mechanised() {
+    fn bare_identifiers_are_not_mechanized() {
         let errors = symbol_errors(
             "pub trait Vcs {\n    fn observe_head(&self);\n}\n\
              /// The scanner consumes the `Vcs` trait — `current_ref`,\n\

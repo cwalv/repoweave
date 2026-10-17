@@ -65,7 +65,7 @@ const SERVER_PATH: &str = "github/example/server";
 
 /// Write a `.rwv-workweave` marker file into `ww_dir`.
 ///
-/// This is necessary for `rwv` to recognise the directory as a workweave via
+/// This is necessary for `rwv` to recognize the directory as a workweave via
 /// the marker-based resolution path (step 1 in `WorkspaceContext::resolve`).
 /// Without it, `rwv` falls back to the `{primary}--{name}` naming convention
 /// and infers the project name from the left-hand side of the directory name
@@ -115,7 +115,7 @@ fn make_workweave_ahead_fixture(
     common::git_in(&primary_project, &["commit", "-m", "lock: initial"]);
     std::fs::write(primary.join(".rwv-active"), "web-app\n").unwrap();
 
-    // Workweave: materialise as git worktrees from the primary repos.
+    // Workweave: materialize as git worktrees from the primary repos.
     // Name the directory simply as the workweave name (e.g. "sample-weave") so the
     // marker-based resolution path is unambiguous and doesn't conflict with the
     // legacy `{primary}--{name}` convention (which uses the sibling's dir name
@@ -646,7 +646,7 @@ fn sync_to_json_outside_workspace_no_panic() {
 // whose owner workspace, target and retire flag are not what the request
 // carries. Each identity field then has two candidate answers that differ —
 // the machine's and the invocation's — which is what makes the assertions
-// below behavioural rather than a statement about how the derivation is
+// below behavioral rather than a statement about how the derivation is
 // spelled.
 //
 // One resume is not enough to separate all three. The invocation answers

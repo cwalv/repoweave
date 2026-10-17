@@ -1,7 +1,7 @@
 //! `untracked-collision` must name the condition it says it names.
 //!
 //! The kind is for untracked files standing where an advance writes. Two
-//! neighbouring refusals are not it, and both are reachable from a fixture a
+//! neighboring refusals are not it, and both are reachable from a fixture a
 //! few lines apart: a tracked file the operator modified, remedied by
 //! commit-or-stash rather than move-or-delete; and a diverged tip, remedied
 //! by neither.

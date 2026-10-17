@@ -237,7 +237,7 @@ const ALLOWLIST: &[Allowed] = &[
             unmoved (tip still equals the recorded tip), merged (tip is an \
             ancestor of a named baseline), operator_discarded \
             (--discard-unmerged-commits). The receipt carries the store, so \
-            it cannot authorise a delete in a different refdb. Force \
+            it cannot authorize a delete in a different refdb. Force \
             semantics are correct here: the warrant already established the \
             safety `-d` would re-derive, and `-d` would additionally refuse \
             the operator_discarded case the flag exists to permit.",
@@ -330,7 +330,7 @@ const ALLOWLIST: &[Allowed] = &[
             exiting 0. So the refusal is rwv's: the branch tip is resolved \
             through refs/heads/<name> first and an absent branch is an \
             error before git runs, with --no-guess and the -- terminator as \
-            defence in depth for the window after the check. No -f, so \
+            defense in depth for the window after the check. No -f, so \
             git's own refusal to overwrite modified paths still applies. \
             Reachable only through reattach_head, which requires a \
             ReattachConsent minted from --reattach-checkouts and refuses \

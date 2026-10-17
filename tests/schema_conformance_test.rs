@@ -42,7 +42,7 @@
 //! doctor included, cannot reach the regenerated artifact and stay unsampled.
 //! A new field on a nested type doctor mints inside the builder still can.
 //!
-//! Two neighbouring shapes do *not* widen the gap, both checked rather than
+//! Two neighboring shapes do *not* widen the gap, both checked rather than
 //! assumed. A new *variant* is caught by
 //! [`every_corpus_exercises_every_member_its_schema_declares`], which reads the
 //! regenerated artifact. And no envelope reaches a type through
@@ -935,9 +935,9 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
 // ---------------------------------------------------------------------------
 // NDJSON record corpora
 //
-// Each record is serialised directly from its production struct (with a
+// Each record is serialized directly from its production struct (with a
 // concrete lifetime) so the corpus cannot drift from the struct the verb
-// actually serialises at runtime.
+// actually serializes at runtime.
 // ---------------------------------------------------------------------------
 
 fn fetch_record_corpus() -> Vec<(&'static str, Value)> {

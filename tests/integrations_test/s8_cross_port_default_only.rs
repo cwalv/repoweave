@@ -293,7 +293,7 @@ fn s8_cargo_default_only_seeds_on_greenfield() {
 // Note: because FORCE_GOWORK_FALLBACK is a thread-local private to the
 // go_work module, these tests go through the public activate() entrypoint.
 // If `go` is on PATH the primary path is used; otherwise the hand-parse
-// fallback.  Both paths honour the DefaultOnly contract.
+// fallback.  Both paths honor the DefaultOnly contract.
 // -----------------------------------------------------------------------
 
 /// (a) go.work — existing `go 1.20` line survives re-activate.

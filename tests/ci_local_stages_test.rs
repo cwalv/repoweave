@@ -144,7 +144,7 @@ fn cargo_args_claimed_by(header: &str) -> Option<&str> {
 /// name the same argv — the direction a header and its command actually
 /// disagree.
 ///
-/// Scope: covers only headers `cargo_args_claimed_by` recognises (six of
+/// Scope: covers only headers `cargo_args_claimed_by` recognizes (six of
 /// the seven — drift's header is prose, not a command echo, and is outside
 /// what this can see).
 fn assert_cargo_headers_agree_with_invocations(stdout: &str) {

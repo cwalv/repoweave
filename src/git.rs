@@ -234,7 +234,7 @@ pub fn rwv_replay_exclusion_needle(path_str: &str) -> String {
     format!("{path_str} merge={RWV_MERGE_DRIVER_NAME}")
 }
 
-/// Legacy needle (`<path> merge=ours`) recognised by the migrator so
+/// Legacy needle (`<path> merge=ours`) recognized by the migrator so
 /// `doctor --fix` and `set_replay_exclusion` can rewrite it in place.
 pub fn legacy_rwv_replay_exclusion_needle(path_str: &str) -> String {
     format!("{path_str} merge={LEGACY_RWV_MERGE_DRIVER_NAME}")
@@ -836,7 +836,7 @@ pub fn fetch_all_prune_command(repo: &Path) -> Command {
 
 /// The only way to obtain a git backend from outside this module.
 ///
-/// The backend type itself is private, so a caller that wants git behaviour
+/// The backend type itself is private, so a caller that wants git behavior
 /// must accept it as a [`Vcs`] handle and can be handed a different one.
 pub fn git_vcs() -> Box<dyn crate::vcs::Vcs> {
     Box::new(GitVcs)
@@ -1087,7 +1087,7 @@ impl GitVcs {
     /// A receipt is keyed by canonical store, and `resolve_canonical_store`
     /// reports the store itself (`<clone>/.git`), not the working
     /// directory. git will accept a `.git` directory as its cwd, but the
-    /// behaviour differs subtly between porcelain commands, so normalise to
+    /// behavior differs subtly between porcelain commands, so normalize to
     /// the clone root and leave anything else alone.
     fn work_dir_for_store(store: &Path) -> PathBuf {
         match store.file_name() {
@@ -2155,7 +2155,7 @@ impl Vcs for GitVcs {
         let resolved_pre_abort = self.resolve_pre_abort_ref(repo, op_id);
         let pre_abort = resolved_pre_abort.clone().unwrap_or_else(|| {
             // Should not happen: run_abort writes the pre-abort ref before
-            // every verified_restore_savepoint call. Synthesise a label so
+            // every verified_restore_savepoint call. Synthesize a label so
             // the refusal still names a recovery anchor.
             PreAbortRef {
                 label: pre_abort_ref(op_id),
@@ -2665,7 +2665,7 @@ impl Vcs for GitVcs {
         //
         // `--no-guess` closes the first, the `--` terminator closes the
         // third, and *neither* closes the second. So the existence check is
-        // what makes the refusal real; the flags are defence in depth for
+        // what makes the refusal real; the flags are defense in depth for
         // the window between the check and the switch.
         let branch = RawRefName::new(name.as_str());
         if self.resolve_local_branch_tip(repo, &branch)?.is_none() {
@@ -2712,7 +2712,7 @@ impl Vcs for GitVcs {
         let store = Self::work_dir_for_store(store);
         // `-m`, never `-M`. The uppercase form renames *over* an existing
         // branch, which destroys that branch's ref with neither receipt nor
-        // warrant; the lowercase form refuses, which is the behaviour the
+        // warrant; the lowercase form refuses, which is the behavior the
         // trait's contract requires. git also refuses the D/F direction on
         // its own ("cannot lock ref"), so a leftover `p--w/other` blocks the
         // rename rather than being silently swept up.
@@ -2837,7 +2837,7 @@ const SAVEPOINT_NAMESPACE: &str = "refs/rwv/pre-op";
 /// The namespacing is a git impl detail — callers of the [`Vcs`] trait pass
 /// an opaque `op_id` string and reach the name, when they must show it to an
 /// operator, through [`Vcs::savepoint_label`] or [`Vcs::savepoint_namespace`].
-/// Centralising the format here means create / resolve / drop / restore all
+/// Centralizing the format here means create / resolve / drop / restore all
 /// agree on the layout.
 fn savepoint_ref(op_id: &str) -> String {
     format!("{SAVEPOINT_NAMESPACE}/{op_id}")
@@ -2848,7 +2848,7 @@ fn savepoint_ref(op_id: &str) -> String {
 /// The namespacing (`refs/rwv/pre-abort/<id>`) is a git impl detail —
 /// callers of the [`Vcs`] trait receive a [`PreAbortRef`] whose `label`
 /// carries this string for recovery hints, but never spell the ref
-/// directly. Centralising the format here keeps create / resolve in sync.
+/// directly. Centralizing the format here keeps create / resolve in sync.
 fn pre_abort_ref(op_id: &str) -> String {
     format!("refs/rwv/pre-abort/{op_id}")
 }
@@ -3065,7 +3065,7 @@ fn eol_action(value: &str) -> Option<EolAction> {
 /// Mirrors git's own end-of-line decision, so it must never answer `true`
 /// where git converts: placing the blob's bytes there would differ from the
 /// checkout, and an unfiltered hash would still call the placed file right.
-/// Every value it does not recognise answers `false`.
+/// Every value it does not recognize answers `false`.
 fn checks_out_verbatim(attrs: &ConversionAttributes, config: &ConversionConfig) -> bool {
     let [text, eol, crlf, ident, filter, encoding] = attrs.each_ref().map(String::as_str);
     if !matches!(filter, "unspecified" | "unset")
@@ -4393,7 +4393,7 @@ mod branch_model_tests {
     }
 
     #[test]
-    fn work_dir_for_store_normalises_a_git_dir_and_leaves_anything_else_alone() {
+    fn work_dir_for_store_normalizes_a_git_dir_and_leaves_anything_else_alone() {
         let clone = Path::new("/w/github/acme/server");
         assert_eq!(GitVcs::work_dir_for_store(&clone.join(".git")), clone);
         assert_eq!(GitVcs::work_dir_for_store(clone), clone);
@@ -4406,7 +4406,7 @@ mod derived_content_tests {
     //!
     //! In-crate because the resolution vocabulary is crate-internal: the
     //! translation is a match on it, and only code inside the crate can name
-    //! the arms it has to cover. The behaviour the translated arguments buy —
+    //! the arms it has to cover. The behavior the translated arguments buy —
     //! a declared path resolving mechanically through a real replay — is in
     //! `tests/derived_content_policy_test.rs`.
 

@@ -20,7 +20,7 @@
 //! # Omission is allowed; a wrong value is not
 //!
 //! One-directional on flag *names* is a deliberate choice — a doc may leave a
-//! flag out. It was never a licence to say something false about a flag that
+//! flag out. It was never a license to say something false about a flag that
 //! is documented, and for a long time the name check was the only check, so a
 //! doc could offer a value clap rejects and CI stayed green. README advertised
 //! `--strategy ff|rebase|merge` after `merge` was removed from `SyncStrategy`;

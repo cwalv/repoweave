@@ -1,9 +1,9 @@
-//! Integration tests verifying documented behaviour of `rwv fetch`, `rwv add`,
+//! Integration tests verifying documented behavior of `rwv fetch`, `rwv add`,
 //! and `rwv remove`.
 //!
 //! Each test states the documented claim it pins in its own section banner.
 //! Where the implementation diverges from what the docs say, the test verifies
-//! the *current* behaviour and carries a `// TODO` comment pointing at the gap.
+//! the *current* behavior and carries a `// TODO` comment pointing at the gap.
 //!
 //! ## Verb-vocabulary audit (2026-05-24)
 //!

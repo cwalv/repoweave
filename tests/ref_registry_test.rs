@@ -1,6 +1,6 @@
 //! The ownership-receipt registry against a real store.
 //!
-//! The registry's own file-level behaviour is unit-tested in
+//! The registry's own file-level behavior is unit-tested in
 //! `src/workweave_index.rs`. What needs a real repo is the half of R2 that
 //! is about refs rather than records:
 //!

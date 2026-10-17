@@ -891,7 +891,7 @@ fn a_resumed_pull_from_an_ahead_workweave_source_still_targets_the_tips() {
 }
 
 /// The negative half, and the one that pins the read-back specifically: the
-/// consent was spelled on the fresh invocation only, so the resume can honour
+/// consent was spelled on the fresh invocation only, so the resume can honor
 /// it solely by recovering `allow-stale-lock` from the owner record. Under it
 /// the source's later commit must NOT be chased — replay's target stays the
 /// lock.
@@ -1022,7 +1022,7 @@ fn pull_destination_lock_behind_head_syncs_and_performs_the_relock_itself() {
 /// correct to refuse (a bare pull fast-forwards, and ff cannot advance past a
 /// destination-only commit without discarding it), so what carries the
 /// operator is the refusal's evidence: it must quote the relock commit's
-/// subject, making the blocking commit recognisable as rwv's own, and the
+/// subject, making the blocking commit recognizable as rwv's own, and the
 /// strategy it names must then converge rather than manufacture a third
 /// refusal.
 #[test]
@@ -1049,7 +1049,7 @@ fn second_bare_pull_refusal_identifies_rwvs_own_relock_and_its_remedy_converges(
     assert!(
         stderr.contains("lock: auto-relock after sync from"),
         "the evidence block must quote the relock commit's subject, so the operator can \
-         recognise the blocking commit as rwv's own bookkeeping; got:\n{stderr}"
+         recognize the blocking commit as rwv's own bookkeeping; got:\n{stderr}"
     );
     assert!(
         stderr.contains("--strategy rebase"),

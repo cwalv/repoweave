@@ -1,15 +1,15 @@
 //! Acceptance tests for `rwv fetch -j N` and `rwv update -j N`.
 //!
-//! These cover the visible behaviours pinned in the spec notes:
+//! These cover the visible behaviors pinned in the spec notes:
 //!
 //! - `-j N` accepted as a flag on both verbs.
-//! - `-j 1` reproduces serial behaviour (no `[<repo>]` prefix in output).
+//! - `-j 1` reproduces serial behavior (no `[<repo>]` prefix in output).
 //! - `-j > 1` runs concurrently; per-line `[<repo-path>]` prefix appears.
 //! - Failure aggregation under `-j > 1` matches the serial shape (all
 //!   failing repos surface in the trailing summary; exit non-zero).
 //! - Lock write under `-j > 1` happens after the worker pool joins —
 //!   asserted via the resulting `rwv.lock` content being well-formed and
-//!   covering every manifest repo (no race / partial-write artefacts).
+//!   covering every manifest repo (no race / partial-write artifacts).
 //!
 //! The tests follow the existing `tests/fetch_test.rs` pattern: spin up
 //! local bare repos as file:// remotes; no network.
@@ -85,7 +85,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
 
 // ----- Tests -----------------------------------------------------------------
 
-/// `-j 1` reproduces serial behaviour: output never contains a
+/// `-j 1` reproduces serial behavior: output never contains a
 /// `[<repo-path>]` prefix.
 #[test]
 fn fetch_dash_j_one_emits_no_prefix() {

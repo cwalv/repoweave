@@ -23,7 +23,7 @@
 //! means calling the predicate from inside the runner, which moves or
 //! multiplies one of the two sites and fails here.
 //!
-//! Residue: this reads the call graph's shape, not its behaviour. A gate that
+//! Residue: this reads the call graph's shape, not its behavior. A gate that
 //! kept both arities and computed the wrong answer is not a shape this sees —
 //! `tests/arrived_drift_consent_scope_test.rs` is where the answer is checked.
 //!

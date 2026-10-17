@@ -16,7 +16,7 @@
 //!          drop; the ref is the last anchor for unreachable commits.
 //!
 //! Each kind has a fixture test asserting the report shape, and the
-//! `--fix` behaviour (where applicable) is exercised plus its
+//! `--fix` behavior (where applicable) is exercised plus its
 //! idempotence checked.
 
 use assert_cmd::Command;
@@ -37,7 +37,7 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
     root
 }
 
-/// Initialise a git repo at `path` with a single commit so HEAD exists.
+/// Initialize a git repo at `path` with a single commit so HEAD exists.
 /// Returns the SHA of that commit.
 fn init_git_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();

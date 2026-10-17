@@ -58,7 +58,7 @@ an `Issue` rather than bailed. The published set is
 operator gets for anything raised the other way. `activate` and `activate_hook`
 have no `Issue` channel at all, so a condition either of them detects that an
 operator needs to look up has to be reported by `check` or `verify` too — the
-bail there is a second line of defence, never the only report.
+bail there is a second line of defense, never the only report.
 
 ### Provided methods
 

@@ -6,7 +6,7 @@
 //! one in sync is the one an operator reads in a `mid-<op>` refusal.
 //!
 //! Neither side of the comparison is typed into this file: the labels come out
-//! of serialising the enum, whose kebab-case wire spelling is the same
+//! of serializing the enum, whose kebab-case wire spelling is the same
 //! vocabulary the display text uses, and the corpus is `src/` itself.
 
 mod common;
@@ -32,9 +32,9 @@ fn all_conflict_ops() -> Vec<ConflictOp> {
 
 fn wire_label(op: ConflictOp) -> String {
     serde_json::to_value(op)
-        .expect("ConflictOp serialises")
+        .expect("ConflictOp serializes")
         .as_str()
-        .expect("ConflictOp serialises to a plain string")
+        .expect("ConflictOp serializes to a plain string")
         .to_owned()
 }
 
@@ -65,7 +65,7 @@ fn the_display_label_is_the_wire_spelling() {
         assert_eq!(
             op.to_string(),
             wire_label(op),
-            "ConflictOp's display label and its serialised form are one \
+            "ConflictOp's display label and its serialized form are one \
              vocabulary; they must not drift apart"
         );
     }

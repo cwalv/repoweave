@@ -17,7 +17,7 @@
 //!
 //! ```text
 //! mkdir my-ws && cd my-ws
-//! rwv init my-project        # bootstraps projects/ and initialises the project
+//! rwv init my-project        # bootstraps projects/ and initializes the project
 //! rwv add <url>              # works — workspace context resolves
 //! ```
 //!
@@ -55,7 +55,7 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
             format!(
                 "`rwv init` requires either an existing workspace or an empty directory; \
                  {} is not a workspace and is not empty. \
-                 `rwv init` would create a workspace skeleton (projects/) and initialise a \
+                 `rwv init` would create a workspace skeleton (projects/) and initialize a \
                  project. To proceed: run `rwv init` in an empty directory, or `cd` into an \
                  existing workspace.",
                 cwd.display()
@@ -169,7 +169,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 
         // Look up the registry to get the clone URL pattern. Parse into
         // `RegistryName` at the boundary so the comparison goes through the
-        // newtype's PartialEq — any future normalisation (case, prefixes)
+        // newtype's PartialEq — any future normalization (case, prefixes)
         // applies here automatically. (Audit A2.)
         let target = crate::registry::RegistryName::new(registry_name);
         let registries = builtin_registries();

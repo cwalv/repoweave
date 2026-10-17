@@ -52,7 +52,7 @@ A workweave holding a repo as a symlink is refused before any phase runs
 
 ### State diagram
 
-The diagram shows the states a sync operation can be in. The grey box
+The diagram shows the states a sync operation can be in. The gray box
 (`guard → mark → savepoint`) runs once before the driver loop and is not
 persisted; a crash there leaves no trace. The white states (`replay`
 onward) are the phases the driver persists in `.rwv-op`.
@@ -265,7 +265,7 @@ the two preconditions were mutually unsatisfiable for the bare form.
 Teaching the ancestry gate to ignore a destination-only lock-only
 commit does not work under `ff` at all: there is no replay to exclude
 `rwv.lock` from, the destination is no longer an ancestor of the
-source, and honouring it would mean resetting past a commit the
+source, and honoring it would mean resetting past a commit the
 operator made — `--discard-local-commits` minted silently. The
 `rwv.lock`-excluded property the remedy relies on belongs to replay,
 and `ff` has no replay.
@@ -403,7 +403,7 @@ The classification has five outcomes:
 | Equal to the savepoint | `Untouched` — op never moved this repo; HEAD not touched |
 | Equal to `advanced_tips[repo]` (the op's recorded intent tip) | `RestoredFromIntent` — op advanced this repo during replay; reset to savepoint |
 | Equal to `converged_tips[repo]` (the recorded converged tip) | `RestoredFromConverged` — op converged this repo; reset to savepoint |
-| Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick) | `RestoredFromMidOp` — mid-op cancelled; reset to savepoint |
+| Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick) | `RestoredFromMidOp` — mid-op canceled; reset to savepoint |
 | Anything else | `ForeignTip` — restore **refused**; violation reported; op-state retained |
 
 **`advanced_tips` — the advancement-intent journal.** The `advanced_tips`

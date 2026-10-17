@@ -47,7 +47,7 @@ fn git_tag(repo: &Path, tag: &str) {
     );
 }
 
-/// Initialise a git repo with one commit. Returns HEAD SHA.
+/// Initialize a git repo with one commit. Returns HEAD SHA.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
     common::git_in(path, &["init", "-b", "main"]);

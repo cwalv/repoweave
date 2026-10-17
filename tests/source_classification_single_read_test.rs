@@ -7,7 +7,7 @@
 //! `Ahead` at the second pinned no tip while the note announced one: the pull
 //! took the lock and said it took the tips.
 //!
-//! The fix is structural, so the pin is too. A behavioural test here would have
+//! The fix is structural, so the pin is too. A behavioral test here would have
 //! to widen the window with a sleep, and a sleep-timed test pins the sleep.
 //!
 //! Residue: this counts calls per enclosing function, so it cannot tell a

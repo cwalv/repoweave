@@ -9,7 +9,7 @@
 //! own name.
 //!
 //! Neither side of the comparison is typed into this file: the expected
-//! spellings come out of `Cli::command()`, the actual ones out of serialising
+//! spellings come out of `Cli::command()`, the actual ones out of serializing
 //! the enum.
 
 use clap::CommandFactory;
@@ -57,7 +57,7 @@ fn consent_flag_names(subcommand: &str) -> Vec<String> {
 
 fn wire_spelling(o: &Override) -> String {
     serde_json::to_string(o)
-        .expect("Override serialises")
+        .expect("Override serializes")
         .trim_matches('"')
         .to_owned()
 }
@@ -85,7 +85,7 @@ fn every_override_spells_the_consent_flag_that_mints_it() {
     assert_eq!(
         sorted_wire_spellings(),
         flags,
-        "each Override must serialise to its flag's name with the dashes \
+        "each Override must serialize to its flag's name with the dashes \
          stripped, and each consent flag must have an Override to record it"
     );
 }

@@ -291,7 +291,7 @@ fn bare_identifier(expr: &str) -> Option<&str> {
     (!e.is_empty() && e.chars().all(|c| c.is_alphanumeric() || c == '_')).then_some(e)
 }
 
-/// How a destination expression was recognised as a lock path.
+/// How a destination expression was recognized as a lock path.
 ///
 /// Recorded rather than discarded because each is a separate piece of
 /// parsing: one can break while the others keep working, and a report that
@@ -548,7 +548,7 @@ fn every_raw_lock_write_says_why_the_builder_cannot_write_it() {
 /// what makes it red instead.
 ///
 /// [`Resolution::Literal`] is not required. Nothing in this tree writes a lock
-/// through a bare relative `"rwv.lock"`; the form is recognised against the
+/// through a bare relative `"rwv.lock"`; the form is recognized against the
 /// day something does, and is exercised only by
 /// [`a_destination_spelled_as_a_bare_relative_path_is_reached`].
 #[test]

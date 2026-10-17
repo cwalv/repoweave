@@ -463,7 +463,7 @@ impl RepoSyncOutcome {
 /// Wire-output mirror of [`SyncFailure`] for `--json` emission.
 ///
 /// Carries the same payload as the in-memory enum but with a `cause`
-/// represented as the serialisable [`VcsErrorOutput`]. The `#[serde(rename)]`
+/// represented as the serializable [`VcsErrorOutput`]. The `#[serde(rename)]`
 /// override below keeps the wire tag matching [`SyncFailure::kind`].
 ///
 /// `message` is the human-readable display string of the failure (free-form
@@ -763,7 +763,7 @@ pub struct SyncToJsonOutput {
 /// record carries its own `$schema` URL (pointing at `sync-record.json`) so
 /// consumers can identify a line without out-of-band context.
 ///
-/// Serialised with `#[serde(flatten)]` on the inner outcome so the wire
+/// Serialized with `#[serde(flatten)]` on the inner outcome so the wire
 /// shape is a single flat object: `{"$schema": "...", "kind": "...", ...}`,
 /// not a nested wrapper.
 ///
@@ -1241,7 +1241,7 @@ fn check_phase1_ancestor(
     );
 }
 
-/// Number of commits to show inline per refused repo before summarising the
+/// Number of commits to show inline per refused repo before summarizing the
 /// rest as "and N more".
 const BLOCKING_COMMITS_CAP: usize = 5;
 
@@ -1481,7 +1481,7 @@ fn per_conflict_bail_message(
 /// AND commits the .gitattributes migration. If neither the new nor the
 /// legacy line is present, the invariant bails with the classic
 /// "add-the-line" message. If BOTH lines are committed, the invariant bails
-/// too, even though the current spelling is present: which line git honours
+/// too, even though the current spelling is present: which line git honors
 /// is decided by attribute reading order, so the legacy name — and whatever
 /// `merge.ours.driver` the operator's global config binds — stays live
 /// either way. `rwv doctor --fix` resolves this state by dropping the
@@ -1544,7 +1544,7 @@ fn verify_replay_exclusion_invariant(
             "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
              in the project repo's committed .gitattributes, but {ga} carries \
              BOTH that line and the legacy `rwv.lock merge=ours` spelling. \
-             Which one git honours is decided by attribute reading order, and \
+             Which one git honors is decided by attribute reading order, and \
              the legacy name stays live either way: an unrelated \
              `merge.ours.driver` in the operator's global git config would \
              silently activate on rwv.lock during a bare `git rebase \
@@ -2285,7 +2285,7 @@ impl RetiredWorkweave {
 /// Text-mode handler: prints one line per repo to stdout/stderr and discards
 /// structured records. Used by `rwv sync` and `rwv sync-to` (no `--json`).
 ///
-/// `stdout_lock` serialises concurrent writes when `-j > 1` is combined with
+/// `stdout_lock` serializes concurrent writes when `-j > 1` is combined with
 /// text mode (defensive; text mode is serial in normal use).
 pub struct TextHandler<'a> {
     stdout_lock: &'a Mutex<()>,
@@ -2385,7 +2385,7 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
 /// callers can check `any_failure`. Used by `rwv sync --json -j N` with
 /// `N > 1`.
 ///
-/// `stdout_lock` serialises concurrent writes so parallel workers cannot
+/// `stdout_lock` serializes concurrent writes so parallel workers cannot
 /// interleave bytes. Text chatter is suppressed (`emit_text` returns `false`).
 ///
 /// A placement, a member and an advance-target fast-forward are each streamed
@@ -3615,7 +3615,7 @@ fn guard_and_mark<'a>(
     if matches!(verb, MachineVerb::SyncTo) {
         let tsp_id = OpId::from_string(target_savepoint_id(&op_id));
         // Load the target's project to enumerate its repos. Best-effort:
-        // if we cannot load it (e.g. project not yet materialised) skip
+        // if we cannot load it (e.g. project not yet materialized) skip
         // — abort will just leave those repos unchanged.
         let target_presents_the_project =
             WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name).is_ok();
@@ -4102,7 +4102,7 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
 }
 
 /// sync-to `--strategy=ff` precondition: CWD must be strictly ahead of
-/// target. If equal: no-op (signalled by `Ok(())` from a caller that then
+/// target. If equal: no-op (signaled by `Ok(())` from a caller that then
 /// short-circuits — handled inside `run_replay` via the noop-detection path).
 /// If diverged: refuse before any side effects.
 fn check_sync_to_ff_precondition(
@@ -4309,7 +4309,7 @@ fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
 /// are modified (staged or unstaged). Untracked files survive a rebase
 /// untouched — git never touches them during replay. Fast-forward (`ff`) also
 /// leaves untracked files alone. Refusing on untracked-only dirt would block
-/// normal in-progress work (scratch files, build artefacts) without any
+/// normal in-progress work (scratch files, build artifacts) without any
 /// corresponding git-layer failure. We therefore refuse only on tracked dirt,
 /// matching git's actual failure conditions.
 ///
@@ -5463,7 +5463,7 @@ fn settle_members(
 /// Pin the atomic source snapshot at T0: read the source project tip once,
 /// then read source manifest + lock AT that revision. Combined with the
 /// no-op-in-progress check on the source (in `check_no_op_in_progress`),
-/// source reads are effectively serialisable with no locks.
+/// source reads are effectively serializable with no locks.
 fn pin_source_snapshot(
     source_vcs: &dyn Vcs,
     source_project_dir: &Path,
@@ -6282,7 +6282,7 @@ fn retire_workweave_after_sync_to(
 
     // Both invariants hold: delete the workweave. `--retire` has no flag that
     // could waive the delete's own dirty check, so `false` is the absence of
-    // consent to waive rather than a judgement about the check — the refusal
+    // consent to waive rather than a judgment about the check — the refusal
     // above evaluates the same predicate, and the second evaluation is the
     // delete primitive's precondition, which every caller of it pays. Pass the
     // primary path (the delete resolves the workweave under the primary's
@@ -7060,7 +7060,7 @@ fn report_abort_outcome(
             // reset). An ancestor-only advance would have been done by rail 1
             // and this branch would not be reached. Say so, and name a
             // seat-runnable remedy — abandoning a tip nothing else names is
-            // destruction, which the flag deliberately does not authorise.
+            // destruction, which the flag deliberately does not authorize.
             let consent_note = if consented {
                 let captured = pre_abort_ref.revision.as_str();
                 let diverged_note = repo_abs
@@ -9343,7 +9343,7 @@ mod tests {
     #[test]
     fn sync_source_workweave_resolve_errors_when_no_active_project() {
         // Build a minimal workspace directory so resolution
-        // succeeds and recognises it as a Weave (no .rwv-active).
+        // succeeds and recognizes it as a Weave (no .rwv-active).
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("ws");
         std::fs::create_dir_all(root.join("projects")).unwrap();

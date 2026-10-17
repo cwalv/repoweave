@@ -153,7 +153,7 @@ fn doctor_fix_neither_converts_nor_modifies_the_legacy_manifest() {
     );
     assert!(
         !project_dir.join("rwv.toml").exists(),
-        "--fix must not synthesise a TOML manifest from the legacy one"
+        "--fix must not synthesize a TOML manifest from the legacy one"
     );
 }
 

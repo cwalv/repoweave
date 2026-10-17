@@ -17,7 +17,7 @@
 //! ledger's exclusion is a claim file created exclusively; a stamper that
 //! cannot create it waits out the claim budget and refuses with
 //! `state-claim-held`. The test creates that file itself, so while it holds
-//! the claim a stamper that honours the exclusion has exactly one possible
+//! the claim a stamper that honors the exclusion has exactly one possible
 //! outcome — refusal — and one that does not succeeds. Neither outcome depends
 //! on how the scheduler interleaves the children, because the holder is the
 //! test and releases only after every child has exited.

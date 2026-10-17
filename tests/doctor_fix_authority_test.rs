@@ -686,7 +686,7 @@ fn no_finding_doc_comment_contradicts_the_register() {
 /// classifier that reads every block as making no claim reports nothing and
 /// is indistinguishable, when green, from a tree with no contradictions.
 #[test]
-fn the_doc_walk_actually_recognises_the_claims_in_the_source() {
+fn the_doc_walk_actually_recognizes_the_claims_in_the_source() {
     let top = variants_of(CHECK_RS, "CheckViolation");
     assert!(
         top.len() >= 30,
@@ -705,7 +705,7 @@ fn the_doc_walk_actually_recognises_the_claims_in_the_source() {
         .count();
     assert!(
         stated >= 10,
-        "the classifier recognised a disposition in only {stated} of the {} \
+        "the classifier recognized a disposition in only {stated} of the {} \
          `CheckViolation` docs — it has stopped reading claims, and every comparison \
          above passes for that reason",
         top.len()
@@ -1072,7 +1072,7 @@ fn repair_arm_gaps(
                 "src/check.rs:{}: a repair announced in `{}` is bound to nothing — add \
                  it to the binding table with the finding it repairs (which the register \
                  must mark Auto or Consented), or it is a repair the register never \
-                 authorised",
+                 authorized",
                 a.line, a.function
             )),
             [one] => {

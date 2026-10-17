@@ -15,9 +15,9 @@
 //!   [`FakeVcs::fail_next`] and otherwise only through permission games that
 //!   depend on who is running the suite.
 //!
-//! Only the methods some uncovered arm needed are modelled. Every other method
+//! Only the methods some uncovered arm needed are modeled. Every other method
 //! panics naming itself: a method nobody has needed yet is one whose faithful
-//! fake behaviour nobody has thought about, and guessing quietly is how a
+//! fake behavior nobody has thought about, and guessing quietly is how a
 //! double starts lying.
 
 use super::*;
@@ -69,7 +69,7 @@ impl FakeVcs {
     }
 
     /// A double that answers [`Vcs::population`]. Of those questions only
-    /// the unpopulated create is modelled, in the same ref store a populated
+    /// the unpopulated create is modeled, in the same ref store a populated
     /// one uses.
     pub(crate) fn answering_population() -> Self {
         let mut fake = Self::default();
@@ -128,7 +128,7 @@ impl FakeVcs {
             .push_back(Box::new(hook));
     }
 
-    /// Every modelled call this double has served, in order.
+    /// Every modeled call this double has served, in order.
     pub(crate) fn calls(&self) -> Vec<VcsCall> {
         self.log.lock().unwrap().clone()
     }
@@ -214,7 +214,7 @@ impl Drop for FakeVcs {
 
 fn unsupported(method: &str) -> ! {
     panic!(
-        "FakeVcs models no behaviour for `{method}`; add it, scoped to the arm under test, \
+        "FakeVcs models no behavior for `{method}`; add it, scoped to the arm under test, \
          rather than to the trait"
     )
 }
@@ -243,7 +243,7 @@ impl Vcs for FakeVcs {
 
     /// The canonical store `workspace` resolves to: always `None`.
     ///
-    /// A modelled answer, not an absent one. The real method reports `None`
+    /// A modeled answer, not an absent one. The real method reports `None`
     /// for a path that is not a repo, and this double's refs live in a map
     /// keyed by the path a caller hands it rather than in an object store two
     /// paths could share — so no path it is given has one. That is what keeps
@@ -793,7 +793,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "`head_revision`")]
-    fn an_unmodelled_method_names_itself() {
+    fn an_unmodeled_method_names_itself() {
         let _ = FakeVcs::new().head_revision(Path::new("/store"));
     }
 
@@ -926,7 +926,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "`tracked_files`")]
-    fn an_unmodelled_population_question_names_itself() {
+    fn an_unmodeled_population_question_names_itself() {
         let fake = FakeVcs::answering_population();
         let _ = fake.population().unwrap().tracked_files(Path::new("/one"));
     }

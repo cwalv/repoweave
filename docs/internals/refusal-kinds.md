@@ -87,7 +87,7 @@ rwv explain <token>
 - **No kind in the chain ⇒ no route line**, and the output is byte-identical to
   what the runtime's own reporter produced before the funnel existed. Errors
   outside the class gain nothing.
-- **Exit codes are unchanged.** A refusal exits 1 with a capitalised `Error:`;
+- **Exit codes are unchanged.** A refusal exits 1 with a capitalized `Error:`;
   argv rejection exits 2 with a lowercase `error:`. That case split is the only
   class marker, and it is now deliberate rather than incidental.
 

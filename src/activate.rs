@@ -157,7 +157,7 @@ pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<
 /// at primary and the workweave directory inside a workweave — the isolation
 /// contract pinned by `doctor_workweave_content_fix_isolation_test`.
 ///
-/// **Install hooks run**, unlike the workweave-flavoured
+/// **Install hooks run**, unlike the workweave-flavored
 /// [`activate_workweave_intent`]. A `generated_files()` lockfile has no other
 /// author — only `cargo generate-lockfile` / `npm install` / `uv sync`
 /// produce one, so a hook-suppressed `--fix` reports the lock as regenerable
@@ -1507,7 +1507,7 @@ impl RestorePoint {
 /// presents — the pointer at primary, the marker in a workweave. Returns an
 /// empty set if `root` presents no project (in which case no symlinks are
 /// owned by rwv and nothing gets removed). This is the deactivate-side
-/// analogue of step 2 in [`activate_at`].
+/// analog of step 2 in [`activate_at`].
 fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
     let observed = match observe_root(root) {
         Some(observation) => observation,
@@ -1990,7 +1990,7 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
 /// Where the links at one weave root read from, settled once per pass so every
 /// reader in it judges against the same answer.
 ///
-/// The absolute shape is recognised as rwv's surfacing only under the root's
+/// The absolute shape is recognized as rwv's surfacing only under the root's
 /// own primary, and never at a `workweave.link` name: that section
 /// canonicalizes its source, and a primary root slot that is itself a
 /// surfacing link canonicalizes to exactly this shape.
@@ -4481,7 +4481,7 @@ mod tests {
 
     /// Only Windows spells one path two ways, so a `/verbatim` prefix stands in
     /// for `\\?\` here: what matters is that the plan is spelled the way the
-    /// link reads back, and that the read-back is recognised as rwv's.
+    /// link reads back, and that the read-back is recognized as rwv's.
     #[test]
     fn a_primary_sourced_link_is_planned_in_the_spelling_it_reads_back_in() {
         fn as_read_back(path: &Path) -> &Path {
@@ -4510,7 +4510,7 @@ mod tests {
                 .primary_owner_dir(Path::new("shared.db"), read_back)
                 .as_deref(),
             Some("alpha"),
-            "the link as read back must be recognised as rwv's own surfacing"
+            "the link as read back must be recognized as rwv's own surfacing"
         );
     }
 

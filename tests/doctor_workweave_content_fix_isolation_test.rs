@@ -95,7 +95,7 @@
 //!     `.git/info/exclude`). A workweave has no copy.
 //!
 //! So a workweave-scoped `--fix` retracting a receipt recorded for a
-//! DIFFERENT workweave is expected behaviour, not a leak of the contract
+//! DIFFERENT workweave is expected behavior, not a leak of the contract
 //! above. Do not "fix" it by pointing those arms at `active_path()` — that
 //! would make them silently no-op against a registry that is not there.
 //!

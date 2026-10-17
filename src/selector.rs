@@ -29,7 +29,7 @@
 //! ## Semantics
 //!
 //! - **Empty filter** (no `--role`, no `--repo`): every repo passes. Existing
-//!   verb behaviour is preserved bit-for-bit.
+//!   verb behavior is preserved bit-for-bit.
 //! - **Union accumulation:** a repo is included if it matches *any* `--role`
 //!   value OR *any* `--repo` selector. This matches the common case of
 //!   "these specific repos plus everything in this role".

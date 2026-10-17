@@ -134,7 +134,7 @@ role = "owned"
     let weave_dir = tmp.path().join("ws--hotfix");
     fs::create_dir_all(&weave_dir).unwrap();
 
-    // Write the .rwv-workweave marker so resolve() recognises this as a
+    // Write the .rwv-workweave marker so resolve() recognizes this as a
     // workweave (marker-less resolution was removed).
     let primary_canon = root.canonicalize().unwrap();
     let marker = common::workweave_marker(&primary_canon, "ws", &primary_canon);

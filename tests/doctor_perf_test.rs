@@ -4,10 +4,10 @@
 //!
 //! ## Structural license
 //!
-//! A direct behavioural assertion would time `rwv doctor --all` and bound
+//! A direct behavioral assertion would time `rwv doctor --all` and bound
 //! the elapsed-wall-clock ratio between two scales. That is not usable on a
 //! host running concurrent, unrelated load — contention noise swamps the
-//! signal at the scale a fixture can afford to build, so no behavioural
+//! signal at the scale a fixture can afford to build, so no behavioral
 //! assertion on elapsed time can reliably distinguish linear from
 //! quadratic scaling here. Counting `git` subprocess invocations is the
 //! licensed stand-in: it is a property of the code path an input takes,
@@ -72,7 +72,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
     }
     std::fs::write(root.join("projects/app/rwv.toml"), manifest).unwrap();
 
-    // --- Workweaves, each materialising every repo via `git worktree add` ---
+    // --- Workweaves, each materializing every repo via `git worktree add` ---
     let primary_canon = root.canonicalize().unwrap();
     for k in 0..n_ww {
         let ww_dir = parent.join(".workweaves").join(format!("app--wk{k}"));

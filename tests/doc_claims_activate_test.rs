@@ -25,7 +25,7 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// Initialise a real git repo at `path` with one commit on `main`.
+/// Initialize a real git repo at `path` with one commit on `main`.
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
     common::git_in(path, &["init", "--initial-branch=main"]);
@@ -540,7 +540,7 @@ link = [".beads"]
 // what is measured is what rwv spawned rather than what this host installs.
 // ===========================================================================
 
-/// Build an npm-flavoured workspace at `ws_root` and pre-author its managed
+/// Build an npm-flavored workspace at `ws_root` and pre-author its managed
 /// files, leaving a context-mode `rwv activate` something to surface.
 ///
 /// Unix-gated with its two callers, which need a PATH shim Windows cannot

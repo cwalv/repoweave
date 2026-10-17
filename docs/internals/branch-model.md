@@ -26,7 +26,7 @@ cites this document by section number for every branch-discipline finding).
 |---|---|
 | `[V]` | Verified by reading the source at the citation base below. |
 | `[S]` | Verified empirically against a built `rwv` binary. Several `[S]` symptoms below were *reproduced before this model shipped* and no longer reproduce; each such passage says so and names the test that now holds the inverse. |
-| `[R]` | Read from source or docs during the branch-behaviour investigation; not re-verified here. |
+| `[R]` | Read from source or docs during the branch-behavior investigation; not re-verified here. |
 | `[?]` | Flagged, unverified by anyone. |
 
 Code is cited as `file:line` against this repo. Docs are cited by path.
@@ -217,7 +217,7 @@ not because it means anything. Two facts:
 1. A worktree must be attached to some writable ref to commit onto.
 2. Git refuses to give two worktrees one branch **by default**. Verified:
    `git worktree add ../wt2 main` → `fatal: 'main' is already used by
-   worktree at …`, git 2.43.0 `[V]`. This is default behaviour, not an
+   worktree at …`, git 2.43.0 `[V]`. This is default behavior, not an
    impossibility — `git worktree add --force ../wt2 main` succeeds on the
    same git version and yields two worktrees both on `main` `[V]`, and
    `git symbolic-ref HEAD` does the same with no flag. rwv itself never
@@ -497,7 +497,7 @@ The `"checkout"` entry has moved the same way. It is at `:248-297` with
 `count: 4`, and opens by recording that "the bare `checkout()` that used to
 head this list is DELETED" `[V]`. (Both spans are corrected here: the previous
 citation base pinned this pair at `:289-323` and `:239-287`, which are the
-`"--hard"` entry and its neighbour — the entries were named correctly and
+`"--hard"` entry and its neighbor — the entries were named correctly and
 located wrongly, and no sweep before this one checked the line against the
 `pattern:` it claimed.) Its clauses no longer consider only
 *working-tree clobber*: they cover `refresh_working_tree_to_head_if_safe`,
@@ -1027,7 +1027,7 @@ fn list_branches_with_prefix(&self, repo: &Path, prefix: &RefName)
 fn restore_savepoint(&self, ...) -> Result<(), VcsError>;
 ```
 
-Two neighbours survive because they are not branch-model operations:
+Two neighbors survive because they are not branch-model operations:
 `advance_if_fast_forward` (`vcs.rs`, impl `git.rs:1227-1234`) and
 `hard_reset` remain on the trait as the mechanical primitives the typed MOVEs
 call underneath. `advance_if_fast_forward` still takes a bare `&Path`, which
@@ -1243,7 +1243,7 @@ probe, because the existing suite will not report the loss.
 
 **The two exits, and what triggers each.** Neither is wrong on the merits;
 both are unpaid-for today, and each is written down with its trigger so the
-day it becomes right is recognisable.
+day it becomes right is recognizable.
 
 - **Hoist to a crate-root `consent`; widen the mint to `pub(crate)`.**
   *Trigger: a second in-crate frontend is real* — an `api` or `daemon` module
@@ -1530,7 +1530,7 @@ a_witness_cannot_point_a_move_at_a_different_repo` asserts `E0061` on
 refusals are pinned by `sync.rs:5659
 ff_advance_repo_refuses_to_land_onto_a_detached_target` and `:5635
 ff_advance_repo_lands_on_the_branch_the_target_is_attached_to`, and the
-end-to-end behaviour by `tests/sync_to_test.rs:775
+end-to-end behavior by `tests/sync_to_test.rs:775
 sync_to_advances_the_target_branch_not_just_head`.
 
 This is Q4's answer, obtained for free: **sync-to advances the ref the target
@@ -1590,7 +1590,7 @@ the line that depends on it. `PublishRef::from_attached` (`push.rs:213`,
 answer, `PublishRef::from_local`, exists unused (`vcs.rs:1419`) so that
 choosing it later is a one-line change at one place `[V]`.
 
-**(3) Deleting a ref you only recognised.** `create_worktree`'s retry:
+**(3) Deleting a ref you only recognized.** `create_worktree`'s retry:
 
 ```rust
 // the shape this section objected to — verified destroying a branch carrying
@@ -1686,7 +1686,7 @@ error[E0599]: no method named `checkout` found for struct `GitVcs`
             `detach_head` (which requires `DetachConsent`).
 ```
 
-There is no way to restore the old behaviour without either producing an
+There is no way to restore the old behavior without either producing an
 `AttachedRef` (and thereby moving the branch instead of abandoning it) or
 threading a `DetachConsent` up to a named CLI flag. R1 holds by construction.
 
@@ -1938,7 +1938,7 @@ landed — plus a seventh the implementation exposed.
    them across a weave whose members sit on branches will refuse until
    it passes `--detach-checkouts`, or until the target revision is a
    fast-forward. This is the intended consequence of the already-decided
-   "changing attachment needs consent" principle, but it is a real behaviour
+   "changing attachment needs consent" principle, but it is a real behavior
    change with a real blast radius, and it will surface in CI first.
    A specific sharp edge: **materializing an older lock** (rolling a weave
    back to a prior lock) is not a fast-forward, so it refuses and requires the
@@ -2507,7 +2507,7 @@ model still does not decide it.** What the model contributed, and has
 shipped: `Vcs::push_ref` takes the ref as a parameter (`vcs.rs:3027`), so the
 decision is made at one site in `push.rs` instead of being implicit inside
 the VCS impl (§4.6(2)); `PublishRef::from_attached` (`push.rs:213`, `:418`)
-is the choice currently made, matching the shipped behaviour exactly, and
+is the choice currently made, matching the shipped behavior exactly, and
 `PublishRef::from_local` (`vcs.rs:1419`) sits unused as the other answer so
 that changing it is a one-line change at one place `[V]`. The member gate
 still warns and pushes anyway (`push.rs:406-412`) `[V]` — the split relocated
@@ -2839,6 +2839,6 @@ the ref types, 2 more on the name types `mint` consumes, and 23 probes in
   listed in `docs/SUMMARY.md:55`. It cites **nothing** from this document —
   no section, no rule label `[V]` — which is the point: it is the surface an
   operator is meant to open, and this one is not.
-Every claim that came from the earlier branch-behaviour investigation is
+Every claim that came from the earlier branch-behavior investigation is
 restated in this document; no external hop is required to derive any answer
 here.

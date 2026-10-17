@@ -25,7 +25,7 @@ Write a comment only for something the code cannot state:
 - an invariant a caller must uphold that no signature enforces;
 - a deliberate deviation from the obvious implementation, and what breaks if
   someone "fixes" it;
-- a fact about the world outside this repo — a git behaviour, a filesystem
+- a fact about the world outside this repo — a git behavior, a filesystem
   guarantee — that a reader cannot derive from the file in front of them.
 
 Never write a comment that restates the code, narrates the steps below it, or
@@ -85,7 +85,7 @@ because they encode no route a reader can take:
   test may name the regression it pins in its own words; the ID itself is not
   the way to do that — that provenance is what the commit that added the test
   already carries. `check_no_tracker_ids` in `src/bin/generate-explain.rs`
-  mechanises one prefix of this and deliberately not the rest; the next
+  mechanizes one prefix of this and deliberately not the rest; the next
   section says which, and why it stops there.
 - **a comment whose entire content is a reference** — `// See
   docs/explanation/joints/clone-topology.md.`. Banned in `src/` and `docs/`.
@@ -98,7 +98,7 @@ temp directory is not citing a document" — is still true, but only for that
 one shape: a citation naming a real document under a wrong or missing path is
 exactly as much a dead end when a test writes it as when `src/` does. So the
 rule reads both trees, and the fixture-path case is carved out by the same
-operated-filename exemption `src/` already had (see "What is mechanised, and
+operated-filename exemption `src/` already had (see "What is mechanized, and
 what is not" below), widened to also look at what `tests/*.rs` code writes as
 fixture content, matched by basename so a comment naming a bare filename and a
 fixture writing it under a directory are read as the same fact.
@@ -121,7 +121,7 @@ it covers exactly one case: a path outside this repository. Not for a tracker
 ID, not for a path that does resolve here, not a way to preserve a comment a
 rewrite would have removed. Expect to reach for it close to never.
 
-### What is mechanised, and what is not
+### What is mechanized, and what is not
 
 Three gates in `src/bin/generate-explain.rs`:
 
@@ -134,7 +134,7 @@ Three gates in `src/bin/generate-explain.rs`:
   carry no four-character floor. None may be preceded by an alphanumeric or an
   underscore — an underscore continues an identifier rather than ending a
   word, and without that rule the gate reports its own test names. Nothing
-  shorter, longer, capitalised, or otherwise prefixed. It reads `docs/`
+  shorter, longer, capitalized, or otherwise prefixed. It reads `docs/`
   as well as `src/` and `tests/`, which the citation gate does not, and it
   also reads every `.md`, `.rs` and `.toml` file directly at the repo root —
   `CLAUDE.md`, `build.rs` and `Cargo.toml` included, so neither the file
@@ -188,7 +188,7 @@ Three gates in `src/bin/generate-explain.rs`:
   `docs/internals/` deliberately.
 
 **The section-pointer shape (`plan §7.1 arm 7`, `Finding 1 of …`) is not
-mechanised as such.** Written against a bare filename it is caught, but only
+mechanized as such.** Written against a bare filename it is caught, but only
 because the filename does not resolve; the section token is invisible to the
 gate. Written against a path that resolves, or against a document named with
 no file extension, nothing fires.
@@ -243,7 +243,7 @@ purpose — and a fixture is not a use.
 Comment text is the surface making the claim. It cannot also be the evidence
 for it.
 
-### What is mechanised, and what is not
+### What is mechanized, and what is not
 
 `check_doc_symbol_refs` in `src/bin/generate-explain.rs` enforces this for the
 **qualified** shape only: a comment writing `` `Type::member` ``, where `Type`
@@ -296,9 +296,9 @@ make it an assertion keyed on the set — a count from `.len()`, a census-shaped
 pin in the style of the audit tests — never prose. A failure message that
 states a count derives it from the collection it prints.
 
-### What is mechanised, and what is not
+### What is mechanized, and what is not
 
-Nothing mechanises this. Distinguishing a derived population from a closed set
+Nothing mechanizes this. Distinguishing a derived population from a closed set
 stated normatively is the reader's judgment, and a matcher for "numerals near
 plurals in comments" reports correct code, which is the property that gets
 matchers turned off. When a sweep turns one up, prefer deleting the
@@ -319,7 +319,7 @@ generate-explain` names the file, line and word in seconds.
 
 ## A green gate is not coverage
 
-The rules above each end with a "What is mechanised, and what is not". That is not
+The rules above each end with a "What is mechanized, and what is not". That is not
 boilerplate. It is the same defect written down at each rule: **a check green-lights
 what it examined, and reading it as green-lighting what it was pointed at is
 the error.**
@@ -344,7 +344,7 @@ defect looks like when someone is already looking for it:
   parser read **zero** claims and reported nothing. A gate written specifically
   to catch "passes for the wrong reason" passed for the wrong reason, in its
   first hour.
-- **The scope matcher recognised one module name.** `before_test_module` in
+- **The scope matcher recognized one module name.** `before_test_module` in
   `src/bin/generate-explain.rs` ended the scan at a literal `mod tests`, so
   `src/git.rs` — which names its test modules `branch_model_tests` and
   `derived_content_tests` — was scanned end to end. The freshly hardened gate
@@ -362,7 +362,7 @@ The four the survey found, for the taxonomy:
 - **one syntactic form** — the citation gate required a `/` in a token before
   it would look at the token at all. Roughly eighty bare `<document>.md §N`
   citations sat unexamined behind that one character.
-- **one spelling** — the tracker-ID matcher recognised the retired prefix as
+- **one spelling** — the tracker-ID matcher recognized the retired prefix as
   prose writes it and not as a Rust identifier is forced to write it, so a
   module name and a test name carrying that same retired ID sat green, as did
   an entire retired doc-claim scheme at twenty-one sites. Those came out by
@@ -516,3 +516,13 @@ workspace; and distinguish **materialize** (populating member checkouts and
 ecosystem state via `rwv materialize`, `rwv sync`, or `rwv workweave create`)
 from **activate** (switching `.rwv-active` and root-level ecosystem symlinks
 via `rwv activate`).
+
+### American spelling
+
+All prose in this repository — operator pages, maintainer docs, `--help` and
+message text, and code comments — uses American spelling: behavior,
+recognize, serialize, normalize, initialize, honor, judgment, modeled,
+canceled, labeled, catalog, artifact. The idiom is American too: while and
+among, not whilst and amongst. Private identifiers follow the same spelling;
+a wire token (a finding or refusal kind, a JSON key, a flag name) keeps the
+spelling it shipped with, because renaming one is a break.

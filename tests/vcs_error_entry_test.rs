@@ -81,7 +81,7 @@ fn published() -> BTreeSet<String> {
 
 /// The tokens `SyncFailure::kind` mints — the page's second register.
 ///
-/// Not the wire producer: `rwv sync --json` serialises `SyncFailureOutput`.
+/// Not the wire producer: `rwv sync --json` serializes `SyncFailureOutput`.
 /// `sync_failure_kind_matches_wire_tag` pins the two over every variant, which
 /// is what makes reading the match arms a faithful read of the wire.
 fn sync_failure_kinds() -> BTreeSet<String> {

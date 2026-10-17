@@ -29,7 +29,7 @@
 //!     → clone is back at the locked SHA → status reports `ok`.
 //!
 //!   - `[unreachable]` repair: the status.rs doc comment says "Repair: git
-//!     fetch / rwv fetch to materialise the missing object."  In-place `rwv
+//!     fetch / rwv fetch to materialize the missing object."  In-place `rwv
 //!     fetch` skips clones whose directory already exists and tries to
 //!     `git checkout <lock-sha>` locally — if the SHA is absent from the
 //!     local object store (the definition of `unreachable`) that checkout
@@ -523,7 +523,7 @@ fn missing_repair_drive_fetch_in_place_restores_ok() {
 // 5. Repair-drive: [unreachable] → git fetch + checkout → [ok]
 //
 // The documented repair in status.rs for [unreachable] is:
-//   "git fetch / rwv fetch to materialise the missing object"
+//   "git fetch / rwv fetch to materialize the missing object"
 //
 // In-place `rwv fetch` does NOT network-fetch individual objects for clones
 // that already exist on disk — it tries to resolve the locked SHA locally

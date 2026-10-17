@@ -15,7 +15,7 @@
 //! census's finding, not its failure** — the number is large, it is recorded
 //! rather than hidden, and it moves only when someone changes it.
 //!
-//! Structural, under docs/internals/testing.md's licence 2 — a prohibition over
+//! Structural, under docs/internals/testing.md's license 2 — a prohibition over
 //! an enumerable population.
 //!
 //! **Scope.** Production lines of `src/` (comment lines and `#[cfg(test)]`
@@ -28,7 +28,7 @@
 //! shapes — a new error type printed raw, an `eprintln!` — is invisible here.
 //! Typed `Display` variants reach the terminal without a macro site and are
 //! counted by their attachment in `src/refusal.rs`, not at the `?` that
-//! converts them. The instrument column recognises one shape of read,
+//! converts them. The instrument column recognizes one shape of read,
 //! `assert_routes_to`, so a test that drives a site and checks its token some
 //! other way reads as `-` and understates coverage.
 

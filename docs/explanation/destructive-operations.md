@@ -20,7 +20,7 @@ operator either resolves the condition themselves or invokes the
 operation again with the precondition's named override (rule 2).
 
 The precondition is *named* — present in the source as a function or a
-clearly-labelled inline check — so a reviewer auditing the call site can
+clearly-labeled inline check — so a reviewer auditing the call site can
 verify the gate matches the destruction it guards. Anonymous guards
 ("if not dirty …") drift; named ones survive refactors.
 
@@ -51,7 +51,7 @@ what would be lost. "Informed" means:
   one-line description of what consent is being granted. Hidden or
   undocumented override flags are not informed consent.
 - Adding a new override-gated destructive path requires extending the
-  refusal output to enumerate the loss, not just signalling that
+  refusal output to enumerate the loss, not just signaling that
   something is at risk.
 
 **The house rule:** an override flag is named for the precondition it
@@ -71,7 +71,7 @@ that an override bypasses is enumerated at the call site.
 `abort --abandon-foreign-tip=<repo>` shows how narrow "narrow" is meant
 to be. It waives one precondition (the tip must be attributable to the
 op) for one repo per occurrence, and has no all-repos form — whether a
-particular repo's foreign commits are expendable is a judgement about
+particular repo's foreign commits are expendable is a judgment about
 those commits, so a blanket spelling would answer it for repos the
 operator never looked at. It is also the case where rule 3 does the
 naming: the flag says *abandon*, not *discard*, because the pre-abort
