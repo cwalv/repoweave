@@ -12,7 +12,7 @@ rwv abort                 # roll back all involved workspaces to pre-op savepoin
 
 `rwv status` is read-only and marks any repository that is mid-rebase, mid-merge, or mid-cherry-pick (in `--json` output, `"mid_op": "<op>"`).
 
-For `rwv sync-to`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace; `rwv abort` can be run from either workspace and rolls back both.
+For `rwv sync-to`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace. `rwv abort` can be run from either workspace and rolls back both with the same verdict per repository; its lines for the other workspace's repositories carry a `[target]` prefix (run from the initiating workweave) or a `[source]` prefix (run from the target).
 
 ## Resume with `--continue`
 
@@ -22,7 +22,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 
 ## Roll back with `rwv abort`
 
-`rwv abort` restores every repository in the involved workspaces to its pre-op savepoint (`refs/rwv/pre-op/<op-id>`), cancels any in-progress VCS rebase/merge/cherry-pick, and clears the op-state record:
+`rwv abort` restores every repository in the involved workspaces to its pre-op savepoint (`refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` for a repository in the target of a `sync-to`), cancels any in-progress VCS rebase/merge/cherry-pick, and clears the op-state record:
 
 | Current repository tip | `rwv abort` outcome |
 |---|---|
@@ -31,7 +31,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 | Mid-rebase / mid-merge / mid-cherry-pick | `restored` — VCS operation canceled and reset to the savepoint |
 | Anything else | `foreign-tip violation` — restore refused; op-state retained |
 
-Before resetting any repository, `rwv abort` writes a durable reference at `refs/rwv/pre-abort/<op-id>` pointing to the pre-abort tip. That reference is kept after abort finishes, so commits discarded by `rwv abort` remain reachable in git (`git log refs/rwv/pre-abort/<op-id>`).
+Before resetting any repository, `rwv abort` writes a durable reference at `refs/rwv/pre-abort/<op-id>` (with the same `-target` suffix in a `sync-to` target) pointing to the pre-abort tip, and its output names the reference. That reference is kept after abort finishes, so commits discarded by `rwv abort` remain reachable in git (`git log refs/rwv/pre-abort/<op-id>`).
 
 Uncommitted working-tree edits that existed before the sync started and untracked tool directories (`node_modules/`, `.venv/`, `target/`) are not snapshotted by savepoints and are not modified by `rwv abort`.
 
@@ -54,6 +54,6 @@ If no op-state record is present in the workspace, `rwv abort` exits with status
 
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts before running `--continue`
 - [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave work with `rwv sync-to`
-- [`rwv explain abort`](../reference/explain/abort.md) — two-rail verified restore and foreign-tip recovery contract
-- [`rwv explain sync`](../reference/explain/sync.md) — `rwv sync --continue` and op-state flags
-- [`rwv explain sync-to`](../reference/explain/sync-to.md) — multi-workspace op-state and `--continue`
+- [Sync semantics](../explanation/joints/sync-semantics.md) — phase ordering, savepoints, and op-state
+
+For the full contracts, run `rwv explain abort` (verified restore and foreign-tip recovery), `rwv explain sync`, and `rwv explain sync-to` (op-state and `--continue`).

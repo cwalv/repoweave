@@ -10,7 +10,7 @@ cd ../.workweaves/web-app--payments
 This forks from CWD's active workspace (the primary weave, or the surrounding workweave when invoked inside one) and creates `../.workweaves/web-app--payments/` — a sibling of the weave root by default — containing:
 
 - a git worktree on an ephemeral `web-app--payments` branch for every member repo (`role = "reference"` members included, with read-only permissions on tracked regular files), populated via copy-on-write reflinks or read-only hardlinks where the filesystem supports them
-- surfaced ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, `pyproject.toml`) and isolated tool state (`node_modules/`, `target/`, `.venv/`)
+- surfaced ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`, `pyproject.toml`) and isolated tool state (`node_modules/`, `target/`, `.venv/`), installed by the integration install hooks `create` runs in the new workweave (pass `--no-materialize` to skip them; `rwv materialize` inside the workweave runs them later)
 - a `.rwv-workweave` marker recording the parent workspace and project
 
 `rwv workweave create` checks for uncommitted changes in `projects/<project>/` before proceeding. If the project repo is dirty, it refuses and lists three options:
@@ -23,6 +23,8 @@ To proceed, do one of:
   1. commit the changes: git -C projects/web-app commit
   2. stash the changes: git -C projects/web-app stash
   3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
+
+rwv explain dirty-project-dir
 ```
 
 Pass `--capture-dirty` when the uncommitted `rwv.toml` edit is meant for the new workweave:
@@ -31,7 +33,7 @@ Pass `--capture-dirty` when the uncommitted `rwv.toml` edit is meant for the new
 rwv workweave web-app create payments --capture-dirty
 ```
 
-Commit or stash captured edits in the workweave before running `rwv sync-to`.
+`--capture-dirty` moves uncommitted edits to `rwv.toml` and `rwv.lock` into the workweave: once the workweave exists, `projects/web-app/` in the source holds their committed versions again, so a later `rwv sync-to` is not refused over the source's copy. Other uncommitted files in `projects/web-app/` stay in the source, and `create` lists them. Commit or stash the captured edits in the workweave before running `rwv sync-to`.
 
 ## Work across repos
 
@@ -46,7 +48,7 @@ cd ../server
 # edit ...
 git commit -am "server: add /payments endpoint"
 
-cd ../..
+cd ../../..
 cargo test --workspace   # or npm test --workspaces, go test ./...
 ```
 
@@ -70,7 +72,7 @@ To throw away a workweave without landing its changes:
 rwv workweave web-app delete payments
 ```
 
-Deletion refuses if any worktree has uncommitted changes or commits not reachable from the recorded parent or primary weave; pass `--discard-uncommitted` and/or `--discard-unmerged-commits` to confirm discarding that work.
+Deletion refuses if any checkout in the workweave, a manifest member or not, has uncommitted changes or commits not reachable from the recorded parent or primary weave; pass `--discard-uncommitted` and/or `--discard-unmerged-commits` to confirm discarding that work.
 
 ## Related
 

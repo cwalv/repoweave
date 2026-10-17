@@ -9,7 +9,7 @@ cd github/chatly/server
 git add <files>
 
 # 2. Resume from the weave root where the sync started
-cd ../..
+cd ../../..
 rwv sync --continue      # or: rwv sync-to --continue
 ```
 
@@ -34,9 +34,11 @@ cd <repo>
 rwv sync --continue   # resume; already-converged repos are no-ops
 
 If you'd rather roll everything back: `rwv abort`.
+
+rwv explain op-parked
 ```
 
-`--continue` reads all original parameters — source or target, `--strategy`, `--retire`, and any consent flags — from the saved op-state record. Do not pass the original flags again alongside `--continue`; any flag other than `--project` is rejected.
+`--continue` reads all original parameters — source or target, `--strategy`, `--retire`, and any consent flags — from the saved op-state record. Do not pass the original flags again alongside `--continue`; any other flag is rejected as a usage error (exit 2), except `--project`, which must name the project the op started for, and `--json` on `rwv sync-to`.
 
 If you step through a multi-commit rebase manually with `git rebase --continue`, the repository's `merge.rwv-ours.driver` configuration keeps `rwv.lock` conflict-free across picks. Once the manual rebase finishes, run `rwv sync --continue` (or `rwv sync-to --continue`) so `rwv` regenerates `rwv.lock` and clears the op-state record.
 

@@ -37,7 +37,7 @@ For tracked source files themselves, `rwv` already shares disk blocks across wor
 
 ### Enable per project via `rwv.toml`
 
-Setting `rustc-wrapper = "sccache"` under `[integrations.cargo-workspace]` in `rwv.toml` instructs `rwv` to check whether `sccache` is on `PATH` whenever the workspace is materialized (including `rwv fetch`, `rwv activate`, `rwv materialize`, and `rwv doctor --fix`). When `sccache` is present on the host, `rwv` writes `[build] rustc-wrapper = "sccache"` into the generated `.cargo/config.toml`; on machines without `sccache`, the key is omitted so `cargo` still builds cleanly.
+Setting `rustc-wrapper = "sccache"` under `[integrations.cargo-workspace]` in `rwv.toml` instructs `rwv` to check whether `sccache` is on `PATH` whenever the workspace is materialized (including `rwv fetch`, `rwv activate`, `rwv materialize`, `rwv workweave create`, and `rwv doctor --fix`). When `sccache` is present on the host, `rwv` writes `[build] rustc-wrapper = "sccache"` into the generated `.cargo/config.toml`; on machines without `sccache`, the key is omitted (and the file removed when nothing else is in it) so `cargo` still builds cleanly.
 
 ### Or enable host-wide via shell environment
 

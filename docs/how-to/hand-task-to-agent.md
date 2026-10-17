@@ -21,7 +21,7 @@ Run `rwv prime` from the weave or workweave root to emit structured workspace co
 rwv prime
 ```
 
-`rwv prime` produces no output when CWD is outside a weave or workweave (pass `--no-suppress` to always emit). Running `rwv setup claude` registers `rwv prime` on `SessionStart` and `PreCompact` hooks and wires `WorktreeCreate` / `WorktreeRemove` so `claude --worktree` creates and removes full multi-repo workweaves automatically.
+`rwv prime` produces no output when CWD is outside a weave or workweave (pass `--no-suppress` to always emit). Running `rwv setup claude` registers `rwv prime` on `SessionStart` and `PreCompact` hooks and wires `WorktreeCreate` / `WorktreeRemove` so `claude --worktree` creates and removes full multi-repo workweaves automatically. It edits `~/.claude/settings.json` and refuses (`claude-settings-missing`) until Claude Code has run once and created that file.
 
 ## Discover verbs and schemas (`rwv explain`)
 
@@ -56,7 +56,7 @@ Every `--json`-capable verb emits a self-describing document carrying a `$schema
 When creating a workweave for an agent (`rwv workweave web-app create agent-task-99`), the agent's directory at `../.workweaves/web-app--agent-task-99/` gets:
 
 - a git worktree on an ephemeral branch for every member repo (`reference` repos have read-only tracked files), populated via copy-on-write reflinks or read-only hardlinks where supported
-- isolated tool state (`node_modules/`, `.venv/`, `target/`) and its own `rwv.lock`
+- isolated tool state (`node_modules/`, `.venv/`, `target/`), installed by the integration install hooks `create` runs, and its own `rwv.lock`
 - a `.rwv-workweave` marker pointing back to the parent workspace
 
 When the agent finishes committing across member repos, `rwv sync-to --retire` auto-relocks CWD, replays the work onto the parent workspace, fast-forwards the parent, and deletes the workweave. If a conflict occurs, the workweave is preserved so the agent or operator can resolve it and run `rwv sync-to --continue`.

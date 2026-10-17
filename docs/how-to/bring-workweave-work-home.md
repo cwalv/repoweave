@@ -51,18 +51,20 @@ rwv workweave web-app delete payments   # when ready to clean up
 
 ## Land multiple workweaves serially
 
-When two workweaves both have commits to land, land the first directly, then pull the updated parent state into the second before landing it:
+When two workweaves both have commits to land, land them one at a time:
 
 ```bash
 # 1. Land and retire ww1
 cd ../.workweaves/web-app--ww1
 rwv sync-to --retire
 
-# 2. Absorb primary's new state into ww2, then land and retire ww2
+# 2. Optionally absorb primary's new state into ww2 to test against it, then land and retire ww2
 cd ../web-app--ww2
 rwv sync primary --strategy rebase
 rwv sync-to --retire
 ```
+
+`rwv sync-to` replays ww2's commits onto the parent's new tip by itself, so the `rwv sync primary` step is only for building and testing ww2 against ww1's landed work before it lands. Plain `rwv sync primary` uses `--strategy ff`, which stops when ww2 and the parent have both moved, as they have here; `--strategy rebase` replays ww2's commits onto the parent's tip instead.
 
 `rwv.lock` is recomputed rather than merged; see [Sync semantics](../explanation/joints/sync-semantics.md) for how `rwv.lock` is excluded during replay.
 
@@ -85,6 +87,17 @@ rwv sync-to --continue    # or: rwv abort
 ```
 
 Do not re-pass `--retire` or strategy flags with `--continue`; they are restored from the saved op-state. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the step-by-step conflict resolution walkthrough.
+
+## If `--retire` refuses to delete the workweave
+
+When the parent dropped a member repo that the workweave still has a checkout of, `sync-to` lands the work and then tries to prune that checkout. If the checkout holds uncommitted work, unpushed commits, or the only copy of its repository, the prune is refused and `--retire` refuses too (`retire-unpruned-checkout`, exit 1), naming the checkout. The landing has already completed; the op stays parked at its retire step in both workspaces. Save what you need from the checkout, remove it by hand, and re-run the retire step:
+
+```bash
+rm -rf github/chatly/extra       # the checkout the refusal names, after saving its work
+rwv sync-to --continue
+```
+
+`--continue` refuses again while the checkout is still on disk. `rwv abort` rolls the whole op back instead.
 
 ## Related
 
