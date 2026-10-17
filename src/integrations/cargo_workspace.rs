@@ -969,23 +969,31 @@ impl Integration for CargoWorkspace {
         vec![SurfacedFile::written_through_link("Cargo.lock")]
     }
 
-    /// `Cargo.toml`'s marked `[workspace]` region, and the `Cargo.lock` that
-    /// region's workspace resolved.
+    /// `Cargo.toml`'s marked `[workspace]` region, the `Cargo.lock` that
+    /// region's workspace resolved, and the marked entries in
+    /// `.cargo/config.toml`.
     ///
     /// The lock rides on the manifest's marker rather than on its own presence:
     /// an unmarked `Cargo.toml` means the operator authored the workspace, and
     /// the lock of a workspace rwv did not author is not rwv's to name. Same
-    /// gate `NpmWorkspaces` applies to `package-lock.json`.
+    /// gate `NpmWorkspaces` applies to `package-lock.json`. The config file's
+    /// entries carry their own per-key markers, so they are rwv's whoever holds
+    /// the manifest.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
-        if !holds_owned_region::<TomlDoc>(
+        let mut paths = Vec::new();
+        if holds_owned_region::<TomlDoc>(
             &ctx.output_dir.join("Cargo.toml"),
             &Self::deactivate_owned_keys(),
         ) {
-            return vec![];
+            paths.push(OwnedPath::MarkedRegion("Cargo.toml".to_string()));
+            if ctx.output_dir.join("Cargo.lock").is_file() {
+                paths.push(OwnedPath::WholeFile("Cargo.lock".to_string()));
+            }
         }
-        let mut paths = vec![OwnedPath::MarkedRegion("Cargo.toml".to_string())];
-        if ctx.output_dir.join("Cargo.lock").is_file() {
-            paths.push(OwnedPath::WholeFile("Cargo.lock".to_string()));
+        if Self::cargo_config_holds_marked_entries(
+            &ctx.output_dir.join(".cargo").join("config.toml"),
+        ) {
+            paths.push(OwnedPath::MarkedRegion(".cargo/config.toml".to_string()));
         }
         paths
     }
@@ -2361,6 +2369,32 @@ impl CargoWorkspace {
             doc.as_table_mut().remove("build");
         }
         std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))
+    }
+
+    /// Whether `path` carries an entry [`Self::strip_marked_patch_entries`] or
+    /// [`Self::strip_marked_rustc_wrapper`] would remove.
+    fn cargo_config_holds_marked_entries(path: &Path) -> bool {
+        let Some(doc) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.parse::<toml_edit::DocumentMut>().ok())
+        else {
+            return false;
+        };
+        let wrapper = doc
+            .get("build")
+            .and_then(|i| i.as_table())
+            .is_some_and(|t| TomlDoc::key_has_marker(t, "rustc-wrapper"));
+        let patch = doc
+            .get("patch")
+            .and_then(|i| i.as_table())
+            .is_some_and(|registries| {
+                registries.iter().any(|(_, registry)| {
+                    registry
+                        .as_table()
+                        .is_some_and(|t| t.iter().any(|(name, _)| TomlDoc::key_has_marker(t, name)))
+                })
+            });
+        wrapper || patch
     }
 
     /// Delete `<root>/.cargo/config.toml` if it's semantically empty

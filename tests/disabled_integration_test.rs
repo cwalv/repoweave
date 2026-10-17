@@ -578,3 +578,106 @@ fn a_disabled_integration_with_nothing_left_on_disk_still_loses_its_links() {
          never listed gita among what it found"
     );
 }
+
+/// [`weave`], with cargo-workspace also writing a marked `rustc-wrapper` into
+/// `.cargo/config.toml` and the weave root surfacing it — a `.cargo/`
+/// directory surfacing creates.
+fn weave_with_cargo_config(root: &Path) -> PathBuf {
+    let ws = weave(root);
+    let project_dir = ws.join("projects/app");
+    let manifest = project_dir.join("rwv.toml");
+    let text = read(&manifest);
+    std::fs::write(
+        &manifest,
+        format!(
+            "{text}\n[integrations.cargo-workspace]\nenabled = true\nrustc-wrapper = \"cargo\"\n"
+        ),
+    )
+    .unwrap();
+
+    let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
+    repoweave::activate::activate_intent_with_options(
+        "app",
+        &ctx,
+        repoweave::activate::ActivateOptions {
+            no_materialize: true,
+        },
+    )
+    .expect("intent activation should author .cargo/config.toml");
+
+    assert!(
+        read(&project_dir.join(".cargo/config.toml")).contains("rustc-wrapper"),
+        "fixture: the wrapper key should have been authored"
+    );
+    assert!(
+        ws.join(".cargo/config.toml")
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink()),
+        "fixture: the weave root should surface .cargo/config.toml"
+    );
+    ws
+}
+
+/// Disabling cargo-workspace takes its `.cargo/config.toml` content, the
+/// weave-root link onto it and the `.cargo/` directory that link emptied.
+/// Before, the strip removed the project's file and left the weave root a real
+/// `.cargo/` holding a dangling link, which doctor had never named.
+#[test]
+fn disabling_cargo_leaves_no_weave_root_cargo_directory() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_cargo_config(tmp.path());
+    let project_dir = ws.join("projects/app");
+    disable(&ws, "cargo-workspace");
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        report.contains("config.toml (managed region)"),
+        "the finding must name the config file materialize will strip:\n{report}"
+    );
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    assert!(
+        !project_dir.join(".cargo").exists(),
+        "the emptied config and its directory go from the project"
+    );
+    assert!(
+        ws.join(".cargo/config.toml").symlink_metadata().is_err(),
+        "the weave-root link must not survive dangling:\n{materialized}"
+    );
+    assert!(
+        ws.join(".cargo").symlink_metadata().is_err(),
+        "the weave-root `.cargo/` the link emptied must go too"
+    );
+}
+
+/// The other direction: what the operator keeps beside rwv's entries survives
+/// — their own key in the config file, and their own file in the weave-root
+/// `.cargo/`.
+#[test]
+fn disabling_cargo_keeps_what_the_operator_put_beside_its_config() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_cargo_config(tmp.path());
+    let project_dir = ws.join("projects/app");
+    let config = project_dir.join(".cargo/config.toml");
+    std::fs::write(&config, format!("{}jobs = 4\n", read(&config))).unwrap();
+    std::fs::write(ws.join(".cargo/credentials.toml"), "operator\n").unwrap();
+    disable(&ws, "cargo-workspace");
+
+    let (ok, materialized) = rwv(&["materialize"], &ws);
+    assert!(ok, "materialize should succeed:\n{materialized}");
+    let kept = read(&config);
+    assert!(
+        kept.contains("jobs = 4") && !kept.contains("rustc-wrapper"),
+        "rwv's key goes and the operator's stays:\n{kept}"
+    );
+    assert_eq!(
+        read(&ws.join(".cargo/credentials.toml")),
+        "operator\n",
+        "the operator's file in the weave-root `.cargo/` must survive"
+    );
+    assert!(
+        ws.join(".cargo/config.toml").symlink_metadata().is_err(),
+        "no enabled integration declares the link any more"
+    );
+}
