@@ -5,11 +5,9 @@
 //!     branch, at the commit the clone had checked out, with nothing left
 //!     behind and the canonical clone's checkout untouched;
 //!   - while the clone holds anything the canonical clone would not give
-//!     back, the repair refuses for that member, names what it holds, and
-//!     leaves the clone exactly as it was. One test per kind of holding:
-//!     commits the canonical clone lacks, commits it holds but no ref of it
-//!     reaches, uncommitted changes, untracked files, ignored files, and
-//!     worktrees of the clone's own.
+//!     back, or there is nothing to link a worktree into, the repair refuses
+//!     for that member, names why, and leaves the clone exactly as it was;
+//!   - a birth that refuses after the clone was moved aside moves it back.
 
 use std::path::{Path, PathBuf};
 
@@ -437,5 +435,51 @@ fn a_birth_that_refuses_moves_the_clone_back() {
         ),
         side,
         "the moved branch is not destroyed"
+    );
+}
+
+#[test]
+fn refuses_while_there_is_no_canonical_clone_to_link_into() {
+    let tmp = common::tempdir().unwrap();
+    let weave = weave_with_standalone_member(tmp.path());
+    std::fs::remove_dir_all(&weave.canonical).unwrap();
+    let clone_before = repo_state(&weave.clone);
+
+    let (code, out) = doctor_fix(&weave);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(
+        out.contains(&format!("clone-topology fix left {SEAT}/{MEMBER} standing")),
+        "{out}"
+    );
+    assert!(out.contains("there is no canonical clone at"), "{out}");
+    assert!(weave.clone.join(".git").is_dir(), "still a full clone");
+    assert_eq!(repo_state(&weave.clone), clone_before, "clone untouched");
+    assert!(!aside(&weave).exists(), "nothing moved aside");
+}
+
+#[test]
+fn refuses_while_the_clone_has_no_commit_checked_out() {
+    let tmp = common::tempdir().unwrap();
+    let weave = weave_with_standalone_member(tmp.path());
+    common::git_in(&weave.clone, &["symbolic-ref", "HEAD", "refs/heads/unborn"]);
+    let refs_before = common::git_in(
+        &weave.clone,
+        &["for-each-ref", "--format=%(refname) %(objectname)"],
+    );
+
+    let (code, out) = doctor_fix(&weave);
+    assert_eq!(code, Some(1), "{out}");
+    assert!(
+        out.contains(&format!("clone-topology fix left {SEAT}/{MEMBER} standing")),
+        "{out}"
+    );
+    assert!(out.contains("its HEAD names no commit"), "{out}");
+    assert!(weave.clone.join(".git").is_dir(), "still a full clone");
+    assert_eq!(
+        common::git_in(
+            &weave.clone,
+            &["for-each-ref", "--format=%(refname) %(objectname)"]
+        ),
+        refs_before
     );
 }
