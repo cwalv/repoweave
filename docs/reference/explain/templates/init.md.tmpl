@@ -62,7 +62,7 @@ already present). The project is auto-activated after cloning.
 
 ```
 rwv init <name> [--provider <registry/owner>]
-rwv init <source> --adopt
+rwv init <source> --adopt [--no-materialize]
 ```
 
 - `<name>` — project name. Creates `projects/<name>/` with `git init` and a
@@ -74,6 +74,10 @@ rwv init <source> --adopt
 - `--adopt` — adopt an existing repo. `<source>` must be a clone URL or a
   `owner/repo` / `registry/owner/repo` shorthand. The project name is derived
   from the repository name segment of the source.
+- `--no-materialize` — with `--adopt`, skip the integration install hooks of
+  the adopted project's activation (they run for any member whose clone the
+  weave already holds); `rwv materialize` runs them later. Refused without
+  `--adopt`: a new project has no members for a hook to act on.
 
 Run `rwv --help init` for the full clap surface.
 

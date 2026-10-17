@@ -32,7 +32,7 @@ place (`rwv explain member-permissions`).
 ## Invocation
 
 ```
-rwv role <repo> <role> [--project <name>]
+rwv role <repo> <role> [--project <name>] [--no-materialize]
 ```
 
 - `<repo>` — the repo's manifest-relative path, as `rwv.toml` lists it (e.g.
@@ -41,6 +41,10 @@ rwv role <repo> <role> [--project <name>]
   rejected before anything is read.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
+- `--no-materialize` — skip the integration install hooks (`npm install`,
+  `uv sync`, `cargo fetch`, …) of the regeneration this runs at primary;
+  `rwv materialize` runs them later. Inside a workweave the hooks are skipped
+  either way.
 
 Run `rwv --help role` for the full clap surface.
 

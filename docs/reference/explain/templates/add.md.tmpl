@@ -93,9 +93,9 @@ registry and supplies parameters, never a layout.
 ## Invocation
 
 ```
-rwv add <url> [--role <role>] [--project <name>]
-rwv add <path> --adopt [--role <role>] [--project <name>]
-rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <json>] [--role <role>] [--project <name>]
+rwv add <url> [--role <role>] [--project <name>] [--no-materialize]
+rwv add <path> --adopt [--role <role>] [--project <name>] [--no-materialize]
+rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <json>] [--role <role>] [--project <name>] [--no-materialize]
 ```
 
 - `<url>` — repository URL or shorthand. Parsed through the registry
@@ -113,6 +113,10 @@ rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <jso
   values.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
+- `--no-materialize` — skip the integration install hooks (`npm install`,
+  `uv sync`, `cargo fetch`, …) of the regeneration this runs at primary;
+  `rwv materialize` runs them later. Inside a workweave the hooks are skipped
+  either way.
 
 Run `rwv --help add` for the full clap surface.
 

@@ -35,7 +35,7 @@ Create a new workweave. Forks from CWD's active workspace by default; use
 `--from` to specify a different source.
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>]
+rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>] [--no-materialize]
 ```
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
@@ -52,8 +52,14 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   <project> delete <name> --discard-uncommitted --discard-unmerged-commits` to
   discard dirty workweaves explicitly.
 - `--capture-dirty` — allow creation even when the source project directory
-  has uncommitted changes; captures the dirty state into the new workweave's
-  project worktree. Without this flag, `create` refuses and names the dirty
+  has uncommitted changes, and move the uncommitted edits to `rwv.toml` and
+  `rwv.lock` into the new workweave's project worktree: they are copied there,
+  then discarded from the source once the workweave exists, so the workweave
+  can land back on the source with `rwv sync-to`. A file is discarded only
+  while it still holds exactly the bytes copied and has nothing staged its
+  working file does not show; if any copy fails, nothing is discarded. Other
+  uncommitted files are not captured and stay in the source. Every file left
+  behind is named. Without this flag, `create` refuses and names the dirty
   files. Default behavior is recommended; use `--capture-dirty` only when you
   intentionally want to continue in-flight edits inside the workweave.
 - `--dir <path>` — per-invocation placement override. Places the workweave at
@@ -63,6 +69,9 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   it via the registry — the workweave does not have to live under the
   default container to be addressable. Useful for big-disk workweaves and
   tmpfs experiments.
+- `--no-materialize` — skip the integration install hooks (`npm install`,
+  `uv sync`, `cargo fetch`, …) in the new workweave. `rwv materialize` inside
+  it runs them later.
 
 **Placement.** Workweaves live at `<container>/<project>--<name>/` by default,
 where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index`.
@@ -95,7 +104,12 @@ is the standard "ensure workweave exists" path.
    sync-to target for bare `rwv sync-to` from inside the workweave. No
    `.rwv-active` is written beside it: selection is primary-only, and a
    workweave's project is fixed here at creation.
-5. Integration activation (context verb: surfaces symlinks, skips install hooks).
+5. Integration activation (context verb: surfaces symlinks, then runs the
+   install hooks in the new workweave unless `--no-materialize` is passed).
+   A hook whose tool is not on `PATH` is skipped with a `tool-missing`
+   warning. A hook that fails leaves the workweave created and registered,
+   and the command exits non-zero naming `rwv materialize`, which finishes it
+   once the cause is fixed.
 6. An entry in `projects/<project>/.rwv-workweave-index` recording the
    workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
    project repo's `.gitignore` so the machine-local index stays untracked.
@@ -199,7 +213,7 @@ instead of hand-rolling branch-name derivation.
 ## Invocation
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>]
+rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>] [--no-materialize]
 rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]
 rwv workweave <project> list
 rwv workweave <project> log [--diff] [--json]
@@ -211,7 +225,9 @@ Run `rwv --help workweave` for the full clap surface.
 ## Output
 
 `create` — no stdout output on success (workweave path to stdout only when
-`--hook-mode` is set). Progress and warnings go to stderr.
+`--hook-mode` is set). Progress and warnings go to stderr, and so does the
+output of the install hooks' tools, so the `--hook-mode` path is the only
+thing on stdout.
 
 `delete` — no output on success.
 
@@ -220,7 +236,8 @@ Run `rwv --help workweave` for the full clap surface.
 ## Exit codes
 
 - `0` — operation completed successfully.
-- non-zero — operation failed; see stderr for details.
+- non-zero — operation failed; see stderr for details. For `create`, a failed
+  install hook is non-zero too, though the workweave was created and is kept.
 
 ## Examples
 
@@ -274,4 +291,7 @@ rwv workweave foundations list
   `--replace-existing`.
 - *refusing to create workweave — projects/{project} has uncommitted changes*
   — the source project directory is dirty. Commit, stash, or pass
-  `--capture-dirty` to explicitly capture the in-flight state.
+  `--capture-dirty` to explicitly move the in-flight state.
+- *workweave created at …; only its install hooks did not complete* — an
+  install hook failed in the new workweave. The workweave is usable; fix the
+  cause the hook reported, then run `rwv materialize` inside it.

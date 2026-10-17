@@ -51,7 +51,7 @@ Every guard runs before the manifest is written, so a refused delete leaves
 ## Invocation
 
 ```
-rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>]
+rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>] [--no-materialize]
 ```
 
 - `<path>` — manifest-relative path of the repo to remove (as listed in
@@ -62,6 +62,10 @@ rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>]
   references it. Has no effect without `--delete`.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
+- `--no-materialize` — skip the integration install hooks (`npm install`,
+  `uv sync`, `cargo fetch`, …) of the regeneration this runs at primary;
+  `rwv materialize` runs them later. Inside a workweave the hooks are skipped
+  either way.
 
 Run `rwv --help remove` for the full clap surface.
 

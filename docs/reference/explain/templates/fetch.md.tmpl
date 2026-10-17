@@ -120,7 +120,7 @@ happens under a filter.
 ```
 rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
           [--detach-checkouts] [--role <role>...] [--repo <selector>...]
-          [-j <N>] [--json] [--project <name>]
+          [-j <N>] [--json] [--project <name>] [--no-materialize]
 ```
 
 - `<source>` — optional. Full clone URL (`file://` for a local remote) or
@@ -148,6 +148,10 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
   regex; `glob:<pat>` is glob. A filtered fetch does not write the lock.
 - `-j <N>` — run up to `N` clone/checkout operations in parallel.
 - `--json` — emit machine-readable output (see Output below).
+- `--no-materialize` — a fetch that activates a project runs the integration
+  install hooks: a bootstrap fetch when no project is active yet, and an
+  in-place fetch that selects the weave's only project. This skips them, and
+  `rwv materialize` runs them later. The activation itself still happens.
 
 Run `rwv --help fetch` for the full clap surface.
 

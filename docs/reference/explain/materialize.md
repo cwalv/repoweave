@@ -42,16 +42,22 @@ materializing. One word names the operation on both sides.
    made real (see below).
 2. **Drift settlement.** Generated files rwv attests are compared against what
    it accepted, and content it never accepted stops the run (see below).
-3. **Surfacing repair.** The weave root's symlinks onto the project's owned
+3. **Host-dependent settings.** A setting whose right value is a fact about
+   this machine rather than about `rwv.toml` is brought to this host's
+   answer: cargo-workspace's `rustc-wrapper` key is written where the wrapper
+   is on `PATH` and stripped where it is not.
+4. **Surfacing repair.** The weave root's symlinks onto the project's owned
    files are re-created if missing, scoped to this project's own files. The
    root's shared names are not moved — the root already presents this project,
    so there is nothing to move.
-4. **Install hooks.** Each enabled integration's hook runs against the
-   now-in-place symlinks.
+5. **Install hooks.** Each enabled integration's hook runs against the
+   now-in-place symlinks. A hook whose tool is not on `PATH` is skipped with a
+   `tool-missing` warning and the others still run; a hook that runs and
+   fails is an error.
 
-It does **not** author managed content. If an integration's managed file is
-missing, its hook refuses and names `rwv doctor --fix`, which is the verb that
-authors.
+Beyond the host-dependent settings, it does **not** author managed content.
+If an integration's managed file is missing, its hook refuses and names
+`rwv doctor --fix`, which is the verb that authors.
 
 ### Removing what a disabled integration left
 
