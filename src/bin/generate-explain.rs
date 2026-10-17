@@ -427,7 +427,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "sync",
-            summary: "reconcile each repo with its locked SHA",
+            summary: "bring another workspace's committed state into this one",
             schema: Some(schema_sync),
             schema_record: Some(schema_sync_record),
         },
@@ -448,13 +448,13 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "fetch",
-            summary: "clone or fetch every repo in the active project",
+            summary: "clone a project, or align its repos to rwv.lock without advancing pins",
             schema: Some(schema_fetch),
             schema_record: Some(schema_fetch_record),
         },
         Verb {
             name: "update",
-            summary: "advance the lock to current HEADs",
+            summary: "advance each repo to its branch HEAD on the remote and re-snapshot the lock",
             schema: Some(schema_update),
             schema_record: Some(schema_update_record),
         },
@@ -478,7 +478,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "abort",
-            summary: "restore CWD workspace to its pre-sync state using savepoint refs",
+            summary: "roll an in-flight sync or sync-to back to its savepoints, from either workspace it touched",
             schema: None,
             schema_record: None,
         },
@@ -1018,10 +1018,8 @@ fn render_index(verbs: &[Verb]) -> String {
     }
     out.push('\n');
     out.push_str(
-        "Committed schemas live under `docs/reference/schemas/`. CI fails on drift \
-         between Rust types and committed artifacts; do not hand-edit the assembled \
-         files — edit `docs/reference/explain/templates/<verb>.md.tmpl` and re-run \
-         `cargo run --bin generate-explain`.\n",
+        "`rwv explain <token>` serves the entry for a refusal token, a `rwv doctor` \
+         finding kind, or a VCS error kind.\n",
     );
     out
 }
