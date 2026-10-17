@@ -11,6 +11,9 @@
 //!      unfiltered, minus the other kinds — record shape untouched.
 //!   3. An unknown kind name refuses, naming the valid set — a typo must
 //!      not produce an empty report that reads as "clean".
+//!   4. An integration issue's kind is a kind too: naming it admits those
+//!      issues, and under `--json` a non-empty view fails the run, which is
+//!      how CI escalates a warning such as `tool-missing`.
 //!
 //! The fixture holds findings of two kinds at once: two redundant orphaned
 //! savepoints (a collapsed reclamation class) and one misnamed workweave
@@ -150,8 +153,8 @@ fn kind_filter_text_shows_only_the_named_kind_itemized() {
     );
     assert!(
         !stdout.contains("vscode-workspace") && !stdout.contains("rwv-ours"),
-        "integration issues are not violations of any kind and are out of a \
-         filtered view; got:\n{stdout}"
+        "an integration issue is out of a view that names none of its kinds; \
+         got:\n{stdout}"
     );
 }
 
@@ -305,4 +308,111 @@ fn wire_kind_agrees_with_the_serialized_tag_for_the_whole_corpus() {
              from the schema-derived set {valid:?}"
         );
     }
+}
+
+/// Pin 4: `--kind tool-missing` admits the integration issue, and under
+/// `--json` the filtered view fails the run on it while the same warning
+/// leaves an unfiltered run green.
+///
+/// The control is the same weave with the tool on `PATH`: a filter that
+/// admitted nothing, or a run that failed for another reason, would read the
+/// same as one that failed on the finding.
+#[cfg(unix)]
+#[test]
+fn kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let root = two_kind_fixture(tmp.path());
+    let member = root.join("github/acme/server");
+    std::fs::write(
+        member.join("package.json"),
+        "{\"name\": \"server\", \"version\": \"0.1.0\"}\n",
+    )
+    .unwrap();
+    let no_npm = common::tool_only_bin("git");
+    let with_npm = tmp.path().join("with-npm");
+    std::fs::create_dir_all(&with_npm).unwrap();
+    std::os::unix::fs::symlink(which::which("git").unwrap(), with_npm.join("git")).unwrap();
+    let npm = with_npm.join("npm");
+    std::fs::write(&npm, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = |args: &[&str], path: &Path| {
+        rwv()
+            .args(args)
+            .current_dir(&root)
+            .env("PATH", path)
+            .output()
+            .unwrap()
+    };
+    let parse = |raw: &[u8]| -> serde_json::Value {
+        serde_json::from_slice(raw).expect("doctor --json parses")
+    };
+
+    let filtered = run(&["doctor", "--json", "--kind", "tool-missing"], &no_npm);
+    let doc = parse(&filtered.stdout);
+    let issues = doc["issues"].as_array().expect("issues is an array");
+    assert!(
+        !issues.is_empty()
+            && issues
+                .iter()
+                .all(|i| i["kind"] == "tool-missing" && i["severity"] == "warning"),
+        "the view holds the tool-missing warning and nothing else; got: {doc}"
+    );
+    assert!(
+        issues.iter().any(|i| i["integration"] == "npm-workspaces"),
+        "the npm finding is among them; got: {doc}"
+    );
+    assert_eq!(
+        doc["violations"].as_array().map(Vec::len),
+        Some(0),
+        "violations of other kinds stay out; got: {doc}"
+    );
+    assert!(
+        !filtered.status.success(),
+        "a non-empty filtered view fails the run"
+    );
+
+    let control = run(&["doctor", "--json", "--kind", "tool-missing"], &with_npm);
+    assert!(
+        control.status.success(),
+        "control: with the tool installed the view is empty and the run passes; got: {}",
+        parse(&control.stdout)
+    );
+
+    let text = run(&["doctor", "--kind", "tool-missing"], &no_npm);
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        stdout.contains("[warning] npm-workspaces: npm is not on PATH")
+            && !stdout.contains("orphaned-savepoint"),
+        "the text view lists the admitted issue and no other kind; got:\n{stdout}"
+    );
+}
+
+/// The issue register is read off its schema, unit and data-carrying variants
+/// alike, and no name in it is also a violation kind — a shared name would
+/// make one `--kind` admit two unrelated findings.
+#[test]
+fn issue_kinds_are_admissible_and_share_no_name_with_violation_kinds() {
+    use repoweave::check::KindFilter;
+
+    let issue_kinds = KindFilter::issue_kinds();
+    for tag in [
+        "tool-missing",
+        "integration-failed",
+        "member-incompatibility",
+    ] {
+        assert!(
+            issue_kinds.iter().any(|k| k == tag),
+            "the schema walk lost `{tag}`: {issue_kinds:?}"
+        );
+    }
+    let valid = KindFilter::valid_kinds();
+    let distinct: std::collections::BTreeSet<&String> = valid.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        valid.len(),
+        "a kind name appears in both registers: {valid:?}"
+    );
 }

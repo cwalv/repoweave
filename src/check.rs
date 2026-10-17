@@ -9675,33 +9675,71 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
 /// The `--kind` report filter: a validated set of finding kinds the doctor
 /// report is narrowed to, text and `--json` both.
 ///
-/// Kind names are the wire spellings — the `kind` tag each violation
-/// serializes under in `rwv doctor --json`, the same names the per-class
-/// count lines and the published schema carry.
+/// Kind names are the wire spellings — the `kind` tag each violation and
+/// each integration issue serializes under in `rwv doctor --json`, the same
+/// names the per-class count lines and the published schema carry. The two
+/// registers share no name.
 ///
 /// **An unknown name refuses, naming the valid set.** A filter that
 /// silently matched nothing would render an empty report, and an empty
 /// doctor report reads as "clean" — the one thing a typo must never
-/// produce. The valid set is derived from the wire type's own JSON schema
-/// ([`ViolationOutput`] via schemars) rather than maintained beside it, so
-/// the refusal message cannot drift from what `--json` actually emits.
+/// produce. The valid set is derived from the wire types' own JSON schemas
+/// ([`ViolationOutput`] and [`IssueKindOutput`] via schemars) rather than
+/// maintained beside them, so the refusal message cannot drift from what
+/// `--json` actually emits.
 ///
 /// **The filtered view is the drill-down.** Kinds whose classes normally
 /// collapse to a per-class count line render itemized under the filter —
 /// `--kind` exists so triage does not require `--json | jq`, so it shows
-/// the records the count line summarized. Integration issues are not
-/// violations of any kind and are absent from a kind-filtered view, and
-/// the exit code reflects the filtered view: an error outside the named
-/// kinds does not fail a `--kind` run.
+/// the records the count line summarized. An issue is in the view when its
+/// own kind is named, and the exit code reflects the filtered view: a
+/// finding outside the named kinds does not fail a `--kind` run.
 pub struct KindFilter {
     kinds: std::collections::BTreeSet<String>,
 }
 
 impl KindFilter {
     /// Every `kind` name `rwv doctor --json` can emit, sorted — read off
-    /// the wire type's schema, which is generated from the serialized type
-    /// and therefore is the register.
+    /// the wire types' schemas, which are generated from the serialized
+    /// types and therefore are the register.
     pub fn valid_kinds() -> Vec<String> {
+        let mut kinds = Self::violation_kinds();
+        kinds.extend(Self::issue_kinds());
+        kinds.sort();
+        kinds
+    }
+
+    /// The `kind` names an integration issue serializes under: the unit
+    /// variants of [`IssueKindOutput`] as strings, a data-carrying variant as
+    /// its single key.
+    pub fn issue_kinds() -> Vec<String> {
+        let schema = schemars::schema_for!(IssueKindOutput);
+        let variants = schema
+            .schema
+            .subschemas
+            .as_ref()
+            .and_then(|s| s.one_of.clone())
+            .unwrap_or_default();
+        let mut kinds: Vec<String> = variants
+            .iter()
+            .flat_map(|v| {
+                let schemars::schema::Schema::Object(obj) = v else {
+                    return Vec::new();
+                };
+                let named = obj
+                    .enum_values
+                    .iter()
+                    .flatten()
+                    .filter_map(|value| value.as_str().map(String::from));
+                let keyed = obj.object.iter().flat_map(|o| o.properties.keys().cloned());
+                named.chain(keyed).collect()
+            })
+            .collect();
+        kinds.sort();
+        kinds
+    }
+
+    fn violation_kinds() -> Vec<String> {
         let schema = schemars::schema_for!(ViolationOutput);
         let mut kinds: Vec<String> = schema
             .schema
@@ -9750,6 +9788,11 @@ impl KindFilter {
     /// Whether `v` belongs to one of the named kinds.
     fn admits(&self, v: &CheckViolation) -> bool {
         self.kinds.contains(v.wire_kind())
+    }
+
+    /// Whether `issue` belongs to one of the named kinds.
+    fn admits_issue(&self, issue: &Issue) -> bool {
+        self.kinds.contains(issue.kind.tag())
     }
 }
 
@@ -9858,8 +9901,7 @@ pub fn run_check(
         // ITEMIZED, bypassing the per-class count collapse — `--kind` is
         // what replaces `--json | jq` for triage, so it must show the
         // records, not the count line that pointed here. Integration
-        // issues are not violations of any kind and are out of a
-        // kind-filtered view entirely.
+        // issues join below, by their own kind.
         Some(filter) => itemized_violations_to_issues(
             violations
                 .into_iter()
@@ -9879,11 +9921,16 @@ pub fn run_check(
         });
     }
 
-    if kind_filter.is_none() {
-        all_issues.extend(collect_doctor_issues(
+    match kind_filter {
+        None => all_issues.extend(collect_doctor_issues(
             &world,
             if fix { Repair::Apply } else { Repair::Report },
-        ));
+        )),
+        Some(filter) => all_issues.extend(
+            collect_doctor_issues(&world, Repair::Report)
+                .into_iter()
+                .filter(|issue| filter.admits_issue(issue)),
+        ),
     }
 
     let mut has_errors = false;
@@ -10576,7 +10623,9 @@ fn collect_doctor_violations(
 /// found or any integration issue was an error. The violation half of that is
 /// wider than [`run_check`]'s, which exits non-zero on errors alone, and stays
 /// so: a caller already scripting against `--json` reads a warning-severity
-/// violation as exit 1 today.
+/// violation as exit 1 today. Under a kind filter an admitted issue of any
+/// severity is the same signal, which is what lets CI fail on a warning kind
+/// such as `tool-missing` by naming it.
 ///
 /// There is no `--fix` on this path, so nothing here repairs and nothing mints
 /// a `--fix` failure.
@@ -10602,8 +10651,7 @@ pub fn run_check_json(
     // Filtering selects a SUBSET of the records — each surviving record is
     // byte-identical to its unfiltered self, so consumers reading
     // `violations[]` (the per-class baseline capture among them) see the
-    // same shapes whether or not a filter is active. Integration issues
-    // are not violations of any kind and are absent from a filtered view.
+    // same shapes whether or not a filter is active.
     let violations: Vec<CheckViolation> = match kind_filter {
         Some(filter) => violations
             .into_iter()
@@ -10611,15 +10659,14 @@ pub fn run_check_json(
             .collect(),
         None => violations,
     };
-    let issues = if kind_filter.is_none() {
-        collect_doctor_issues(&world, Repair::Report)
-    } else {
-        Vec::new()
-    };
+    let issues: Vec<Issue> = collect_doctor_issues(&world, Repair::Report)
+        .into_iter()
+        .filter(|issue| kind_filter.is_none_or(|filter| filter.admits_issue(issue)))
+        .collect();
     let has_violations = !violations.is_empty()
         || issues
             .iter()
-            .any(|i| i.severity == crate::integration::Severity::Error);
+            .any(|i| kind_filter.is_some() || i.severity == crate::integration::Severity::Error);
     // Discover `rwv-*` executables on PATH for the inventory. This is
     // reporting only — the presence or absence of plugins never affects the
     // has_violations signal or the doctor exit code.

@@ -16,6 +16,7 @@ follow-up actions.
 
 ```
 rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
+           [--kind <kind>]...
 ```
 
 - `--all` runs checks across every project under `projects/` and enables
@@ -32,6 +33,14 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
 - `--json` emits machine-readable output (see Output below). Mutually
   exclusive with `--locked` and `--fix`. Honors the same scoping as the
   default text output: project-scoped by default, weave-wide with `--all`.
+- `--kind <kind>` narrows the report to the named finding kinds (repeatable):
+  a violation's `kind`, or an integration issue's (`tool-missing`,
+  `surfacing`, `member-incompatibility`, …). An unknown name refuses, listing
+  the valid set. The exit code reflects the filtered view, and under `--json`
+  any finding in it exits non-zero, warnings included — so CI fails on a
+  missing ecosystem tool with `rwv doctor --json --kind tool-missing`, while
+  the same warning leaves an unfiltered run green. Mutually exclusive with
+  `--locked` and `--fix`.
 - `--fix` repairs every finding marked **Auto-fixable** in
   `docs/reference/doctor-findings.md`. That page carries the mark on each
   finding it documents, alongside what the repair does and why the findings
@@ -182,6 +191,7 @@ severity. Under `--json`, output is the envelope:
 {
   "$schema": "<url>",
   "violations": [ { "kind": "...", ... }, ... ],
+  "issues": [ { "kind": "...", "integration": "...", "severity": "...", ... }, ... ],
   "plugins": [ { "name": "...", "path": "...", "shadowed": false }, ... ]
 }
 ```
@@ -206,13 +216,13 @@ gate. The exit code is unaffected by this field.
 
 Surfacing violations (missing or mis-resolved symlinks in the active
 project's surfacing set) are reported as `core` integration warnings in
-the text output; they do not have a dedicated `--json` kind because they
-are emitted as `Issue` values through the same integration-issue channel
-as per-integration check results.
+the text output; they are emitted through the same integration-issue channel
+as per-integration check results, so under `--json` they are `issues[]`
+records with `kind` `surfacing` rather than `violations[]` records.
 
-`member-incompatibility` findings travel that same integration-issue channel
-and so also have no dedicated `--json` kind; the kebab-case tag is the message
-prefix, which is what a caller keys off. Doctor is the **standing observation
+`member-incompatibility` findings travel that same integration-issue channel,
+as `issues[]` records keyed `member-incompatibility`; the kebab-case tag is
+also the message prefix. Doctor is the **standing observation
 arm** for the category — `rwv update` reports the same finding at the moment it
 creates one. Neither gates: nothing refuses on this category, and `--fix`
 cannot repair it.
@@ -225,7 +235,8 @@ Schema:
 
 - `0` — no violations found.
 - non-zero — violations found, or an error occurred resolving the
-  workspace.
+  workspace. Under `--kind`, only findings of the named kinds count; with
+  `--json`, any of them does, warnings included.
 
 ## Examples
 

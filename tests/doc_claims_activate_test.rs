@@ -699,7 +699,7 @@ fn activate_warns_when_the_install_command_is_missing_and_fails_when_it_fails() 
     let failing_bin = tmp.path().join("failing-bin");
     std::fs::create_dir_all(&failing_bin).unwrap();
     let npm = failing_bin.join("npm");
-    std::fs::write(&npm, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::write(&npm, "#!/bin/sh\necho 'npm: install failed' >&2\nexit 1\n").unwrap();
     std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
     let output = rwv()
         .args(["activate", "npm-proj"])
