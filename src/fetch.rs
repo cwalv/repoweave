@@ -120,7 +120,7 @@ pub struct FetchOutcomeNdjsonRecord<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchMode {
     /// Read rwv.lock, align clones, bootstrap or add missing entries
-    /// additively. Auto-activates the project on first fetch.
+    /// additively.
     Default,
     /// Like Default, but error when the lock is absent or incomplete
     /// rather than writing it. Clones are aligned the same way.
@@ -507,8 +507,8 @@ fn materialize_workweave_members(
 /// invocations.
 ///
 /// `auto_activate_on_bootstrap` toggles the first-fetch auto-activate step
-/// (only meaningful for SOURCE-mode — the in-place path operates on a
-/// project that is already active).
+/// (only meaningful for SOURCE-mode — the in-place path selects its project
+/// itself, in [`run_fetch_in_place`]).
 ///
 /// `resolution` is the resolved workspace coordinate block for the
 /// `--json` envelope. `None` when no `WorkspaceContext` is available (the
@@ -805,7 +805,7 @@ fn fetch_project_repos(
         println!("rwv fetch: done ({succeeded} repo(s) ready)");
     }
 
-    // Default mode: bootstrap or additively extend the lock; then maybe auto-activate.
+    // Default mode: bootstrap or additively extend the lock.
     //
     // A non-empty `--role` / `--repo` filter narrows the fetch to a subset of
     // the manifest; non-filtered repos are not on disk (in a fresh workspace)
@@ -866,34 +866,31 @@ fn fetch_project_repos(
             lock::write_lock(&merged, &lock_path)?;
             eprintln!("rwv fetch: wrote {}", lock_path.display());
         }
+    }
 
-        // Auto-activate only when no project is already active (first fetch).
-        // In-place mode always skips auto-activate (the project is already
-        // active — that's how the in-place caller resolved the manifest).
-        if auto_activate_on_bootstrap {
-            match crate::workspace::read_active_project(workspace_root) {
-                Some(active) => {
-                    // Route to stderr in JSON mode so stdout stays JSON-only.
-                    let msg = format!(
-                        "rwv fetch: skipping auto-activate (project '{active}' already active)"
-                    );
-                    if json {
-                        eprintln!("{msg}");
-                    } else {
-                        println!("{msg}");
-                    }
+    // Activation is not part of lock coverage: `--frozen` and a filter both
+    // still activate the project a first fetch created.
+    if auto_activate_on_bootstrap {
+        match crate::workspace::read_active_project(workspace_root) {
+            Some(active) => {
+                // Route to stderr in JSON mode so stdout stays JSON-only.
+                let msg = format!(
+                    "rwv fetch: skipping auto-activate (project '{active}' already active)"
+                );
+                if json {
+                    eprintln!("{msg}");
+                } else {
+                    println!("{msg}");
                 }
-                None => {
-                    // Resolve the freshly-bootstrapped workspace to build the
-                    // context activate now takes. This is a first-resolution of
-                    // the newly-created workspace, not a re-resolution of the
-                    // invocation context.
-                    let ctx = crate::workspace::WorkspaceContext::resolve_invocation(
-                        workspace_root,
-                        None,
-                    )?;
-                    crate::activate::activate(name, &ctx)?;
-                }
+            }
+            None => {
+                // Resolve the freshly-bootstrapped workspace to build the
+                // context activate now takes. This is a first-resolution of
+                // the newly-created workspace, not a re-resolution of the
+                // invocation context.
+                let ctx =
+                    crate::workspace::WorkspaceContext::resolve_invocation(workspace_root, None)?;
+                crate::activate::activate(name, &ctx)?;
             }
         }
     }

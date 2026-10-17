@@ -13,7 +13,9 @@ or attaches every member repo at the revision the lock records. When the
 lock is absent (first-time bootstrap), `fetch` clones repos at branch HEAD
 and writes a new lock from those HEAD SHAs. When a manifest entry is missing
 from an existing lock, it is added additively at branch HEAD — already-pinned
-entries are never moved.
+entries are never moved. When no project is active, `fetch` then activates the
+project it cloned, as `rwv activate` would — under `--frozen` and a
+`--role` / `--repo` filter as well.
 
 A plain path is not a source: it names no remote, so `fetch` refuses
 (`unresolvable-repo-source`) and names the two spellings that are — `rwv fetch
@@ -23,15 +25,16 @@ file://<absolute path>` to clone from a local remote, and `rwv fetch --project
 With no `source` argument, `fetch` runs *in-place*: it resolves the workspace
 from CWD, iterates the manifest of the active project (or of `--project
 <name>`), and clones any repo whose canonical clone directory is missing.
-When no project is active, `--project` is not given, and the weave holds
-exactly one project, `fetch` fetches that project and then activates it, as
-`rwv activate` would; with zero or several projects it refuses
-(`no-active-project`) and names `--project`. This is the settled repair verb for a
-dangling reference (a manifest entry pointing at a missing clone — reported
-by `rwv doctor`, or surfaced by `rwv update` / `rwv push` when they hit the
-missing directory).
+This is the settled repair verb for a dangling reference (a manifest entry
+pointing at a missing clone — reported by `rwv doctor`, or surfaced by
+`rwv update` / `rwv push` when they hit the missing directory).
 `doctor --fix` intentionally does not auto-clone; network side effects stay
 behind this explicit verb.
+
+When no project is active, `--project` is not given, and the weave holds
+exactly one project, in-place `fetch` fetches that project and then activates
+it, as `rwv activate` would; with zero or several projects it refuses
+(`no-active-project`) and names `--project`.
 
 Run in a workweave, in-place `fetch` aligns the canonical clones and then
 creates the workweave's worktree for every member its `rwv.lock` pins and the

@@ -432,6 +432,52 @@ fn fetch_shorthand_notation_with_local_bare_repo() {
     );
 }
 
+/// A project remote whose commit carries an empty manifest and the empty lock
+/// that covers it, so `--frozen` has nothing to refuse.
+fn locked_empty_project_bare(tmp: &tempfile::TempDir, name: &str) -> String {
+    let bare = tmp.path().join(format!("{name}.git"));
+    init_bare_repo(&bare);
+    let work = tmp.path().join(format!("{name}-work"));
+    common::git_in(
+        tmp.path(),
+        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
+    );
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+    std::fs::write(work.join("rwv.toml"), "[repositories]\n").unwrap();
+    common::fixture_lock(&work, &[]);
+    common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&work, &["commit", "-m", "manifest and lock"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    common::file_url(&bare)
+}
+
+/// Activation is not lock coverage: neither `--frozen` nor a filter skips the
+/// first fetch's activation of the project it created.
+#[test]
+fn a_frozen_or_filtered_first_fetch_still_activates_the_project() {
+    let tmp = common::tempdir().unwrap();
+    for (name, extra) in [("frozen-app", "--frozen"), ("filtered-app", "--repo=none")] {
+        let url = locked_empty_project_bare(&tmp, name);
+        let workspace = tmp.path().join(format!("ws-{name}"));
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        rwv()
+            .args(["fetch", extra, &url])
+            .current_dir(&workspace)
+            .assert()
+            .success();
+
+        assert_eq!(
+            std::fs::read_to_string(workspace.join(".rwv-active"))
+                .unwrap_or_default()
+                .trim(),
+            name,
+            "`rwv fetch {extra} <source>` must activate the project it cloned"
+        );
+    }
+}
+
 // ============================================================================
 // Test 5 — fetching a second project leaves the active project alone
 //
