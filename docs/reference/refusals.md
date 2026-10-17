@@ -111,8 +111,8 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 **Why.** Changing into a project's directory does not select it, so the verb
 would write into the active project while the directory says the other one was
 meant. Writing into a project the operator did not mean is the outcome the
-refusal prevents; `rwv status` and `rwv doctor` without `--fix` only read, and
-warn instead.
+refusal prevents; `rwv status` and `rwv doctor` without `--fix` only read and
+do not refuse, and `rwv status` warns.
 
 **Exits.** Pass `--project <name>` naming either project to act on it from
 where you are, or `rwv activate <name>` to make the directory's project the
@@ -260,7 +260,9 @@ change the operation is not responsible for.
 **Exits.** Inspect the named repos and decide: if the foreign commits are
 wanted, move them somewhere safe first; if not, reset the ref yourself and
 re-run `rwv abort`, or pass `--abandon-foreign-tip <repo>` to restore that repo
-anyway, keeping the abandoned commits at `refs/rwv/pre-abort/<op-id>`.
+anyway, keeping the abandoned commits at the pre-abort reference the refusal
+names (`refs/rwv/pre-abort/<op-id>`, with a `-target` suffix for a repo on a
+`sync-to`'s target side).
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 

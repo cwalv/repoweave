@@ -332,16 +332,16 @@ See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
 ### `rwv abort [--abandon-foreign-tip <repo>]`
 
-Roll an in-flight `sync` or `sync-to` back to its savepoints at `refs/rwv/pre-op/<op-id>` in every workspace the op touched. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`). Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`.
+Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace the op touched: `refs/rwv/pre-op/<op-id>`, and `refs/rwv/pre-op/<op-id>-target` for the repos of a `sync-to`'s target, whose checkouts share a ref store with the workweave's. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`). Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`.
 
 | Flag | Effect |
 |---|---|
-| `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `(project)`. The abandoned commits stay reachable at `refs/rwv/pre-abort/<op-id>`; where that reference does not already hold the tip, abort refuses even with the flag. |
+| `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `(project)`. The abandoned commits stay reachable at the pre-abort reference abort prints — `refs/rwv/pre-abort/<op-id>`, or `refs/rwv/pre-abort/<op-id>-target` for a repo on a `sync-to`'s target side; where that reference does not already hold the tip, abort refuses even with the flag. |
 
 Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset.
 
 **Exit codes:**
-- `0` — all repositories restored cleanly to `refs/rwv/pre-op/<op-id>` and op-state removed.
+- `0` — all repositories restored cleanly to their savepoints and op-state removed.
 - `1` — a refusal (`no-op-recorded` with nothing in progress, or `foreign-tip` without `--abandon-foreign-tip <repo>`), or a partial restore failure (`abort completed with failures`: at least one repository failed to reset, and op-state is retained so `rwv abort` can be retried).
 
 ### `rwv status [--json] [...]`
@@ -519,7 +519,7 @@ Changing into `projects/<name>/` does not select that project. When `.rwv-active
 Error: CWD is inside projects/mobile/, but `.rwv-active` selects web, so this would act on web. Pass `--project mobile` to act on mobile, or `--project web` to act on web from here; `rwv activate mobile` switches the active project.
 ```
 
-`rwv status` and `rwv doctor` without `--fix` only read, so they warn instead, naming `--project <name>` and `rwv activate <name>`, and report on the active project.
+Reporting verbs do not refuse: `rwv status` warns, naming `--project <name>` and `rwv activate <name>`, and reports on the active project, and `rwv doctor` without `--fix` reports on the active project.
 
 ### Corrective errors
 
