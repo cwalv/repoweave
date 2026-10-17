@@ -266,7 +266,7 @@ pub enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv activate` after lock changes the workspace membership to refresh node_modules / .venv / etc.
+    /// Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc.
     Lock {
         /// Allow locking repos with uncommitted changes
         #[arg(long)]
@@ -609,7 +609,7 @@ pub enum WorkweaveAction {
 
 #[derive(Subcommand)]
 pub enum SetupAction {
-    /// Register rwv prime as a Claude Code hook (SessionStart + PreCompact)
+    /// Register Claude Code hooks: `rwv prime` for SessionStart and PreCompact, `rwv workweave --claude-hook` for WorktreeCreate and WorktreeRemove
     Claude {
         /// Remove all rwv hooks from Claude Code settings
         #[arg(long)]

@@ -40,7 +40,7 @@ Commands:
   remove       Remove a repo from the active project
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking
-  lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv activate` after lock changes the workspace membership to refresh node_modules / .venv / etc
+  lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
   abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
   sync         Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
