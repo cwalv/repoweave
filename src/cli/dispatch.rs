@@ -986,7 +986,7 @@ pub fn run() -> anyhow::Result<()> {
                             }
                         };
                         let dir_override = dir.as_deref().map(std::path::Path::new);
-                        let workweave_path = crate::workweave::create_workweave(
+                        let created = crate::workweave::create_workweave(
                             primary_root,
                             &source_root,
                             &project,
@@ -995,7 +995,12 @@ pub fn run() -> anyhow::Result<()> {
                             capture_dirty,
                             dir_override,
                             activate::ActivateOptions { no_materialize },
-                        )?;
+                        );
+                        let workweave_path = if hook_mode {
+                            crate::workweave::hand_over_seat(created)?
+                        } else {
+                            created?
+                        };
                         if hook_mode {
                             println!("{}", workweave_path.display());
                         }

@@ -109,7 +109,10 @@ is the standard "ensure workweave exists" path.
    A hook whose tool is not on `PATH` is skipped with a `tool-missing`
    warning. A hook that fails leaves the workweave created and registered,
    and the command exits non-zero naming `rwv materialize`, which finishes it
-   once the cause is fixed.
+   once the cause is fixed. Under `--hook-mode`, and for the `WorktreeCreate`
+   request `--claude-hook` handles, the agent runtime is waiting for the
+   workweave: the create exits `0`, prints the path as usual, and the failure
+   is a warning on stderr naming `rwv materialize`.
 6. An entry in `projects/<project>/.rwv-workweave-index` recording the
    workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
    project repo's `.gitignore` so the machine-local index stays untracked.
@@ -237,7 +240,9 @@ thing on stdout.
 
 - `0` — operation completed successfully.
 - non-zero — operation failed; see stderr for details. For `create`, a failed
-  install hook is non-zero too, though the workweave was created and is kept.
+  install hook is non-zero too, though the workweave was created and is kept —
+  except under `--hook-mode` or `--claude-hook`, where it is a warning and the
+  create exits `0`.
 
 ## Examples
 

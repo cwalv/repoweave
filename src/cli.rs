@@ -219,10 +219,10 @@ pub enum Commands {
         /// Project name (not required when --claude-hook is set)
         #[arg(required_unless_present = "claude_hook")]
         project: Option<String>,
-        /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook)
+        /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook). An install hook that fails in the created workweave is a warning here, not a failure
         #[arg(long)]
         hook_mode: bool,
-        /// Claude Code hook mode: read JSON from stdin, handle create/remove automatically
+        /// Claude Code hook mode: read JSON from stdin, handle create/remove automatically. An install hook that fails in a created workweave is a warning, not a failure
         #[arg(long, conflicts_with = "hook_mode")]
         claude_hook: bool,
         #[command(subcommand)]

@@ -2300,15 +2300,66 @@ pub fn create_workweave(
         release_captured_edits(project_vcs.as_ref(), &project_dir, project, &captured);
     }
 
-    if let Some(e) = hooks_failed {
-        return Err(e.context(format!(
-            "workweave created at {}; only its install hooks did not complete. Fix \
-             the cause, then run `rwv materialize` inside it",
-            crate::path_spelling::operator_path(&workweave_dir)
-        )));
+    if let Some(cause) = hooks_failed {
+        return Err(HooksIncomplete {
+            dir: workweave_dir,
+            cause,
+        }
+        .into());
     }
 
     Ok(workweave_dir)
+}
+
+/// [`create_workweave`]'s error when the workweave was created and registered
+/// and only its install hooks failed: the seat is usable and kept, so an agent
+/// runtime's create hook can hand it over and leave the hooks to `rwv
+/// materialize`.
+#[derive(Debug)]
+pub struct HooksIncomplete {
+    pub dir: PathBuf,
+    pub cause: anyhow::Error,
+}
+
+impl HooksIncomplete {
+    /// The failure as a warning on stderr, for a caller that hands the seat
+    /// over instead of failing.
+    pub fn warn(&self) {
+        eprintln!("rwv workweave create: warning: {self}: {:#}", self.cause);
+    }
+}
+
+impl std::fmt::Display for HooksIncomplete {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "workweave created at {}; only its install hooks did not complete. Fix \
+             the cause, then run `rwv materialize` inside it",
+            crate::path_spelling::operator_path(&self.dir)
+        )
+    }
+}
+
+impl std::error::Error for HooksIncomplete {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+
+/// What an agent runtime's create hook gets from [`create_workweave`]'s
+/// result: the seat even when only its install hooks failed, that failure
+/// turned into a warning, and every other error unchanged.
+pub fn hand_over_seat(created: anyhow::Result<PathBuf>) -> anyhow::Result<PathBuf> {
+    match created {
+        Err(e) => match e.downcast::<HooksIncomplete>() {
+            Ok(incomplete) => {
+                incomplete.warn();
+                Ok(incomplete.dir)
+            }
+            Err(e) => Err(e),
+        },
+        created => created,
+    }
 }
 
 /// What `--capture-dirty` copied into a new workweave, held so the source
@@ -4101,7 +4152,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let name =
                 derive_workweave_name(input.branch_name.as_deref(), input.session_id.as_deref());
 
-            let path = create_workweave(
+            let path = hand_over_seat(create_workweave(
                 primary_root,
                 source_root,
                 &project,
@@ -4110,7 +4161,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 false,
                 None,
                 crate::activate::ActivateOptions::default(),
-            )?;
+            ))?;
             println!("{}", path.display());
         }
         Some("WorktreeRemove") => {

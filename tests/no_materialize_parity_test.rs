@@ -132,10 +132,15 @@ impl Weave {
     }
 
     fn run_in(&self, cwd: &Path, args: &[&str]) -> (bool, String, String) {
+        self.run_with_stdin(cwd, args, "")
+    }
+
+    fn run_with_stdin(&self, cwd: &Path, args: &[&str], stdin: &str) -> (bool, String, String) {
         let out = common::rwv()
             .args(args)
             .current_dir(cwd)
             .env("PATH", &self.bin)
+            .write_stdin(stdin)
             .output()
             .expect("rwv should run");
         (
@@ -294,6 +299,72 @@ fn a_hook_that_fails_at_create_keeps_the_seat_and_names_materialize() {
     assert!(
         weave.ok(&["workweave", "app", "list"]).contains("seat"),
         "and stay registered, so it can be addressed and finished"
+    );
+}
+
+/// Under `--hook-mode` an agent runtime is waiting for the seat's path, and a
+/// seat whose hooks failed is still a seat: the create exits 0, prints the
+/// path as usual, and the failure is a warning naming `rwv materialize`.
+#[test]
+fn hook_mode_create_hands_over_a_seat_whose_hooks_failed() {
+    let weave = Weave::new();
+    weave.npm(1);
+
+    let (ok, stdout, stderr) = weave.run_in(
+        &weave.ws,
+        &["workweave", "app", "--hook-mode", "create", "seat"],
+    );
+    assert!(
+        !weave.npm_runs().is_empty(),
+        "fixture: the failing hook must have run:\n{stderr}"
+    );
+    assert!(
+        ok,
+        "hook-mode create must not fail over its hooks:\n{stdout}\n{stderr}"
+    );
+    assert_hook_failure_handed_over(&weave, "seat", &stdout, &stderr);
+}
+
+/// The hook `rwv setup claude` registers for `WorktreeCreate` reads its
+/// request from stdin, and hands the seat over on the same terms.
+#[test]
+fn claude_hook_create_hands_over_a_seat_whose_hooks_failed() {
+    let weave = Weave::new();
+    weave.npm(1);
+
+    let payload = format!(
+        "{{\"hook_event_name\": \"WorktreeCreate\", \"cwd\": {}, \"branch_name\": \"seat\"}}",
+        serde_json::to_string(&weave.ws.to_string_lossy()).unwrap()
+    );
+    let (ok, stdout, stderr) =
+        weave.run_with_stdin(&weave.ws, &["workweave", "--claude-hook"], &payload);
+    assert!(
+        !weave.npm_runs().is_empty(),
+        "fixture: the failing hook must have run:\n{stderr}"
+    );
+    assert!(
+        ok,
+        "the WorktreeCreate hook must not fail over its hooks:\n{stdout}\n{stderr}"
+    );
+    assert_hook_failure_handed_over(&weave, "seat", &stdout, &stderr);
+}
+
+fn assert_hook_failure_handed_over(weave: &Weave, name: &str, stdout: &str, stderr: &str) {
+    let seat = weave.tmp.path().join(format!(".workweaves/app--{name}"));
+    assert_eq!(
+        PathBuf::from(stdout.trim_end()).canonicalize().ok(),
+        seat.canonicalize().ok(),
+        "stdout must be the bare path, as for a clean create; got:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("warning")
+            && stderr.contains("only its install hooks did not complete")
+            && stderr.contains("rwv materialize"),
+        "the failure must be warned about, naming the verb that finishes it:\n{stderr}"
+    );
+    assert!(
+        weave.ok(&["workweave", "app", "list"]).contains(name),
+        "the seat is registered"
     );
 }
 
