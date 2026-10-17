@@ -64,7 +64,7 @@ url = "https://github.com/acme/client.git"
 version = "develop"
 role = "fork"
 
-[integrations.cargo]
+[integrations.cargo-workspace]
 enabled = true
 "#,
     );
@@ -85,7 +85,7 @@ enabled = true
         .stdout(predicate::str::contains("github/acme/client"))
         .stdout(predicate::str::contains("fork"))
         .stdout(predicate::str::contains("## Integrations"))
-        .stdout(predicate::str::contains("- cargo"))
+        .stdout(predicate::str::contains("- cargo-workspace"))
         .stdout(predicate::str::contains("## Key commands"))
         .stdout(predicate::str::contains("## Directory layout"));
 }

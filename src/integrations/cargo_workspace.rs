@@ -666,6 +666,10 @@ impl Integration for CargoWorkspace {
         "cargo-workspace"
     }
 
+    fn settings_keys(&self) -> &'static [&'static str] {
+        crate::integration::settings_struct_keys::<CargoWorkspaceConfig>()
+    }
+
     fn default_enabled(&self) -> bool {
         true
     }

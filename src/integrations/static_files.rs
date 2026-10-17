@@ -180,6 +180,10 @@ impl Integration for StaticFiles {
         "static-files"
     }
 
+    fn settings_keys(&self) -> &'static [&'static str] {
+        crate::integration::settings_struct_keys::<StaticFilesConfig>()
+    }
+
     fn default_enabled(&self) -> bool {
         false
     }

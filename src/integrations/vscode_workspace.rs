@@ -417,6 +417,10 @@ impl Integration for VscodeWorkspace {
         "vscode-workspace"
     }
 
+    fn settings_keys(&self) -> &'static [&'static str] {
+        crate::integration::settings_struct_keys::<VscodeConfig>()
+    }
+
     fn default_enabled(&self) -> bool {
         true
     }

@@ -515,12 +515,15 @@ pub struct RepoEntry {
 pub struct IntegrationConfig(toml::Table);
 
 impl IntegrationConfig {
+    /// The one key every `[integrations.<name>]` table accepts.
+    pub(crate) const ENABLED_KEY: &'static str = "enabled";
+
     /// Whether the integration should run.
     ///
     /// Returns `Some(true)` / `Some(false)` when `enabled` is present in the
     /// table, `None` when absent (fall back to `default_enabled()`).
     pub fn enabled(&self) -> Option<bool> {
-        self.0.get("enabled").and_then(|v| v.as_bool())
+        self.0.get(Self::ENABLED_KEY).and_then(|v| v.as_bool())
     }
 
     /// Parse integration-specific settings into a typed struct.
@@ -571,6 +574,7 @@ impl IntegrationConfig {
 /// otherwise fully-listed include. Entries that do not appear in `include` are
 /// silently ignored.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MemberSpec {
     /// Sub-paths under the repo root to add as workspace members.
     /// e.g. `["daemon", "client", "common"]`
@@ -987,13 +991,18 @@ fn retired_manifest_key_hint(unknown: &str) -> Option<&'static str> {
 
 /// Return the element of [`MANIFEST_TOP_LEVEL_KEYS`] closest (by edit
 /// distance) to `unknown`, or `None` when no element is within the threshold.
+fn nearest_manifest_key(unknown: &str) -> Option<&'static str> {
+    nearest_key(unknown, MANIFEST_TOP_LEVEL_KEYS)
+}
+
+/// Return the element of `candidates` closest (by edit distance) to
+/// `unknown`, or `None` when no element is within the threshold.
 ///
 /// The threshold is `max(1, unknown.len() / 2)` to catch common typos
 /// including transpositions, missing/extra characters, and single-character
 /// substitutions.  This is intentionally simple — no external dependency,
-/// no Unicode normalization; ASCII comparison is sufficient for TOML table
-/// names.
-fn nearest_manifest_key(unknown: &str) -> Option<&'static str> {
+/// no Unicode normalization; ASCII comparison is sufficient for TOML keys.
+fn nearest_key<'a>(unknown: &str, candidates: &[&'a str]) -> Option<&'a str> {
     /// Optimal String Alignment (OSA) distance — like Levenshtein but also
     /// counts adjacent transpositions as a single edit.  Strictly speaking
     /// OSA is not a true metric (the triangle inequality does not hold), but
@@ -1039,7 +1048,7 @@ fn nearest_manifest_key(unknown: &str) -> Option<&'static str> {
     // Min threshold is 1 so even a 1-char unknown gets a match on a known key
     // that differs by one edit.
     let threshold = (unknown.len() / 2).max(1);
-    MANIFEST_TOP_LEVEL_KEYS
+    candidates
         .iter()
         .copied()
         .filter_map(|key| {
@@ -1083,10 +1092,148 @@ fn nearest_manifest_key(unknown: &str) -> Option<&'static str> {
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub(crate) repositories: BTreeMap<RepoPath, RepoEntry>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_integrations")]
     pub integrations: BTreeMap<String, IntegrationConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workweave: Option<WorkweaveConfig>,
+}
+
+/// One built-in integration's `[integrations.<name>]` vocabulary.
+struct IntegrationKeys {
+    name: String,
+    keys: Vec<&'static str>,
+}
+
+/// Read `[integrations]`, refusing a table no built-in integration is named by
+/// and a key the named integration does not read — the same strictness
+/// `deny_unknown_fields` gives the top level, for the same reason.
+///
+/// The refusal is raised while each key is read, so the TOML parser locates it
+/// at that key exactly as it locates an unknown top-level key.
+fn deserialize_integrations<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, IntegrationConfig>, D::Error> {
+    let vocabulary: Vec<IntegrationKeys> = crate::integrations::builtin_integrations()
+        .iter()
+        .map(|integration| IntegrationKeys {
+            name: integration.name().to_string(),
+            keys: std::iter::once(IntegrationConfig::ENABLED_KEY)
+                .chain(integration.settings_keys().iter().copied())
+                .collect(),
+        })
+        .collect();
+    deserializer.deserialize_map(IntegrationsVisitor(&vocabulary))
+}
+
+fn unknown_key_message(what: &str, key: &str, table: &str, accepted: &[&str]) -> String {
+    let expected = match accepted {
+        [only] => format!("expected `{only}`"),
+        _ => format!(
+            "expected one of {}",
+            accepted
+                .iter()
+                .map(|k| format!("`{k}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let hint = nearest_key(key, accepted)
+        .map(|nearest| format!("; did you mean `{nearest}`?"))
+        .unwrap_or_default();
+    format!("unknown {what} `{key}` in `{table}`, {expected}{hint}")
+}
+
+struct IntegrationsVisitor<'a>(&'a [IntegrationKeys]);
+
+impl<'de, 'a> serde::de::Visitor<'de> for IntegrationsVisitor<'a> {
+    type Value = BTreeMap<String, IntegrationConfig>;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a table of integration tables")
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut integrations = BTreeMap::new();
+        while let Some(integration) = map.next_key_seed(IntegrationNameSeed(self.0))? {
+            let table = map.next_value_seed(IntegrationTableSeed(integration))?;
+            integrations.insert(integration.name.clone(), IntegrationConfig(table));
+        }
+        Ok(integrations)
+    }
+}
+
+struct IntegrationNameSeed<'a>(&'a [IntegrationKeys]);
+
+impl<'de, 'a> serde::de::DeserializeSeed<'de> for IntegrationNameSeed<'a> {
+    type Value = &'a IntegrationKeys;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        self.0.iter().find(|i| i.name == name).ok_or_else(|| {
+            let names: Vec<&str> = self.0.iter().map(|i| i.name.as_str()).collect();
+            serde::de::Error::custom(unknown_key_message(
+                "integration",
+                &name,
+                "[integrations]",
+                &names,
+            ))
+        })
+    }
+}
+
+struct IntegrationTableSeed<'a>(&'a IntegrationKeys);
+
+impl<'de, 'a> serde::de::DeserializeSeed<'de> for IntegrationTableSeed<'a> {
+    type Value = toml::Table;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_map(self)
+    }
+}
+
+impl<'de, 'a> serde::de::Visitor<'de> for IntegrationTableSeed<'a> {
+    type Value = toml::Table;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "the `[integrations.{}]` table", self.0.name)
+    }
+
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut table = toml::Table::new();
+        while let Some(key) = map.next_key_seed(SettingsKeySeed(self.0))? {
+            let value: toml::Value = map.next_value()?;
+            table.insert(key, value);
+        }
+        Ok(table)
+    }
+}
+
+struct SettingsKeySeed<'a>(&'a IntegrationKeys);
+
+impl<'de, 'a> serde::de::DeserializeSeed<'de> for SettingsKeySeed<'a> {
+    type Value = String;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        let key = String::deserialize(deserializer)?;
+        if self.0.keys.contains(&key.as_str()) {
+            return Ok(key);
+        }
+        Err(serde::de::Error::custom(unknown_key_message(
+            "key",
+            &key,
+            &format!("[integrations.{}]", self.0.name),
+            &self.0.keys,
+        )))
+    }
 }
 
 /// Extract the offending key from a TOML `deny_unknown_fields` error message.
@@ -1804,7 +1951,7 @@ url = "https://github.com/acme/client.git"
 version = "develop"
 role = "fork"
 
-[integrations.cargo]
+[integrations.cargo-workspace]
 enabled = true
 "#;
 
@@ -3160,7 +3307,7 @@ url = "https://github.com/acme/server.git"
 version = "main"
 role = "owned"
 
-[integrations.cargo]
+[integrations.cargo-workspace]
 enabled = true
 
 [workweave]
@@ -3172,33 +3319,129 @@ link = ["target/"]
         assert_eq!(m.integrations.len(), 1);
     }
 
-    /// Top-level strictness must not leak into `[integrations]`: each
-    /// integration's private keys are deliberately open and must keep parsing.
-    /// This pins the invariant that `deny_unknown_fields` on `Manifest` applies
-    /// only to the top level, not to `IntegrationConfig`'s transparent map.
+    /// A key the integration does not read is refused at parse, as an unknown
+    /// top-level key is: the key, its table, its line and the nearest
+    /// accepted spelling. `hide-dotfile` was silently ignored, leaving the
+    /// setting it misspells at its default.
     #[test]
-    fn integration_private_keys_are_unaffected_by_top_level_strictness() {
+    fn an_unknown_integration_key_is_refused_with_table_line_and_suggestion() {
+        let text = "[repositories]\n\n[integrations.vscode-workspace]\nhide-dotfile = false\n";
+        let err = Manifest::from_toml_str(text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unknown key `hide-dotfile` in `[integrations.vscode-workspace]`"),
+            "refusal must name the key and its table, got: {msg}"
+        );
+        assert!(
+            msg.contains("line 4"),
+            "refusal must locate the offending line, got: {msg}"
+        );
+        assert!(
+            msg.contains("did you mean `hide-dotfiles`"),
+            "refusal must suggest the nearest accepted spelling, got: {msg}"
+        );
+        assert!(
+            msg.contains(&Manifest::unparseable_hint()),
+            "refusal must carry the same remedy as any parse failure, got: {msg}"
+        );
+        assert!(
+            !msg.contains("top-level"),
+            "the key is not a top-level one, got: {msg}"
+        );
+    }
+
+    /// An integration that reads no settings accepts only `enabled`.
+    #[test]
+    fn an_integration_without_settings_refuses_any_key_but_enabled() {
+        let text = "[repositories]\n\n[integrations.gita]\nenabled = true\ngroups = \"role\"\n";
+        let err = Manifest::from_toml_str(text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unknown key `groups` in `[integrations.gita]`, expected `enabled`"),
+            "got: {msg}"
+        );
+    }
+
+    /// A table named for no integration is refused: its `enabled = false`
+    /// would otherwise leave the integration it misspells running.
+    #[test]
+    fn an_unknown_integration_name_is_refused_with_the_nearest_name() {
+        let text = "[repositories]\n\n[integrations.vscode-workspaces]\nenabled = false\n";
+        let err = Manifest::from_toml_str(text).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unknown integration `vscode-workspaces` in `[integrations]`"),
+            "refusal must name the table, got: {msg}"
+        );
+        assert!(msg.contains("line 3"), "got: {msg}");
+        assert!(
+            msg.contains("did you mean `vscode-workspace`"),
+            "got: {msg}"
+        );
+    }
+
+    /// Every key a built-in integration reads still parses — listed here by
+    /// hand, so a broken read of the settings types is a red here rather than
+    /// a refusal of valid manifests.
+    #[test]
+    fn every_key_an_integration_reads_is_accepted() {
         let text = r#"
-[repositories."github/acme/server"]
-type = "git"
-url = "https://github.com/acme/server.git"
-version = "main"
-role = "owned"
+[repositories]
+
+[integrations.npm-workspaces]
+enabled = false
+
+[integrations.pnpm-workspaces]
+enabled = true
+
+[integrations.go-work]
+enabled = true
+go-version = "1.22"
+
+[integrations.uv-workspace]
+enabled = true
 
 [integrations.cargo-workspace]
 enabled = true
+exclude = ["github/acme/nested"]
 patch = "derived"
+patch-surface = "cargo-config"
 workspace-package = true
-some-private-key = "value"
-another-custom-setting = 42
+rustc-wrapper = "sccache"
+
+[integrations.cargo-workspace.members."github/acme/multi"]
+include = ["daemon"]
+exclude = ["fuzz"]
+
+[integrations.gita]
+enabled = true
+
+[integrations.vscode-workspace]
+enabled = true
+hide-dotfiles = false
+
+[integrations.static-files]
+enabled = true
+files = ["turbo.json", { path = ".beads", from = "primary" }]
 "#;
-        let m = Manifest::from_toml_str(text).expect(
-            "integration private keys must parse successfully; \
-             top-level deny_unknown_fields must not leak into IntegrationConfig",
-        );
-        assert_eq!(m.integrations.len(), 1);
-        let cw = m.integrations.get("cargo-workspace").unwrap();
-        assert_eq!(cw.enabled(), Some(true));
+        let m = Manifest::from_toml_str(text).unwrap_or_else(|e| panic!("{e:#}"));
+        assert_eq!(m.integrations.len(), 8);
+        let cargo: CargoWorkspaceConfig = m.integrations["cargo-workspace"].settings().unwrap();
+        assert_eq!(cargo.members["github/acme/multi"].include, vec!["daemon"]);
+    }
+
+    /// A misspelled key inside a cargo `members` entry does not deserialize,
+    /// which reaches the operator as `malformed-settings`.
+    #[test]
+    fn an_unknown_key_in_a_cargo_member_spec_does_not_deserialize() {
+        let text = "[repositories]\n\n\
+                    [integrations.cargo-workspace.members.\"github/acme/multi\"]\n\
+                    incldue = [\"daemon\"]\n";
+        let m = Manifest::from_toml_str(text).unwrap_or_else(|e| panic!("{e:#}"));
+        let err = m.integrations["cargo-workspace"]
+            .settings::<CargoWorkspaceConfig>()
+            .unwrap_err();
+        assert!(err.to_string().contains("incldue"), "got: {err}");
     }
 
     // ========================================================================

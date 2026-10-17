@@ -102,6 +102,10 @@ impl Integration for GoWork {
         "go-work"
     }
 
+    fn settings_keys(&self) -> &'static [&'static str] {
+        crate::integration::settings_struct_keys::<GoWorkConfig>()
+    }
+
     fn default_enabled(&self) -> bool {
         true
     }

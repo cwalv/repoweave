@@ -35,10 +35,10 @@ url = "https://github.com/docs/rfc.git"
 version = "main"
 role = "reference"
 
-[integrations.cargo]
+[integrations.cargo-workspace]
 enabled = true
 
-[integrations.npm]
+[integrations.npm-workspaces]
 enabled = false
 "#;
 
@@ -168,10 +168,10 @@ fn integration_config_enabled_none() {
     let manifest_toml = r#"
 [repositories]
 
-[integrations.cargo]
+[integrations.cargo-workspace]
 "#;
     let m: Manifest = toml::from_str(manifest_toml).unwrap();
-    assert!(m.integrations["cargo"].enabled().is_none());
+    assert!(m.integrations["cargo-workspace"].enabled().is_none());
 }
 
 // ---------------------------------------------------------------------------

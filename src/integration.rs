@@ -576,6 +576,14 @@ pub trait Integration {
         &[]
     }
 
+    /// The keys this integration reads from its `[integrations.<name>]` table,
+    /// besides the framework's own `enabled`. Parsing `rwv.toml` refuses any
+    /// other key in that table, so an integration that reads settings returns
+    /// [`settings_struct_keys`] of the type it deserializes them into.
+    fn settings_keys(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Generate config files and run install commands.
     /// Called during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, and `rwv remove`.
     ///
@@ -770,6 +778,43 @@ pub trait Integration {
     ) -> anyhow::Result<Option<MemberIncompatibility>> {
         Ok(None)
     }
+}
+
+/// The keys a derived settings struct accepts, as serde spells them on the
+/// wire — renames applied — read off the field list serde hands a deserializer.
+pub fn settings_struct_keys<T: serde::de::DeserializeOwned>() -> &'static [&'static str] {
+    struct FieldListProbe<'a>(&'a mut &'static [&'static str]);
+
+    impl<'de> serde::Deserializer<'de> for FieldListProbe<'_> {
+        type Error = serde::de::value::Error;
+
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            Err(serde::de::Error::custom("not a struct"))
+        }
+
+        fn deserialize_struct<V: serde::de::Visitor<'de>>(
+            self,
+            _: &'static str,
+            fields: &'static [&'static str],
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            *self.0 = fields;
+            Err(serde::de::Error::custom("field list read"))
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+            bytes byte_buf option unit unit_struct newtype_struct seq tuple
+            tuple_struct map enum identifier ignored_any
+        }
+    }
+
+    let mut fields: &'static [&'static str] = &[];
+    let _ = T::deserialize(FieldListProbe(&mut fields));
+    fields
 }
 
 /// Whether an integration should run, considering its default and any override.

@@ -312,7 +312,7 @@ url = "https://github.com/acme/client.git"
 version = "develop"
 role = "fork"
 
-[integrations.cargo]
+[integrations.cargo-workspace]
 enabled = true
 "#,
         );
@@ -331,7 +331,7 @@ enabled = true
         assert!(output.contains("github/acme/client"));
         assert!(output.contains("fork"));
         assert!(output.contains("## Integrations"));
-        assert!(output.contains("- cargo"));
+        assert!(output.contains("- cargo-workspace"));
         assert!(output.contains("## Key commands"));
         assert!(output.contains("## Directory layout"));
         // Agent integration surfaces.

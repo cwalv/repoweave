@@ -458,22 +458,25 @@ well. The published contract for this seam, and that residue in full, is
 
 ### 6.2 `Integration`
 
-`pub trait Integration` (`src/integration.rs`) is twelve methods: five
+`pub trait Integration` (`src/integration.rs`) is thirteen methods: five
 required (`name`, `default_enabled`, `activate`, `deactivate`, `check`) and
-seven defaulted (`detection_manifests`, `activate_hook`, `generated_files`,
-`managed_files`, `verify`, `owned_paths_on_disk`, `member_incompatibility`).
+eight defaulted (`detection_manifests`, `settings_keys`, `activate_hook`,
+`generated_files`, `managed_files`, `verify`, `owned_paths_on_disk`,
+`member_incompatibility`).
 
 Eight built-in implementors, all unit structs, returned in fixed order by
 `builtin_integrations()` (`src/integrations/mod.rs`): `npm-workspaces`,
 `pnpm-workspaces`, `go-work`, `uv-workspace`, `cargo-workspace`, `gita`,
 `vscode-workspace`, `static-files`.
 
-**There is no id-to-implementation lookup.** No map, no registry, no dynamic
-loading. The set is the fixed `Vec`, and `name()` is consulted for exactly one
-purpose: fetching that integration's config out of `manifest.integrations`
-inside `for_each_enabled` (`src/integration_runner.rs`). Integrations are
-compiled in; the plugin mechanism (§6.4) is unrelated and does not reach this
-trait.
+**There is no registry.** No map, no dynamic loading. The set is the fixed
+`Vec`, and `name()` is consulted for two purposes: fetching that integration's
+config out of `manifest.integrations` inside `for_each_enabled`
+(`src/integration_runner.rs`), and, while `rwv.toml` is parsed, refusing an
+`[integrations.<name>]` table no implementor is named by or a key outside that
+implementor's `settings_keys` (`deserialize_integrations`, `src/manifest.rs`).
+Integrations are compiled in; the plugin mechanism (§6.4) is unrelated and does
+not reach this trait.
 
 `integration_runner` owns the lifecycle, and the division is worth stating
 because the two halves are easy to confuse:
