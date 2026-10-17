@@ -1,7 +1,8 @@
 # Run a command across repos
 
 `rwv each` runs a command in every repo of the checkout you are in, in
-parallel, and tells you which repos failed. It ships with `rwv`.
+parallel, and tells you which repos failed. Every way of installing `rwv`
+installs it too ([installation](../reference/rwv-each.md#installation)).
 
 ```bash
 rwv each -- git status --short

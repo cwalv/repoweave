@@ -2,6 +2,12 @@
 
 `rwv each` runs one command in each repo of the checkout `rwv` resolved, in parallel, and reports how every repo fared. It is a plugin — an executable named `rwv-each` that `rwv` dispatches like any other ([plugin protocol](./plugin-protocol.md)) — that ships with `rwv` in every release channel. For a guided tour, see [run a command across repos](../how-to/run-a-command-across-repos.md).
 
+## Installation
+
+Every release channel installs `rwv-each` in the same directory as `rwv`: the install script, the release archives, Homebrew, `pip`/`uv` (including a one-off `uvx`), and `cargo install repoweave`. It is the same version as the `rwv` beside it.
+
+`rwv` finds `rwv-each` the way it finds any plugin — on `PATH` — so if `rwv each` is refused as an [unknown verb](./refusals.md#unknown-verb), `rwv-each` is not on `PATH`: the directory it was installed to is missing from `PATH`, or `rwv` came from somewhere that installs it alone (a single binary copied out of an archive, `cargo install --bin rwv`). Put the `rwv-each` from the same release on `PATH`, next to `rwv`.
+
 ## Synopsis
 
 ```text

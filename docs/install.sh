@@ -1,5 +1,6 @@
 #!/bin/sh
-# install.sh — download and install the repoweave (rwv) binary.
+# install.sh — download and install the repoweave binaries: rwv and the
+# plugins bundled with it (rwv-each), side by side.
 #
 # Usage:
 #   curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh
@@ -13,7 +14,7 @@
 set -eu
 
 REPO="cwalv/repoweave"
-BINARY="rwv"
+BINARIES="rwv rwv-each"
 INSTALL_DIR="${INSTALL_DIR:-"$HOME/.local/bin"}"
 BASE_URL="https://github.com/${REPO}/releases"
 
@@ -114,7 +115,7 @@ main() {
 
     printf 'Installing repoweave %s (%s)\n' "$_version" "$_target"
     info "from  ${_url}"
-    info "to    ${INSTALL_DIR}/${BINARY}"
+    info "to    ${INSTALL_DIR}"
 
     _tmpdir="$(mktemp -d)"
     trap 'rm -rf "$_tmpdir"' EXIT
@@ -128,19 +129,23 @@ main() {
 
     mkdir -p "$INSTALL_DIR"
 
-    # cargo-dist places the binary inside a directory named after the archive stem.
+    # cargo-dist places the binaries inside a directory named after the archive stem.
     _extracted_dir="${_tmpdir}/repoweave-${_target}"
-    if [ -f "${_extracted_dir}/${BINARY}" ]; then
-        install -m 755 "${_extracted_dir}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
-    elif [ -f "${_tmpdir}/${BINARY}" ]; then
-        install -m 755 "${_tmpdir}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
-    else
-        err "could not find ${BINARY} binary in archive"
-    fi
+    _uninstall=""
+    for _bin in $BINARIES; do
+        if [ -f "${_extracted_dir}/${_bin}" ]; then
+            install -m 755 "${_extracted_dir}/${_bin}" "${INSTALL_DIR}/${_bin}"
+        elif [ -f "${_tmpdir}/${_bin}" ]; then
+            install -m 755 "${_tmpdir}/${_bin}" "${INSTALL_DIR}/${_bin}"
+        else
+            err "could not find ${_bin} in archive"
+        fi
+        info "installed ${_bin} to ${INSTALL_DIR}/${_bin}"
+        _uninstall="${_uninstall} ${INSTALL_DIR}/${_bin}"
+    done
 
-    info "installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
     printf '\n'
-    printf 'To uninstall: rm %s/%s\n\n' "$INSTALL_DIR" "$BINARY"
+    printf 'To uninstall: rm%s\n\n' "$_uninstall"
 
     # Check PATH
     case ":${PATH}:" in

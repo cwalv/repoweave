@@ -25,3 +25,10 @@ plan-jobs = ["./require-green-ci"]
 # workflow-level block grants only `contents`, and job-level permissions
 # replace it rather than intersect with it.
 github-custom-job-permissions = { require-green-ci = { actions = "read", contents = "read" } }
+
+# The binaries every release channel ships: rwv and each bundled plugin, side
+# by side. Without this list dist packages every [[bin]] of the package, which
+# would ship the generate-explain build tool. python/build_wheels.py reads the
+# same list for the PyPI wheels.
+[dist.binaries]
+"*" = ["rwv", "rwv-each"]

@@ -28,6 +28,8 @@ repoweave is in **active alpha** (`0.x`): core workflows are heavily tested, and
 
 **Prerequisites:** `git` on `$PATH`. On Windows, enable **Developer Mode** (or run from an elevated shell) so `rwv` can create workspace symlinks.
 
+Every channel below installs `rwv` and, beside it, `rwv-each` — the plugin behind [`rwv each`](docs/reference/rwv-each.md).
+
 **Quick install** (Linux/macOS — detects platform, installs to `~/.local/bin`):
 
 ```bash
@@ -56,10 +58,10 @@ pip install repoweave    # or: uvx repoweave
 
 ### Uninstall
 
-Remove the binary:
+Remove the binaries:
 
 ```sh
-rm ~/.local/bin/rwv
+rm ~/.local/bin/rwv ~/.local/bin/rwv-each
 ```
 
 ### Quick start

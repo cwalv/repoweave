@@ -118,6 +118,15 @@ every repo succeeded. `--json`, `--fail-fast`, `--dry-run`, `--shell`,
 `--timeout`, `--joblog`, `--results` and `--progress` are described in the
 `rwv each` reference. Ctrl-C and `--timeout` end a command's whole process tree.
 
+### Every release channel installs `rwv-each` beside `rwv`, and no longer `generate-explain`
+
+The release archives, the Homebrew formula, the PyPI wheels, the install script
+and `cargo install repoweave` all carry `rwv-each` next to `rwv`. Earlier
+archives, formulae and crates also installed `generate-explain`, a tool that
+regenerates this repository's own documentation; it is no longer shipped.
+After upgrading by hand, `rm` any `generate-explain` an earlier install left
+beside `rwv`.
+
 ### rwv waits for a plugin through Ctrl-C
 
 A Ctrl-C while a plugin runs no longer ends `rwv` ahead of the plugin. `rwv`

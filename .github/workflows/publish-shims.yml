@@ -1,7 +1,8 @@
 # Publish platform-specific PyPI wheels after a GitHub Release is created.
 #
-# Each wheel contains the pre-built rwv binary in its .data/scripts/ directory,
-# so that pip/uv/pipx install it directly into the user's PATH.  No Python
+# Each wheel contains the pre-built rwv binary and every bundled plugin binary
+# (rwv-each, ...) in its .data/scripts/ directory, so that pip/uv/pipx install
+# them side by side into the user's PATH.  No Python
 # wrapper or Rust toolchain is required on the install side.
 #
 # Uses OIDC (OpenID Connect) via PyPI trusted publishing — no stored tokens.
@@ -39,23 +40,18 @@ jobs:
           - rust_target: aarch64-apple-darwin
             plat_tag: macosx_11_0_arm64
             artifact: repoweave-aarch64-apple-darwin.tar.xz
-            bin: rwv
           - rust_target: x86_64-apple-darwin
             plat_tag: macosx_10_12_x86_64
             artifact: repoweave-x86_64-apple-darwin.tar.xz
-            bin: rwv
           - rust_target: aarch64-unknown-linux-gnu
             plat_tag: manylinux_2_17_aarch64.manylinux2014_aarch64
             artifact: repoweave-aarch64-unknown-linux-gnu.tar.xz
-            bin: rwv
           - rust_target: x86_64-unknown-linux-gnu
             plat_tag: manylinux_2_17_x86_64.manylinux2014_x86_64
             artifact: repoweave-x86_64-unknown-linux-gnu.tar.xz
-            bin: rwv
           - rust_target: x86_64-pc-windows-msvc
             plat_tag: win_amd64
             artifact: repoweave-x86_64-pc-windows-msvc.zip
-            bin: rwv.exe
 
     steps:
       - uses: actions/checkout@v6
@@ -81,27 +77,15 @@ jobs:
             --pattern "${{ matrix.artifact }}" \
             --dir /tmp/artifacts/
 
-      - name: Extract binary
-        run: |
-          mkdir -p /tmp/bin
-          artifact="/tmp/artifacts/${{ matrix.artifact }}"
-          if [[ "${{ matrix.artifact }}" == *.zip ]]; then
-            unzip -o -j "$artifact" "${{ matrix.bin }}" -d /tmp/bin/
-          else
-            # tar.xz: archive directory matches artifact name without extension
-            tar -xJf "$artifact" -C /tmp/artifacts/
-            archive_dir="${{ matrix.artifact }}"
-            archive_dir="${archive_dir%.tar.xz}"
-            cp "/tmp/artifacts/${archive_dir}/${{ matrix.bin }}" "/tmp/bin/${{ matrix.bin }}"
-            chmod +x "/tmp/bin/${{ matrix.bin }}"
-          fi
-
+      # build_wheels.py takes every binary dist-workspace.toml's
+      # [dist.binaries] names out of the archive — rwv and each bundled
+      # plugin — and fails if the archive lacks one.
       - name: Build platform wheel
         run: |
           mkdir -p dist/
           python python/build_wheels.py \
             --version "${{ steps.version.outputs.version }}" \
-            --binary "/tmp/bin/${{ matrix.bin }}" \
+            --archive "/tmp/artifacts/${{ matrix.artifact }}" \
             --platform "${{ matrix.plat_tag }}" \
             --out dist/
           ls -la dist/

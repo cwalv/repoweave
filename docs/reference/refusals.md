@@ -1086,7 +1086,9 @@ matches neither is a typo or a missing install, and guessing between them
 would run the wrong thing.
 
 **Exits.** `rwv --help` lists core verbs. For a plugin, check it is installed
-and named `rwv-<verb>`. This is distinct from `no-explain-entry`, which
+and named `rwv-<verb>`. `rwv each` is a plugin that every release channel
+installs beside `rwv`; refused here, its `rwv-each` is not on `PATH` — see
+[rwv each](./rwv-each.md#installation). This is distinct from `no-explain-entry`, which
 refuses names that *do* dispatch.
 
 **Where this sits.** [Plugin boundary](../explanation/joints/plugin-boundary.md).
