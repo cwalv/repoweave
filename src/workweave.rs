@@ -1287,12 +1287,22 @@ fn refuse_unless_replaceable(
         ));
     }
 
-    let unrecorded = vcs.unrecorded_file_names(standalone)?;
-    if !unrecorded.is_empty() {
+    let dirty = vcs.dirty_file_names(standalone)?;
+    if !dirty.is_empty() {
         reasons.push(format!(
-            "it holds files no commit records (uncommitted, untracked or ignored); commit, \
-             move or delete them:{}",
-            listed(&unrecorded)
+            "it holds uncommitted or untracked files; commit, move or delete them:{}",
+            listed(&dirty)
+        ));
+    }
+
+    let ignored = vcs.ignored_file_names(standalone)?;
+    if !ignored.is_empty() {
+        reasons.push(format!(
+            "it holds ignored files, which no commit records either. Move out any you \
+             need; if the rest are regenerable, such as build output or installed \
+             dependencies, {}:{}",
+            vcs.ignored_removal_hint(standalone),
+            listed(&ignored)
         ));
     }
 

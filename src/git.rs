@@ -1499,8 +1499,20 @@ impl Vcs for GitVcs {
         Self::dirty_file_names_inner(repo, StatusReach::Tracked)
     }
 
-    fn unrecorded_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        Self::dirty_file_names_inner(repo, StatusReach::Ignored)
+    fn ignored_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        Ok(Self::porcelain_status(repo, StatusReach::Ignored)?
+            .into_iter()
+            .filter(|entry| entry.staged == b'!')
+            .map(|entry| entry.path)
+            .collect())
+    }
+
+    fn ignored_removal_hint(&self, workspace: &Path) -> String {
+        let at = crate::path_spelling::operator_path(workspace);
+        format!(
+            "`git -C {at} clean -X -n` lists what would go, and `git -C {at} clean -X -f` \
+             deletes it"
+        )
     }
     fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {
         let mut args: Vec<&str> = vec!["add", "--"];

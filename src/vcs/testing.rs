@@ -365,8 +365,12 @@ impl Vcs for FakeVcs {
         unsupported("tracked_dirty_file_names")
     }
 
-    fn unrecorded_file_names(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
-        unsupported("unrecorded_file_names")
+    fn ignored_file_names(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("ignored_file_names")
+    }
+
+    fn ignored_removal_hint(&self, _workspace: &Path) -> String {
+        unsupported("ignored_removal_hint")
     }
 
     fn is_tracked(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {

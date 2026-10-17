@@ -9,6 +9,7 @@
 //!     for that member, names why, and leaves the clone exactly as it was;
 //!   - a birth that refuses after the clone was moved aside moves it back.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -141,6 +142,56 @@ fn repo_state(repo: &Path) -> (String, String, String) {
     )
 }
 
+/// Every entry under `root`, `.git` included, keyed by its path relative to
+/// `root`: its kind, its permissions, and its bytes (a link's target).
+fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, (&'static str, u32, Vec<u8>)> {
+    let mut out = BTreeMap::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let meta = std::fs::symlink_metadata(&path).unwrap();
+            #[cfg(unix)]
+            let mode = std::os::unix::fs::PermissionsExt::mode(&meta.permissions());
+            #[cfg(not(unix))]
+            let mode = u32::from(meta.permissions().readonly());
+            let (kind, bytes) = if meta.file_type().is_symlink() {
+                let target = std::fs::read_link(&path).unwrap();
+                ("link", target.to_string_lossy().into_owned().into_bytes())
+            } else if meta.is_dir() {
+                pending.push(path.clone());
+                ("dir", Vec::new())
+            } else {
+                ("file", std::fs::read(&path).unwrap())
+            };
+            out.insert(
+                path.strip_prefix(root).unwrap().to_path_buf(),
+                (kind, mode, bytes),
+            );
+        }
+    }
+    out
+}
+
+/// Let git rewrite the clone's index once its entries can no longer be
+/// racily clean, so the reads doctor makes have no reason to rewrite it and
+/// a byte comparison sees only what the repair did.
+fn settle_index(clone: &Path) {
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    common::git_in(clone, &["status", "--porcelain"]);
+}
+
+/// The entries listed under the reason line of `report` containing `heading`.
+fn listed_under<'a>(report: &'a str, heading: &str) -> Vec<&'a str> {
+    report
+        .lines()
+        .skip_while(|l| !l.contains(heading))
+        .skip(1)
+        .take_while(|l| l.starts_with("      "))
+        .map(str::trim)
+        .collect()
+}
+
 fn store_of(checkout: &Path) -> PathBuf {
     let common_dir = common::git_in(checkout, &["rev-parse", "--git-common-dir"]);
     std::fs::canonicalize(checkout.join(common_dir)).unwrap()
@@ -243,7 +294,9 @@ fn doctor_fix_replaces_the_clone_with_a_worktree_at_the_commit_it_had_checked_ou
 /// Run `doctor --fix` over a clone that holds something, and assert it
 /// refused for that member naming `reason` and `item`, and changed nothing.
 fn assert_refused_and_untouched(weave: &Weave, reason: &str, item: &str) {
+    settle_index(&weave.clone);
     let clone_before = repo_state(&weave.clone);
+    let bytes_before = tree_bytes(&weave.clone);
     let canonical_before = repo_state(&weave.canonical);
 
     let (code, out) = doctor_fix(weave);
@@ -259,6 +312,10 @@ fn assert_refused_and_untouched(weave: &Weave, reason: &str, item: &str) {
     assert!(!out.contains("[fixed] core: replaced"), "{out}");
 
     assert!(weave.clone.join(".git").is_dir(), "still a full clone");
+    assert!(
+        tree_bytes(&weave.clone) == bytes_before,
+        "the clone must be byte-for-byte as it was"
+    );
     assert_eq!(repo_state(&weave.clone), clone_before, "clone untouched");
     assert_eq!(
         repo_state(&weave.canonical),
@@ -318,7 +375,11 @@ fn refuses_while_the_clone_holds_uncommitted_changes() {
     let weave = weave_with_standalone_member(tmp.path());
     std::fs::write(weave.clone.join("README.md"), "edited\n").unwrap();
 
-    assert_refused_and_untouched(&weave, "files no commit records", "README.md");
+    assert_refused_and_untouched(
+        &weave,
+        "it holds uncommitted or untracked files",
+        "README.md",
+    );
 }
 
 #[test]
@@ -327,7 +388,11 @@ fn refuses_while_the_clone_holds_untracked_files() {
     let weave = weave_with_standalone_member(tmp.path());
     std::fs::write(weave.clone.join("notes.txt"), "scratch\n").unwrap();
 
-    assert_refused_and_untouched(&weave, "files no commit records", "notes.txt");
+    assert_refused_and_untouched(
+        &weave,
+        "it holds uncommitted or untracked files",
+        "notes.txt",
+    );
 }
 
 #[test]
@@ -342,7 +407,42 @@ fn refuses_while_the_clone_holds_ignored_files() {
         "fixture: plain status reads clean"
     );
 
-    assert_refused_and_untouched(&weave, "files no commit records", "local.env");
+    assert_refused_and_untouched(&weave, "it holds ignored files", "local.env");
+}
+
+#[test]
+fn lists_ignored_files_apart_from_untracked_ones_and_names_their_removal() {
+    let tmp = common::tempdir().unwrap();
+    let weave = weave_with_standalone_member(tmp.path());
+    std::fs::write(weave.clone.join(".git/info/exclude"), "*.env\n").unwrap();
+    std::fs::write(weave.clone.join("local.env"), "TOKEN=only-here\n").unwrap();
+    std::fs::write(weave.clone.join("notes.txt"), "scratch\n").unwrap();
+
+    let (code, out) = doctor_fix(&weave);
+    assert_eq!(code, Some(1), "{out}");
+    assert_eq!(
+        listed_under(&out, "it holds uncommitted or untracked files"),
+        vec!["notes.txt"],
+        "{out}"
+    );
+    assert_eq!(
+        listed_under(&out, "it holds ignored files"),
+        vec!["local.env"],
+        "{out}"
+    );
+    let heading = out
+        .lines()
+        .find(|l| l.contains("it holds ignored files"))
+        .unwrap();
+    assert!(
+        heading.contains("widget clean -X -n`") && heading.contains("widget clean -X -f`"),
+        "the ignored files' heading must name the preview and the removal: {heading}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(weave.clone.join("local.env")).unwrap(),
+        "TOKEN=only-here\n",
+        "rwv names the removal and never runs it"
+    );
 }
 
 #[test]
@@ -413,7 +513,9 @@ fn a_birth_that_refuses_moves_the_clone_back() {
             &side,
         ],
     );
+    settle_index(&weave.clone);
     let clone_before = repo_state(&weave.clone);
+    let bytes_before = tree_bytes(&weave.clone);
 
     let (code, out) = doctor_fix(&weave);
     assert_eq!(code, Some(1), "{out}");
@@ -425,6 +527,10 @@ fn a_birth_that_refuses_moves_the_clone_back() {
     assert!(
         weave.clone.join(".git").is_dir(),
         "the clone is back at the slot"
+    );
+    assert!(
+        tree_bytes(&weave.clone) == bytes_before,
+        "the clone must be byte-for-byte as it was"
     );
     assert_eq!(repo_state(&weave.clone), clone_before, "clone untouched");
     assert!(!aside(&weave).exists(), "nothing left aside");

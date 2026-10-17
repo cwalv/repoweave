@@ -2056,14 +2056,20 @@ pub trait Vcs: Send + Sync {
     /// `git status --porcelain -z --untracked-files=no`.
     fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
-    /// [`Vcs::dirty_file_names`] with the paths the VCS's ignore rules hide
-    /// from status added: everything in the workspace no commit records, so
-    /// everything deleting the workspace would lose that its history would not
-    /// give back.
+    /// The paths the VCS's ignore rules hide from [`Vcs::dirty_file_names`]:
+    /// files no commit records that status does not report. Together the two
+    /// are everything deleting the workspace would lose that its history would
+    /// not give back.
     ///
-    /// For git: parses `git status --porcelain -z --ignored`, which reports a
-    /// wholly untracked or wholly ignored directory once, as `<dir>/`.
-    fn unrecorded_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+    /// For git: the `!!` records of `git status --porcelain -z --ignored`,
+    /// which reports a wholly ignored directory once, as `<dir>/`.
+    fn ignored_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// The native commands that preview and then delete every file
+    /// [`Vcs::ignored_file_names`] reports for the workspace at `workspace`,
+    /// for an operator to run once they judge those files regenerable. rwv
+    /// never runs them.
+    fn ignored_removal_hint(&self, workspace: &Path) -> String;
 
     /// Return `true` when the regular file at `path` (relative to `repo`)
     /// holds exactly the bytes the working copy's parent commit records for
