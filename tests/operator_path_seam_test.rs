@@ -475,8 +475,6 @@ const ROUTED: &[Routed] = &[
         prints: "the notice that a symlinked `.cargo` path kept the wrapper key from being \
                  fitted, naming the link",
     },
-    // rwv-wmr6.26: the whole add/remove refusal family (src/add_remove.rs) was
-    // un-minted before this bead — every site below is new.
     Routed {
         file: "add_remove.rs",
         scope: "",
