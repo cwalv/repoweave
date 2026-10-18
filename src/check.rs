@@ -9549,7 +9549,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             &ctx_base,
         );
         let (fixable_issues, user_held_issues): (Vec<_>, Vec<_>) =
-            verify_issues.into_iter().partition(|i| i.safe_to_fix);
+            verify_issues.into_iter().partition(Issue::fix_permitted);
         // Withholding is per project, because the repair is: activation runs
         // every managed file's hooks, and a hook re-attests what it produces —
         // so a user-held finding anywhere in the project is content this
@@ -9630,7 +9630,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             &project.manifest,
         );
         let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
-            surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
+            surfacing_issues.into_iter().partition(Issue::fix_permitted);
         // A real file or dir occupying a surfacing path is user-held and never
         // auto-clobbered.
         issues.extend(surf_user_held);

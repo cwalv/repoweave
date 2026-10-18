@@ -112,7 +112,7 @@ states one answer for the whole kind, the table gives it:
 
 | `kind` | `--fix` |
 |---|---|
-| [`tool-missing`](#tool-missing) | Per finding |
+| [`tool-missing`](#tool-missing) | Never |
 | [`managed-file-missing`](#managed-file-missing) | Per finding |
 | [`managed-file-drift`](#managed-file-drift) | Per finding |
 | [`managed-file-user-held`](#managed-file-user-held) | Never |
@@ -120,7 +120,7 @@ states one answer for the whole kind, the table gives it:
 | [`config-rejected`](#config-rejected) | Never |
 | [`malformed-settings`](#malformed-settings) | Never |
 | [`member-incompatibility`](#member-incompatibility) | Never |
-| [`derived-state-stale`](#derived-state-stale) | Per finding |
+| [`derived-state-stale`](#derived-state-stale) | Never |
 | [`disabled-integration-artifact`](#disabled-integration-artifact) | Never |
 | [`integration-failed`](#integration-failed) | Per finding |
 | [`core-finding`](#core-finding) | Per finding |

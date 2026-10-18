@@ -250,6 +250,50 @@ impl IssueKind {
     }
 }
 
+/// Whether `rwv doctor --fix` may repair any finding of an [`IssueKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueFixScope {
+    /// Decided per finding, by its [`Issue::safe_to_fix`].
+    PerFinding,
+    /// Never, whatever a finding's `safe_to_fix` says.
+    Never,
+}
+
+impl IssueKind {
+    /// The one place that says which issue kinds `rwv doctor --fix` may
+    /// repair, read by its repair partition through [`Issue::fix_permitted`].
+    /// The issues table's `--fix` column in
+    /// `docs/reference/doctor-findings.md` is checked against it.
+    ///
+    /// `PerFinding` is necessary for a repair, not sufficient: a finding
+    /// raised by a pass `--fix` never partitions is reported either way.
+    pub fn fix_scope(&self) -> IssueFixScope {
+        use IssueFixScope::{Never, PerFinding};
+        match self {
+            Self::ManagedFileMissing
+            | Self::ManagedFileDrift
+            | Self::Surfacing
+            | Self::IntegrationFailed
+            | Self::CoreFinding => PerFinding,
+            Self::ToolMissing
+            | Self::ManagedFileUserHeld
+            | Self::ConfigRejected
+            | Self::MalformedSettings
+            | Self::MemberIncompatibility(_)
+            | Self::DerivedStateStale
+            | Self::DisabledIntegrationArtifact => Never,
+        }
+    }
+}
+
+impl Issue {
+    /// Whether `rwv doctor --fix` may act on this finding: both its kind and
+    /// the finding itself permit it.
+    pub fn fix_permitted(&self) -> bool {
+        self.safe_to_fix && self.kind.fix_scope() == IssueFixScope::PerFinding
+    }
+}
+
 /// Where the write that produces a surfaced file lands, which is what decides
 /// whether its weave-root symlink may exist before the file does.
 ///

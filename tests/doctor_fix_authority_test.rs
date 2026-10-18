@@ -52,9 +52,13 @@
 //!     a repair without one is a different defect than the one bound here.
 //!   - Findings with no `CheckViolation` variant — surfacing symlinks,
 //!     integration-content drift, member incompatibilities — carry no
-//!     disposition here. The page documents them under its own heading and
-//!     that section is unchecked; their two repair announcements are bound
-//!     in instrument 4 as explicit no-variant boundaries.
+//!     disposition here. Their Summary index rows are checked against
+//!     `IssueKind::fix_scope`, a per-kind register that says whether `--fix`
+//!     may ever repair the kind, not whether a given pass does: a
+//!     `Per finding` kind raised only by a pass `--fix` never partitions
+//!     reads green. Their per-kind entries are unchecked; their two repair
+//!     announcements are bound in instrument 4 as explicit no-variant
+//!     boundaries.
 //!   - A doc comment that describes a repair without naming a disposition
 //!     ("`--fix` retracts it") is not read as a claim, so it cannot be
 //!     reported as a wrong one.
@@ -63,7 +67,7 @@ mod common;
 
 use common::doctor_corpus::{case_token, corpus, issue_corpus, issue_kind_token};
 use repoweave::check::FixDisposition;
-use repoweave::integration::Severity;
+use repoweave::integration::{IssueFixScope, Severity};
 use std::collections::{BTreeMap, BTreeSet};
 
 const PAGE_PATH: &str = "docs/reference/doctor-findings.md";
@@ -420,17 +424,10 @@ fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
 // kind column for issues, and the "Twelve kinds carry a `sub_kind`" sentence
 // just above both.
 //
-// Scope: the issues table's kind column is checked against `IssueKind`'s
-// exhaustive set, and its `--fix` cell against the two-word vocabulary
-// (`Per finding` / `Never`). Which of the two words is correct per kind is
-// NOT re-derived here — `run_doctor`'s collection path decides it (some
-// kinds bypass the `--fix` partition entirely; others go through it per
-// occurrence), and there is no single register for that the way
-// `fix_disposition` is one for violations; hand-deriving it here would be a
-// second copy of that judgment to keep complete. The violations table's
-// Severity and `--fix` columns ARE checked for value agreement, because both
-// already have one register apiece (`fix_disposition`, and the severity each
-// violation renders with).
+// Each table is checked for value agreement against its register: the
+// violations table's Severity and `--fix` columns against `severity` and
+// `fix_disposition`, the issues table's kind column against `IssueKind`'s
+// exhaustive set and its `--fix` cell against `IssueKind::fix_scope`.
 
 const SUMMARY_VIOLATIONS_HEADER: &str =
     "| `kind` (and `sub_kind` where applicable) | Severity | `--fix` disposition |";
@@ -639,32 +636,49 @@ fn summary_issue_rows(page: &str) -> Vec<SummaryIssueEntry> {
     out
 }
 
-/// The issues table's kind column against `IssueKind`'s exhaustive set, and
-/// its `--fix` cell against the two-word vocabulary. See the module note
-/// above for why the word itself is not checked against the code.
-fn summary_issue_gaps(page: &str) -> Vec<String> {
-    let expected: BTreeSet<String> = issue_corpus()
+/// Token → `IssueKind::fix_scope`, for every kind the issue corpus builds.
+fn issue_fix_register() -> BTreeMap<String, IssueFixScope> {
+    issue_corpus()
         .iter()
-        .map(|issue| issue_kind_token(&issue.kind))
-        .collect();
+        .map(|issue| (issue_kind_token(&issue.kind), issue.kind.fix_scope()))
+        .collect()
+}
+
+fn issue_fix_cell(scope: IssueFixScope) -> &'static str {
+    match scope {
+        IssueFixScope::PerFinding => "Per finding",
+        IssueFixScope::Never => "Never",
+    }
+}
+
+/// The issues table's kind column against `IssueKind`'s exhaustive set, and
+/// its `--fix` cell against `IssueKind::fix_scope`.
+fn summary_issue_gaps(page: &str, register: &BTreeMap<String, IssueFixScope>) -> Vec<String> {
     let mut gaps = Vec::new();
     let mut reached: BTreeSet<String> = BTreeSet::new();
     for row in summary_issue_rows(page) {
-        if !expected.contains(&row.token) {
-            gaps.push(format!(
+        match register.get(&row.token) {
+            None => gaps.push(format!(
                 "{PAGE_PATH}:{}: `{}` names no `IssueKind`",
                 row.line, row.token
-            ));
-        }
-        if row.fix != "Per finding" && row.fix != "Never" {
-            gaps.push(format!(
+            )),
+            Some(scope) if row.fix == "Per finding" || row.fix == "Never" => {
+                let expected = issue_fix_cell(*scope);
+                if row.fix != expected {
+                    gaps.push(format!(
+                        "{PAGE_PATH}:{}: `{}` --fix says {}, the code says {expected}",
+                        row.line, row.token, row.fix
+                    ));
+                }
+            }
+            Some(_) => gaps.push(format!(
                 "{PAGE_PATH}:{}: `{}` --fix cell `{}` is not `Per finding` or `Never`",
                 row.line, row.token, row.fix
-            ));
+            )),
         }
         reached.insert(row.token.clone());
     }
-    for token in &expected {
+    for token in register.keys() {
         if !reached.contains(token) {
             gaps.push(format!(
                 "{token}: `IssueKind` defines it and the issues Summary index table has no \
@@ -684,7 +698,7 @@ fn the_summary_index_agrees_with_the_register() {
         gaps.join("\n  ")
     );
 
-    let gaps = summary_issue_gaps(PAGE);
+    let gaps = summary_issue_gaps(PAGE, &issue_fix_register());
     assert!(
         gaps.is_empty(),
         "{PAGE_PATH}'s Summary index (issues) disagrees with `IssueKind`:\n  {}",
@@ -741,30 +755,54 @@ fn the_summary_index_check_reports_a_drifted_cell() {
 
 #[test]
 fn the_issues_summary_index_check_reports_a_drifted_row() {
-    const ROW: &str = "| [`tool-missing`](#tool-missing) | Per finding |";
+    const ROW: &str = "| [`managed-file-missing`](#managed-file-missing) | Per finding |";
+    let register = issue_fix_register();
 
-    let renamed = PAGE.replacen(ROW, "| [`tool-absent`](#tool-missing) | Per finding |", 1);
+    let renamed = PAGE.replacen(
+        ROW,
+        "| [`managed-file-absent`](#managed-file-missing) | Per finding |",
+        1,
+    );
     assert_ne!(renamed, PAGE, "the seeded edit matched nothing");
-    let gaps = summary_issue_gaps(&renamed);
+    let gaps = summary_issue_gaps(&renamed, &register);
     assert!(
         gaps.iter()
-            .any(|g| g.contains("`tool-absent` names no `IssueKind`")),
+            .any(|g| g.contains("`managed-file-absent` names no `IssueKind`")),
         "a kind the issues table invents must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
     assert!(
         gaps.iter()
-            .any(|g| g.starts_with("tool-missing:") && g.contains("no row for it")),
+            .any(|g| g.starts_with("managed-file-missing:") && g.contains("no row for it")),
         "the real kind it stopped naming must be reported missing too; got:\n  {}",
         gaps.join("\n  ")
     );
 
-    let unvocab = PAGE.replacen(ROW, "| [`tool-missing`](#tool-missing) | Sometimes |", 1);
-    assert_ne!(unvocab, PAGE, "the seeded edit matched nothing");
-    let gaps = summary_issue_gaps(&unvocab);
+    let flipped = PAGE.replacen(
+        ROW,
+        "| [`managed-file-missing`](#managed-file-missing) | Never |",
+        1,
+    );
+    assert_ne!(flipped, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_issue_gaps(&flipped, &register);
     assert!(
         gaps.iter()
-            .any(|g| g.contains("`tool-missing` --fix cell `Sometimes`")),
+            .any(|g| g
+                .contains("`managed-file-missing` --fix says Never, the code says Per finding")),
+        "a flipped --fix cell must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    let unvocab = PAGE.replacen(
+        ROW,
+        "| [`managed-file-missing`](#managed-file-missing) | Sometimes |",
+        1,
+    );
+    assert_ne!(unvocab, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_issue_gaps(&unvocab, &register);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("`managed-file-missing` --fix cell `Sometimes`")),
         "a --fix cell outside the two-word vocabulary must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
