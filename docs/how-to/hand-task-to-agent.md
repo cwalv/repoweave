@@ -71,6 +71,13 @@ rwv push --repo glob:'github/chatly/*'
 rwv update --role owned --repo re:'proto'
 ```
 
+A narrowed `rwv update` regenerates no integration files and runs no install hooks, and says so:
+
+```text
+[skipped] core: the integration files were not regenerated (the update was narrowed by --role or --repo); `rwv doctor --fix` regenerates them
+[skipped] core: the install hooks did not run (the update was narrowed by --role or --repo); `rwv materialize` runs them
+```
+
 ## Related
 
 - [Agent lens](../explanation/lenses/agent.md) — parallel agent workflow patterns

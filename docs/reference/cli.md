@@ -156,7 +156,7 @@ Switch the active project in the primary weave: updates `.rwv-active`, surfaces 
 |---|---|
 | `--no-materialize` | Skip integration install hooks for a fast context-switch; `rwv materialize` runs them later |
 
-An install hook whose tool is not on `PATH` does not fail the verb: it prints ``[warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize` `` (finding kind `tool-missing`) and the other hooks still run. This holds for every verb that runs install hooks. A hook whose tool runs and fails is an error: the verb exits 1, and `activate` leaves `.rwv-active` unwritten.
+An install hook whose tool is not on `PATH` does not fail the verb: it prints ``[warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize` `` (finding kind `tool-missing`) and the other hooks still run. This holds for every verb that runs install hooks. Every line a verb prints for a side effect it skipped is listed under [Skipped side effects](#skipped-side-effects). A hook whose tool runs and fails is an error: the verb exits 1, and `activate` leaves `.rwv-active` unwritten.
 
 `.rwv-active` is the single source of truth for the active project; CWD does not override.
 
@@ -450,6 +450,40 @@ Register Claude Code hooks in `~/.claude/settings.json` (`SessionStart` and `Pre
 ### `rwv completions <shell>`
 
 Generate shell completions (bash, zsh, fish, etc.). Source the output in your shell rc file.
+
+## Skipped side effects
+
+A verb that leaves out a side effect it would otherwise perform says so on
+stderr, in a line naming the verb that performs it. A run that skipped
+nothing prints none of these lines, and none of them changes the exit code.
+
+| When | Line |
+|---|---|
+| `--no-materialize` on `activate`, `add`, `remove`, `role`, `update`, `workweave create`, `fetch` or `init --adopt` | ``[skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them`` |
+| `add`, `remove`, `role` or `update` inside a workweave, which never run hooks there | ``[skipped] core: the install hooks did not run (an authoring verb runs none inside a workweave); `rwv materialize` runs them`` |
+| `add`, `remove`, `role` or `update` with `--project <name>` naming a project the weave root does not present: the files are regenerated and the verb stops there | ``[skipped] core: the weave-root links were not refreshed (`<name>` is not the project this weave root presents); `rwv activate <name>` refreshes them`` and ``[skipped] core: the install hooks did not run (`<name>` is not the project this weave root presents); `rwv activate <name>` runs them`` |
+| `update --role` or `--repo`, which regenerates nothing and runs no hooks | ``[skipped] core: the integration files were not regenerated (the update was narrowed by --role or --repo); `rwv doctor --fix` regenerates them`` and ``[skipped] core: the install hooks did not run (the update was narrowed by --role or --repo); `rwv materialize` runs them`` |
+| `fetch <source>` while another project is active (on stdout in text mode, stderr under `--json`) | ``rwv fetch: skipping auto-activate (project '<active>' already active); `rwv activate <fetched>` selects it and runs its install hooks`` |
+| `fetch` with no source, its project already active, when it cloned a missing member or realigned one to its pin | ``[skipped] core: the install hooks did not run (project `<project>` was already active, so this fetch activated nothing); `rwv materialize` runs them`` (with `--project` naming a project the root does not present, the `rwv activate <project>` form above) |
+| An install hook whose tool is not on `PATH`, on every verb that runs hooks | ``[warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize` `` |
+
+Under `--json` in serial mode (`-j 1`), the `rwv update` and `rwv fetch`
+envelopes carry a `skipped` array, present and empty when nothing was
+skipped. Each record has `effect` (`install-hooks`, `integration-files`,
+`weave-root-links` or `activation`), `reason` (`no-materialize`,
+`inside-workweave`, `narrowed`, or an object: `tool-missing` with the tool,
+`not-presented` or `project-already-active` with the project), `remedy` (the
+command), and `integration` for a single integration's hook. For example:
+
+```json
+"skipped": [
+  { "effect": "integration-files", "reason": "narrowed", "remedy": "rwv doctor --fix" },
+  { "effect": "install-hooks", "reason": "narrowed", "remedy": "rwv materialize" }
+]
+```
+
+NDJSON (`-j N` with `N > 1`) carries no skipped records; the stderr lines still
+print.
 
 ## Scripting helpers
 

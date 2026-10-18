@@ -43,7 +43,7 @@ If a commit was made in a repository after the sync paused, `rwv abort` refuses 
   ```bash
   rwv abort --abandon-foreign-tip=github/foo/bar
   ```
-  The abandoned commits remain reachable at `refs/rwv/pre-abort/<op-id>`. If a foreign rebase or reset caused the branch to diverge from an earlier `refs/rwv/pre-abort/<op-id>` capture, abort refuses so the earlier capture is not orphaned; the refusal names the workspace-runnable path to reconcile or delete the ref first.
+  The abandoned commits remain reachable at the pre-abort ref the refusal printed as `tip preserved at:` — `refs/rwv/pre-abort/<op-id>`, or `refs/rwv/pre-abort/<op-id>-target` for a repository on the target side of a `sync-to`. If a foreign rebase or reset caused the branch to diverge from an earlier capture under that ref, abort refuses so the earlier capture is not orphaned; the refusal names the workspace-runnable path to reconcile or delete the ref first.
 - **To keep the post-crash commits**, move the branch back to the tip recorded by the op (or finish resolving manually) and re-run `rwv abort`.
 
 ### When no operation is in progress

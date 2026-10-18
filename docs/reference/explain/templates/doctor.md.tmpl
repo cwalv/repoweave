@@ -205,9 +205,12 @@ Every per-repo variant carries `path` (manifest-relative) and
 ({{MSG:doctor_workweave_tree_integrity_subkinds}}).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
-run time. Each record carries `name` (the `<verb>` in `rwv-<verb>`), `path`
-(absolute), and `shadowed` (`true` when an earlier `PATH` entry shadows this
-binary, with `shadowed_by` naming the winner). An empty array means no
+run time. Each record carries `name` (the verb typed as `rwv <verb>`: the file
+name after `rwv-`, less its `PATHEXT` extension on Windows), `path` (absolute,
+with the file's real name), and `shadowed` (`true` when another file for the
+same verb runs instead — one in an earlier `PATH` entry, or on Windows one in
+the same directory whose extension comes earlier in `PATHEXT` — with
+`shadowed_by` naming the winner). An empty array means no
 `rwv-*` executables were found. Plugin presence is **never** a failed check —
 the inventory is the audit surface for the PATH trust boundary, not a health
 gate. The exit code is unaffected by this field.

@@ -38,7 +38,7 @@ rwv materialize
 
 ## After `rwv sync` or inside a workweave
 
-`rwv activate` is refused inside a workweave because a workweave's project is fixed at creation, and the authoring verbs run no install hooks there. To run integration install hooks inside a workweave (or at the primary weave without switching projects) after `rwv sync` brings in new membership or lock changes:
+`rwv activate` is refused inside a workweave because a workweave's project is fixed at creation, and the authoring verbs run no install hooks there; each says so with ``[skipped] core: the install hooks did not run (an authoring verb runs none inside a workweave); `rwv materialize` runs them``. To run integration install hooks inside a workweave (or at the primary weave without switching projects) after `rwv sync` brings in new membership or lock changes:
 
 ```bash
 rwv materialize

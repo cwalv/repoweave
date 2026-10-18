@@ -393,8 +393,10 @@ reported rather than reset and blocks the record from being cleared
 (`src/sync.rs`).
 
 Savepoints are git refs under `refs/rwv/pre-op/<op-id>`; pre-abort refs under
-`refs/rwv/pre-abort/<op-id>`. `OpId` (`src/op_state.rs`) is nanoseconds since
-epoch, minted by `OpId::new_now()`.
+`refs/rwv/pre-abort/<op-id>`. A `sync-to` target's repos get the same refs
+with a `-target` suffix, because a worktree pair shares one ref store and the
+first restore would otherwise drop the ref the second needs. `OpId`
+(`src/op_state.rs`) is nanoseconds since epoch, minted by `OpId::new_now()`.
 
 ## 6. The seams
 
@@ -458,11 +460,23 @@ well. The published contract for this seam, and that residue in full, is
 
 ### 6.2 `Integration`
 
-`pub trait Integration` (`src/integration.rs`) is thirteen methods: five
-required (`name`, `default_enabled`, `activate`, `deactivate`, `check`) and
-eight defaulted (`detection_manifests`, `settings_keys`, `activate_hook`,
-`generated_files`, `managed_files`, `verify`, `owned_paths_on_disk`,
-`member_incompatibility`).
+`pub trait Integration` (`src/integration.rs`) is fourteen methods at
+`c812509`: five required (`name`, `default_enabled`, `activate`,
+`deactivate`, `check`) and nine defaulted (`detection_manifests`,
+`settings_keys`, `activate_hook`, `fit_to_host`, `generated_files`,
+`managed_files`, `verify`, `owned_paths_on_disk`, `member_incompatibility`).
+
+Two of them are the materialization path, not authoring. `activate_hook`
+runs the ecosystem's install tool and returns a `HookOutcome`: `Done`, or
+`ToolMissing(tool)` when that tool is not on `PATH`, which the runner reports
+as a `tool-missing` warning while the other integrations' hooks still run; a
+hook that fails while running is an error. Every hook is refused while any
+enabled integration's `[integrations.<name>]` block fails to deserialize,
+and `rwv materialize` refuses up front in that state, before anything else
+it does. `fit_to_host` brings content whose right value is a fact about the
+machine rather than about `rwv.toml` — `cargo-workspace`'s `rustc-wrapper`
+key — to this host's answer at every materialization that runs the hooks,
+ahead of surfacing.
 
 Eight built-in implementors, all unit structs, returned in fixed order by
 `builtin_integrations()` (`src/integrations/mod.rs`): `npm-workspaces`,
@@ -485,11 +499,11 @@ because the two halves are easy to confuse:
   `IntegrationContext`.
 - **`integration_runner.rs`** assembles that input once per cycle
   (`IntegrationContextBase`,), precomputes the on-disk detection cache
-  (`build_detection_cache`,), filters by enablement, and drives six
-  entry points — `run_activations`, `run_checks`,
+  (`build_detection_cache`,), filters by enablement, and drives seven
+  entry points at `c812509` — `run_activations`, `run_checks`,
   `run_verifications`, `run_member_incompatibilities`,
-  `run_activate_hooks`, `run_deactivations`. It does **not**
-  own the list: callers pass `&[&dyn Integration]`.
+  `run_activate_hooks`, `run_host_fits`, `run_deactivations`. It does
+  **not** own the list: callers pass `&[&dyn Integration]`.
 - Errors are contained per integration: one integration returning `Err` becomes
   an `Issue` tagged with its name, and iteration continues.
 
@@ -497,7 +511,11 @@ because the two halves are easy to confuse:
 implementors call — the `ManagedDoc` trait and its `JsonDoc` /
 `TomlDoc` / `YamlDoc` / `GoWorkDoc` implementations, `merge_activate`
 / `strip_deactivate`, and the ownership-marker machinery — so the
-hybrid-file invariants live once rather than per integration. It imports
+hybrid-file invariants live once rather than per integration. Its writes go
+through `write_parseable`, which refuses to write a managed file whose
+generated text does not parse back as that document type and leaves the
+file as it was; `cargo-workspace`'s own direct writes to `Cargo.toml` and
+`.cargo/config.toml` take the same guard. It imports
 `Issue`, `IssueKind` and `Severity` and nothing else from core. Its contract is
 published at
 [`docs/explanation/joints/file-ownership.md`](docs/explanation/joints/file-ownership.md).

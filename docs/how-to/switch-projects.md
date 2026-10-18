@@ -19,6 +19,12 @@ To switch the active project and weave-root symlinks without running install hoo
 rwv activate mobile-app --no-materialize
 ```
 
+It says what it left out:
+
+```text
+[skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them
+```
+
 Run `rwv materialize` later when you want the install hooks to run.
 
 `.rwv-active` is the single source of truth for which project is active at the weave root. Changing directories into `projects/<name>/` does not switch the active project; action verbs (`rwv lock`, `rwv add`, `rwv sync`) read `.rwv-active`. When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, verbs that write (`add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `fetch` with no source, `doctor --fix`) refuse with `cwd-in-inactive-project`, naming `--project <name>`, `--project <active>`, and `rwv activate <name>`. `rwv status` warns and reports on the active project; `rwv doctor` reports on the active project without a warning.
@@ -29,6 +35,13 @@ To run a single command against another project without changing `.rwv-active`:
 
 ```bash
 rwv lock --project mobile-app
+```
+
+An authoring verb (`add`, `remove`, `role`, `update`) given `--project` for a project the weave root does not present regenerates that project's files and stops there, saying so:
+
+```text
+[skipped] core: the weave-root links were not refreshed (`mobile-app` is not the project this weave root presents); `rwv activate mobile-app` refreshes them
+[skipped] core: the install hooks did not run (`mobile-app` is not the project this weave root presents); `rwv activate mobile-app` runs them
 ```
 
 ## When switching is too slow

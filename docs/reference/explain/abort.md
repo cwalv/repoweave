@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Restore CWD's workspace to its pre-sync state using savepoint refs written by
-`rwv sync` or `rwv sync-to` at the start of the operation. Call `abort` when a
+Roll an in-flight `rwv sync` or `rwv sync-to` back to the savepoint refs it
+wrote at the start of the operation, in every workspace it touched. Call `abort` when a
 sync or sync-to has left the workspace in an unresolvable state and you want to
 get back to the last known-good position rather than continue forward.
 

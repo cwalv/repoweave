@@ -263,12 +263,20 @@ overwrites nor strips it, and verify reports it as `managed-file-user-held`.
 
 ### `[workspace.package]`
 
-`workspace-package = true` asks `rwv` to author a `[workspace.package]` table
-in `Cargo.toml`. Leave it unset: the authoring pass writes the table's header
-in a form Cargo cannot parse. An authoring verb then refuses and puts the file
-back, and a `rwv doctor --fix` that regenerates leaves the unparseable
-`Cargo.toml` on disk. With it unset (the default), `[workspace.package]` is
-left entirely to you.
+`workspace-package = true` asks `rwv` to author an empty `[workspace.package]`
+table in `Cargo.toml`, marked as its own:
+
+```toml
+# managed by rwv
+[workspace.package]
+```
+
+`rwv` writes no keys into the table. An intent verb (`add`, `remove`,
+`role`, `update`) authors it as soon as the knob is set; `rwv doctor --fix`
+authors it only when other drift already makes it regenerate. Disabling the
+integration and running `rwv materialize` strips the table and its marker.
+With the knob unset (the default), `[workspace.package]` is left entirely to
+you.
 
 ## Managed and generated files
 

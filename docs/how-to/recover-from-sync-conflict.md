@@ -48,7 +48,7 @@ If you step through a multi-commit rebase manually with `git rebase --continue`,
 - **Member repo conflict:** A member repo's branch has a textual conflict against the incoming target revision. Resolve the conflicted files in that member checkout, run `git add`, and resume with `--continue`.
 - **`rwv sync-to --retire` conflict:** When `--retire` hits a conflict, the workweave is preserved so you can resolve it. After staging fixes, run bare `rwv sync-to --continue` — `--retire` is remembered in op-state and runs automatically once the sync finishes.
 
-For inspecting in-flight op-state, handling `foreign-tip` refusals during `rwv abort`, or recovering pre-abort commits from `refs/rwv/pre-abort/<op-id>`, see [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md).
+For inspecting in-flight op-state, handling `foreign-tip` refusals during `rwv abort`, or recovering pre-abort commits from `refs/rwv/pre-abort/<op-id>` (`refs/rwv/pre-abort/<op-id>-target` in a `sync-to` target's repos), see [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md).
 
 ## Related
 
