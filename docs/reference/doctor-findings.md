@@ -211,8 +211,14 @@ that directory to find it. Always checked, with or without `--all`: which
 top-level directories count as registry segments is already a fact about
 every project's manifest, not about which ones this invocation loaded.
 
-**What to do:** `rwv add <url>` to register it, or remove the directory
-yourself.
+**What to do:** to register it, move it to the path its origin URL places it
+at under the primary weave root (the canonical path
+[`rwv add`](./cli.md#rwv-add-url-) describes), unless it already sits there,
+and run `rwv add --adopt <path>` with that path. Adopted at any other path, it
+is registered there, and an `owned` or `dependency` entry then reports
+[`placement-disagreement`](#placement-disagreement). `rwv add <url>` registers
+it only once it sits at that path; anywhere else it makes a second clone and
+leaves this one standing. Or remove the directory yourself.
 
 ### `dangling-reference`
 

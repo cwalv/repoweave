@@ -7338,8 +7338,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     format!(
                         "unknown-segment clone: {path} — sits under a top-level directory no \
                          built-in registry and no project's rwv.toml names, so no scan compares \
-                         it against anything; run `rwv add <url>` to register it, or remove the \
-                         directory manually"
+                         it against anything; to register it, move it to the path its origin URL \
+                         places it at under the primary weave root, unless it already sits there, \
+                         and run `rwv add --adopt` with that path; or remove the directory \
+                         manually"
                     ),
                 ),
                 // `rwv fetch` (no SOURCE) re-clones missing manifest

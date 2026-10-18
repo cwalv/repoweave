@@ -337,6 +337,10 @@ saying the table was retired. Delete it.
   to the path its URL places at unless it is already there, re-key the entry
   in `rwv.toml`, and run `rwv lock`. It named moving the checkout alone, which
   leaves the finding and adds a `dangling-reference`.
+- `unknown-segment-clone` names `rwv add --adopt` with the path the clone's
+  origin URL places it at, moving it there first. It named `rwv add <url>`,
+  which for a clone anywhere else makes a second clone and leaves the first
+  one reported.
 
 ### Documentation
 

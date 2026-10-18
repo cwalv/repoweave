@@ -6,6 +6,9 @@
 //! finding that covers it; `docs/internals/path-url-mapping.md` states what the
 //! scan still does not see.
 //!
+//! Each repair the finding names is run here to a report with nothing on it,
+//! beside the two it steers away from.
+//!
 //! What this scan must NOT report is as load-bearing as what it must:
 //! `projects/`, a dot-prefixed directory, and a directory shaped like build
 //! output (`target/`, `node_modules/@scope/pkg`) all sit at the weave root
@@ -398,4 +401,215 @@ fn an_unparseable_non_active_manifest_never_yields_unknown_segment_clone() {
     member_of_broken_project(&tmp, &ws, "other");
 
     assert_broken_manifest_never_reads_as_unknown_segment(&ws, &[]);
+}
+
+/// The line `rwv doctor` prints for the `unknown-segment-clone` at `path`.
+fn unknown_segment_advice(ws: &Path, path: &str) -> String {
+    let out = common::rwv()
+        .arg("doctor")
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    report
+        .lines()
+        .find(|l| l.contains(&format!("unknown-segment clone: {path} ")))
+        .unwrap_or_else(|| panic!("no unknown-segment-clone line for {path}:\n{report}"))
+        .to_owned()
+}
+
+fn assert_advises_adopt_at_the_placement(advice: &str) {
+    assert!(
+        advice.contains(
+            "move it to the path its origin URL places it at under the primary weave root"
+        ) && advice.contains("run `rwv add --adopt` with that path"),
+        "the advice must name the move to the clone's placement and `rwv add --adopt` there: \
+         {advice}"
+    );
+}
+
+/// `rwv add --adopt` with `path`, from `dir`.
+fn adopt(dir: &Path, path: &str) {
+    common::rwv()
+        .args(["add", "--adopt", path])
+        .current_dir(dir)
+        .assert()
+        .success();
+}
+
+/// A clone whose top-level directory is its origin's own host already sits
+/// where its URL places it, so adopting it where it stands is the whole repair.
+#[test]
+fn adopting_a_clone_already_at_its_placement_clears_the_finding() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    let path = "selfhosted.example/acme/stray";
+    let clone = common::under(&ws, path);
+    plant_clone(&tmp, &clone, "stray.git");
+    common::git_in(
+        &clone,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://selfhosted.example/acme/stray.git",
+        ],
+    );
+    assert_advises_adopt_at_the_placement(&unknown_segment_advice(&ws, path));
+
+    adopt(&ws, path);
+
+    assert_eq!(doctor_findings(&ws, &["--all"]), Vec::new());
+}
+
+/// A clone anywhere else is moved to its placement first: adopted where it
+/// stands, it trades this finding for `placement-disagreement`, and
+/// `rwv add <url>` would make a second clone.
+#[test]
+fn moving_a_clone_to_its_placement_and_adopting_it_there_clears_the_finding() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    let origin = common::under(tmp.path(), "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    common::git_in(
+        &ws,
+        &[
+            "clone",
+            "--quiet",
+            &common::file_url(&origin),
+            "vendor/acme/x",
+        ],
+    );
+    assert_advises_adopt_at_the_placement(&unknown_segment_advice(&ws, "vendor/acme/x"));
+
+    std::fs::create_dir_all(common::under(&ws, "local/acme")).unwrap();
+    std::fs::rename(
+        common::under(&ws, "vendor/acme/x"),
+        common::under(&ws, "local/acme/x"),
+    )
+    .unwrap();
+    adopt(&ws, "local/acme/x");
+
+    assert_eq!(doctor_findings(&ws, &["--all"]), Vec::new());
+}
+
+/// What the advice steers away from: adopting the clone where its URL does
+/// not place it registers it there, and an `owned` entry then disagrees with
+/// its own URL.
+#[test]
+fn adopting_a_clone_where_its_url_does_not_place_it_reports_placement_disagreement() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    let origin = common::under(tmp.path(), "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    common::git_in(
+        &ws,
+        &[
+            "clone",
+            "--quiet",
+            &common::file_url(&origin),
+            "vendor/acme/x",
+        ],
+    );
+
+    adopt(&ws, "vendor/acme/x");
+
+    assert_eq!(
+        doctor_findings(&ws, &["--all"]),
+        vec![("provenance".to_owned(), "vendor/acme/x".to_owned())]
+    );
+}
+
+/// Nor is `rwv add <url>` the repair for a clone off its placement: it clones
+/// the URL afresh at the placement and leaves this clone where it was.
+#[test]
+fn adding_its_url_while_it_sits_off_its_placement_makes_a_second_clone() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    let origin = common::under(tmp.path(), "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    let url = common::file_url(&origin);
+    common::git_in(&ws, &["clone", "--quiet", &url, "vendor/acme/x"]);
+
+    common::rwv()
+        .args(["add", &url])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(common::under(&ws, "local/acme/x").join(".git").is_dir());
+    assert_eq!(
+        doctor_findings(&ws, &["--all"]),
+        vec![(
+            "unknown-segment-clone".to_owned(),
+            "vendor/acme/x".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn removing_the_directory_clears_the_finding() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    let path = "selfhosted.example/acme/stray";
+    plant_clone(&tmp, &common::under(&ws, path), "stray.git");
+    assert!(unknown_segment_advice(&ws, path).contains("or remove the directory manually"));
+
+    std::fs::remove_dir_all(ws.join("selfhosted.example")).unwrap();
+
+    assert_eq!(doctor_findings(&ws, &["--all"]), Vec::new());
+}
+
+/// In a workweave the clone is moved into the primary weave, where the
+/// canonical clone of every member lives, and adopted from the workweave,
+/// which then holds a worktree of it.
+#[test]
+fn a_workweave_stray_moved_to_its_placement_in_the_primary_and_adopted_clears_the_finding() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    common::git_in(ws.join("projects").join("demo"), &["add", "."]);
+    common::git_in(
+        ws.join("projects").join("demo"),
+        &["commit", "--quiet", "-m", "init"],
+    );
+    common::rwv()
+        .args(["workweave", "demo", "create", "feat"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let ww = tmp.path().join(".workweaves").join("demo--feat");
+    let origin = common::under(tmp.path(), "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    common::git_in(
+        &ww,
+        &[
+            "clone",
+            "--quiet",
+            &common::file_url(&origin),
+            "vendor/acme/x",
+        ],
+    );
+    assert_advises_adopt_at_the_placement(&unknown_segment_advice(&ww, "vendor/acme/x"));
+
+    std::fs::create_dir_all(common::under(&ws, "local/acme")).unwrap();
+    std::fs::rename(
+        common::under(&ww, "vendor/acme/x"),
+        common::under(&ws, "local/acme/x"),
+    )
+    .unwrap();
+    adopt(&ww, "local/acme/x");
+
+    assert_eq!(doctor_findings(&ww, &["--all"]), Vec::new());
+    assert!(
+        common::under(&ww, "local/acme/x").join(".git").is_file(),
+        "the workweave holds a worktree of the adopted clone"
+    );
 }
