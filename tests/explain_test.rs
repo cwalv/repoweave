@@ -103,12 +103,12 @@ fn explain_push_lock_state_mismatch_remedy_has_no_dead_checkout_advice() {
 /// sync` after the first commit".
 #[test]
 fn explain_add_worktree_skip_names_lock_then_doctor_fix() {
-    rwv().args(["explain", "add"]).assert().success().stdout(
-        predicate::str::contains("run `rwv sync`")
-            .not()
-            .and(predicate::str::contains(
-                "`rwv lock` then\n`rwv doctor --fix`",
-            )),
+    let out = rwv().args(["explain", "add"]).assert().success();
+    let text = String::from_utf8_lossy(&out.get_output().stdout).replace("\r\n", "\n");
+    assert!(!text.contains("run `rwv sync`"), "{text}");
+    assert!(
+        text.contains("`rwv lock` then\n`rwv doctor --fix`"),
+        "{text}"
     );
 }
 

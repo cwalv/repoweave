@@ -719,15 +719,16 @@ fn the_summary_index_agrees_with_the_register() {
 #[test]
 fn the_summary_index_check_reports_a_drifted_cell() {
     let register = register();
+    let page = PAGE.replace("\r\n", "\n");
     let severities = severity_register();
     const ROW: &str = "| [`orphaned-clone`](#orphaned-clone) | Error | Report-only |";
 
-    let wrong_severity = PAGE.replacen(
+    let wrong_severity = page.replacen(
         ROW,
         "| [`orphaned-clone`](#orphaned-clone) | Warning | Report-only |",
         1,
     );
-    assert_ne!(wrong_severity, PAGE, "the seeded edit matched nothing");
+    assert_ne!(wrong_severity, page, "the seeded edit matched nothing");
     let gaps = summary_violation_gaps(&wrong_severity, &register, &severities);
     assert!(
         gaps.iter()
@@ -736,12 +737,12 @@ fn the_summary_index_check_reports_a_drifted_cell() {
         gaps.join("\n  ")
     );
 
-    let wrong_fix = PAGE.replacen(
+    let wrong_fix = page.replacen(
         ROW,
         "| [`orphaned-clone`](#orphaned-clone) | Error | Auto-fixable |",
         1,
     );
-    assert_ne!(wrong_fix, PAGE, "the seeded edit matched nothing");
+    assert_ne!(wrong_fix, page, "the seeded edit matched nothing");
     let gaps = summary_violation_gaps(&wrong_fix, &register, &severities);
     assert!(
         gaps.iter()
@@ -751,8 +752,8 @@ fn the_summary_index_check_reports_a_drifted_cell() {
         gaps.join("\n  ")
     );
 
-    let dropped_row = PAGE.replacen(&format!("{ROW}\n"), "", 1);
-    assert_ne!(dropped_row, PAGE, "the seeded edit matched nothing");
+    let dropped_row = page.replacen(&format!("{ROW}\n"), "", 1);
+    assert_ne!(dropped_row, page, "the seeded edit matched nothing");
     let gaps = summary_violation_gaps(&dropped_row, &register, &severities);
     assert!(
         gaps.iter()
