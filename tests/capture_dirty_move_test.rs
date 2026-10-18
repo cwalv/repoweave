@@ -96,9 +96,7 @@ fn capture_dirty_moves_the_edits_so_the_workweave_lands_back() {
         "the captured edit must land back on the source:\n{report}"
     );
     assert!(
-        std::fs::read_to_string(project.join("rwv.toml"))
-            .unwrap()
-            .contains(MARKER),
+        common::read_normalized(project.join("rwv.toml")).contains(MARKER),
         "the source holds the edit again, committed:\n{report}"
     );
     assert_eq!(status(&project), "");

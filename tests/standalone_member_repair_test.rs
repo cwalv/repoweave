@@ -259,7 +259,7 @@ fn doctor_fix_replaces_the_clone_with_a_worktree_at_the_commit_it_had_checked_ou
         "born at the commit the clone had checked out, not at the pin"
     );
     assert_eq!(
-        std::fs::read_to_string(weave.clone.join("README.md")).unwrap(),
+        common::read_normalized(weave.clone.join("README.md")),
         "widget, featured\n"
     );
     assert!(

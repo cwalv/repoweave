@@ -760,7 +760,7 @@ fn add_local_path_records_the_configured_url_not_the_instead_of_rewrite() {
         home.join(".gitconfig"),
         format!(
             "[url \"{}\"]\n\tinsteadOf = {configured_url}\n[user]\n\temail = test@test.com\n\tname = Test\n",
-            bare.to_string_lossy()
+            common::file_url(&bare)
         ),
     )
     .unwrap();

@@ -528,7 +528,7 @@ fn a_refused_url_add_names_the_clone_it_keeps_and_the_command_that_removes_it() 
 
     let stderr = refused(&["add", &beta_url], &weave.ws);
 
-    let clone = weave.ws.join(&beta);
+    let clone = common::under(&weave.ws, &beta);
     assert!(
         clone.join(".git").is_dir(),
         "the clone is kept for a re-run"
@@ -557,8 +557,8 @@ fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
 
     let stderr = refused(&["add", &beta_url], &workweave);
 
-    let worktree = workweave.join(&beta);
-    let clone = weave.ws.join(&beta);
+    let worktree = common::under(&workweave, &beta);
+    let clone = common::under(&weave.ws, &beta);
     assert!(worktree.join(".git").is_file() && clone.join(".git").is_dir());
     assert!(
         stderr.contains(&format!(
@@ -590,7 +590,7 @@ fn a_refused_adopt_in_a_workweave_names_only_the_worktree_it_made() {
 
     let stderr = refused(&["add", "--adopt", &beta], &workweave);
 
-    let worktree = workweave.join(&beta);
+    let worktree = common::under(&workweave, &beta);
     assert!(
         stderr.contains(&format!(
             "kept the worktree it made at {}",
@@ -635,8 +635,8 @@ fn a_refused_add_new_takes_back_its_upstream_and_its_member() {
         &weave.ws,
     );
 
-    let upstream = root.join("acme/fresh");
-    let member = weave.ws.join("local/acme/fresh");
+    let upstream = common::under(&root, "acme/fresh");
+    let member = common::under(&weave.ws, "local/acme/fresh");
     assert!(
         !upstream.exists() && !root.join("acme").exists(),
         "the bare upstream and the directory made for it are gone"
