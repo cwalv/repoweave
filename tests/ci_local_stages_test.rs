@@ -1,21 +1,22 @@
 //! `scripts/ci-local.sh` is the one script CI, the release gate, the
-//! pre-push hook and every contributor run. This pins four things about its
-//! `--stages` selector: the no-flag invocation still runs all seven stages,
+//! pre-push hook and every contributor run. This pins its `--stages`
+//! selector: the no-flag invocation still runs all seven default stages,
 //! in the same order, with the same header text and the same terminal line;
 //! `--stages=drift` isolates the regenerate-and-diff block, exiting non-zero
 //! and naming the remedy when regeneration disagrees with the committed
 //! tree; the windows stage skips loudly, printing the install command,
 //! whenever the target isn't there — never a hard failure, because
 //! ci-checks.yml's windows-check job already owns Windows compile truth
-//! authoritatively; and a subset run's terminal line names the stages that
-//! ran, so it can never be mistaken for a full gate by a reader holding only
-//! the log.
+//! authoritatively; a subset run's terminal line names the stages that ran,
+//! so it can never be mistaken for a full gate by a reader holding only the
+//! log; and the windows-wine stage runs only when named.
 //!
 //! Every test drives the real script as a subprocess with a stub `cargo` and
-//! `rustup` on `PATH`, so a stage's *shape* — which header prints, in what
-//! order, on what exit code — is pinned without paying for a real build or
-//! depending on whether this host happens to have the Windows target
-//! installed. `#![cfg(unix)]`: the script under test is a
+//! `rustup` on `PATH` (and, for the wine stage's wiring, a stub
+//! `windows-wine.sh` beside a copy of it), so a stage's *shape* — which
+//! header prints, in what order, on what exit code — is pinned without paying
+//! for a real build or depending on whether this host happens to have the
+//! Windows target installed. `#![cfg(unix)]`: the script under test is a
 //! `#!/usr/bin/env bash` file, so every helper here exists for a target this
 //! suite already can't run on; a per-test `#[cfg(unix)]` would strand them
 //! all as dead code on the one platform that denies warnings on the host
@@ -93,12 +94,23 @@ fn fixture_repo() -> tempfile::TempDir {
 }
 
 fn run_ci_local(cwd: &Path, stub_bin: &Path, args: &[&str], extra_env: &[(&str, &str)]) -> Output {
+    run_script(&ci_local_sh(), cwd, stub_bin, args, extra_env)
+}
+
+fn run_script(
+    script: &Path,
+    cwd: &Path,
+    stub_bin: &Path,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Output {
     let real_path = std::env::var("PATH").unwrap_or_default();
     let path = format!("{}:{real_path}", stub_bin.display());
-    let mut cmd = Command::new(ci_local_sh());
+    let mut cmd = Command::new(script);
     cmd.args(args).current_dir(cwd).env("PATH", path);
     cmd.env_remove("CI_LOCAL_TEST_DRIFT_FILE");
     cmd.env_remove("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED");
+    cmd.env_remove("CI_LOCAL_TEST_WINE_EXIT");
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -425,5 +437,134 @@ fn windows_stage_skips_loudly_with_the_install_command_when_the_target_is_missin
         !stdout
             .contains("STUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc"),
         "the cross-check itself should not have run:\n{stdout}"
+    );
+}
+
+const WINE_HEADER: &str = "==> test suite under Wine as x86_64-pc-windows-gnu binaries";
+
+/// `scripts/ci-local.sh` copied beside a stub `windows-wine.sh` that logs
+/// its call and exits with `CI_LOCAL_TEST_WINE_EXIT`, so the stage's wiring
+/// is observed without the real script's downloads.
+fn ci_local_beside_a_stub_wine_script() -> (tempfile::TempDir, PathBuf) {
+    let dir = common::tempdir().expect("tempdir");
+    let scripts = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let ci_local = scripts.join("ci-local.sh");
+    std::fs::copy(ci_local_sh(), &ci_local).unwrap();
+    let wine = scripts.join("windows-wine.sh");
+    std::fs::write(
+        &wine,
+        "#!/bin/sh\nprintf 'STUB_WINDOWS_WINE: %s\\n' \"$*\"\nexit \"${CI_LOCAL_TEST_WINE_EXIT:-0}\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&wine, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (dir, ci_local)
+}
+
+#[test]
+fn default_run_never_runs_the_wine_stage() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(&ci_local, fixture.path(), stub.path(), &[], &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(
+        !stdout.contains("STUB_WINDOWS_WINE") && !stdout.contains(WINE_HEADER),
+        "the default run reached the opt-in wine stage:\n{stdout}"
+    );
+    assert!(
+        stdout.trim_end().ends_with("All checks passed."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn wine_stage_runs_its_script_when_named() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows-wine"],
+        &[],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains(WINE_HEADER), "{stdout}");
+    assert_eq!(stdout.matches("STUB_WINDOWS_WINE:").count(), 1, "{stdout}");
+    assert!(!stdout.contains("STUB_CARGO:"), "{stdout}");
+    assert!(
+        stdout
+            .trim_end()
+            .ends_with("All checks passed (stages: windows-wine)."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_red_wine_stage_fails_the_run() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows-wine"],
+        &[("CI_LOCAL_TEST_WINE_EXIT", "1")],
+    );
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(!stdout_of(&out).contains("All checks passed"));
+}
+
+/// Seven stages ran, so a count would call this the full gate; one of the
+/// seven is the opt-in stage standing in for a default one that never ran.
+#[test]
+fn the_wine_stage_cannot_stand_in_for_a_default_stage_on_the_terminal_line() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let (_scripts, ci_local) = ci_local_beside_a_stub_wine_script();
+    let out = run_script(
+        &ci_local,
+        fixture.path(),
+        stub.path(),
+        &["--stages=check,windows,test,clippy,doc,fmt,windows-wine"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert_eq!(
+        stdout.trim_end().lines().last().unwrap_or(""),
+        "All checks passed (stages: check,windows,test,clippy,doc,fmt,windows-wine).",
+        "{stdout}"
+    );
+}
+
+#[test]
+fn wine_stage_refuses_with_the_install_command_when_the_target_is_missing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=windows-wine"],
+        &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+    );
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(stdout_of(&out).contains(WINE_HEADER), "{}", stdout_of(&out));
+    assert!(
+        stderr_of(&out).contains(
+            "windows-wine: x86_64-pc-windows-gnu is not installed — rustup target add x86_64-pc-windows-gnu"
+        ),
+        "{}",
+        stderr_of(&out)
+    );
+    assert!(
+        !stdout_of(&out).contains("STUB_CARGO:"),
+        "{}",
+        stdout_of(&out)
     );
 }

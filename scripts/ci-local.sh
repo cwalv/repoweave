@@ -4,15 +4,17 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--stages=check,windows,test,clippy,doc,fmt,drift]
+# Usage: scripts/ci-local.sh [--stages=check,windows,test,clippy,doc,fmt,drift,test-autocrlf,windows-wine]
 #
-# With no --stages, runs all stages in the order above — this is what CI, the
-# release gate and the pre-push hook invoke. --stages selects a subset, in
-# that same fixed order, regardless of the order named on the command line;
-# re-gating an integration tip between landings wants --stages=drift alone,
-# without paying for a full build first. A subset run's
-# terminal line names the stages it ran, so a log naming less than all seven
-# is never mistaken for a full gate.
+# With no --stages, runs all stages in the order above but the last — this is
+# what CI, the release gate and the pre-push hook invoke. windows-wine runs
+# only when named: it is scripts/windows-wine.sh, which downloads several GB
+# on first use and reports reds that belong to Wine rather than to the code.
+# --stages selects a subset, in that same fixed order, regardless of the order
+# named on the command line; re-gating an integration tip between landings
+# wants --stages=drift alone, without paying for a full build first. A subset
+# run's terminal line names the stages it ran, so a log naming less than the
+# seven default stages is never mistaken for a full gate.
 #
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile
@@ -35,8 +37,8 @@
 set -euo pipefail
 
 ALL_STAGES=(check windows test clippy doc fmt drift)
-EXTRA_STAGES=(test-autocrlf)
-KNOWN_STAGES=("${ALL_STAGES[@]}" "${EXTRA_STAGES[@]}")
+OPT_IN_STAGES=(test-autocrlf windows-wine)
+KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
 
 join_by_comma() {
     local IFS=,
@@ -45,7 +47,7 @@ join_by_comma() {
 
 usage() {
     printf 'Usage: %s [--stages=%s]\n' "$0" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
-    printf '  also valid, not run by default: %s\n' "$(join_by_comma "${EXTRA_STAGES[@]}")" >&2
+    printf '  also valid, not run by default: %s\n' "$(join_by_comma "${OPT_IN_STAGES[@]}")" >&2
 }
 
 stages_csv="$(join_by_comma "${ALL_STAGES[@]}")"
@@ -176,6 +178,11 @@ if run_stage drift; then
     }
 fi
 
+if run_stage windows-wine; then
+    header "test suite under Wine as x86_64-pc-windows-gnu binaries"
+    "$(dirname "$0")/windows-wine.sh"
+fi
+
 ran_stages=()
 for s in "${KNOWN_STAGES[@]}"; do
     if run_stage "$s"; then
@@ -183,7 +190,7 @@ for s in "${KNOWN_STAGES[@]}"; do
     fi
 done
 
-if [ "${#ran_stages[@]}" -eq "${#ALL_STAGES[@]}" ]; then
+if [ "${ran_stages[*]}" = "${ALL_STAGES[*]}" ]; then
     printf '\nAll checks passed.\n'
 else
     printf '\nAll checks passed (stages: %s).\n' "$(join_by_comma "${ran_stages[@]}")"
